@@ -245,6 +245,28 @@ func (h *EventHub) Replay(ctx context.Context, after modulecore.EventSeq, snapsh
 	return replaySnapshot(boundedContext, snapshot, after, emit, true)
 }
 
+// ReplayAvailable emits the retained canonical window when a durable reader is
+// configured, or the current in-memory snapshot otherwise. It is used after a
+// reconnect cursor can no longer be resolved, when replaying after its old
+// EventSeq could silently skip a replacement event that reused that sequence.
+func (h *EventHub) ReplayAvailable(ctx context.Context, snapshot []orchestrator.OrchestratorEvent, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {
+	if ctx == nil {
+		return 0, fmt.Errorf("event replay context is required")
+	}
+	if emit == nil {
+		return 0, fmt.Errorf("event replay emitter is required")
+	}
+	boundedContext, cancel := context.WithTimeout(ctx, replayTimeout)
+	defer cancel()
+	h.mu.RLock()
+	reader := h.replayReader
+	h.mu.RUnlock()
+	if reader != nil {
+		return replayDurable(boundedContext, reader, 0, emit)
+	}
+	return replaySnapshot(boundedContext, snapshot, 0, emit, false)
+}
+
 func replayDurable(ctx context.Context, reader EventReplayReader, after modulecore.EventSeq, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {
 	cursor := after
 	through := modulecore.EventSeq(0)

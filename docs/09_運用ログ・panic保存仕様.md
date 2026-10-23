@@ -114,6 +114,21 @@ backup windowはrunnerが`RENCROW_BACKUP`をmountして所有し、終了時に�
 `CORE restarted`と記録しません。長時間Agent RunはSuperAgent owner storeのcheckpointと期限付きleaseを正本とし、
 backup停止中に失効したclaimは再起動後のschedulerが同じrun／checkpoint identityで回収します。
 
+## SQLite WAL checkpoint operation
+
+Event Store、Persona Architecture、AI Workflowの各SQLite storeは、writerとは別の専用connectionから約60秒を目標に
+`PASSIVE` checkpointを試み、正常停止時にも最終checkpointを行います。checkpoint error、未完了frame、または約60秒の実行目標超過は
+`GET /health`のstore別checkを`degraded`にします。状態と`last_success_age_sec`、`target_interval_sec`、
+`last_checkpoint_result`は[Public API仕様](06_Public_API仕様.md#主な-endpoint-群)に従い、初回結果前は`pending`、
+成功checkpointが未発生なら`last_success_age_sec=null`です。
+
+約60秒は目標であって最大損失時間の保証ではありません。degraded中にOS crash／電源断が起きると、最後に完了したcheckpoint以降の
+WAL tailが失われる範囲は約60秒を越える可能性があります。degraded status自体はreadinessや新規request admissionを変更しません。
+
+運用logにはcheckpointの失敗、`degraded`への遷移、回復、停止時の最終checkpoint結果を、store名・結果分類・経過時間だけで記録します。
+SQL本文、record ID、ユーザー本文、絶対pathは記録しません。定期backupは別経路です。既存のCORE停止windowとscratch restore checkを
+使い、SQLiteのdatabaseと存在するWAL sidecarを同じ整合単位として保存・検査します。
+
 ## 正式な記録先
 
 Linuxのsystemd常用環境では、`rencrow.service`のstdoutとstderrをsystemd journalへ送ります。

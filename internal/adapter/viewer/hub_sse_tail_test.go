@@ -3,10 +3,8 @@ package viewer
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,9 +18,8 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-// maxInt64LastEventID is the literal value that older clients sent as
-// Last-Event-ID to mean "subscribe from now". It is not a real EventSeq and
-// must keep being rejected as a cursor ahead of the canonical window.
+// maxInt64LastEventID is a legacy numeric cursor that older clients used as a
+// "subscribe from now" sentinel. Numeric cursors now request an explicit reset.
 const maxInt64LastEventID = "9223372036854775807"
 
 // serveTail runs HandleSSE for a request and cancels it after the given number
@@ -100,7 +97,8 @@ func TestHandleSSE_FromNowSkipsHistoryAndStreamsLiveOnce(t *testing.T) {
 				hub.SetReplayReader(reader)
 			}
 			hub.OnEvent(history)
-			counts := publishOnConnect(hub, sequencedEvent("agent.response", "LIVE-AGENT", 2))
+			live := sequencedEvent("agent.response", "LIVE-AGENT", 2)
+			counts := publishOnConnect(hub, live)
 
 			rec := serveTail(t, hub, "/viewer/events?from=now", "", 2)
 
@@ -114,8 +112,8 @@ func TestHandleSSE_FromNowSkipsHistoryAndStreamsLiveOnce(t *testing.T) {
 			if got := strings.Count(body, "LIVE-AGENT"); got != 1 {
 				t.Fatalf("live event delivered %d times, want once: %q", got, body)
 			}
-			if got := strings.Count(body, "id: 2\n"); got != 1 {
-				t.Fatalf("live id line appeared %d times, want once: %q", got, body)
+			if got := strings.Count(body, "id: "+string(live.EventID)+"\n"); got != 1 {
+				t.Fatalf("live EventID line appeared %d times, want once: %q", got, body)
 			}
 			if reader != nil && reader.calls != 0 {
 				t.Fatalf("durable ReplayPage called %d times for a tail subscription, want 0", reader.calls)
@@ -146,7 +144,7 @@ func TestHandleSSE_FromNowDeliversTransientLiveEventsWithoutID(t *testing.T) {
 	if got := strings.Count(body, "LIVE-DURABLE"); got != 1 {
 		t.Fatalf("durable live event delivered %d times, want once: %q", got, body)
 	}
-	if got := strings.Count(body, "id: "); got != 1 || !strings.Contains(body, "id: 5\n") {
+	if got := strings.Count(body, "id: "); got != 1 || !strings.Contains(body, "id: "+string(durable.EventID)+"\n") {
 		t.Fatalf("only the durable event may carry an id line, got %d id lines: %q", got, body)
 	}
 }
@@ -195,7 +193,7 @@ func TestHandleSSE_PositiveLastEventIDResumesAndIgnoresFromNow(t *testing.T) {
 		hub.OnEvent(event)
 	}
 
-	rec := serveTail(t, hub, "/viewer/events?from=now", "1", 1)
+	rec := serveTail(t, hub, "/viewer/events?from=now", string(events[0].EventID), 1)
 
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK {
@@ -204,12 +202,12 @@ func TestHandleSSE_PositiveLastEventIDResumesAndIgnoresFromNow(t *testing.T) {
 	if reader.calls == 0 {
 		t.Fatal("a positive Last-Event-ID must resume through the durable reader even with from=now")
 	}
-	for sequence := 2; sequence <= 3; sequence++ {
-		if got := strings.Count(body, "id: "+strconv.Itoa(sequence)+"\n"); got != 1 {
-			t.Fatalf("resumed event_seq %d appeared %d times, want once: %q", sequence, got, body)
+	for _, event := range events[1:] {
+		if got := strings.Count(body, "id: "+string(event.EventID)+"\n"); got != 1 {
+			t.Fatalf("resumed EventID %s appeared %d times, want once: %q", event.EventID, got, body)
 		}
 	}
-	if strings.Contains(body, "id: 1\n") {
+	if strings.Contains(body, "id: "+string(events[0].EventID)+"\n") {
 		t.Fatalf("resume must start after the cursor: %q", body)
 	}
 }
@@ -281,7 +279,7 @@ func TestHandleSSE_IgnoresUnknownQueryAndKeepsSnapshotWithoutFrom(t *testing.T) 
 
 // newCanonicalHub wires the same objects as the production runtime: a real
 // SQLite canonical event store, CanonicalEventLog and EventHub.SetReplayReader.
-func newCanonicalHub(t *testing.T, persisted int) (*EventHub, modulecore.EventSeq) {
+func newCanonicalHub(t *testing.T, persisted int) (*EventHub, modulecore.EventID) {
 	t.Helper()
 	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))
 	if err != nil {
@@ -294,52 +292,53 @@ func newCanonicalHub(t *testing.T, persisted int) (*EventHub, modulecore.EventSe
 	}
 	sessionID := string(modulecore.NewSessionID())
 	traceID := modulecore.NewTraceID()
-	var latest modulecore.EventSeq
+	var latest modulecore.EventID
 	for index := 1; index <= persisted; index++ {
 		event := orchestrator.NewEventWithTraceID(traceID, "entry.stage", "chrome", "system", "persisted-"+strconv.Itoa(index), "CHAT", "", sessionID, "local", "chrome")
 		projected, err := archive.AppendSequenced(event)
 		if err != nil {
 			t.Fatalf("AppendSequenced(%d) error = %v", index, err)
 		}
-		latest = projected.EventSeq
+		latest = projected.EventID
 	}
 	hub := NewEventHub(200)
 	hub.SetReplayReader(archive)
 	return hub, latest
 }
 
-// A Last-Event-ID is a canonical EventSeq. The accepted range ends at the
-// canonical watermark; anything ahead (including the old MaxInt64 "from now"
-// sentinel) stays a 409. "From now" is expressed with ?from=now instead.
+// Canonical cursors use EventID; numeric legacy cursors and unavailable IDs
+// trigger reset and replay of the available canonical window.
 func TestHandleSSE_CanonicalCursorBoundaryAndTailAgainstSQLite(t *testing.T) {
 	hub, latest := newCanonicalHub(t, 3)
+	lostEventID := string(modulecore.NewEventID())
 	cases := []struct {
 		name        string
 		target      string
 		lastEventID string
 		want        int
+		wantReset   bool
 	}{
-		{"no header replays the in-memory snapshot", "/viewer/events", "", http.StatusOK},
-		{"latest real EventSeq resumes", "/viewer/events", strconv.FormatInt(int64(latest), 10), http.StatusOK},
-		{"latest+1 is ahead of the canonical window", "/viewer/events", strconv.FormatInt(int64(latest)+1, 10), http.StatusConflict},
-		{"MaxInt64 sentinel stays rejected", "/viewer/events", maxInt64LastEventID, http.StatusConflict},
-		{"from=now alone tails", "/viewer/events?from=now", "", http.StatusOK},
-		{"from=now with Last-Event-ID 0 tails", "/viewer/events?from=now", "0", http.StatusOK},
-		{"from=now does not rescue an out-of-window cursor", "/viewer/events?from=now", maxInt64LastEventID, http.StatusConflict},
+		{name: "no header replays the in-memory snapshot", target: "/viewer/events", want: http.StatusOK},
+		{name: "latest stable EventID resumes", target: "/viewer/events", lastEventID: string(latest), want: http.StatusOK},
+		{name: "lost stable EventID resets", target: "/viewer/events", lastEventID: lostEventID, want: http.StatusOK, wantReset: true},
+		{name: "numeric legacy cursor resets", target: "/viewer/events", lastEventID: "1", want: http.StatusOK, wantReset: true},
+		{name: "MaxInt64 legacy sentinel resets", target: "/viewer/events", lastEventID: maxInt64LastEventID, want: http.StatusOK, wantReset: true},
+		{name: "from=now alone tails", target: "/viewer/events?from=now", want: http.StatusOK},
+		{name: "from=now with Last-Event-ID 0 tails", target: "/viewer/events?from=now", lastEventID: "0", want: http.StatusOK},
+		{name: "from=now with a numeric cursor resets", target: "/viewer/events?from=now", lastEventID: maxInt64LastEventID, want: http.StatusOK, wantReset: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var logs strings.Builder
-			log.SetOutput(&logs)
-			t.Cleanup(func() { log.SetOutput(os.Stderr) })
-
 			rec := serveTail(t, hub, tc.target, tc.lastEventID, 1)
 
 			if rec.Code != tc.want {
-				t.Fatalf("status = %d, want %d (server-log=%q)", rec.Code, tc.want, strings.TrimSpace(logs.String()))
+				t.Fatalf("status = %d, want %d: %q", rec.Code, tc.want, rec.Body.String())
 			}
-			if tc.want == http.StatusConflict && !strings.Contains(logs.String(), "event replay cursor is outside the canonical window") {
-				t.Fatalf("409 reason in server log = %q, want 'outside the canonical window'", strings.TrimSpace(logs.String()))
+			if got := strings.Contains(rec.Body.String(), "event: reset\n"); got != tc.wantReset {
+				t.Fatalf("reset frame present=%t, want %t: %q", got, tc.wantReset, rec.Body.String())
+			}
+			if tc.wantReset && !strings.Contains(rec.Body.String(), "id: reset\n") {
+				t.Fatalf("reset frame did not set the reset continuation cursor: %q", rec.Body.String())
 			}
 			if hub.ClientCount() != 0 {
 				t.Fatalf("client leaked after request: %d", hub.ClientCount())

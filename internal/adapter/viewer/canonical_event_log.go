@@ -31,6 +31,12 @@ type EventReplayReader interface {
 	ReplayPage(context.Context, modulecore.EventSeq, modulecore.EventSeq, int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error)
 }
 
+// EventCursorResolver resolves the stable identity used by SSE reconnects to
+// the canonical sequence used internally for ordered replay.
+type EventCursorResolver interface {
+	GetByEventID(context.Context, modulecore.EventID) (orchestrator.OrchestratorEvent, bool, error)
+}
+
 type componentReplayReader interface {
 	ReadComponentPage(context.Context, string, modulecore.EventSeq, modulecore.EventSeq, int) ([]modulecore.EventEnvelope, modulecore.EventSeq, error)
 }
@@ -44,6 +50,8 @@ type CanonicalEventLog struct {
 
 var _ EventLogReader = (*CanonicalEventLog)(nil)
 var _ EventReplayReader = (*CanonicalEventLog)(nil)
+var _ EventCursorResolver = (*CanonicalEventLog)(nil)
+var _ SessionPublicEventCursorResolver = (*CanonicalEventLog)(nil)
 var _ interface {
 	Append(orchestrator.OrchestratorEvent) error
 } = (*CanonicalEventLog)(nil)
@@ -139,11 +147,45 @@ func (s *CanonicalEventLog) GetByEventID(ctx context.Context, eventID modulecore
 	if err != nil || !found {
 		return orchestrator.OrchestratorEvent{}, found, err
 	}
+	if envelope.ComponentID != canonicalEventComponent {
+		return orchestrator.OrchestratorEvent{}, false, nil
+	}
 	event, ok := projectOrchestratorEvent(envelope)
 	if !ok {
 		return orchestrator.OrchestratorEvent{}, true, fmt.Errorf("canonical event envelope is invalid")
 	}
 	return event, true, nil
+}
+
+// ResolveSessionPublicEventID binds a stable cursor to its sequence only when
+// the event is still visible through the trusted owner/session projection.
+// The unscoped lookup supplies the sequence; the existing scoped lookup then
+// enforces the public message index and owner boundary before it is accepted.
+func (s *CanonicalEventLog) ResolveSessionPublicEventID(ctx context.Context, scope SessionPublicReplayScope, eventID modulecore.EventID) (modulecore.EventSeq, bool, error) {
+	if ctx == nil || scope.SessionID.Validate() != nil || strings.TrimSpace(scope.OwnerID) == "" || strings.TrimSpace(scope.ActorID) == "" || scope.CutoverSeq < 0 {
+		return 0, false, fmt.Errorf("invalid owner-scoped event cursor query")
+	}
+	if s == nil || s.store == nil {
+		return 0, false, fmt.Errorf("canonical event store is required")
+	}
+	if err := eventID.Validate(); err != nil {
+		return 0, false, fmt.Errorf("event_id is invalid: %w", err)
+	}
+	envelope, found, err := s.store.GetByID(ctx, eventID)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	if envelope.EventID != eventID || envelope.EventSeq <= scope.CutoverSeq || envelope.SessionID != scope.SessionID || envelope.ComponentID != canonicalEventComponent {
+		return 0, false, nil
+	}
+	canonical, public, err := s.ReadSessionPublicMessage(ctx, scope, eventID, envelope.EventSeq)
+	if err != nil || !public {
+		return 0, false, err
+	}
+	if canonical.EventID != eventID || canonical.EventSeq != envelope.EventSeq || canonical.SessionID != scope.SessionID || canonical.Visibility != "public" {
+		return 0, false, fmt.Errorf("owner-scoped event cursor lookup returned a mismatched event")
+	}
+	return canonical.EventSeq, true, nil
 }
 
 // Query reads a bounded canonical component projection, then applies the

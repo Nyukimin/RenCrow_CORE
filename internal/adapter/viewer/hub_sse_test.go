@@ -25,11 +25,12 @@ func TestHandleSSE_UsesLastEventIDForHistoryReplay(t *testing.T) {
 	first.EventSeq = 1
 	second := orchestrator.NewEvent("entry.stage", "chrome", "system", "planning", "CHAT", taskID, "s1", "local", "u1")
 	second.EventSeq = 2
+	hub.SetReplayReader(&replayPageReader{events: []orchestrator.OrchestratorEvent{first, second}})
 	hub.OnEvent(first)
 	hub.OnEvent(second)
 
 	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
-	req.Header.Set("Last-Event-ID", "1")
+	req.Header.Set("Last-Event-ID", string(first.EventID))
 	ctx, cancel := context.WithCancel(req.Context())
 	defer cancel()
 	rec := &cancelAfterFlushWriter{
@@ -46,6 +47,309 @@ func TestHandleSSE_UsesLastEventIDForHistoryReplay(t *testing.T) {
 	}
 	if !strings.Contains(body, `"event_seq":2`) {
 		t.Fatalf("expected event_seq=2 in replay, got: %s", body)
+	}
+	if !strings.Contains(body, "id: "+string(second.EventID)+"\n") {
+		t.Fatalf("expected canonical EventID %s on replay, got: %s", second.EventID, body)
+	}
+}
+
+func TestHandleSSE_ResumesByStableEventID(t *testing.T) {
+	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	first, err := archive.AppendSequenced(orchestrator.NewEvent("entry.stage", "chrome", "system", "first", "CHAT", "", "", "local", "u1"))
+	if err != nil {
+		t.Fatalf("AppendSequenced(first) error = %v", err)
+	}
+	second, err := archive.AppendSequenced(orchestrator.NewEvent("entry.stage", "chrome", "system", "second", "CHAT", "", "", "local", "u1"))
+	if err != nil {
+		t.Fatalf("AppendSequenced(second) error = %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetReplayReader(archive)
+	hub.OnEvent(first)
+	hub.OnEvent(second)
+
+	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
+	req.Header.Set("Last-Event-ID", string(first.EventID))
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSSE(rec, req.WithContext(ctx))
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "second") || strings.Contains(body, "first") {
+		t.Fatalf("EventID resume status=%d body=%q, want only the event after %s", rec.Code, body, first.EventID)
+	}
+	if !strings.Contains(body, "id: "+string(second.EventID)+"\n") {
+		t.Fatalf("SSE id does not contain canonical EventID %s: %q", second.EventID, body)
+	}
+}
+
+func TestHandleSSE_LostEventIDResetsAndReplaysAvailableCanonicalWindow(t *testing.T) {
+	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	current, err := archive.AppendSequenced(orchestrator.NewEvent("entry.stage", "chrome", "system", "reused-sequence-current-event", "CHAT", "", "", "local", "u1"))
+	if err != nil {
+		t.Fatalf("AppendSequenced(current) error = %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetReplayReader(archive)
+	hub.OnEvent(current)
+
+	// This was the cursor for the rolled-back WAL tail. The current canonical
+	// store has reused its old EventSeq for a different, stable EventID.
+	lostCursor := modulecore.NewEventID()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
+	req.Header.Set("Last-Event-ID", string(lostCursor))
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSSE(rec, req.WithContext(ctx))
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "event: reset\n") || !strings.Contains(body, "reused-sequence-current-event") {
+		t.Fatalf("lost EventID status=%d body=%q, want explicit reset followed by available canonical events", rec.Code, body)
+	}
+	if !strings.Contains(body, "id: "+string(current.EventID)+"\n") {
+		t.Fatalf("replayed event has no stable canonical EventID %s: %q", current.EventID, body)
+	}
+}
+
+func TestHandleSSE_ResetCursorRetriesDurableReplayAfterFromNowDisconnect(t *testing.T) {
+	event := sequencedEvent("entry.stage", "replayed-after-reset-retry", 1)
+	reader := &failFirstReplayPageReader{replayPageReader: &replayPageReader{events: []orchestrator.OrchestratorEvent{event}}}
+	hub := NewEventHub(10)
+	hub.SetReplayReader(reader)
+	hub.OnEvent(event)
+
+	firstRequest := httptest.NewRequest(http.MethodGet, "/viewer/events?from=now", nil)
+	firstRequest.Header.Set("Last-Event-ID", string(modulecore.NewEventID()))
+	firstResponse := httptest.NewRecorder()
+	hub.HandleSSE(firstResponse, firstRequest)
+	if firstResponse.Code != http.StatusOK || !strings.Contains(firstResponse.Body.String(), "event: reset\n") {
+		t.Fatalf("initial lost-cursor response status=%d body=%q, want reset before failed durable replay", firstResponse.Code, firstResponse.Body.String())
+	}
+	if !strings.Contains(firstResponse.Body.String(), "id: reset\n") {
+		t.Errorf("initial lost-cursor response has no reset continuation ID: %q", firstResponse.Body.String())
+	}
+
+	// EventSource reconnects to the same ?from=now URL with the reset frame's
+	// Last-Event-ID. The sentinel must continue the reset replay from the
+	// durable beginning until a real canonical EventID is sent.
+	if err := modulecore.EventID("reset").Validate(); err == nil {
+		t.Fatal("reset continuation sentinel unexpectedly validates as a canonical EventID")
+	}
+	retryRequest := httptest.NewRequest(http.MethodGet, "/viewer/events?from=now", nil)
+	retryRequest.Header.Set("Last-Event-ID", "reset")
+	ctx, cancel := context.WithCancel(retryRequest.Context())
+	defer cancel()
+	retryResponse := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSSE(retryResponse, retryRequest.WithContext(ctx))
+	if retryResponse.Code != http.StatusOK || !strings.Contains(retryResponse.Body.String(), "replayed-after-reset-retry") || !strings.Contains(retryResponse.Body.String(), "id: "+string(event.EventID)+"\n") {
+		t.Fatalf("reset continuation status=%d body=%q, want durable replay from the available beginning", retryResponse.Code, retryResponse.Body.String())
+	}
+}
+
+func TestHandleSSE_FilteredEventIDCannotAdvanceReconnectCursor(t *testing.T) {
+	first := sequencedEvent("entry.stage", "visible-before-filtered-event", 1)
+	hidden := sequencedEvent("conversation.internal", "FILTERED-CURSOR-SENTINEL", 2)
+	third := sequencedEvent("entry.stage", "visible-after-filtered-event", 3)
+	events := []orchestrator.OrchestratorEvent{first, hidden, third}
+	hub := NewEventHub(10)
+	hub.SetReplayReader(&replayPageReader{events: events})
+	for _, event := range events {
+		hub.OnEvent(event)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
+	request.Header.Set("Last-Event-ID", string(hidden.EventID))
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	response := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSSE(response, request.WithContext(ctx))
+
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "event: reset\n") || !strings.Contains(body, "visible-before-filtered-event") || !strings.Contains(body, "visible-after-filtered-event") {
+		t.Fatalf("filtered cursor status=%d body=%q, want reset and all visible replay events", response.Code, body)
+	}
+	if strings.Contains(body, "FILTERED-CURSOR-SENTINEL") || !strings.Contains(body, "id: reset\n") {
+		t.Fatalf("filtered cursor reset exposed hidden content or omitted the reset continuation cursor: %q", body)
+	}
+}
+
+func TestHandleSessionPublicSSE_ResumesByAuthorizedEventID(t *testing.T) {
+	fixture := seedSessionPublicReplayFixture(t)
+	store, err := eventstore.NewSQLiteStore(fixture.path)
+	if err != nil {
+		t.Fatalf("reopen EventStore: %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetSessionPublicReplayReader(archive)
+
+	request := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events", nil)
+	request.Header.Set("Last-Event-ID", string(fixture.reply.EventID))
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	response := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSessionPublicSSE(response, request.WithContext(ctx), fixture.scope)
+
+	body := response.Body.String()
+	if response.Code != http.StatusOK || strings.Contains(body, "public answer") || !strings.Contains(body, "public question") {
+		t.Fatalf("owner-scoped EventID resume status=%d body=%q, want only public events after the cursor", response.Code, body)
+	}
+	if strings.Contains(body, "PRIVATE_SENTINEL") {
+		t.Fatalf("owner-scoped EventID resume exposed private content: %q", body)
+	}
+}
+
+func TestHandleSessionPublicSSE_InaccessibleEventIDResetsWithinAuthorizedScope(t *testing.T) {
+	fixture := seedSessionPublicReplayFixture(t)
+	store, err := eventstore.NewSQLiteStore(fixture.path)
+	if err != nil {
+		t.Fatalf("reopen EventStore: %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetSessionPublicReplayReader(archive)
+
+	request := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events", nil)
+	// A private canonical EventID is not a valid owner-scoped public cursor.
+	request.Header.Set("Last-Event-ID", string(fixture.private.EventID))
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	response := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSessionPublicSSE(response, request.WithContext(ctx), fixture.scope)
+
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "event: reset\n") || !strings.Contains(body, "public answer") {
+		t.Fatalf("lost owner-scoped EventID status=%d body=%q, want reset and safe public replay", response.Code, body)
+	}
+	if !strings.Contains(body, "id: reset\n") || strings.Contains(body, "PRIVATE_SENTINEL") || strings.Contains(body, "other session") {
+		t.Fatalf("lost owner-scoped EventID reset exposed out-of-scope content: %q", body)
+	}
+}
+
+func TestHandleSessionPublicSSE_ResetCursorRetriesScopedReplayAfterFromNowDisconnect(t *testing.T) {
+	fixture := seedSessionPublicReplayFixture(t)
+	store, err := eventstore.NewSQLiteStore(fixture.path)
+	if err != nil {
+		t.Fatalf("reopen EventStore: %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetSessionPublicReplayReader(&failFirstSessionPublicReplayReader{CanonicalEventLog: archive})
+
+	firstRequest := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events?from=now", nil)
+	firstRequest.Header.Set("Last-Event-ID", string(modulecore.NewEventID()))
+	firstResponse := httptest.NewRecorder()
+	hub.HandleSessionPublicSSE(firstResponse, firstRequest, fixture.scope)
+	if firstResponse.Code != http.StatusOK || !strings.Contains(firstResponse.Body.String(), "event: reset\n") {
+		t.Fatalf("initial scoped lost-cursor response status=%d body=%q, want reset before failed durable replay", firstResponse.Code, firstResponse.Body.String())
+	}
+	if !strings.Contains(firstResponse.Body.String(), "id: reset\n") {
+		t.Errorf("initial scoped lost-cursor response has no reset continuation ID: %q", firstResponse.Body.String())
+	}
+
+	retryRequest := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events?from=now", nil)
+	retryRequest.Header.Set("Last-Event-ID", "reset")
+	ctx, cancel := context.WithCancel(retryRequest.Context())
+	defer cancel()
+	retryResponse := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSessionPublicSSE(retryResponse, retryRequest.WithContext(ctx), fixture.scope)
+	body := retryResponse.Body.String()
+	if retryResponse.Code != http.StatusOK || !strings.Contains(body, "public question") || !strings.Contains(body, "public answer") {
+		t.Fatalf("scoped reset continuation status=%d body=%q, want authorized durable replay from the session beginning", retryResponse.Code, body)
+	}
+	if strings.Contains(body, "PRIVATE_SENTINEL") || strings.Contains(body, "other session") {
+		t.Fatalf("scoped reset continuation exposed out-of-scope data: %q", body)
+	}
+}
+
+func TestHandleSessionPublicSSE_LegacyNumericCursorResetsWithinAuthorizedScope(t *testing.T) {
+	fixture := seedSessionPublicReplayFixture(t)
+	store, err := eventstore.NewSQLiteStore(fixture.path)
+	if err != nil {
+		t.Fatalf("reopen EventStore: %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetSessionPublicReplayReader(archive)
+
+	request := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events?from=now", nil)
+	request.Header.Set("Last-Event-ID", strconv.FormatInt(int64(fixture.reply.EventSeq), 10))
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	response := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSessionPublicSSE(response, request.WithContext(ctx), fixture.scope)
+
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "event: reset\n") || !strings.Contains(body, "public answer") {
+		t.Fatalf("legacy owner-scoped numeric cursor status=%d body=%q, want reset and safe public replay", response.Code, body)
+	}
+	if !strings.Contains(body, "id: reset\n") || strings.Contains(body, "PRIVATE_SENTINEL") {
+		t.Fatalf("legacy owner-scoped numeric reset omitted continuation cursor or exposed private content: %q", body)
+	}
+}
+
+func TestHandleSSE_LegacyNumericCursorResetsInsteadOfSkippingReusedSequence(t *testing.T) {
+	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	current, err := archive.AppendSequenced(orchestrator.NewEvent("entry.stage", "chrome", "system", "reused-sequence-current-event", "CHAT", "", "", "local", "u1"))
+	if err != nil {
+		t.Fatalf("AppendSequenced(current) error = %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetReplayReader(archive)
+	hub.OnEvent(current)
+
+	req := httptest.NewRequest(http.MethodGet, "/viewer/events?from=now", nil)
+	req.Header.Set("Last-Event-ID", "1")
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSSE(rec, req.WithContext(ctx))
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "event: reset\n") || !strings.Contains(body, "reused-sequence-current-event") {
+		t.Fatalf("legacy numeric cursor status=%d body=%q, want reset and replay despite from=now", rec.Code, body)
 	}
 }
 
@@ -130,9 +434,9 @@ func TestHandleSSE_DoesNotDuplicateEventBetweenSnapshotAndLive(t *testing.T) {
 	}
 
 	hub.HandleSSE(rec, req)
-	idLine := "id: " + strconv.FormatInt(int64(event.EventSeq), 10) + "\n"
+	idLine := "id: " + string(event.EventID) + "\n"
 	if got := strings.Count(rec.Body.String(), idLine); got != 1 {
-		t.Fatalf("event_seq %d appeared %d times, want once: %s", event.EventSeq, got, rec.Body.String())
+		t.Fatalf("event_id %s appeared %d times, want once: %s", event.EventID, got, rec.Body.String())
 	}
 	if got := hub.ClientCount(); got != 0 {
 		t.Fatalf("client count after disconnect = %d, want 0", got)
@@ -199,11 +503,11 @@ func TestHandleSSEAdvancesLiveCursorOnlyAfterSuccessfulFrame(t *testing.T) {
 	hub.HandleSSE(rec, req)
 
 	body := rec.Body.String()
-	if got := strings.Count(body, "id: 1\n"); got != 1 {
-		t.Fatalf("live EventSeq 1 appeared %d times after a successful frame, want once: %q", got, body)
+	if got := strings.Count(body, "id: "+string(first.EventID)+"\n"); got != 1 {
+		t.Fatalf("live EventID %s appeared %d times after a successful frame, want once: %q", first.EventID, got, body)
 	}
-	if got := strings.Count(body, "id: 2\n"); got != 1 {
-		t.Fatalf("live EventSeq 2 appeared %d times, want once: %q", got, body)
+	if got := strings.Count(body, "id: "+string(second.EventID)+"\n"); got != 1 {
+		t.Fatalf("live EventID %s appeared %d times, want once: %q", second.EventID, got, body)
 	}
 }
 
@@ -302,6 +606,32 @@ type replayPageReader struct {
 	calls           int
 }
 
+type failFirstReplayPageReader struct {
+	*replayPageReader
+	failed bool
+}
+
+func (r *failFirstReplayPageReader) ReplayPage(ctx context.Context, after, through modulecore.EventSeq, limit int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {
+	if !r.failed {
+		r.failed = true
+		return nil, 0, errors.New("durable reader unavailable for initial reset replay")
+	}
+	return r.replayPageReader.ReplayPage(ctx, after, through, limit)
+}
+
+type failFirstSessionPublicReplayReader struct {
+	*CanonicalEventLog
+	failed bool
+}
+
+func (r *failFirstSessionPublicReplayReader) ReplaySessionPublicPage(ctx context.Context, scope SessionPublicReplayScope, after, through modulecore.EventSeq, limit int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {
+	if !r.failed {
+		r.failed = true
+		return nil, 0, errors.New("owner-scoped durable reader unavailable for initial reset replay")
+	}
+	return r.CanonicalEventLog.ReplaySessionPublicPage(ctx, scope, after, through, limit)
+}
+
 func (r *replayPageReader) ReplayPage(ctx context.Context, after, through modulecore.EventSeq, limit int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
@@ -341,6 +671,15 @@ func (r *replayPageReader) ReplayPage(ctx context.Context, after, through module
 	return page, through, nil
 }
 
+func (r *replayPageReader) GetByEventID(_ context.Context, eventID modulecore.EventID) (orchestrator.OrchestratorEvent, bool, error) {
+	for _, event := range r.events {
+		if event.EventID == eventID {
+			return event, true, nil
+		}
+	}
+	return orchestrator.OrchestratorEvent{}, false, nil
+}
+
 func replayTestEvents(count int) []orchestrator.OrchestratorEvent {
 	events := make([]orchestrator.OrchestratorEvent, 0, count)
 	for index := 1; index <= count; index++ {
@@ -361,17 +700,17 @@ func TestHandleSSE_ReplaysDurableHistoryBeyondHubCapacity(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
-	req.Header.Set("Last-Event-ID", "1")
+	req.Header.Set("Last-Event-ID", string(events[0].EventID))
 	ctx, cancel := context.WithCancel(req.Context())
 	defer cancel()
 	req = req.WithContext(ctx)
 	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
 	hub.HandleSSE(rec, req)
 	body := rec.Body.String()
-	for sequence := 2; sequence <= 5; sequence++ {
-		idLine := "id: " + strconv.Itoa(sequence) + "\n"
+	for _, event := range events[1:] {
+		idLine := "id: " + string(event.EventID) + "\n"
 		if got := strings.Count(body, idLine); got != 1 {
-			t.Fatalf("event_seq %d appeared %d times, want once: %s", sequence, got, body)
+			t.Fatalf("event_id %s appeared %d times, want once: %s", event.EventID, got, body)
 		}
 	}
 	if reader.calls == 0 {
@@ -392,17 +731,17 @@ func TestHandleSSE_DeduplicatesDurableReplayAndLiveOverlap(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
-	req.Header.Set("Last-Event-ID", "1")
+	req.Header.Set("Last-Event-ID", string(events[0].EventID))
 	ctx, cancel := context.WithCancel(req.Context())
 	defer cancel()
 	req = req.WithContext(ctx)
 	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
 	hub.HandleSSE(rec, req)
 	body := rec.Body.String()
-	for sequence := 2; sequence <= 3; sequence++ {
-		idLine := "id: " + strconv.Itoa(sequence) + "\n"
+	for _, event := range events[1:] {
+		idLine := "id: " + string(event.EventID) + "\n"
 		if got := strings.Count(body, idLine); got != 1 {
-			t.Fatalf("overlap event_seq %d appeared %d times, want once: %s", sequence, got, body)
+			t.Fatalf("overlap event_id %s appeared %d times, want once: %s", event.EventID, got, body)
 		}
 	}
 }
@@ -561,8 +900,8 @@ func TestHandleSessionPublicSSEReplaysCommittedMessagesOnceAfterRestart(t *testi
 		}
 	}
 	for _, event := range []modulecore.EventEnvelope{fixture.reply, fixture.clarification} {
-		if got := strings.Count(body, "id: "+strconv.FormatInt(int64(event.EventSeq), 10)+"\n"); got != 1 {
-			t.Errorf("event sequence %d appeared %d times, want once", event.EventSeq, got)
+		if got := strings.Count(body, "id: "+string(event.EventID)+"\n"); got != 1 {
+			t.Errorf("event ID %s appeared %d times, want once", event.EventID, got)
 		}
 	}
 	if strings.Contains(body, "PRIVATE_SENTINEL") || strings.Contains(body, "other session") {

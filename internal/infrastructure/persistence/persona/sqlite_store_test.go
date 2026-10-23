@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,41 @@ func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreConfiguresWALPragmasForEveryConnection(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+	store.db.SetMaxIdleConns(0)
+	for connection := 0; connection < 2; connection++ {
+		var walAutoCheckpoint int
+		if err := store.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&walAutoCheckpoint); err != nil {
+			t.Fatalf("connection %d wal_autocheckpoint: %v", connection, err)
+		}
+		if walAutoCheckpoint != 0 {
+			t.Fatalf("connection %d wal_autocheckpoint = %d, want 0 to keep checkpoints off the append path", connection, walAutoCheckpoint)
+		}
+		var journalMode string
+		if err := store.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+			t.Fatalf("connection %d journal_mode: %v", connection, err)
+		}
+		if !strings.EqualFold(journalMode, "wal") {
+			t.Fatalf("connection %d journal_mode = %q, want wal", connection, journalMode)
+		}
+		var synchronous int
+		if err := store.db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil {
+			t.Fatalf("connection %d synchronous: %v", connection, err)
+		}
+		if synchronous != 1 {
+			t.Fatalf("connection %d synchronous = %d, want NORMAL (1)", connection, synchronous)
+		}
+	}
+}
+
 func TestSQLiteStoreConcurrentObservationWrites(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))
 	if err != nil {
@@ -37,7 +73,7 @@ func TestSQLiteStoreConcurrentObservationWrites(t *testing.T) {
 	}
 	defer store.Close()
 	const workers = 8
-	errs := make(chan error, workers)
+	errs := make(chan error, workers+4)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		i := i
@@ -55,6 +91,15 @@ func TestSQLiteStoreConcurrentObservationWrites(t *testing.T) {
 			})
 		}()
 	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := store.checkpointWorker.Checkpoint(context.Background()); err != nil {
+				errs <- err
+			}
+		}()
+	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
@@ -65,6 +110,48 @@ func TestSQLiteStoreConcurrentObservationWrites(t *testing.T) {
 	items, err := store.ListObservationLogs(context.Background(), workers)
 	if err != nil || len(items) != workers {
 		t.Fatalf("concurrent observation count = %d, err=%v; want %d", len(items), err, workers)
+	}
+}
+
+func TestSQLiteStoreReopensSavedPersonaDataAfterFinalCheckpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "persona-reopen.db")
+	first, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := domainpersona.ObservationLog{
+		EventID:         "reopen-observation",
+		ObserverID:      "lumina",
+		TargetID:        "ren",
+		ObservationType: "daily",
+		Summary:         "persist through checkpoint and close",
+		Sensitivity:     "normal",
+		ReviewStatus:    "pending",
+		CreatedAt:       time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC),
+	}
+	if err := first.SaveObservationLog(context.Background(), item); err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("repeated Close() = %v, want nil", err)
+	}
+	status := first.CheckpointStatus()
+	if status.LastSuccessAt.IsZero() || !status.CheckpointAttempted {
+		t.Fatalf("closed checkpoint status = %+v, want final success", status)
+	}
+
+	second, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	items, err := second.ListObservationLogs(context.Background(), 10)
+	if err != nil || len(items) != 1 || items[0].EventID != item.EventID {
+		t.Fatalf("reopened observations=%#v err=%v, want saved observation", items, err)
 	}
 }
 

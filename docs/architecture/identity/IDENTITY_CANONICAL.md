@@ -1119,6 +1119,49 @@ Test:
 - 旧Event tableとJSONLの削除は、production snapshot dry-run、件数・checksum・参照整合性、
   新binaryのRuntime疎通を確認した同じcutoverで行う。
 
+#### Step 02: SQLite WAL durability and checkpoint contract
+
+この節はCanonical Event Store、Persona Architecture store、AI Workflow storeに適用します。物理pathとbackup配置は
+[設定リファレンスのCORE DB契約](../../05_設定リファレンス.md#coreのdbと記憶)に従います。これは採用済み実装仕様であり、
+各runtimeへの配線完了を示す証拠ではありません。
+
+- 三storeはSQLite WAL modeを使い、writer connectionごとに`PRAGMA synchronous=NORMAL`と
+  `PRAGMA wal_autocheckpoint=0`を設定します。DB fileとWALは同じstoreの一体の回復単位であり、WALを別の正本や
+  別writerとして扱いません。
+- 通常appendはownerのSQLite transactionをcommitしてからprojectionへ進みます。呼出元へappend成功を返す条件は
+  transaction commitの成功です。通常requestは媒体fsyncやcheckpointの完了を待ちません。commit errorはprojectionより前に
+  呼出元へ伝播し、request／owner jobを成功扱いにしません。従来どおり非同期queue、dual write、失敗を隠すvoid callbackは
+  使用しません。
+- processだけが異常終了しOSが稼働を続けた場合、SQLiteは残存WALからcommit済みtransactionを再生します。OS crashや電源断では、
+  最後に完了したcheckpointより後のWAL tailが失われる可能性があります。このtail損失を許容します。約60秒ごとのcheckpointは
+  損失範囲を小さくする目標であり、最大損失時間の保証ではありません。目標を越えた場合、tail損失は約60秒を越える可能性があります。
+- WAL rollbackやEvent欠落だけを根拠に、Event Storeに記録されたTask／Action、別storeの状態遷移、または外部作用を自動再実行しては
+  なりません。再開・重複抑止は該当するTask／Action／外部作用ownerの既存receipt、idempotency、policyを通し、Event Storeの再生だけで
+  「外部作用は起きていない」と推定しません。
+- 各store ownerはwriterと共有しない専用checkpoint connectionを一つ持ち、約60秒を目標に`PASSIVE` checkpointを実行します。
+  起動時はstore open後にworkerを開始します。正常停止時は新しいwriteを止め、in-flight transactionをdrainしてから最終checkpointを
+  試み、その結果を記録してconnectionを閉じます。自動checkpointには依存しません。
+- ownerはcheckpoint結果と最後に全frameをcheckpointできた時刻を追跡します。checkpoint error、`PASSIVE`が未完了frameを残した状態、
+  または最後の成功から約60秒を越えた状態は`degraded`として運用healthに見せます。これは厳密な60秒上限や新規受付拒否を
+  意味しません。checkpointが正常に再開したら状態を解消します。`PASSIVE`の部分進捗だけで成功時刻を更新しません。
+- worker起動後に初回checkpoint結果が得られるまでは`last_checkpoint_result=pending`とし、成功checkpointが一度もない間は
+  `last_success_age_sec=null`です。初回の完全checkpointが目標時間内に成功しない場合も`degraded`を表示します。
+- 日次backupはこのcheckpoint workerの代替ではありません。backupはCOREを停止した既存の整合snapshot経路を使い、設定済みの
+  三storeを同じCORE backup cohortへ含めます。WALが残る場合はSQLite整合性を保つ形でdatabaseとともに取得し、scratch restoreで
+  `integrity_check`を通します。稼働中の`.db` file単独copyを行いません。
+
+実装順と受入条件:
+
+1. 各storeの全writer connectionにWAL mode、`synchronous=NORMAL`、`wal_autocheckpoint=0`を設定し、PRAGMA readbackを検査します。
+2. transaction commitの後だけprojectionを行う既存owner経路を保ち、commit failureが呼出元へ戻りprojection／成功応答が発生しないことを確認します。
+3. 各storeに専用connectionのperiodic `PASSIVE` workerを接続し、約60秒の実行目標、完全成功判定、最終停止checkpoint、失敗時のclose処理を検査します。
+4. 初回結果前の`pending`／null age、checkpoint失敗・未完了・目標期限超過の`degraded`、成功checkpoint後の`ok`を`/health`のstore別checkで検査します。
+   このcheckは本仕様だけではreadinessやrequest admissionを変更しません。
+5. transaction commit後・checkpoint前のprocess crash後に、実SQLite fileを再openしてWAL replayされたEventIDとEventSeqを検査します。
+   OS crash／電源断時の未checkpoint tail損失は許容範囲として扱い、ソフトウェア試験から媒体fsync保証を主張しません。
+6. 認証済userまたはMio／Shiro／Kuro／Midoriの実Actorによる通常routeで、append成功後のprojectionとSSEを照合し、保存error時に成功receiptが出ないこと、EventIDによる再接続、
+   backup／scratch restore後のSQLite整合性を検査します。
+
 #### Step 02 Failure Knowledge: JobIDをTraceIDとして流用したEvent分断
 
 - **Failure:** Orchestrator Eventの`TraceID`へ旧`JobID`を渡し、Canonical Event adapterが不正形式をEventごとに別Traceへ置換した。
@@ -1140,6 +1183,7 @@ Test:
 - **Invariant:** 一つのowner Event発行は`canonical append -> projection`の一方向だけを通り、append失敗はrequest error／cancelへ伝播する。別writer、dual write、非同期canonical queueを作らない。
 - **Enforcement:** Event発行境界をerror-returningにし、request Trace単位で最初の失敗を保持する。最初の受付Event失敗時はLLM／Tool／外部処理へ進まず、途中失敗時も最終成功応答を拒否する。
 - **Tests:** appendが成功したEventだけが一度だけ投影されること、最初／途中／最終append失敗で成功応答が返らないこと、失敗EventがViewerへ出ないことをMessage／Distributed経路で検査する。
+- **現行契約:** このFailure Knowledgeは引き続き有効です。新しいWAL契約が緩和するのは通常commit時の媒体fsync待ちだけであり、transaction commit前の投影、append errorの握り潰し、非同期canonical appendは引き続き禁止します。
 
 #### Step 02 Failure Knowledge: TTS callbackによるTrace分断
 
@@ -2030,8 +2074,9 @@ Test:
   mechanismをassignee Actorにしない。
 - `routing.decision`はroot Task、`agent.assignment`は実行対象TaskへCanonical Eventとして保存する。
   assignmentの`CausationEventID`は有効なrouting Eventを指し、Taskは両EventIDを保持する。
-- Event Storeはappend前に正の単調増加`EventSeq`を割り当て、SQLite、Monitor、SSE、再起動後の
-  次Eventまで同じ順序を維持する。`EventID`、`TraceID`、`TaskID`、`SessionID`、`ThreadID`、
+- Event Storeはappend前に正の単調増加`EventSeq`を割り当て、SQLite、Monitor、SSEの順序と再起動後の
+  次Eventまで同じ順序を維持する。SSE `id:`と再接続cursorには既存`EventID`を使い、EventSeqは内部順序とpage queryに限る。
+  `EventID`、`TraceID`、`TaskID`、`SessionID`、`ThreadID`、
   `TurnID`、`MessageID`はtyped validationを通し、相互変換しない。
 - COREからRenCrow LLM Gatewayへ送るprompt-free observation metadataは`task_id`だけを使う。
   Gatewayは同じ値をqueue、active status、structured log、prompt-debug receiptへ保持し、Backendへ
@@ -3783,20 +3828,26 @@ Step 03をcompleteとしない。
 
 #### Follow-up specification: durable SSE replay
 
-- reconnectの`Last-Event-ID`はEvent Store正本のEventSeqとして扱う。メモリ履歴容量を越えたEventをsilentに省略しない。
+- normal durable EventのSSE `id:`とreconnectの`Last-Event-ID`は既存EventIDとする。Event StoreでEventIDをEventSeqへlookupし、
+  そのEventSeqより後を再送する。EventSeqは内部順序とrange queryに使い、SSE cursorとして公開しない。メモリ履歴容量を越えたEventをsilentに省略しない。
 - Event Storeはcomponent、after EventSeq、固定through EventSeq、page limitを受け、EventSeq昇順のpageと固定throughを返す。初回のみthroughを正本queryで確定し、後続pageは同じthroughを保持する。各pageは最大1000 Event、負cursor・不正bound・正本より先のcursorは拒否する。
 - Viewerの再送はCanonicalEventLogの既存projectionを使用する。購読登録後に固定範囲を再送し、live channelと重複するEventSeqは一度だけ送信する。transient audio等の既存再送禁止を維持する。
 - replayはrequest contextで中止可能とし、途中失敗時に未取得範囲を取得済みと報告しない。slow clientのlive queue overflowはsilent dropではなく切断して再接続による正本再送へ戻す。各consumerはchannel closeを終端として扱う。
 - CLI工程はindexed range queryと順序・重複制御、Boundary工程はcursor validation・page bound・context・エラーと切断。LLM工程は不要。source受入には保持容量外、restart後、再送/live境界、overflow回復、拒否・取消しを含める。実Viewer再接続は配備後に別途検証する。
-- 購読開始位置は三種に限る。正の`Last-Event-ID`はEvent Store正本のEventSeqからのresume、`?from=now`は接続登録時点以降のliveだけを送るtail、どちらも無い場合はin-memory履歴のsnapshotである。`from`は予約queryで値は`now`だけ、他は400とし、未知のqueryは無視する。正の`Last-Event-ID`があるときはtailを適用せずresumeを優先する。tailは履歴とdurable replayを使わず、接続していない間のEventと再接続の間の欠落を保証しない。欠落させない購読者は最後に受信したEventSeqでresumeする。transient eventはreplayから除外したままtailのliveでは配信する。正本より先の`Last-Event-ID`は従来どおり拒否する。
+- 購読開始位置は三種です。Canonical `Last-Event-ID`はEventID lookup後にEventSeq順でresumeし、`?from=now`は接続登録時点以降のliveだけを送るtail、どちらも無い場合はin-memory履歴のsnapshotです。`Last-Event-ID: 0`もcursorなしとして扱い、`?from=now`の有無に従います。`from`は予約queryで値は`now`だけ、他は400とし、未知のqueryは無視します。Last-Event-IDがある場合はtailよりcursor処理を優先します。
+- Event StoreにないCanonical EventID、正の旧numeric cursor、または`reset` sentinelはEventSeqへ推測変換せず、機械可読reason付き`event: reset`と`id: reset`を送ってreset経路へ進みます。不正形式または0未満のnumeric Last-Event-IDはHTTP 400で拒否し、購読を開始しません。`reset`はreserved sentinelでCanonical `EventID.Validate`に拒否され、Event StoreのEventIDにはなりません。
+- resetの再送範囲は認証済みowner windowに従います。unscoped streamはdurable replay readerがあればauthorized canonical windowの先頭から再送し、readerがなければin-memory snapshotを送り、session-scoped streamはowner public windowのcutover位置から再送します。reset再送が実Event送信前に切れ、`Last-Event-ID: reset`で再接続した場合も同じ範囲の再送をやり直します。実Eventを送った時点でcursorはそのEventIDへ切り替わります。
+- PORTALのbrowser consumerはreset時にprojectionをreloadしてauthorized windowから再構築する要件です。このconsumerのreset handlerが実装された後に適用し、COREのSSE契約だけをもってPORTAL側の実装済みとは扱いません。
+- tailは履歴とdurable replayを使わず、接続していない間のEventと再接続の間の欠落を保証しません。欠落させない購読者は最後に受信したEventIDでresumeします。transient eventはreplayから除外したままtailのliveでは配信します。
 - **Failure Knowledge（購読開始位置）:**
   - **Failure:** `rencrowctl idlechat watch`が`Last-Event-ID: 9223372036854775807`を送り、durable replay導入後にHTTP 409となった。
   - **Problem:** 公開APIに「今から購読」の正規手段がなく、clientが非公開の暗黙値に依存していた。
   - **Cause:** 旧replayはcursor以下を全て省略するため暗黙のtailとして機能していた。仕様化されないまま、cursorを正本EventSeqとして厳格化した。
   - **Lesson:** streamの購読開始位置（履歴、resume、tail）は公開仕様で明示し、clientは擬似cursorに依存しない。
-  - **Invariant:** `Last-Event-ID`は正本EventSeqだけを意味する。「今から」は`?from=now`で表す。
-  - **Enforcement:** handlerが`from`の値を検証し、正本より先のcursorを拒否する。
-  - **Tests:** `internal/adapter/viewer/hub_sse_tail_test.go`がtail、resume優先、400、transient、実SQLite正本での409境界を、`cmd/rencrow/interaction_profile_guard_test.go`が`cmd-idlechat`のtail許可を、`scripts/vds_e2e_probe_test.py`がprobeの購読要求を検査する。
+  - **Historical status:** 当時のfailureはnumeric pseudo-cursorがEventSeqとして扱われたことです。このFailure Knowledgeは「tailに擬似cursorを使わない」というlessonを維持し、current cursor semanticsはEventIDへ更新します。
+  - **Invariant:** Canonical EventIDだけをdurable resume cursorとして使い、「今から」は`?from=now`で表します。EventSeqはSSE cursorにしません。正の旧numeric cursorとreset sentinelはreset用の制御値で、Canonical EventIDではありません。
+  - **Enforcement:** handlerは`from`とLast-Event-IDの構文を検証し、不正形式／0未満のnumeric cursorはHTTP 400で拒否します。Canonical EventIDはlookupし、未発見ID、正の旧numeric cursor、reset sentinelはEventIDとして採用せずauthorized windowのreset経路へ送ります。
+  - **Tests:** `internal/adapter/viewer/hub_sse_tail_test.go`がtail、EventID lookup、resume優先、未発見Canonical ID／正の旧numeric cursor／reset sentinelのreset、reset途中切断後のdurable window再送、unscoped reader fallbackとsession cutover、不正形式の400、transientを実SQLite正本で検査します。`cmd/rencrow/interaction_profile_guard_test.go`と`scripts/vds_e2e_probe_test.py`はtail queryを検査します。PORTAL browser consumerのreset時projection reloadは、そのhandlerを実装した時点で別途受け入れ検査します。
 
 #### Follow-up specification: STT transport identity boundary
 

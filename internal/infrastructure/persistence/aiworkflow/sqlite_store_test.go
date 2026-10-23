@@ -103,6 +103,41 @@ func TestSQLiteStoreConfiguresSingleConnectionBusyTimeoutAndPreservesWAL(t *test
 	}
 }
 
+func TestSQLiteStoreConfiguresWALPragmasForEveryConnection(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "fresh_ai_workflow.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+	store.db.SetMaxIdleConns(0)
+	for connection := 0; connection < 2; connection++ {
+		var walAutoCheckpoint int
+		if err := store.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&walAutoCheckpoint); err != nil {
+			t.Fatalf("connection %d wal_autocheckpoint: %v", connection, err)
+		}
+		if walAutoCheckpoint != 0 {
+			t.Fatalf("connection %d wal_autocheckpoint = %d, want 0 to keep checkpoints off the append path", connection, walAutoCheckpoint)
+		}
+		var journalMode string
+		if err := store.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+			t.Fatalf("connection %d journal_mode: %v", connection, err)
+		}
+		if !strings.EqualFold(journalMode, "wal") {
+			t.Fatalf("connection %d journal_mode = %q, want wal", connection, journalMode)
+		}
+		var synchronous int
+		if err := store.db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil {
+			t.Fatalf("connection %d synchronous: %v", connection, err)
+		}
+		if synchronous != 1 {
+			t.Fatalf("connection %d synchronous = %d, want NORMAL (1)", connection, synchronous)
+		}
+	}
+}
+
 func TestSQLiteStoreConcurrentContextUsageSaves(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "ai_workflow.db"))
 	if err != nil {
@@ -113,7 +148,7 @@ func TestSQLiteStoreConcurrentContextUsageSaves(t *testing.T) {
 	const writers = 8
 	const iterations = 20
 	ctx := context.Background()
-	errs := make(chan error, writers*iterations)
+	errs := make(chan error, writers*iterations+4)
 	var wg sync.WaitGroup
 	for writer := 0; writer < writers; writer++ {
 		for iteration := 0; iteration < iterations; iteration++ {
@@ -131,10 +166,58 @@ func TestSQLiteStoreConcurrentContextUsageSaves(t *testing.T) {
 			}()
 		}
 	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := store.checkpointWorker.Checkpoint(ctx); err != nil {
+				errs <- err
+			}
+		}()
+	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
 		t.Errorf("concurrent save error: %v", err)
+	}
+}
+
+func TestSQLiteStoreReopensSavedAIWorkflowDataAfterFinalCheckpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ai-workflow-reopen.db")
+	first, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := domainai.ContextUsage{
+		EventID:   "context-reopen",
+		SessionID: "session-reopen",
+		Agent:     "Shiro",
+		Model:     "model-reopen",
+		CreatedAt: time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC),
+	}
+	if err := first.SaveContextUsage(context.Background(), item); err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("repeated Close() = %v, want nil", err)
+	}
+	status := first.CheckpointStatus()
+	if status.LastSuccessAt.IsZero() || !status.CheckpointAttempted {
+		t.Fatalf("closed checkpoint status = %+v, want final success", status)
+	}
+
+	second, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	items, err := second.ListContextUsages(context.Background(), 10)
+	if err != nil || len(items) != 1 || items[0].EventID != item.EventID {
+		t.Fatalf("reopened context usages=%#v err=%v, want saved context usage", items, err)
 	}
 }
 

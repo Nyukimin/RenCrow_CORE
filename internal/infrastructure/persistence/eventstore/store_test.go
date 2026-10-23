@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,6 +65,44 @@ func TestAppendAndReadRootChildParallelJoin(t *testing.T) {
 func TestNewSQLiteStoreRejectsUnconfiguredPath(t *testing.T) {
 	if _, err := NewSQLiteStore(""); err == nil {
 		t.Fatal("NewSQLiteStore(\"\") error = nil")
+	}
+}
+
+func TestSQLiteStoreConfiguresWALPragmasForEveryConnection(t *testing.T) {
+	store := newTestStore(t)
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+	store.db.SetMaxIdleConns(0)
+	for connection := 0; connection < 2; connection++ {
+		var walAutoCheckpoint int
+		if err := store.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&walAutoCheckpoint); err != nil {
+			t.Fatalf("connection %d wal_autocheckpoint: %v", connection, err)
+		}
+		if walAutoCheckpoint != 0 {
+			t.Fatalf("connection %d wal_autocheckpoint = %d, want 0 to keep checkpoints off the append path", connection, walAutoCheckpoint)
+		}
+		var journalMode string
+		if err := store.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+			t.Fatalf("connection %d journal_mode: %v", connection, err)
+		}
+		if !strings.EqualFold(journalMode, "wal") {
+			t.Fatalf("connection %d journal_mode = %q, want wal", connection, journalMode)
+		}
+		var synchronous int
+		if err := store.db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil {
+			t.Fatalf("connection %d synchronous: %v", connection, err)
+		}
+		if synchronous != 1 {
+			t.Fatalf("connection %d synchronous = %d, want NORMAL (1)", connection, synchronous)
+		}
+		var foreignKeys int
+		if err := store.db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+			t.Fatalf("connection %d foreign_keys: %v", connection, err)
+		}
+		if foreignKeys != 1 {
+			t.Fatalf("connection %d foreign_keys = %d, want 1", connection, foreignKeys)
+		}
 	}
 }
 
@@ -182,6 +221,10 @@ func TestAppendSequencedContinuesAfterRestart(t *testing.T) {
 	if err := firstStore.Close(); err != nil {
 		t.Fatalf("Close(first): %v", err)
 	}
+	closedStatus := firstStore.CheckpointStatus()
+	if !closedStatus.CheckpointAttempted || closedStatus.LastSuccessAt.IsZero() {
+		t.Fatalf("Close(first) status = %+v, want final checkpoint success", closedStatus)
+	}
 
 	secondStore, err := NewSQLiteStore(path)
 	if err != nil {
@@ -194,6 +237,134 @@ func TestAppendSequencedContinuesAfterRestart(t *testing.T) {
 	}
 	if second.EventSeq != 2 {
 		t.Fatalf("second EventSeq = %d, want 2", second.EventSeq)
+	}
+}
+
+func TestCloseFinalCheckpointIncludesLastCommittedAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-store-close-final.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	event := eventFixture(modulecore.NewTraceID(), "close.final-checkpoint", "dci")
+	stored, err := store.AppendSequenced(context.Background(), event)
+	if err != nil {
+		t.Fatalf("AppendSequenced: %v", err)
+	}
+	committedAt := time.Now().UTC()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	status := store.CheckpointStatus()
+	if !status.CheckpointAttempted || status.LastSuccessAt.IsZero() || status.LastSuccessAt.Before(committedAt) {
+		t.Fatalf("final checkpoint status = %+v, want success after commit at %s", status, committedAt)
+	}
+	if status.Busy != 0 || (status.LogFrames != status.CheckpointedFrames && !(status.LogFrames == -1 && status.CheckpointedFrames == -1)) {
+		t.Fatalf("final checkpoint status = %+v, want fully checkpointed WAL", status)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore after close: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	reloaded, found, err := reopened.GetByID(context.Background(), stored.EventID)
+	if err != nil || !found || reloaded.EventSeq != stored.EventSeq {
+		t.Fatalf("reopened last committed event found=%v seq=%d err=%v; want found with seq %d", found, reloaded.EventSeq, err, stored.EventSeq)
+	}
+}
+
+func TestCloseWaitsForActiveWriterTransactionBeforeFinalCheckpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-store-close-drain.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	if _, err := store.db.Exec(`CREATE TABLE close_drain_test (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatalf("create close drain table: %v", err)
+	}
+	tx, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO close_drain_test (id) VALUES (1)`); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("insert in-flight row: %v", err)
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- store.Close() }()
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before the active writer transaction completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if status := store.CheckpointStatus(); status.CheckpointAttempted {
+		t.Fatalf("checkpoint ran before the active writer committed: %+v", status)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit active writer transaction: %v", err)
+	}
+	commitAt := time.Now().UTC()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not finish after the active writer transaction committed")
+	}
+	status := store.CheckpointStatus()
+	if !status.CheckpointAttempted || status.LastSuccessAt.IsZero() || status.LastSuccessAt.Before(commitAt) {
+		t.Fatalf("final checkpoint status = %+v, want success after commit at %s", status, commitAt)
+	}
+	if status.Busy != 0 || (status.LogFrames != status.CheckpointedFrames && !(status.LogFrames == -1 && status.CheckpointedFrames == -1)) {
+		t.Fatalf("final checkpoint status = %+v, want fully checkpointed WAL", status)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore after close: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	var rows int
+	if err := reopened.db.QueryRow(`SELECT COUNT(*) FROM close_drain_test WHERE id = 1`).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("persisted close-racing transaction rows = %d, err=%v; want 1", rows, err)
+	}
+}
+
+func TestAppendSequencedConcurrentWithWALCheckpoint(t *testing.T) {
+	store := newTestStore(t)
+	const writes = 24
+	errCh := make(chan error, writes+4)
+	var wg sync.WaitGroup
+	for i := 0; i < writes; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := store.AppendSequenced(context.Background(), eventFixture(modulecore.NewTraceID(), "checkpoint.concurrent", "dci")); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := store.checkpointWorker.Checkpoint(context.Background()); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("concurrent append/checkpoint error: %v", err)
+	}
+	items, err := store.ListByComponent(context.Background(), "dci", writes)
+	if err != nil || len(items) != writes {
+		t.Fatalf("concurrent append count = %d, err=%v; want %d", len(items), err, writes)
 	}
 }
 

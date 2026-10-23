@@ -34,8 +34,28 @@ func (s *HealthService) RunChecks(ctx context.Context) domainhealth.HealthReport
 	return domainhealth.Aggregate(results)
 }
 
-// IsReady は全チェックが OK かどうかを返す
+type readinessOptional interface {
+	ReadinessOptional() bool
+}
+
+// IsReady は全必須チェックが OK かどうかを返す。ReadinessOptionalな
+// チェックのdegradedだけは受付可否に影響しない。
 func (s *HealthService) IsReady(ctx context.Context) bool {
 	report := s.RunChecks(ctx)
-	return report.Status == domainhealth.StatusOK
+	for i, result := range report.Checks {
+		switch result.Status {
+		case domainhealth.StatusOK:
+			continue
+		case domainhealth.StatusDegraded:
+			if i < len(s.checks) {
+				if optional, ok := s.checks[i].(readinessOptional); ok && optional.ReadinessOptional() {
+					continue
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return true
 }

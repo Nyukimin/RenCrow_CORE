@@ -292,6 +292,7 @@ type Dependencies struct {
 	aiWorkflowProjectInit          http.HandlerFunc                            // viewer project init pack API
 	aiWorkflowWorktreeCreate       http.HandlerFunc                            // viewer git worktree create API
 	aiWorkflowWorktreeClose        http.HandlerFunc                            // viewer git worktree close API
+	aiWorkflowStateStore           viewer.AIWorkflowStateStore                 // underlying state owner (separate from canonical event store)
 	aiWorkflowStore                viewer.AIWorkflowStore                      // workflow telemetry store
 	schedulerStatus                http.HandlerFunc                            // viewer in-app scheduler API
 	schedulerStore                 viewer.SchedulerStore                       // in-app scheduler persistent store
@@ -502,6 +503,20 @@ func (d *Dependencies) Shutdown() {
 			log.Printf("Failed to close ToolRegistry: %v", err)
 		}
 	}
+	if _, ok := d.personaRuntimeStore.(infrahealth.SQLiteCheckpointStatusReporter); ok {
+		if closer, ok := d.personaRuntimeStore.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				log.Printf("Failed to close Persona Architecture SQLite store: %v", err)
+			}
+		}
+	}
+	if _, ok := d.aiWorkflowStateStore.(infrahealth.SQLiteCheckpointStatusReporter); ok {
+		if closer, ok := d.aiWorkflowStateStore.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				log.Printf("Failed to close AI Workflow SQLite store: %v", err)
+			}
+		}
+	}
 	if d.canonicalEventStore != nil {
 		if err := d.canonicalEventStore.Close(); err != nil {
 			log.Printf("Failed to close Canonical Event Store: %v", err)
@@ -622,7 +637,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if err != nil {
 		log.Fatalf("Failed to initialize Canonical Event Store: %v", err)
 	}
-	aiWorkflowStore := composeRuntimeAIWorkflowStore(buildAIWorkflowStateStore(cfg), canonicalEventStore)
+	aiWorkflowStateStore := buildAIWorkflowStateStore(cfg)
+	aiWorkflowStore := composeRuntimeAIWorkflowStore(aiWorkflowStateStore, canonicalEventStore)
 	llmBusyTracker := newLLMBusyTracker()
 	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker, runtimeActionManager, deps.taskManager, deps.transportManager)
 	var classifier domainagent.Classifier
@@ -1518,6 +1534,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		deps.superAgentMessageChannel = viewer.HandleSuperAgentMessageChannelCreate(superAgentStore)
 	}
 	if aiWorkflowStore != nil {
+		deps.aiWorkflowStateStore = aiWorkflowStateStore
 		deps.aiWorkflowStore = aiWorkflowStore
 		if err := registerRuntimeDataRecallAIWorkflow(dataRecallRegistry, aiWorkflowStore); err != nil {
 			log.Fatalf("Failed to register AI Workflow data recall: %v", err)

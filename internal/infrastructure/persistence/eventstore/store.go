@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
@@ -28,7 +29,8 @@ var errStep09MigrationRequired = errors.New("Step09 migration required: existing
 // SQLiteStore is the append-only SQLite implementation of the canonical event
 // envelope store.
 type SQLiteStore struct {
-	db *sql.DB
+	db               *sql.DB
+	checkpointWorker *persistence.SQLiteWALCheckpointWorker
 }
 
 // NewSQLiteStore opens a SQLite canonical event store at the configured path.
@@ -43,18 +45,10 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		}
 	}
 
-	dsn := path
-	separator := "?"
-	if strings.Contains(dsn, "?") {
-		separator = "&"
-	}
-	dsn += fmt.Sprintf("%s_pragma=busy_timeout%%3d%d&_time_format=sqlite", separator, sqliteBusyTimeoutMilliseconds)
-	db, err := sql.Open("sqlite", dsn)
+	db, _, err := persistence.OpenSQLiteWALWriter(path, sqliteBusyTimeoutMilliseconds, "foreign_keys(ON)")
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	store := &SQLiteStore{db: db}
 	if err := store.enableForeignKeys(); err != nil {
 		_ = db.Close()
@@ -64,16 +58,47 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	store.checkpointWorker, err = persistence.NewSQLiteWALCheckpointWorker("event_store", path, sqliteBusyTimeoutMilliseconds)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.checkpointWorker.Start(); err != nil {
+		_ = store.checkpointWorker.Close()
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
 // Close releases the underlying SQLite connection. It is safe to call on a
 // nil or already uninitialized store.
 func (s *SQLiteStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil {
 		return nil
 	}
-	return s.db.Close()
+	var writerErr error
+	if s.db == nil {
+		if s.checkpointWorker != nil {
+			return s.checkpointWorker.Close()
+		}
+		return nil
+	}
+	// Close and drain the writer pool before the final checkpoint.
+	writerErr = persistence.CloseSQLiteWALWriter(s.db)
+	var checkpointErr error
+	if s.checkpointWorker != nil {
+		checkpointErr = s.checkpointWorker.Close()
+	}
+	return errors.Join(writerErr, checkpointErr)
+}
+
+// CheckpointStatus reports the latest checkpoint and its effective WAL settings.
+func (s *SQLiteStore) CheckpointStatus() persistence.SQLiteWALCheckpointStatus {
+	if s == nil || s.checkpointWorker == nil {
+		return persistence.SQLiteWALCheckpointStatus{}
+	}
+	return s.checkpointWorker.CheckpointStatus()
 }
 
 // Append validates and atomically appends one canonical event envelope and

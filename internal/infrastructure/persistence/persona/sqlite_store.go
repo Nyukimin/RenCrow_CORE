@@ -4,17 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence"
 	_ "modernc.org/sqlite"
 )
 
 type SQLiteStore struct {
-	db       *sql.DB
-	metaRoot string
+	db               *sql.DB
+	metaRoot         string
+	checkpointWorker *persistence.SQLiteWALCheckpointWorker
 }
 
 const sqliteBusyTimeoutMilliseconds = 5000
@@ -26,14 +29,22 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout%%3d%d&_time_format=sqlite", path, sqliteBusyTimeoutMilliseconds))
+	db, _, err := persistence.OpenSQLiteWALWriter(path, sqliteBusyTimeoutMilliseconds)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	store := &SQLiteStore{db: db}
 	if err := store.migrate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	store.checkpointWorker, err = persistence.NewSQLiteWALCheckpointWorker("persona", path, sqliteBusyTimeoutMilliseconds)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.checkpointWorker.Start(); err != nil {
+		_ = store.checkpointWorker.Close()
 		_ = db.Close()
 		return nil, err
 	}
@@ -50,10 +61,31 @@ func NewSQLiteStoreWithMetaRoot(path, metaRoot string) (*SQLiteStore, error) {
 }
 
 func (s *SQLiteStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil {
 		return nil
 	}
-	return s.db.Close()
+	var writerErr error
+	if s.db == nil {
+		if s.checkpointWorker != nil {
+			return s.checkpointWorker.Close()
+		}
+		return nil
+	}
+	// Close and drain the writer pool before the final checkpoint.
+	writerErr = persistence.CloseSQLiteWALWriter(s.db)
+	var checkpointErr error
+	if s.checkpointWorker != nil {
+		checkpointErr = s.checkpointWorker.Close()
+	}
+	return errors.Join(writerErr, checkpointErr)
+}
+
+// CheckpointStatus reports the latest checkpoint and its effective WAL settings.
+func (s *SQLiteStore) CheckpointStatus() persistence.SQLiteWALCheckpointStatus {
+	if s == nil || s.checkpointWorker == nil {
+		return persistence.SQLiteWALCheckpointStatus{}
+	}
+	return s.checkpointWorker.CheckpointStatus()
 }
 
 func (s *SQLiteStore) migrate() error {

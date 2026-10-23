@@ -40,7 +40,7 @@ path、Config、secret、validator内部errorを開示しない。
 | --- | --- |
 | `GET /health/live` | COREのHTTPイベントループ自身のliveness。外部依存を確認しない |
 | `GET /health/ready` | CORE capabilityのreadiness。未ready時は503と`status=unavailable`を返す |
-| `GET /health` | COREと設定済み依存serviceの総合health。`checks[]`のcheckは任意の`details`（件数・名前・フラグ。IDや本文を含まない）を持てる。Action storeを開いたprocessは名前`action_store`のcheckを返す（`status`は常に`ok`で`/health/ready`を落とさない。[設定リファレンス](05_設定リファレンス.md#action-storeのsnapshotaction_store)） |
+| `GET /health` | COREと設定済み依存serviceの総合health。`checks[]`のcheckは任意の`details`（件数・名前・フラグ。IDや本文を含まない）を持てる。Action storeを開いたprocessは名前`action_store`のcheckを返す（`status`は常に`ok`で`/health/ready`を落とさない。[設定リファレンス](05_設定リファレンス.md#action-storeのsnapshotaction_store)）。Event、Persona、AI Workflow storeを開いたprocessは、各storeのcheckpoint状態を`ok`／`degraded`で返す（[SQLite WAL durability](05_設定リファレンス.md#event-persona-and-ai-workflow-sqlite-durability)） |
 | `GET /ready` | request受付可否 |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読。購読開始位置は「Viewer event streamの購読開始位置」に従う（`?from=now`は接続時点以降のliveだけ） |
 | `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを実行、または同じnative OPS Taskの明示Resumeを要求 |
@@ -106,6 +106,27 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` または `?event_id=<audit_ref>` | Shadow Outcome台帳を検証して読み取り専用集計を返す。write→read handoffの`audit_ref`はexact `shadow-event/sha256:<64 lowercase hex>` |
 | `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
 | `GET /viewer/trade/shadow/outcomes/reviews/report?study_id=<id>` | Review ledgerを検証し、独立reviewの有無を返す読み取り専用projection |
+
+Event、Persona、AI Workflow storeのcheck名は`event_store_checkpoint`、`persona_architecture_checkpoint`、
+`ai_workflow_checkpoint`です。各checkの`details`は次の12 fieldに限定し、pathやraw SQLite errorを含めません。
+
+| field | 値 |
+| --- | --- |
+| `last_success_age_sec` | 最後に全frameをcheckpointした時刻からの秒数（number）。成功未発生時は`null` |
+| `target_interval_sec` | checkpoint目標間隔。現在は`60` |
+| `last_checkpoint_result` | `pending`、`complete`、`partial`、`error` |
+| `journal_mode` | `wal`または`unknown` |
+| `synchronous` | SQLite PRAGMAの整数値（`1`は`NORMAL`） |
+| `wal_autocheckpoint` | SQLite PRAGMAの整数値（無効化時は`0`） |
+| `busy`、`log_frames`、`checkpointed_frames` | checkpoint結果の整数値 |
+| `checkpoint_duration_ms` | checkpoint所要時間（整数ms） |
+| `last_success_at` | 最後に全frameをcheckpointしたUTC RFC3339Nano時刻。成功未発生時は`null` |
+| `error_class` | `none`、`sqlite`、`context`、`busy`、`partial`、`unknown` |
+
+初回checkpointを試みる前は`last_checkpoint_result=pending`で、最後の成功時刻がないため`last_success_age_sec=null`です。store open後の
+約60秒の初期待機中は`status=ok`を保ちますが、初回の完全checkpointが目標時間内に成功しなければ`degraded`になります。以降もcheckpoint失敗・
+未完了、または最後の完全成功から約60秒の実行目標を越えた状態を`degraded`で示します。checkpoint目標は最大損失時間を保証せず、このhealth statusだけでは
+`/health/ready`や`/ready`を落とさず、新規requestの拒否も行いません。
 
 ### Canonical Task API
 
@@ -1732,15 +1753,22 @@ PORTALは使用しません。`portal-idlechat`は利用者操作としては引
 
 | 条件 | 開始位置 |
 | --- | --- |
-| 正の`Last-Event-ID` | Event Store正本のEventSeqとして、その次のEventから再送し、続けてliveを送る。正本より先の値は409 |
-| 正の`Last-Event-ID`がなく、`?from=now` | 接続登録時点以降のliveだけを送る。履歴とdurable replayは使わない（tail） |
-| 上記のどちらでもない | in-memory履歴のsnapshotを再送し、続けてliveを送る |
+| Canonical `Last-Event-ID` | 既存EventIDをEvent Storeでlookupし、そのEventのEventSeqより後を再送してからliveへ移る |
+| `Last-Event-ID`がなく、`?from=now` | 接続登録時点以降のliveだけを送る。履歴とdurable replayは使わない（tail） |
+| `Last-Event-ID`がなく、`?from=now`もない | in-memory履歴のsnapshotを再送し、続けてliveを送る |
+| Event StoreにないCanonical EventID、正の旧numeric cursor、`reset` sentinel | `event: reset`と`id: reset`を送り、authorized windowから再送をやり直す |
+| 不正形式または0未満のnumeric `Last-Event-ID` | HTTP 400を返し、購読を開始しない |
 
-- `from`は予約済みのqueryで、値は`now`だけです。空、`now`以外、複数指定は400を返し、購読を開始しません。それ以外の未知のqueryは従来どおり無視します。
-- 正の`Last-Event-ID`と`?from=now`を同時に受けた場合は`Last-Event-ID`を優先します。EventSourceは`id:`を受信した後の自動再接続で`Last-Event-ID`を再送するため、再接続でtailを再適用せず、取りこぼしを避けます。`Last-Event-ID: 0`は指定なしと同義で、tailが有効です。
-- tailは接続時点以降のliveだけを保証します。接続していない間に発生したEventは配信されず、再接続の間の欠落は保証しません。欠落させない場合は、最後に受信したEventSeqを正の`Last-Event-ID`で送ってresumeします。これはEventをsilentに省略する動作ではなく、開始位置の明示です。
+- normal durable EventのSSE `id:`は既存EventIDです。EventSeqはEvent Store内の順序・paginationにだけ使い、SSE cursorとして公開しません。
+- `from`は予約済みのqueryで値は`now`だけです。空、`now`以外、複数指定は400を返し、購読を開始しません。それ以外の未知のqueryは従来どおり無視します。
+- Canonical `Last-Event-ID`と`?from=now`を同時に受けた場合はID cursorを優先します。EventSourceは`id:`を受信した後の自動再接続で同じEventIDを再送するため、resumeを維持します。headerがない場合、または`Last-Event-ID: 0`の場合は`?from=now`の有無に従います。
+- Event StoreにないCanonical EventID（WAL tail rollback等）、正の旧numeric cursor、または`reset` sentinelは数値をEventSeqとして解釈せず、機械可読reason付きの`event: reset`と`id: reset`でauthorized windowの再送を始めます。不正形式または0未満のnumeric headerはHTTP 400で拒否し、購読を始めません。`reset`はreserved sentinelで、Canonical `EventID.Validate`が拒否し、Event Storeに保存するEventIDではありません。
+- reset後の再送範囲は認証済みowner windowに従います。unscoped streamにdurable replay readerがあればcanonical windowの先頭から再送し、readerがなければin-memory snapshotを送ります。session-scoped streamはownerが公開するwindowのcutover位置から再送します。
+- `event: reset`を受けたconnectionが実Eventの送信前に切れた場合、EventSourceは`Last-Event-ID: reset`を自動再送します。これはEventID cursorとして受け入れず、同じauthorized windowの先頭／cutoverから再送をやり直します。`?from=now`を付けた自動再接続でもreset headerが優先され、実Eventが届いた後に初めてLast-Event-IDはその既存EventIDへ切り替わります。これにより再送途中の切断がtailへ切り替わって未取得範囲をsilent skipしません。
+- PORTALのbrowser consumerはreset時にprojectionをreloadしてauthorized windowから再構築する要件です。このconsumerのreset handlerが実装された後に適用し、COREのSSE契約だけをもってPORTAL側の実装済みとは扱いません。
+- tailは接続登録時点以降のliveだけを保証します。接続していない間に発生したEventと再接続の間の欠落は保証しません。欠落させないclientは最後に受信したEventIDでresumeします。
 - transient event（`idlechat.message`、`idlechat.summary`、`tts.audio_chunk`等）は`id:`行を持たず、replayには含まれませんが、tailのliveでは配信されます。
-- 「今から購読」を`Last-Event-ID`の擬似値（`9223372036854775807`等）で表さないでください。`Last-Event-ID`は正本のEventSeqであり、正本より先の値は409です。
+- `?from=now`をnumeric cursorやEventIDの擬似値で表しません。旧numeric cursorはreset/snapshotになります。
 - 200とheaderは接続の登録直後に確定します。`from`を解釈しない旧版のCOREは`?from=now`を無視し、in-memory履歴のsnapshotを先に返します。
 
 ## Client の注意
