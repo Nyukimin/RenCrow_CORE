@@ -445,7 +445,67 @@ func buildOutput(ctx context.Context, path string, events []modulecore.EventEnve
 	if err := store.Close(); err != nil {
 		return err
 	}
+	if err := normalizeOfflineSQLiteFile(ctx, path); err != nil {
+		return err
+	}
 	succeeded = true
+	return nil
+}
+
+func normalizeOfflineSQLiteFile(ctx context.Context, path string) (resultErr error) {
+	query := url.Values{}
+	query.Set("mode", "rw")
+	query.Set("_pragma", "busy_timeout(5000)")
+	db, err := sql.Open("sqlite", (&url.URL{
+		Scheme:   "file",
+		Path:     filepath.ToSlash(path),
+		RawQuery: query.Encode(),
+	}).String())
+	if err != nil {
+		return fmt.Errorf("open SQLite file for offline normalization: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	dbClosed := false
+	defer func() {
+		if !dbClosed {
+			if closeErr := db.Close(); closeErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("close rebuilt output normalization connection: %w", closeErr))
+			}
+		}
+	}()
+
+	var busy, logFrames, checkpointedFrames int
+	if err := db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointedFrames); err != nil {
+		return fmt.Errorf("checkpoint SQLite file: %w", err)
+	}
+	if busy != 0 || (logFrames != checkpointedFrames && !(logFrames == -1 && checkpointedFrames == -1)) {
+		return fmt.Errorf("SQLite file checkpoint incomplete: busy=%d log_frames=%d checkpointed_frames=%d", busy, logFrames, checkpointedFrames)
+	}
+	var journalMode string
+	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode=DELETE`).Scan(&journalMode); err != nil {
+		return fmt.Errorf("set SQLite file journal mode to DELETE: %w", err)
+	}
+	if !strings.EqualFold(journalMode, "delete") {
+		return fmt.Errorf("SQLite file journal_mode = %q, want DELETE", journalMode)
+	}
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close SQLite file after offline normalization: %w", err)
+	}
+	dbClosed = true
+	if err := ensureSQLiteSidecarsAbsent(path); err != nil {
+		return fmt.Errorf("normalized SQLite file is not standalone: %w", err)
+	}
+	return nil
+}
+
+func ensureSQLiteSidecarsAbsent(path string) error {
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Lstat(path + suffix); err == nil {
+			return fmt.Errorf("SQLite sidecar %q remains", suffix)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat SQLite sidecar %q: %w", suffix, err)
+		}
+	}
 	return nil
 }
 

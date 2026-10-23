@@ -250,6 +250,7 @@ func TestApplyBlocksWhenActiveLogicalSnapshotGainsEvent(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
+	normalizeOfflineStoreForTest(t, fixture.active)
 	receipt, err := Apply(context.Background(), fixture.options(t))
 	if err == nil || receipt.Status != CutoverStatusBlocked || receipt.ErrorCode != "active_mismatch" {
 		t.Fatalf("active logical drift must block: %+v err=%v", receipt, err)

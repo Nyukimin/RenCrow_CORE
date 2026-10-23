@@ -1149,6 +1149,8 @@ Test:
 - 日次backupはこのcheckpoint workerの代替ではありません。backupはCOREを停止した既存の整合snapshot経路を使い、設定済みの
   三storeを同じCORE backup cohortへ含めます。WALが残る場合はSQLite整合性を保つ形でdatabaseとともに取得し、scratch restoreで
   `integrity_check`を通します。稼働中の`.db` file単独copyを行いません。
+- offline移行・修復の出力は、runtime store ownerを閉じてからWALを完全checkpointし、`journal_mode=DELETE`へ戻します。
+  読取検証の後も`-wal`／`-shm`／`-journal`がない単独fileとして扱います。稼働中storeのsidecar拒否は維持します。
 
 実装順と受入条件:
 

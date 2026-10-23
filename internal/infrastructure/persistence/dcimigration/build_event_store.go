@@ -167,6 +167,15 @@ func createBuiltEventStore(ctx context.Context, source, target string, snapshot 
 	if err := ctx.Err(); err != nil {
 		return buildEventStoreEvidence{}, err
 	}
+	if err := normalizeCapturedSQLiteJournal(ctx, targetPath); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return buildEventStoreEvidence{}, ctxErr
+		}
+		return buildEventStoreCauseErrorResult(err, "target_store")
+	}
+	if err := ctx.Err(); err != nil {
+		return buildEventStoreEvidence{}, err
+	}
 	if err := buildEventStoreAfterAppend(targetPath); err != nil {
 		return buildEventStoreCauseErrorResult(err, "target_verify")
 	}
@@ -259,6 +268,15 @@ func canonicalizeBuiltEventStore(ctx context.Context, target string) (logicalHas
 		return logicalHashes{}, err
 	}
 	if err := store.Close(); err != nil {
+		return logicalHashes{}, err
+	}
+	if err := normalizeCapturedSQLiteJournal(ctx, target); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return logicalHashes{}, ctxErr
+		}
+		return logicalHashes{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return logicalHashes{}, err
 	}
 	db, err := openSQLiteReadOnly(ctx, target)

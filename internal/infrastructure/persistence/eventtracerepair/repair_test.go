@@ -3,10 +3,12 @@ package eventtracerepair
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +60,8 @@ func TestDryRunAndBuildRepairFragmentedJobWithoutChangingEventIdentity(t *testin
 	}
 
 	got := readAll(t, output)
+	assertJournalMode(t, output, "delete")
+	assertNoSQLiteSidecars(t, output)
 	if len(got) != len(events) {
 		t.Fatalf("output count=%d want=%d", len(got), len(events))
 	}
@@ -802,6 +806,46 @@ func writeStore(t *testing.T, path string, events []modulecore.EventEnvelope) {
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
+	}
+	normalizeOfflineStoreForTest(t, path)
+}
+
+func normalizeOfflineStoreForTest(t *testing.T, path string) {
+	t.Helper()
+	if err := normalizeOfflineSQLiteFile(context.Background(), path); err != nil {
+		t.Fatalf("normalize offline test store: %v", err)
+	}
+	assertNoSQLiteSidecars(t, path)
+}
+
+func assertJournalMode(t *testing.T, path, want string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", readOnlySQLiteDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journalMode string
+	queryErr := db.QueryRowContext(context.Background(), `PRAGMA journal_mode`).Scan(&journalMode)
+	closeErr := db.Close()
+	if queryErr != nil {
+		t.Fatalf("read SQLite journal mode: %v", queryErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close SQLite journal mode reader: %v", closeErr)
+	}
+	if !strings.EqualFold(journalMode, want) {
+		t.Fatalf("journal_mode=%q, want %q", journalMode, want)
+	}
+}
+
+func assertNoSQLiteSidecars(t *testing.T, path string) {
+	t.Helper()
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Lstat(path + suffix); err == nil {
+			t.Errorf("unexpected SQLite sidecar %q", suffix)
+		} else if !os.IsNotExist(err) {
+			t.Errorf("stat SQLite sidecar %q: %v", suffix, err)
+		}
 	}
 }
 

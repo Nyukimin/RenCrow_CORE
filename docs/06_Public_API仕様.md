@@ -1765,7 +1765,7 @@ PORTALは使用しません。`portal-idlechat`は利用者操作としては引
 - Event StoreにないCanonical EventID（WAL tail rollback等）、正の旧numeric cursor、または`reset` sentinelは数値をEventSeqとして解釈せず、機械可読reason付きの`event: reset`と`id: reset`でauthorized windowの再送を始めます。不正形式または0未満のnumeric headerはHTTP 400で拒否し、購読を始めません。`reset`はreserved sentinelで、Canonical `EventID.Validate`が拒否し、Event Storeに保存するEventIDではありません。
 - reset後の再送範囲は認証済みowner windowに従います。unscoped streamにdurable replay readerがあればcanonical windowの先頭から再送し、readerがなければin-memory snapshotを送ります。session-scoped streamはownerが公開するwindowのcutover位置から再送します。
 - `event: reset`を受けたconnectionが実Eventの送信前に切れた場合、EventSourceは`Last-Event-ID: reset`を自動再送します。これはEventID cursorとして受け入れず、同じauthorized windowの先頭／cutoverから再送をやり直します。`?from=now`を付けた自動再接続でもreset headerが優先され、実Eventが届いた後に初めてLast-Event-IDはその既存EventIDへ切り替わります。これにより再送途中の切断がtailへ切り替わって未取得範囲をsilent skipしません。
-- PORTALのbrowser consumerはreset時にprojectionをreloadしてauthorized windowから再構築する要件です。このconsumerのreset handlerが実装された後に適用し、COREのSSE契約だけをもってPORTAL側の実装済みとは扱いません。
+- PORTALのbrowser consumerはreset時にEventSourceを閉じ、画面をreloadしてauthorized windowからprojectionを再構築します。COREのSSE resetとPORTALのconsumer handlerを組み合わせた契約です。
 - tailは接続登録時点以降のliveだけを保証します。接続していない間に発生したEventと再接続の間の欠落は保証しません。欠落させないclientは最後に受信したEventIDでresumeします。
 - transient event（`idlechat.message`、`idlechat.summary`、`tts.audio_chunk`等）は`id:`行を持たず、replayには含まれませんが、tailのliveでは配信されます。
 - `?from=now`をnumeric cursorやEventIDの擬似値で表しません。旧numeric cursorはreset/snapshotになります。

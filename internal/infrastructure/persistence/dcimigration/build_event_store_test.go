@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,18 +53,33 @@ func TestCreateBuiltEventStorePreservesSourceAndAppendsExactPlan(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("target permissions = %o, want 600", info.Mode().Perm())
 	}
-	for _, suffix := range sqliteSidecarSuffixes {
-		if _, err := os.Lstat(fixture.target + suffix); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("target sidecar %q exists: %v", suffix, err)
-		}
-	}
-
 	output, err := readBuildEventStorePath(context.Background(), fixture.target, false)
 	if err != nil {
 		t.Fatalf("read built Event Store: %v", err)
 	}
 	if err := verifyBuildEventStoreOutput(fixture.sourceRows, output, fixture.planned); err != nil {
 		t.Fatalf("verify built Event Store: %v", err)
+	}
+	db, err := sql.Open("sqlite", fixture.target)
+	if err != nil {
+		t.Fatalf("reopen built Event Store: %v", err)
+	}
+	var journalMode string
+	queryErr := db.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&journalMode)
+	closeErr := db.Close()
+	if queryErr != nil {
+		t.Fatalf("read built Event Store journal mode: %v", queryErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close reopened Event Store: %v", closeErr)
+	}
+	if !strings.EqualFold(journalMode, "delete") {
+		t.Fatalf("built Event Store journal_mode = %q, want delete", journalMode)
+	}
+	for _, suffix := range sqliteSidecarSuffixes {
+		if _, err := os.Lstat(fixture.target + suffix); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("target sidecar after reopening and reading output %q exists: %v", suffix, err)
+		}
 	}
 }
 
