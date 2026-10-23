@@ -70,7 +70,10 @@ type workPresentationDTO struct {
 // Assessment reads the assessment route for exactly one Actor inside CORE's
 // configured view scope. An Actor outside the allowlist is rejected before any
 // request is sent. A response that mixes scopes, omits a list, or carries a
-// malformed ID fails as ErrContract rather than being read as an empty set.
+// malformed ID fails as ErrContract rather than being read as an empty set. It
+// also fails when the response claims work success or publishes an executable
+// ID outside the permitted set, so CORE never consumes a candidate the current
+// LifePolicy does not allow (D-07, D-08, D-10, D-11).
 func (c *Client) Assessment(ctx context.Context, actorID string) (Assessment, error) {
 	if c == nil || c.httpClient == nil || c.base == nil {
 		return Assessment{}, &ReadError{Op: "assessment", Err: ErrInvalidConfig}
@@ -153,6 +156,26 @@ func validateAssessment(actorID string, c *Client, dto *assessmentDTO) error {
 	} {
 		if err := validateIDList(name, list); err != nil {
 			return err
+		}
+	}
+	// D-07/D-08: WORLD never establishes work success. An empty or expired
+	// WorkSet is "no assignment" or unknown, and only a CORE work result can
+	// claim success, so a response carrying true is a contract violation rather
+	// than a fact CORE may consume.
+	if dto.WorkSuccess {
+		return fmt.Errorf("%w: work_success must stay false; only a CORE work result establishes success", ErrContract)
+	}
+	// D-10/D-11: the published executable set is WORLD's owner-filtered subset
+	// of the permitted set. An ID outside it would let a consumer start work the
+	// current LifePolicy does not allow, so it fails as a contract violation
+	// instead of being read as a granted candidate.
+	permitted := make(map[string]struct{}, len(*dto.PermittedActivityIDs))
+	for _, id := range *dto.PermittedActivityIDs {
+		permitted[id] = struct{}{}
+	}
+	for _, id := range *dto.ExecutableActivityIDs {
+		if _, ok := permitted[id]; !ok {
+			return fmt.Errorf("%w: executable_activity_ids carries %q outside permitted_activity_ids", ErrContract, id)
 		}
 	}
 	return nil

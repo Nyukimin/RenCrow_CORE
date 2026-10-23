@@ -205,6 +205,14 @@ func TestAssessmentValidatesResponseContract(t *testing.T) {
 		{name: "missing permitted list", mutate: func(b map[string]any) { b["permitted_activity_ids"] = nil }},
 		{name: "missing executable list", mutate: func(b map[string]any) { b["executable_activity_ids"] = nil }},
 		{name: "control activity id", mutate: func(b map[string]any) { b["executable_activity_ids"] = []any{"read\x00"} }},
+		{name: "executable outside permitted", mutate: func(b map[string]any) { b["executable_activity_ids"] = []any{"idle", "sleep"} }},
+		{name: "executable list when permitted list is empty", mutate: func(b map[string]any) {
+			b["permitted_activity_ids"] = []any{}
+			b["executable_activity_ids"] = []any{"idle"}
+			b["new_activity_allowed"] = false
+			b["blocked_reason"] = "no_allowed_activity"
+		}},
+		{name: "work success claimed", mutate: func(b map[string]any) { b["work_success"] = true }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
