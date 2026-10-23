@@ -1770,6 +1770,7 @@ PORTALは使用しません。`portal-idlechat`は利用者操作としては引
 - transient event（`idlechat.message`、`idlechat.summary`、`tts.audio_chunk`等）は`id:`行を持たず、replayには含まれませんが、tailのliveでは配信されます。
 - `?from=now`をnumeric cursorやEventIDの擬似値で表しません。旧numeric cursorはreset/snapshotになります。
 - 200とheaderは接続の登録直後に確定します。`from`を解釈しない旧版のCOREは`?from=now`を無視し、in-memory履歴のsnapshotを先に返します。
+- CORE再起動時はCanonical Event StoreからMonitorとEventHubの保存済みprojectionをHTTP受付前に復元します。復元に失敗したprocessはlistenせず、最初の購読者へ保存済みEventをliveとして一斉再送しません。live購読中のchannelが満杯になった場合は切断されるため、接続中の任意の大量同時発行まで無欠落を保証するものではありません。
 
 ## Client の注意
 

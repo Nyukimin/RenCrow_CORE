@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	"fmt"
+	"sort"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -23,6 +25,7 @@ type shutdownOrderEventStore struct {
 	appendErr             error
 	appendErrOnce         bool
 	appendHook            func(int)
+	replayErr             error
 	events                []modulecore.EventEnvelope
 	hub                   *viewer.EventHub
 	projectedBeforeAppend bool
@@ -120,6 +123,9 @@ func (s *shutdownOrderEventStore) ReadComponentPage(ctx context.Context, compone
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.replayErr != nil {
+		return nil, 0, s.replayErr
+	}
 	var latest modulecore.EventSeq
 	for _, event := range s.events {
 		if event.ComponentID == component && event.EventSeq > latest {
@@ -142,6 +148,191 @@ func (s *shutdownOrderEventStore) ReadComponentPage(ctx context.Context, compone
 		}
 	}
 	return page, through, nil
+}
+
+func TestEventRelayRestoresCanonicalProjectionBeforeLiveSubscription(t *testing.T) {
+	const historicalEventCount = canonicalEventRelayPageLimit + 19
+	const transientEventIndex = 510
+	const privateSequenceGapAfter = 700
+
+	hub := viewer.NewEventHub(200)
+	store := &shutdownOrderEventStore{hub: hub}
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	monitor := viewer.NewMonitorStore(nil, archive)
+	marker := &responsePublicationMarkerStub{store: store}
+	relay := &idleAwareEventListener{hub: hub, monitor: monitor, archive: archive, responseMarker: marker}
+	taskID := modulecore.NewTaskID().String()
+	sessionID := modulecore.NewSessionID()
+	traceID := modulecore.NewTraceID()
+	turnID := modulecore.NewTurnID()
+
+	var watermark modulecore.EventSeq
+	for index := 0; index < historicalEventCount; index++ {
+		eventType := "agent.note"
+		from, to := "mio", "user"
+		content := fmt.Sprintf("historical-%04d", index)
+		if index == transientEventIndex {
+			eventType = "tts.audio_chunk"
+			from = "tts"
+			content = "historical transient"
+		}
+		event := orchestrator.NewEvent(eventType, from, to, content, "CHAT", taskID, string(sessionID), "viewer", "chat-1")
+		if index == historicalEventCount-1 {
+			event = orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "historical final response", "CHAT", taskID, string(sessionID), "viewer", "chat-1")
+			event.TurnID = turnID
+		}
+		persisted, appendErr := archive.AppendSequenced(event)
+		if appendErr != nil {
+			t.Fatalf("AppendSequenced historical event %d: %v", index, appendErr)
+		}
+		watermark = persisted.EventSeq
+	}
+	addPrivateEventSequenceGap(t, store, privateSequenceGapAfter)
+	watermark++
+
+	if err := relay.RestoreCanonicalProjection(context.Background()); err != nil {
+		t.Fatalf("RestoreCanonicalProjection() error = %v", err)
+	}
+	if relay.publicationCursor != watermark {
+		t.Fatalf("publication cursor=%d, want canonical watermark %d", relay.publicationCursor, watermark)
+	}
+	assertRestoredEventProjection(t, hub, monitor, watermark, historicalEventCount-1)
+	if marker.calls != 0 {
+		t.Fatalf("historical response marker calls=%d, want no restore side effects", marker.calls)
+	}
+
+	if err := relay.RestoreCanonicalProjection(context.Background()); err != nil {
+		t.Fatalf("second RestoreCanonicalProjection() error = %v", err)
+	}
+	if relay.publicationCursor != watermark {
+		t.Fatalf("cursor after idempotent restore=%d, want %d", relay.publicationCursor, watermark)
+	}
+	assertRestoredEventProjection(t, hub, monitor, watermark, historicalEventCount-1)
+	if marker.calls != 0 {
+		t.Fatalf("historical response marker calls after idempotent restore=%d, want 0", marker.calls)
+	}
+
+	client, snapshot := hub.Subscribe()
+	defer hub.Unsubscribe(client)
+	if len(snapshot) != 200 {
+		t.Fatalf("subscription snapshot events=%d, want last 200 restored events", len(snapshot))
+	}
+	select {
+	case event := <-client:
+		t.Fatalf("restoration queued historical live event for new subscriber: %s", event)
+	default:
+	}
+
+	newFinal := orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "agent.response", "mio", "user", "new live response", "CHAT", taskID, string(sessionID), "viewer", "chat-1")
+	newFinal.TurnID = modulecore.NewTurnID()
+	if err := relay.OnEvent(newFinal); err != nil {
+		t.Fatalf("OnEvent() after restore: %v", err)
+	}
+	select {
+	case data := <-client:
+		var published orchestrator.OrchestratorEvent
+		if err := json.Unmarshal(data, &published); err != nil {
+			t.Fatalf("decode new live event: %v", err)
+		}
+		if published.EventID != newFinal.EventID || published.EventSeq != watermark+1 || published.Content != "new live response" {
+			t.Fatalf("live event=%+v, want new final response at seq %d", published, watermark+1)
+		}
+	default:
+		t.Fatal("new live event was not delivered after restore")
+	}
+	select {
+	case data := <-client:
+		t.Fatalf("unexpected extra live event after new response: %s", data)
+	default:
+	}
+	if marker.calls != 1 || !marker.afterAppend {
+		t.Fatalf("new response marker=%+v, want one post-append call", marker)
+	}
+}
+
+func TestEventRelayRestoreCanonicalProjectionReturnsFailure(t *testing.T) {
+	hub := viewer.NewEventHub(200)
+	store := &shutdownOrderEventStore{replayErr: errRecordTest}
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	monitor := viewer.NewMonitorStore(nil, archive)
+	relay := &idleAwareEventListener{hub: hub, monitor: monitor, archive: archive}
+
+	if err := relay.RestoreCanonicalProjection(context.Background()); !errors.Is(err, errRecordTest) {
+		t.Fatalf("RestoreCanonicalProjection() error = %v, want replay failure %v", err, errRecordTest)
+	}
+	if relay.publicationCursor != 0 {
+		t.Fatalf("publication cursor after failed restore=%d, want 0", relay.publicationCursor)
+	}
+	if got := len(hub.History()); got != 0 {
+		t.Fatalf("hub history after failed restore=%d, want 0", got)
+	}
+	if got := len(monitor.Logs(viewer.LogFilter{Limit: 10})); got != 0 {
+		t.Fatalf("monitor logs after failed restore=%d, want 0", got)
+	}
+	store.replayErr = nil
+	canceledContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := relay.RestoreCanonicalProjection(canceledContext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RestoreCanonicalProjection() with canceled context error = %v, want %v", err, context.Canceled)
+	}
+	if relay.publicationCursor != 0 || len(hub.History()) != 0 || len(monitor.Logs(viewer.LogFilter{Limit: 10})) != 0 {
+		t.Fatalf("canceled restore claimed a projection: cursor=%d hub=%d monitor=%d", relay.publicationCursor, len(hub.History()), len(monitor.Logs(viewer.LogFilter{Limit: 10})))
+	}
+}
+
+func addPrivateEventSequenceGap(t *testing.T, store *shutdownOrderEventStore, after modulecore.EventSeq) {
+	t.Helper()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	index := sort.Search(len(store.events), func(index int) bool {
+		return store.events[index].EventSeq > after
+	})
+	for current := index; current < len(store.events); current++ {
+		store.events[current].EventSeq++
+	}
+	private := modulecore.NewRootEventEnvelope("private", "private.event", time.Now().UTC(), map[string]any{"content": "not an orchestrator event"})
+	private.EventSeq = after + 1
+	store.events = append(store.events, modulecore.EventEnvelope{})
+	copy(store.events[index+1:], store.events[index:])
+	store.events[index] = private
+	store.appends++
+	store.appendCalls++
+}
+
+func assertRestoredEventProjection(t *testing.T, hub *viewer.EventHub, monitor *viewer.MonitorStore, watermark modulecore.EventSeq, wantMonitorEvents int) {
+	t.Helper()
+	history := hub.History()
+	if len(history) != 200 {
+		t.Fatalf("hub history events=%d, want last 200", len(history))
+	}
+	if history[0].EventSeq != watermark-199 || history[len(history)-1].EventSeq != watermark {
+		t.Fatalf("hub history sequence window=%d..%d, want %d..%d", history[0].EventSeq, history[len(history)-1].EventSeq, watermark-199, watermark)
+	}
+	logs := monitor.Logs(viewer.LogFilter{Limit: wantMonitorEvents + 1})
+	if len(logs) != wantMonitorEvents {
+		t.Fatalf("monitor log events=%d, want %d projected historical events", len(logs), wantMonitorEvents)
+	}
+	for _, event := range logs {
+		if event.Type == "tts.audio_chunk" {
+			t.Fatal("transient historical event was restored to MonitorStore")
+		}
+	}
+	var mio *viewer.AgentSnapshot
+	for _, agent := range monitor.Agents() {
+		if agent.ID == "mio" {
+			mio = &agent
+			break
+		}
+	}
+	if mio == nil || mio.State != "idle" || mio.LastEvent != "agent.response" || mio.EventSeq != watermark {
+		t.Fatalf("restored Mio monitor state=%+v, want idle final response at seq %d", mio, watermark)
+	}
 }
 
 func TestEventRelayPersistsBeforeProjection(t *testing.T) {

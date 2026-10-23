@@ -20,6 +20,8 @@ const responsePublicationMarkerTimeout = 100 * time.Millisecond
 
 const canonicalEventRelayPageLimit = 1000
 
+const canonicalEventProjectionRestoreTimeout = 2 * time.Minute
+
 type idleAwareEventListener struct {
 	hub            *viewer.EventHub
 	monitor        *viewer.MonitorStore
@@ -100,6 +102,23 @@ func (l *idleAwareEventListener) PublishAcceptedInput(ctx context.Context, event
 	published, err := l.drainCanonicalEvents(ctx, "")
 	l.publicationMu.Unlock()
 	l.afterCanonicalPublication(published, "")
+	return err
+}
+
+// RestoreCanonicalProjection rebuilds in-memory Viewer projections from the
+// canonical event store before the runtime accepts requests. It deliberately
+// skips post-publication actor side effects because replay is not new activity.
+func (l *idleAwareEventListener) RestoreCanonicalProjection(ctx context.Context) error {
+	if l == nil || l.archive == nil {
+		return errCanonicalEventArchiveRequired
+	}
+	if ctx == nil {
+		return errors.New("canonical event projection restore context is required")
+	}
+
+	l.publicationMu.Lock()
+	_, err := l.drainCanonicalEvents(ctx, "")
+	l.publicationMu.Unlock()
 	return err
 }
 

@@ -1164,6 +1164,16 @@ Test:
 6. 認証済userまたはMio／Shiro／Kuro／Midoriの実Actorによる通常routeで、append成功後のprojectionとSSEを照合し、保存error時に成功receiptが出ないこと、EventIDによる再接続、
    backup／scratch restore後のSQLite整合性を検査します。
 
+#### Step 02 Failure Knowledge: 再起動後の初回公開が履歴全件をliveへ流した
+
+- **Failure:** CORE再起動後の初回CMD会話で、SSE購読が`client too slow`で切れ、COREに本文が保存されてもCMDへ届かなかった。
+- **Problem:** 起動後の初回公開時に保存済み約5.9万件を約2.4秒でEventHubへ再投影し、64件の購読channelが満杯になった。
+- **Cause:** Event relayのRAM公開cursorが0から始まり、projection復元をHTTP受付後の最初の公開まで遅延した。`?from=now`の購読もこの再投影をliveとして受けた。
+- **Lesson:** 保存済みprojectionの再構築と利用者向けlive発行は時期を分ける。tail購読だけでは起動時の内部再投影を防げない。
+- **Invariant:** Event StoreからMonitor／EventHub／公開cursorへの復元をHTTP listen前に完了し、失敗時は受付を開始しない。復元は既存の順序・一時Event除外を守り、Eventを再appendせず、履歴を外部作用として再実行しない。
+- **Enforcement:** Runtimeの依存構築時にEvent relayの復元を同期実行し、そのerrorを起動失敗へ伝える。復元済みcursor以降だけを通常のlive公開へ流す。
+- **Tests:** 64件を越える履歴を保存した再起動相当の状態で、復元後に登録した購読者が過去Eventのlive一斉送信を受けず、新しいEventと本文終端を受けることを確認する。復元失敗・中断ではlistenしないことを検査する。
+
 #### Step 02 Failure Knowledge: JobIDをTraceIDとして流用したEvent分断
 
 - **Failure:** Orchestrator Eventの`TraceID`へ旧`JobID`を渡し、Canonical Event adapterが不正形式をEventごとに別Traceへ置換した。

@@ -963,6 +963,12 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		gamePlayProvider,
 		newGameAgentDecisionService(agents),
 	)
+	projectionRestoreContext, cancelProjectionRestore := context.WithTimeout(context.Background(), canonicalEventProjectionRestoreTimeout)
+	projectionRestoreErr := deps.eventRelay.RestoreCanonicalProjection(projectionRestoreContext)
+	cancelProjectionRestore()
+	if projectionRestoreErr != nil {
+		log.Fatalf("Failed to restore canonical Viewer event projection: %v", projectionRestoreErr)
+	}
 	if defaultTaskStorePath(cfg.WorkspaceDir) != "" && deps.taskManager == nil {
 		log.Fatal("Failed to initialize canonical Task lifecycle owner")
 	}
