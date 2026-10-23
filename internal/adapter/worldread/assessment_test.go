@@ -28,7 +28,7 @@ func validAssessmentBody() map[string]any {
 		"work_presentation": map[string]any{
 			"kind":              "presence",
 			"presence_task_ids": []any{"task-presence"},
-			"running_task_ids":  []any{"task-run"},
+			"running_task_ids":  []any{"task-presence"},
 			"queued_task_ids":   []any{"task-queue"},
 			"waiting_task_ids":  []any{"task-wait"},
 		},
@@ -114,7 +114,7 @@ func TestAssessmentReadsOneBoundActor(t *testing.T) {
 	}
 	if assessment.WorkPresentation.Kind != "presence" ||
 		strings.Join(assessment.WorkPresentation.PresenceTaskIDs, ",") != "task-presence" ||
-		strings.Join(assessment.WorkPresentation.RunningTaskIDs, ",") != "task-run" ||
+		strings.Join(assessment.WorkPresentation.RunningTaskIDs, ",") != "task-presence" ||
 		strings.Join(assessment.WorkPresentation.QueuedTaskIDs, ",") != "task-queue" ||
 		strings.Join(assessment.WorkPresentation.WaitingTaskIDs, ",") != "task-wait" {
 		t.Fatalf("work presentation = %+v", assessment.WorkPresentation)
@@ -309,5 +309,79 @@ func TestAssessmentValidatesArguments(t *testing.T) {
 	}
 	if atomic.LoadInt32(calls) != 0 {
 		t.Fatalf("calls = %d; want 0", *calls)
+	}
+}
+
+// TestAssessmentRejectsContradictoryAssessment pins the assessment vocabulary
+// and the internal consistency of WORLD's assessment contract: an unknown state
+// or presentation kind, a presentation that does not follow from the WorkSet
+// state and task ID lists, or a permission flag that contradicts its
+// blocked_reason is a contract violation. CORE never guesses a meaning for an
+// undefined enum value, never reads a presentation the WorkSet does not carry,
+// and never treats a blocked assessment as an open permission.
+func TestAssessmentRejectsContradictoryAssessment(t *testing.T) {
+	emptyPresentation := func(b map[string]any, kind string) {
+		b["work_presentation"] = map[string]any{
+			"kind":              kind,
+			"presence_task_ids": []any{},
+			"running_task_ids":  []any{},
+			"queued_task_ids":   []any{},
+			"waiting_task_ids":  []any{},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "unknown work set state", mutate: func(b map[string]any) { b["work_set_state"] = "assigneed" }},
+		{name: "unknown policy state", mutate: func(b map[string]any) { b["policy_state"] = "stale" }},
+		{name: "unknown presentation kind", mutate: func(b map[string]any) {
+			b["work_presentation"].(map[string]any)["kind"] = "moving"
+		}},
+		{name: "assigned work set presented as none", mutate: func(b map[string]any) { emptyPresentation(b, "none") }},
+		{name: "expired work set still presents presence", mutate: func(b map[string]any) {
+			b["work_set_state"] = "expired"
+		}},
+		{name: "assigned work set without any task", mutate: func(b map[string]any) { emptyPresentation(b, "queued") }},
+		{name: "presence kind without a presence task", mutate: func(b map[string]any) {
+			b["work_presentation"].(map[string]any)["presence_task_ids"] = []any{}
+		}},
+		{name: "presence task outside running tasks", mutate: func(b map[string]any) {
+			b["work_presentation"].(map[string]any)["presence_task_ids"] = []any{"task-elsewhere"}
+		}},
+		{name: "remote kind without a running task", mutate: func(b map[string]any) {
+			b["work_presentation"].(map[string]any)["kind"] = "remote"
+			b["work_presentation"].(map[string]any)["presence_task_ids"] = []any{}
+			b["work_presentation"].(map[string]any)["running_task_ids"] = []any{}
+		}},
+		{name: "queued kind while work runs", mutate: func(b map[string]any) {
+			b["work_presentation"].(map[string]any)["kind"] = "queued"
+			b["work_presentation"].(map[string]any)["presence_task_ids"] = []any{}
+		}},
+		{name: "waiting kind while work runs", mutate: func(b map[string]any) {
+			b["work_presentation"].(map[string]any)["kind"] = "waiting"
+			b["work_presentation"].(map[string]any)["presence_task_ids"] = []any{}
+		}},
+		{name: "permission with a blocked reason", mutate: func(b map[string]any) { b["blocked_reason"] = "policy_missing" }},
+		{name: "denied permission without a blocked reason", mutate: func(b map[string]any) {
+			b["new_activity_allowed"] = false
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := validAssessmentBody()
+			test.mutate(body)
+			server, _, _, _ := newAssessmentServer(t, body, http.StatusOK)
+			client := mustAssessmentClient(t, server.URL, "mio")
+
+			assessment, err := client.Assessment(context.Background(), "mio")
+			if !errors.Is(err, ErrContract) {
+				t.Fatalf("Assessment() error = %v, assessment = %+v; want ErrContract", err, assessment)
+			}
+			if assessment.SchemaVersion != 0 || assessment.WorldID != "" || assessment.WorkSetState != "" ||
+				assessment.WorkPresentation.Kind != "" || len(assessment.ExecutableActivityIDs) != 0 {
+				t.Fatalf("a contradictory assessment must not return a partially read value: %+v", assessment)
+			}
+		})
 	}
 }

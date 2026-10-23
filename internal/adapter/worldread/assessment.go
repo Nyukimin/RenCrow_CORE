@@ -74,6 +74,10 @@ type workPresentationDTO struct {
 // also fails when the response claims work success or publishes an executable
 // ID outside the permitted set, so CORE never consumes a candidate the current
 // LifePolicy does not allow (D-07, D-08, D-10, D-11).
+// Beyond those identity checks it enforces WORLD's closed state vocabulary and
+// the presentation and permission-flag consistency of WORLD's assessment
+// contract, so an undefined state or a contradictory presentation is never read
+// as a life fact (D-07, D-09, D-10, D-13).
 func (c *Client) Assessment(ctx context.Context, actorID string) (Assessment, error) {
 	if c == nil || c.httpClient == nil || c.base == nil {
 		return Assessment{}, &ReadError{Op: "assessment", Err: ErrInvalidConfig}
@@ -177,6 +181,80 @@ func validateAssessment(actorID string, c *Client, dto *assessmentDTO) error {
 		if _, ok := permitted[id]; !ok {
 			return fmt.Errorf("%w: executable_activity_ids carries %q outside permitted_activity_ids", ErrContract, id)
 		}
+	}
+	if err := validateAssessmentMeaning(dto); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateAssessmentMeaning enforces WORLD's closed assessment vocabulary and
+// the internal consistency of WORLD's assessment contract. work_set_state,
+// policy_state, and work_presentation.kind are WORLD-owned meaning: an
+// undefined value would be read by CORE as a life fact, and a presentation that
+// does not follow from the WorkSet state and task ID lists would move an Actor
+// or open a permission the WorkSet does not carry. A denied permission always
+// names its reason and an open permission carries none, so the flag and the
+// reason never travel together. Each case fails as ErrContract with no partially
+// read assessment (D-07, D-09, D-10, D-13).
+func validateAssessmentMeaning(dto *assessmentDTO) error {
+	switch dto.WorkSetState {
+	case "missing", "expired", "empty", "assigned":
+	default:
+		return fmt.Errorf("%w: work_set_state %q is outside WORLD's vocabulary", ErrContract, dto.WorkSetState)
+	}
+	switch dto.PolicyState {
+	case "missing", "expired", "fresh":
+	default:
+		return fmt.Errorf("%w: policy_state %q is outside WORLD's vocabulary", ErrContract, dto.PolicyState)
+	}
+	if dto.NewActivityAllowed == (dto.BlockedReason != "") {
+		return fmt.Errorf("%w: new_activity_allowed=%v does not match blocked_reason %q", ErrContract,
+			dto.NewActivityAllowed, dto.BlockedReason)
+	}
+	return validateWorkPresentation(dto.WorkSetState, dto.WorkPresentation)
+}
+
+func validateWorkPresentation(workSetState string, presentation *workPresentationDTO) error {
+	presence, running := *presentation.PresenceTaskIDs, *presentation.RunningTaskIDs
+	queued, waiting := *presentation.QueuedTaskIDs, *presentation.WaitingTaskIDs
+	if workSetState != "assigned" {
+		if presentation.Kind != "none" {
+			return fmt.Errorf("%w: work_presentation.kind %q must be none while the work set is %q",
+				ErrContract, presentation.Kind, workSetState)
+		}
+		if len(presence)+len(running)+len(queued)+len(waiting) != 0 {
+			return fmt.Errorf("%w: a %q work set cannot publish task IDs", ErrContract, workSetState)
+		}
+		return nil
+	}
+	if len(presence)+len(running)+len(queued)+len(waiting) == 0 {
+		return fmt.Errorf("%w: an assigned work set publishes no task", ErrContract)
+	}
+	// Presence-required work is always one of the running items, and the kind is
+	// the single decision WORLD derives from these lists: presence dominates,
+	// otherwise running work stays remote, then waiting, then queued.
+	runningByID := make(map[string]struct{}, len(running))
+	for _, id := range running {
+		runningByID[id] = struct{}{}
+	}
+	for _, id := range presence {
+		if _, ok := runningByID[id]; !ok {
+			return fmt.Errorf("%w: presence task %q is not a running task", ErrContract, id)
+		}
+	}
+	expected := "queued"
+	switch {
+	case len(presence) > 0:
+		expected = "presence"
+	case len(running) > 0:
+		expected = "remote"
+	case len(waiting) > 0:
+		expected = "waiting"
+	}
+	if presentation.Kind != expected {
+		return fmt.Errorf("%w: work_presentation.kind %q does not follow from the task ID lists, which publish %q",
+			ErrContract, presentation.Kind, expected)
 	}
 	return nil
 }
