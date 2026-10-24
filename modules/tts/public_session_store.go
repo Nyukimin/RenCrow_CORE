@@ -6,20 +6,22 @@ import (
 )
 
 type PublicSessionStore struct {
-	mu                    sync.Mutex
-	routes                map[string]*PublicSessionRoute
-	stale                 map[string]uint64
-	nextChunk             map[string]int
-	nextPublicPlaybackRef map[string]int
-	generation            uint64
+	mu                                   sync.Mutex
+	routes                               map[string]*PublicSessionRoute
+	stale                                map[string]uint64
+	nextChunk                            map[string]int
+	nextPublicPlaybackRef                map[string]int
+	cancelledPlaybackGenerationByRuntime map[string]uint64
+	generation                           uint64
 }
 
 func NewPublicSessionStore() *PublicSessionStore {
 	return &PublicSessionStore{
-		routes:                map[string]*PublicSessionRoute{},
-		stale:                 map[string]uint64{},
-		nextChunk:             map[string]int{},
-		nextPublicPlaybackRef: map[string]int{},
+		routes:                               map[string]*PublicSessionRoute{},
+		stale:                                map[string]uint64{},
+		nextChunk:                            map[string]int{},
+		nextPublicPlaybackRef:                map[string]int{},
+		cancelledPlaybackGenerationByRuntime: map[string]uint64{},
 	}
 }
 
@@ -33,6 +35,7 @@ func (s *PublicSessionStore) ResetAll() {
 	s.stale = map[string]uint64{}
 	s.nextChunk = map[string]int{}
 	s.nextPublicPlaybackRef = map[string]int{}
+	s.cancelledPlaybackGenerationByRuntime = map[string]uint64{}
 	s.generation = 0
 }
 
@@ -43,6 +46,12 @@ func (s *PublicSessionStore) Register(reg PublicSessionRouteRegistration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	reg.InternalSessionID = strings.TrimSpace(reg.InternalSessionID)
+	reg.RuntimeEpoch = strings.TrimSpace(reg.RuntimeEpoch)
+	if reg.RuntimeEpoch != "" && reg.PlaybackGeneration > 0 && reg.PlaybackGeneration <= s.cancelledPlaybackGenerationByRuntime[reg.RuntimeEpoch] {
+		s.stale[reg.InternalSessionID] = s.generation
+		delete(s.routes, reg.InternalSessionID)
+		return false
+	}
 	reg.Generation = s.generation
 	route, ok := NewPublicSessionRoute(reg)
 	if !ok {
@@ -51,6 +60,33 @@ func (s *PublicSessionStore) Register(reg PublicSessionRouteRegistration) bool {
 	delete(s.stale, reg.InternalSessionID)
 	s.routes[reg.InternalSessionID] = &route
 	return true
+}
+
+// CancelPlaybackGeneration retires routes owned by a stopped IdleChat
+// generation and rejects late registrations for that generation.
+func (s *PublicSessionStore) CancelPlaybackGeneration(runtimeEpoch string, playbackGeneration uint64) []string {
+	if s == nil {
+		return nil
+	}
+	runtimeEpoch = strings.TrimSpace(runtimeEpoch)
+	if runtimeEpoch == "" || playbackGeneration == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	if playbackGeneration > s.cancelledPlaybackGenerationByRuntime[runtimeEpoch] {
+		s.cancelledPlaybackGenerationByRuntime[runtimeEpoch] = playbackGeneration
+	}
+	retired := make([]string, 0)
+	for internalSessionID, route := range s.routes {
+		if route == nil || route.RuntimeEpoch != runtimeEpoch || route.PlaybackGeneration == 0 || route.PlaybackGeneration > playbackGeneration {
+			continue
+		}
+		s.stale[internalSessionID] = s.generation
+		delete(s.routes, internalSessionID)
+		retired = append(retired, internalSessionID)
+	}
+	s.mu.Unlock()
+	return retired
 }
 
 func (s *PublicSessionStore) ResetForIdleChat() {

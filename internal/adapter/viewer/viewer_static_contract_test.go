@@ -53,9 +53,8 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 		`id="sourceRegistryStagingBody"`: "Source Registry staging review panel",
 		`id="memoryLayerBody"`:           "Memory layer panel",
 		`id="micBtn"`:                    "normal chat voice input control",
-		`id="idlePlaybackPlay"`:          "IdleChat playback control separated from mic input",
-		`id="idlePlaybackNext"`:          "IdleChat next-topic playback control",
-		`id="idlePlaybackPrevious"`:      "IdleChat previous-topic playback control",
+		`id="idleState"`:                 "IdleChat status display",
+		`id="idleViewEpisodes"`:          "prepared IdleChat episode display",
 		`id="audioBtn"`:                  "browser audio enable control",
 		`id="sourceRegistrySaveBtn"`:     "Source Registry save control",
 	}
@@ -65,16 +64,8 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 		}
 	}
 
-	micIndex := strings.Index(html, `id="micBtn"`)
-	idleIndex := strings.Index(html, `id="idlePlaybackPlay"`)
 	headerEnd := strings.Index(html, `</header>`)
 	lipsyncIndex := strings.Index(html, `class="lipsync-stage"`)
-	if micIndex < 0 || idleIndex < 0 {
-		t.Fatal("mic and IdleChat playback controls must both be present")
-	}
-	if micIndex > idleIndex {
-		t.Fatal("normal chat mic control should be in the normal input controls before IdleChat controls")
-	}
 	if headerEnd < 0 || lipsyncIndex < 0 || lipsyncIndex > headerEnd {
 		t.Fatal("Mio/Shiro lipsync mini icons must be placed inside the top header band")
 	}

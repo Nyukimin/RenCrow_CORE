@@ -561,17 +561,6 @@ function setIdleState(mode, manual, active) {
   idleStateEl.className = 'idle-off';
 }
 
-function setIdleSelectedMode(mode) {
-  const next = mode === 'forecast'
-    ? 'forecast'
-    : (mode === 'story-simple' ? 'story-simple' : 'manual');
-  state.idleChat.selectedMode = next;
-  localStorage.setItem('idlechat.selectedMode', next);
-  if (idleModeNormalBtn) idleModeNormalBtn.classList.toggle('is-selected', next === 'manual');
-  if (idleModeForecastBtn) idleModeForecastBtn.classList.toggle('is-selected', next === 'forecast');
-  if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.classList.toggle('is-selected', next === 'story-simple');
-}
-
 function setBadge(el, enabled) {
   el.textContent = enabled ? 'on' : 'off';
   el.className = 'badge ' + (enabled ? 'state-running' : 'state-offline');
@@ -617,7 +606,6 @@ function renderIdleChat() {
 	topicEl.textContent = stripIdleTopicCategory(state.idleChat.currentTopic) || '-';
 	renderIdleTopicStocks();
 	renderIdleEpisodes();
-	updateIdlePlaybackControls();
 
   body.innerHTML = '';
   const rows = state.idleChat.history || [];
@@ -814,7 +802,6 @@ function selectIdleTopicPlayback(itemID) {
   localStorage.setItem('idlechat.selectedTopicPlaybackID', next);
   renderIdleTopicStocks();
   renderIdleEpisodes();
-  updateIdlePlaybackControls();
 }
 
 // Compatibility entrypoint retained for existing Viewer contracts.
@@ -872,7 +859,6 @@ function selectIdleEpisode(episodeID) {
   localStorage.setItem('idlechat.selectedEpisodeID', nextID);
   state.idleChat.episodeDetailError = '';
   renderIdleEpisodes();
-  updateIdlePlaybackControls();
   if (!sameEpisode) refreshIdleEpisodeDetail(nextID);
 }
 
@@ -1164,13 +1150,7 @@ async function refreshIdleStatus() {
     const r = await fetch('/viewer/idlechat/status');
     if (!r.ok) {
       const text = await r.text();
-      if (idleStartBtn) idleStartBtn.disabled = true;
-      if (idleModeNormalBtn) idleModeNormalBtn.disabled = true;
-      if (idleModeForecastBtn) idleModeForecastBtn.disabled = true;
-      if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.disabled = true;
-      if (idleStopBtn) idleStopBtn.disabled = true;
 	  state.idleChat.topicStockPlayback = null;
-	  updateIdlePlaybackControls(true);
       setIdleState('', false, false);
       state.idleChat.mode = '';
       state.idleChat.manualMode = false;
@@ -1186,11 +1166,6 @@ async function refreshIdleStatus() {
     const d = await r.json();
     state.idleChat.statusError = '';
     setIdleState(d.mode || '', !!d.manual_mode, !!d.chat_active);
-    if (idleStartBtn) idleStartBtn.disabled = !!d.manual_mode || !!d.chat_active;
-    if (idleModeNormalBtn) idleModeNormalBtn.disabled = !!d.chat_active;
-    if (idleModeForecastBtn) idleModeForecastBtn.disabled = !!d.chat_active;
-    if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.disabled = !!d.chat_active;
-    if (idleStopBtn) idleStopBtn.disabled = !d.manual_mode && !d.chat_active;
     state.idleChat.mode = d.mode || '';
     state.idleChat.manualMode = !!d.manual_mode;
     state.idleChat.chatActive = !!d.chat_active;
@@ -1207,13 +1182,7 @@ async function refreshIdleStatus() {
 	}
     renderIdleChat();
   } catch (_) {
-    if (idleStartBtn) idleStartBtn.disabled = true;
-    if (idleModeNormalBtn) idleModeNormalBtn.disabled = true;
-    if (idleModeForecastBtn) idleModeForecastBtn.disabled = true;
-    if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.disabled = true;
-    if (idleStopBtn) idleStopBtn.disabled = true;
 	state.idleChat.topicStockPlayback = null;
-	updateIdlePlaybackControls(true);
     setIdleState('', false, false);
     state.idleChat.mode = '';
     state.idleChat.manualMode = false;
@@ -1256,61 +1225,14 @@ async function refreshIdleLogs() {
   }
 }
 
-async function controlIdle(path) {
-  const btns = [idleStartBtn, idleModeNormalBtn, idleModeForecastBtn, idleModeStorySimpleBtn, idleStopBtn].filter(Boolean);
-  btns.forEach((b) => { b.disabled = true; });
-  try {
-    const r = await fetch(path, {method: 'POST'});
-    if (!r.ok) {
-      const text = await r.text();
-      throw new Error('HTTP ' + String(r.status) + ': ' + (text || r.statusText || 'idlechat control failed'));
-    }
-    state.idleChat.controlError = '';
-  } catch (err) {
-    state.idleChat.controlError = 'IdleChat control unavailable: ' + String(err && err.message ? err.message : err);
-    console.error(err);
-  } finally {
-    await refreshIdleStatus();
-  }
-}
-
-function updateIdlePlaybackControls(forceDisabled) {
-  const playback = state.idleChat.topicStockPlayback || {};
-  const current = playback.current || null;
-  const selected = String(state.idleChat.selectedTopicPlaybackID || '').trim();
-  const disabled = !!forceDisabled;
-  if (idlePlaybackPlayBtn) idlePlaybackPlayBtn.disabled = disabled || (!selected && !current && !playback.can_next);
-  if (idlePlaybackNextBtn) idlePlaybackNextBtn.disabled = disabled || !playback.can_next;
-  if (idlePlaybackPreviousBtn) idlePlaybackPreviousBtn.disabled = disabled || !playback.can_previous;
-}
-
-async function controlIdlePlayback(action) {
-  const buttons = [idlePlaybackPlayBtn, idlePlaybackNextBtn, idlePlaybackPreviousBtn].filter(Boolean);
-  buttons.forEach((button) => { button.disabled = true; });
-  try {
-    const payload = {action: String(action || '')};
-    if (payload.action === 'play') payload.item_id = String(state.idleChat.selectedTopicPlaybackID || '');
-    const response = await fetch('/viewer/idlechat/playback', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error('HTTP ' + String(response.status) + ': ' + (text || response.statusText || 'topic playback failed'));
-    }
-    const result = await response.json();
-    state.idleChat.topicStockPlayback = result.playback || null;
-    const current = state.idleChat.topicStockPlayback && state.idleChat.topicStockPlayback.current;
-    if (current && current.id) {
-      state.idleChat.selectedTopicPlaybackID = String(current.id);
-      localStorage.setItem('idlechat.selectedTopicPlaybackID', state.idleChat.selectedTopicPlaybackID);
-    }
-    state.idleChat.controlError = '';
-  } catch (err) {
-    state.idleChat.controlError = 'Topic Stock playback unavailable: ' + String(err && err.message ? err.message : err);
-    console.error(err);
-  } finally {
-    await refreshIdleStatus();
-  }
+function resetIdleChatLiveForControlChange() {
+  idlePendingMessages.clear();
+  idleLiveTopicKey = '';
+  idleLiveActiveSessionId = '';
+  idleLiveSnapshotKey = '';
+  idleSuppressedTTSMessageIds.clear();
+  resetTTSSpeechBubble(idleTTSSpeech);
+  const target = idleLiveRenderTarget();
+  if (target && typeof target.replaceChildren === 'function') target.replaceChildren();
+  else if (target) target.innerHTML = '';
 }

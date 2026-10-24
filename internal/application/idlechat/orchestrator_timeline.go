@@ -1,6 +1,7 @@
 package idlechat
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -9,6 +10,121 @@ import (
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+type idleEventPublicationToken struct {
+	traceID            modulecore.TraceID
+	sessionID          modulecore.SessionID
+	runtimeEpoch       string
+	playbackGeneration uint64
+	ctx                context.Context
+}
+
+func (o *IdleChatOrchestrator) clearIdleEventPublicationLocked() {
+	o.idleEventPublicationToken.Store(nil)
+}
+
+// EventContext returns the live owner context for one currently accepted
+// IdleChat event. Runtime relays use it to abandon a binding wait when the
+// foreground stop invalidates this generation.
+func (o *IdleChatOrchestrator) EventContext(traceID modulecore.TraceID, sessionID modulecore.SessionID) (context.Context, bool) {
+	if o == nil || traceID.Validate() != nil || sessionID.Validate() != nil {
+		return nil, false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	ctx := o.runCtx
+	if !o.chatActive || ctx == nil || ctx.Err() != nil || o.activeTraceID != traceID ||
+		o.activeSessionID != string(sessionID) || o.activeTraceSessionID != string(sessionID) {
+		return nil, false
+	}
+	token := o.idleEventPublicationToken.Load()
+	if token == nil || token.traceID != traceID || token.sessionID != sessionID {
+		o.idleEventPublicationToken.Store(&idleEventPublicationToken{
+			traceID: traceID, sessionID: sessionID, runtimeEpoch: o.runtimeEpoch,
+			playbackGeneration: o.activeGeneration, ctx: ctx,
+		})
+	}
+	return ctx, true
+}
+
+// PlaybackEventContext verifies the immutable playback generation attached to
+// one IdleChat timeline event before the relay begins any durable or live work.
+func (o *IdleChatOrchestrator) PlaybackEventContext(traceID modulecore.TraceID, sessionID modulecore.SessionID, runtimeEpoch string, generation uint64) (context.Context, bool) {
+	if o == nil || traceID.Validate() != nil || sessionID.Validate() != nil || strings.TrimSpace(runtimeEpoch) == "" || generation == 0 {
+		return nil, false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	ctx := o.runCtx
+	if runtimeEpoch != o.runtimeEpoch || generation != o.activeGeneration || !o.chatActive || ctx == nil || ctx.Err() != nil ||
+		o.activeTraceID != traceID || o.activeSessionID != string(sessionID) || o.activeTraceSessionID != string(sessionID) {
+		return nil, false
+	}
+	token := o.idleEventPublicationToken.Load()
+	if token == nil || token.traceID != traceID || token.sessionID != sessionID || token.runtimeEpoch != runtimeEpoch || token.playbackGeneration != generation {
+		o.idleEventPublicationToken.Store(&idleEventPublicationToken{
+			traceID: traceID, sessionID: sessionID, runtimeEpoch: runtimeEpoch,
+			playbackGeneration: generation, ctx: ctx,
+		})
+	}
+	return ctx, true
+}
+
+// IsCurrentEvent rechecks the exact trace/session owner immediately before
+// runtime relay acceptance.
+func (o *IdleChatOrchestrator) IsCurrentEvent(traceID modulecore.TraceID, sessionID modulecore.SessionID) bool {
+	_, ok := o.EventContext(traceID, sessionID)
+	return ok
+}
+
+func (o *IdleChatOrchestrator) IsCurrentPlaybackEvent(traceID modulecore.TraceID, sessionID modulecore.SessionID, runtimeEpoch string, generation uint64) bool {
+	_, ok := o.PlaybackEventContext(traceID, sessionID, runtimeEpoch, generation)
+	return ok
+}
+
+// PublishIfCurrentEvent atomically accepts presentation against owner
+// invalidation, then runs projection outside the owner lock. A stop that clears
+// the token first wins; an event whose compare-and-swap succeeds first was
+// accepted before the stop transition.
+func (o *IdleChatOrchestrator) PublishIfCurrentEvent(traceID modulecore.TraceID, sessionID modulecore.SessionID, publish func() error) (bool, error) {
+	if o == nil || traceID.Validate() != nil || sessionID.Validate() != nil {
+		return false, nil
+	}
+	if publish == nil {
+		return false, fmt.Errorf("idlechat live publication callback is required")
+	}
+	token := o.idleEventPublicationToken.Load()
+	if token == nil || token.traceID != traceID || token.sessionID != sessionID || token.ctx == nil || token.ctx.Err() != nil ||
+		!o.idleEventPublicationToken.CompareAndSwap(token, token) {
+		return false, nil
+	}
+	if err := publish(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// PublishIfCurrentPlaybackEvent is the relay's final RAM admission gate. The
+// generation token compare-and-swap linearizes acceptance against stop's token
+// invalidation; clients also receive the immutable epoch/generation tuple.
+func (o *IdleChatOrchestrator) PublishIfCurrentPlaybackEvent(traceID modulecore.TraceID, sessionID modulecore.SessionID, runtimeEpoch string, generation uint64, publish func() error) (bool, error) {
+	if o == nil || traceID.Validate() != nil || sessionID.Validate() != nil || strings.TrimSpace(runtimeEpoch) == "" || generation == 0 {
+		return false, nil
+	}
+	if publish == nil {
+		return false, fmt.Errorf("idlechat live publication callback is required")
+	}
+	token := o.idleEventPublicationToken.Load()
+	if token == nil || token.traceID != traceID || token.sessionID != sessionID || token.runtimeEpoch != runtimeEpoch ||
+		token.playbackGeneration != generation || token.ctx == nil || token.ctx.Err() != nil ||
+		!o.idleEventPublicationToken.CompareAndSwap(token, token) {
+		return false, nil
+	}
+	if err := publish(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
 func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle {
 	o.emitMu.Lock()
@@ -50,6 +166,8 @@ func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle 
 	ev.ThreadID = threadID
 	ev.ThreadSeq = threadSeq
 	ev.ThreadKind = threadKind
+	ev.RuntimeEpoch = o.runtimeEpoch
+	ev.PlaybackGeneration = ev.ownerEpoch
 	emit := o.emitEvent
 	o.mu.Unlock()
 	o.recordPersonaTimelineEvent(ev)
@@ -75,6 +193,8 @@ func (o *IdleChatOrchestrator) emitTTSPrefetchEvent(ev TTSPrefetchEvent) {
 	if ev.RunID == "" {
 		ev.RunID = o.activeRunID
 	}
+	ev.RuntimeEpoch = o.runtimeEpoch
+	ev.PlaybackGeneration = ev.ownerEpoch
 	emit := o.emitTTSPrefetch
 	o.mu.Unlock()
 	if emit != nil {

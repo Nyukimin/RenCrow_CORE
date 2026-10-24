@@ -82,8 +82,6 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 		return
 	}
 
-	ch, replaySnapshot := h.SubscribeForReplay()
-	defer h.Unsubscribe(ch)
 	lastSeen := modulecore.EventSeq(0)
 	resetReason := ""
 	if lastID.legacySequence {
@@ -131,10 +129,20 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 	if resetReason != "" {
 		lastSeen = 0
 	}
+	ch, controlCh, replaySnapshot, controlSnapshot := h.SubscribeForReplayWithControl()
+	defer h.Unsubscribe(ch)
 	replayCursor := lastSeen
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	controlFrameWritten := false
+	if controlSnapshot != nil {
+		if err := writeSSEIdleChatControlSnapshot(w, *controlSnapshot); err != nil {
+			return
+		}
+		flusher.Flush()
+		controlFrameWritten = true
+	}
 	if !tail {
 		clearReplayDeadline := SetReplayWriteDeadline(w)
 		defer clearReplayDeadline()
@@ -145,6 +153,9 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 			}
 		}
 		emit := func(ev orchestrator.OrchestratorEvent) error {
+			if isUnsequencedConversationEvent(ev) {
+				return nil
+			}
 			if IsTransientReplayEvent(ev) {
 				return nil
 			}
@@ -182,7 +193,7 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 				return
 			}
 			log.Printf("[Viewer] SSE replay failed: %v", err)
-			if !replayWrote && resetReason == "" {
+			if !replayWrote && resetReason == "" && !controlFrameWritten {
 				http.Error(w, "event replay unavailable", http.StatusConflict)
 			} else {
 				// A reset frame precedes this failure; flush it even when the durable
@@ -223,6 +234,14 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 				return
 			}
 			flusher.Flush()
+		case snapshot, ok := <-controlCh:
+			if !ok {
+				return
+			}
+			if err := writeSSEIdleChatControlSnapshot(w, snapshot); err != nil {
+				return
+			}
+			flusher.Flush()
 		case data, ok := <-ch:
 			if !ok {
 				return
@@ -247,6 +266,9 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 					continue
 				}
 			} else {
+				if isUnsequencedConversationEvent(ev) {
+					continue
+				}
 				include, filterErr := filter(r.Context(), ev)
 				if filterErr != nil {
 					log.Printf("[Viewer] SSE live event filter failed: %v", filterErr)
@@ -281,6 +303,10 @@ func IsResponseFirstViewerEvent(event orchestrator.OrchestratorEvent) bool {
 	return false
 }
 
+func isUnsequencedConversationEvent(event orchestrator.OrchestratorEvent) bool {
+	return event.EventSeq <= 0 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(event.Type)), "conversation.")
+}
+
 // HandleSessionPublicSSE streams only public message-index rows for one
 // already owner-authorized v2 session. Scope is supplied by the runtime route,
 // never by query parameters or request headers.
@@ -313,7 +339,7 @@ func (h *EventHub) HandleSessionPublicSSE(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ch, _ := h.Subscribe()
+	ch, controlCh, _, controlSnapshot := h.SubscribeForReplayWithControl()
 	defer h.Unsubscribe(ch)
 	lastSeen := scope.CutoverSeq
 	resetReason := ""
@@ -350,6 +376,14 @@ func (h *EventHub) HandleSessionPublicSSE(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	controlFrameWritten := false
+	if controlSnapshot != nil {
+		if err := writeSSEIdleChatControlSnapshot(w, *controlSnapshot); err != nil {
+			return
+		}
+		flusher.Flush()
+		controlFrameWritten = true
+	}
 
 	cursor := lastSeen
 	if resetReason != "" || !tail || lastSeen > scope.CutoverSeq {
@@ -376,8 +410,10 @@ func (h *EventHub) HandleSessionPublicSSE(w http.ResponseWriter, r *http.Request
 				return
 			}
 			log.Printf("[Viewer] owner-scoped SSE replay failed: %v", err)
-			if !wrote && resetReason == "" {
+			if !wrote && resetReason == "" && !controlFrameWritten {
 				http.Error(w, "conversation replay unavailable", http.StatusConflict)
+			} else {
+				flusher.Flush()
 			}
 			return
 		}
@@ -400,6 +436,14 @@ func (h *EventHub) HandleSessionPublicSSE(w http.ResponseWriter, r *http.Request
 			return
 		case <-heartbeat:
 			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case snapshot, ok := <-controlCh:
+			if !ok {
+				return
+			}
+			if err := writeSSEIdleChatControlSnapshot(w, snapshot); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -498,6 +542,18 @@ func writeSSEEvent(w http.ResponseWriter, event orchestrator.OrchestratorEvent) 
 		if _, err := fmt.Fprintf(w, "id: %s\n", event.EventID); err != nil {
 			return err
 		}
+	}
+	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+	return err
+}
+
+func writeSSEIdleChatControlSnapshot(w http.ResponseWriter, snapshot IdleChatControlSnapshot) error {
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprint(w, "event: idlechat.control\n"); err != nil {
+		return err
 	}
 	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
 	return err

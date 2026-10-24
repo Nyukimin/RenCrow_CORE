@@ -25,12 +25,24 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_PORTAL",
 		allow:  portalGamesInteractionAllowed,
 	},
+	"portal-other": {
+		client: "RenCrow_PORTAL",
+		allow: func(method, path string) bool {
+			return method == http.MethodPost && path == "/viewer/surface-presence"
+		},
+	},
+	"core-viewer": {
+		client: "RenCrow_CORE",
+		allow: func(method, path string) bool {
+			return method == http.MethodPost && (path == "/viewer/surface-presence" || path == "/viewer/send")
+		},
+	},
 	"cmd-chat": {
 		client: "RenCrow_CMD",
 		allow: func(method, path string) bool {
 			return (method == http.MethodGet && path == "/viewer/events") ||
 				(method == http.MethodPost &&
-					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/stt/chat-input"))
+					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/stt/chat-input" || path == "/viewer/surface-presence"))
 		},
 	},
 	"cmd-idlechat": {
@@ -40,7 +52,7 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 				return path == "/viewer/events" || path == "/viewer/idlechat/status"
 			}
 			return method == http.MethodPost &&
-				(path == "/viewer/idlechat/start" || path == "/viewer/idlechat/stop")
+				(path == "/viewer/idlechat/stop" || path == "/viewer/surface-presence")
 		},
 	},
 	"cmd-diagnostics": {
@@ -98,6 +110,9 @@ func withInteractionProfileGuard(next http.Handler) http.Handler {
 // CMD 仕様の「一般操作と repair／process-control を認証scopeまたは
 // capability profileで分ける」に従った分割である。
 func cmdDiagnosticsInteractionAllowed(method, path string) bool {
+	if method == http.MethodPost && path == "/viewer/surface-presence" {
+		return true
+	}
 	if method != http.MethodGet {
 		return false
 	}
@@ -164,6 +179,9 @@ func cmdControlInteractionAllowed(method, path string) bool {
 	}
 	if method != http.MethodPost {
 		return false
+	}
+	if path == "/viewer/surface-presence" {
+		return true
 	}
 	if atlasQueueFreezeResolveInteractionAllowed(method, path) {
 		return true
@@ -281,6 +299,9 @@ func portalGamesInteractionAllowed(method, path string) bool {
 	}
 	if method != http.MethodPost {
 		return false
+	}
+	if path == "/viewer/surface-presence" {
+		return true
 	}
 	if path == "/viewer/games/launch" {
 		return true

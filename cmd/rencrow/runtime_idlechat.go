@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -97,8 +98,6 @@ func buildIdleChatRuntime(
 		idleChatOrch.SetRunIssuer(deps.taskManager)
 		dialogueService.SetRunIssuer(deps.taskManager)
 	}
-	idleChatOrch.InitWordTopicStock(filepath.Join(cfg.Session.StorageDir, "word_topic_stock.json"))
-	idleChatOrch.InitForecastTopicStock(filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))
 	log.Printf("IdleChat topic/dialogue producers enabled (generator=codex_exe sandbox=read-only ephemeral=true)")
 	if cfg.IdleChat.EpisodePreparation.EnabledValue() {
 		storyService := idlechat.NewPersistentStoryEpisodeService(
@@ -127,7 +126,9 @@ func buildIdleChatRuntime(
 	}
 	if deps.eventRelay != nil {
 		idleChatTTSPrefetch = newIdleChatTTSPrefetchManager(ttsBridge)
-		idleChatOrch.SetInterruptHandler(resetIdleChatTTSQueue)
+		idleChatOrch.SetInterruptHandler(func(runtimeEpoch string, playbackGeneration uint64) {
+			cancelIdleChatTTSGeneration(runtimeEpoch, playbackGeneration)
+		})
 		idleChatOrch.SetTTSPrefetchEmitter(func(ev idlechat.TTSPrefetchEvent) {
 			if idleChatTTSPrefetch != nil {
 				idleChatTTSPrefetch.Push(ev)
@@ -140,6 +141,100 @@ func buildIdleChatRuntime(
 	})
 	if deps.eventRelay != nil {
 		deps.eventRelay.SetIdleChat(idleChatOrch)
+	}
+
+	var topicStockInitializationMu sync.Mutex
+	wordTopicStockInitialized := false
+	forecastTopicStockInitialized := false
+	schedule := cfg.IdleChat.EpisodePreparation.Schedule
+	scheduler, schedulerErr := idlechat.NewNightPreparationScheduler(
+		idlechat.NightPreparationSchedule{
+			Timezone:             schedule.Timezone,
+			Start:                schedule.Start,
+			End:                  schedule.End,
+			CatchUpOutsideWindow: schedule.CatchUpOutsideWindow != nil && *schedule.CatchUpOutsideWindow,
+		},
+		time.Now,
+		func() bool {
+			if deps.surfacePresence == nil {
+				return true
+			}
+			presence := deps.surfacePresence.snapshotForLegacy()
+			return presence.ForegroundPresenceCount > 0 || presence.ForegroundTurnCount > 0
+		},
+		func(ctx context.Context, reasons []string) {
+			if ctx.Err() != nil {
+				return
+			}
+			storyPreparationRequested := containsNightPreparationReason(reasons, "viewer_story_prepare")
+			if storyPreparationRequested && len(reasons) == 1 {
+				if err := idleChatOrch.PrepareRequestedStoryEpisodesWithContext(ctx); err != nil {
+					log.Printf("[Story] requested night preparation dispatch failed: %v", err)
+				}
+				return
+			}
+			topicStockInitializationMu.Lock()
+			if !wordTopicStockInitialized && ctx.Err() == nil {
+				idleChatOrch.InitWordTopicStockWithContext(ctx, filepath.Join(cfg.Session.StorageDir, "word_topic_stock.json"))
+				wordTopicStockInitialized = true
+			}
+			topicStockInitializationMu.Unlock()
+			if ctx.Err() != nil {
+				return
+			}
+			topicStockInitializationMu.Lock()
+			if !forecastTopicStockInitialized && ctx.Err() == nil {
+				idleChatOrch.InitForecastTopicStockWithContext(ctx, filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))
+				forecastTopicStockInitialized = true
+			}
+			topicStockInitializationMu.Unlock()
+			if ctx.Err() != nil {
+				return
+			}
+			refreshDailySeedsNow := false
+			for _, reason := range reasons {
+				if reason == "startup" || reason == "daily_seed_refresh" {
+					refreshDailySeedsNow = true
+					break
+				}
+			}
+			if refreshDailySeedsNow {
+				var err error
+				if containsNightPreparationReason(reasons, "daily_seed_refresh") {
+					err = idlechat.RefreshDailySeeds(idleChatNewsSourceConfigFromRuntime(cfg.IdleChat.NewsSources), true)
+				} else {
+					err = idlechat.RefreshDailySeeds(idleChatNewsSourceConfigFromRuntime(cfg.IdleChat.NewsSources), false)
+				}
+				if err != nil {
+					log.Printf("[IdleChat] Scheduled daily seeds fetch failed: %v", err)
+				} else if ctx.Err() == nil {
+					idleChatOrch.EnrichCurrentDailySeedsWithContext(ctx)
+				}
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			idleChatOrch.RefillWordTopicStockIfIdleWithContext(ctx, "night_preparation")
+			if ctx.Err() != nil {
+				return
+			}
+			idleChatOrch.RefillForecastTopicStockIfIdleWithContext(ctx, "night_preparation")
+			if ctx.Err() != nil {
+				return
+			}
+			if storyPreparationRequested {
+				if err := idleChatOrch.PrepareRequestedStoryEpisodesWithContext(ctx); err != nil {
+					log.Printf("[Story] requested night preparation dispatch failed: %v", err)
+				}
+			} else {
+				idleChatOrch.RefillStoryEpisodesAsyncWithContext(ctx, "night_preparation")
+			}
+		},
+	)
+	if schedulerErr != nil {
+		log.Printf("ERROR: IdleChat night preparation disabled by invalid schedule: %v", schedulerErr)
+	} else {
+		idleChatOrch.SetNightPreparationScheduler(scheduler)
 	}
 	if err := idlechatfeature.StartBackground(context.Background(), idlechatfeature.Dependencies{Background: idleChatOrch}); err != nil {
 		log.Printf("WARN: idlechat background start failed: %v", err)
@@ -169,6 +264,8 @@ func idleChatViewerEvent(ev idlechat.TimelineEvent) orchestrator.OrchestratorEve
 	viewerEvent.RawContent = ev.RawContent
 	viewerEvent.MessageID = modulecore.MessageID(ev.MessageID)
 	viewerEvent.TurnIndex = ev.TurnIndex
+	viewerEvent.RuntimeEpoch = ev.RuntimeEpoch
+	viewerEvent.PlaybackGeneration = ev.PlaybackGeneration
 	viewerEvent.Category = string(ev.Category)
 	viewerEvent.Strategy = string(ev.Strategy)
 	viewerEvent.ThreadID = ev.ThreadID
@@ -212,6 +309,15 @@ func newIdleChatRuntimeEventEmitter(
 	}
 }
 
+func containsNightPreparationReason(reasons []string, target string) bool {
+	for _, reason := range reasons {
+		if reason == target {
+			return true
+		}
+	}
+	return false
+}
+
 // buildSurfacePresenceController initializes the shared PORTAL surface-presence
 // controller. The controller is sibling-neutral and is always initialized so
 // that the `/viewer/surface-presence` handler can respond regardless of whether
@@ -226,7 +332,18 @@ func buildSurfacePresenceController(deps *Dependencies) {
 	if deps.idleChatOrch != nil {
 		runtime = deps.idleChatOrch
 	}
-	deps.surfacePresence = newSurfacePresenceController(runtime, surfacePresenceTTL, resetIdleChatTTSQueue)
+	deps.surfacePresence = newSurfacePresenceController(runtime, surfacePresenceTTL)
+	if deps.eventRelay != nil && deps.eventRelay.hub != nil {
+		controlHub := deps.eventRelay.hub
+		controlHub.SetIdleChatControlSnapshotProvider(deps.surfacePresence.idleChatControlSnapshot)
+		deps.surfacePresence.setControlSnapshotPublisher(controlHub.PublishIdleChatControlSnapshot)
+	}
+	if deps.idleChatOrch != nil {
+		deps.idleChatOrch.SetRuntimeEpoch(deps.surfacePresence.runtimeEpochValue())
+		deps.idleChatOrch.SetPlaybackControlSnapshotChangedHandler(deps.surfacePresence.publishControlSnapshotChanged)
+		deps.idleChatOrch.NotifyNightPreparationPolicyChanged()
+	}
+	deps.surfacePresence.publishControlSnapshotChanged()
 }
 
 func idleChatCodexWorkingDir(cfg *config.Config) string {

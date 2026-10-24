@@ -76,3 +76,39 @@ func TestPublicSessionStoreRetireByPublicPlaybackRefKeepsLateCallbacksStale(t *t
 		t.Fatalf("unexpected response-retired snapshot: %+v", got)
 	}
 }
+
+func TestPublicSessionStoreCancelPlaybackGenerationPreservesNewerRoutes(t *testing.T) {
+	store := NewPublicSessionStore()
+	if !store.Register(PublicSessionRouteRegistration{
+		InternalSessionID: "tts-old", PublicSessionID: "idle-1", PublicPlaybackRef: "idle-1:old",
+		RuntimeEpoch: "runtime-a", PlaybackGeneration: 4,
+	}) {
+		t.Fatal("old route registration failed")
+	}
+	if !store.Register(PublicSessionRouteRegistration{
+		InternalSessionID: "tts-new", PublicSessionID: "idle-1", PublicPlaybackRef: "idle-1:new",
+		RuntimeEpoch: "runtime-a", PlaybackGeneration: 5,
+	}) {
+		t.Fatal("new route registration failed")
+	}
+
+	store.CancelPlaybackGeneration("runtime-a", 4)
+	if !store.IsStale("tts-old") {
+		t.Fatal("old route should be stale after generation cancellation")
+	}
+	if store.IsStale("tts-new") {
+		t.Fatal("newer route should remain current")
+	}
+	if got := store.Snapshot(); got.RouteCount != 1 {
+		t.Fatalf("current route count = %d, want 1", got.RouteCount)
+	}
+	if store.Register(PublicSessionRouteRegistration{
+		InternalSessionID: "tts-old-late", PublicSessionID: "idle-1", PublicPlaybackRef: "idle-1:late",
+		RuntimeEpoch: "runtime-a", PlaybackGeneration: 4,
+	}) {
+		t.Fatal("late old route registration should be rejected")
+	}
+	if !store.IsStale("tts-old-late") {
+		t.Fatal("late old route should remain stale")
+	}
+}

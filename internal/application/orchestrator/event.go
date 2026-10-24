@@ -261,6 +261,8 @@ type OrchestratorEvent struct {
 	ActorKind                    string                `json:"actor_kind,omitempty"`  // canonical execution actor kind
 	ActorID                      string                `json:"actor_id,omitempty"`    // actual CORE Agent identity
 	TraceID                      modulecore.TraceID    `json:"trace_id,omitempty"`    // root interaction correlation identifier
+	RuntimeEpoch                 string                `json:"runtime_epoch,omitempty"`
+	PlaybackGeneration           uint64                `json:"playback_generation,omitempty"`
 	CausationEventID             modulecore.EventID    `json:"causation_event_id,omitempty"`
 	DependencyEventIDs           []modulecore.EventID  `json:"dependency_event_ids,omitempty"`
 	SessionID                    modulecore.SessionID  `json:"session_id,omitempty"`      // session identifier

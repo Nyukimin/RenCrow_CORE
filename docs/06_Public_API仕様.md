@@ -49,8 +49,9 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`word_topic_stock`、`forecast_stock`、`episode_stock`、`topic_stock_playback` snapshot |
 | `POST /viewer/idlechat/playback` | Topic Stockを`play`、`next`、`previous`で再生。任意選択時だけ`item_id`を指定する |
 | `GET /viewer/idlechat/collection` | 日次収集の入力cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot。ユーザー向けニュース取得のAPIではない |
-| `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
-| `POST /viewer/surface-presence` | PORTAL Chat／IdleChat画面の期限付き在席を通知し、COREが排他的な有効modeを決定する |
+| `POST /viewer/idlechat/start`, `POST /viewer/idlechat/forecast`, `POST /viewer/idlechat/story`, `POST /viewer/idlechat/story-simple` | 旧開始入口。いずれも副作用を起こさずJSON 409 `legacy_idlechat_start_disabled`を返す |
+| `POST /viewer/idlechat/stop` | 認可されたwrite client用の停止操作。現在のpresence policyを通る |
+| `POST /viewer/surface-presence` | V2 register／claim／heartbeat／releaseでPORTAL／CMD等の許可済みforeground在席を集約し、COREがIdleChatの再生／夜間生成policyを決める |
 | `GET /viewer/knowledge-memory` | Knowledge Memoryのbounded projection。`detail_type=news_knowledge&id=...`でNewsの一件詳細も返す |
 | `POST /viewer/knowledge-memory/news-knowledge` | source-backed News Knowledgeの作成。private itemはowner scopeに限定する |
 | `POST /viewer/knowledge-memory/review` | Knowledge Memoryの明示レビュー。private Newsの状態変更は同一ownerへ限定する |
@@ -1414,10 +1415,14 @@ Debug Viewerでは、お題在庫を`Topic Stock`、episode化した物語在庫
 として直接NGとは別の表示にし、turnを持たない全体errorも隠しません。一覧取得失敗または詳細取得失敗
 では直前に取得済みの内容を消去せず、取得工程とHTTP状態を画面へ表示します。
 
-`POST /viewer/idlechat/episodes/prepare`は`count`と任意の`categories`を受け、低優先度のepisode
-準備jobを登録して`job_id`を返します。`count`は1から10までとし、空の場合はConfigの不足数を使います。
-HTTP request内で台本生成完了を待たず、既存の同一準備jobと重複する要求は冪等に同じ実行へ集約します。
-前景Chatまたは明示Workerが始まった場合、jobは失敗ではなく`deferred`となり、次回Idleへ延期します。
+`POST /viewer/idlechat/episodes/prepare`は低優先度のepisode準備要求をCOREの夜間schedulerへ登録します。
+`count`は1から10までとし、省略時はConfigの目標ready数から現在のready数を引いた不足数を使います。
+明示した`count:0`や範囲外は400、`categories`の非空指定は未対応として型付き400を返し、指定を無視して受理しません。
+不足数が0なら追加制作を予約せず`state:"ready"`で返します。制作が必要な場合はschedulerがRAM上の要求を受理した後だけ202とし、`state:"queued"`または`state:"deferred"`、固定した`target_ready_count`、現在の`episode_stock`を返します。scheduler未設定または停止済みなら型付き503を返します。実Task/Runが存在しない受付時点で架空の`job_id`を発行しません。
+HTTP request内で台本生成完了を待たず、未完了の要求は最大の固定目標へ集約します。部分完成後の中断・再開でも同じ要求を再加算しません。
+生成の開始と各LLM呼出しは夜間window内かつforeground lease／turnがない場合に限ります。時間窓外の要求は
+`deferred`として次の許可時間帯へ予約され、前景Chat／Games／対象CORE Viewer／CMDまたは明示Workerが始まった場合も
+jobを失敗にせずcancelしてcheckpointから再開します。
 生成または検証がNGのepisodeは`needs_repair`として保持し、ready数へ含めません。prepare jobはその
 修復や破棄判断を待たず、別`episode_id`で不足数を追加生成します。元episodeと補充episodeは
 `replacement_for_episode_id`またはjob相関で追跡し、本文やidentityを共有しません。
@@ -1440,7 +1445,7 @@ NG理由をCodexExeへ渡して最終turnまで再生成します。prefixの`me
 新しい`message_id`を発行します。NG判定時点から当該episodeはready在庫へ含めず、修復とは別に
 補充episodeを生成します。`max_suffix_regenerations`到達時はepisodeを`failed`にしますが、
 自動削除は行いません。
-旧ready episodeに`story_title`がない場合は、本文とmessage IDを保持したままタイトルだけをCodexExeで補完し、revisionを増やして追記します。補完失敗は旧ready状態を壊さず`title_generation`として観測し、GETによる一覧・詳細表示自体では補完を開始しません。
+旧ready episodeに`story_title`がない場合は、本文とmessage IDを保持したままタイトルだけをCodexExeで補完し、revisionを増やして追記します。補完は夜間windowとforeground gateの対象であり、失敗は旧ready状態を壊さず`title_generation`として観測して次の許可時間帯へ延期します。GETによる一覧・詳細表示自体では補完を開始しません。
 `POST /viewer/idlechat/episodes/expire`は`episode_id`を受け、再生中でないepisodeを`expired`へ遷移させます。
 再生中のepisodeはHTTP 409と`IDLECHAT_EPISODE_PLAYING`を返し、暗黙に中断しません。これらは
 Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALからproxyしません。
@@ -1579,7 +1584,7 @@ PORTAL、CMD、ASSISTANTは、COREとのInteractionで次の意味論を共有�
 | 能力 | contract |
 | --- | --- |
 | Chat | requestごとに利用者scopeと明示recipientを持ち、別recipientへ黙ってfallbackしない |
-| IdleChat | status／event購読、明示的な開始／停止、PORTALのsurface在席による排他制御を分ける |
+| IdleChat | status／event購読、明示play、PORTAL／CMD等のforeground在席、夜間生成gateを分けてCORE policyへ従う |
 | recipient | UI選択通知は観測event、実送信先はmessage requestの`to`を正とする |
 | event | reconnectと重複を前提に、event IDまたは相関IDで二重処理を防ぐ |
 | session | request、response、Task、audio、外部deliveryへ追跡可能な相関を保つ |
@@ -1595,13 +1600,13 @@ capabilityで制限します。
 
 | `X-RenCrow-Client` | `X-RenCrow-Interaction-Profile` | 許可する主な能力 |
 | --- | --- | --- |
-| `RenCrow_PORTAL` | `portal-chat` | PORTAL Chat allowlistとChat surface在席通知 |
-| `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取りとIdleChat surface在席通知 |
-| `RenCrow_PORTAL` | `portal-games` | Agent-owned gameの選択、起動、観戦、session lifecycle |
-| `RenCrow_CMD` | `cmd-chat` | Chat送信、event購読、CORE経由のWAV文字起こし |
-| `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
-| `RenCrow_CMD` | `cmd-diagnostics` | 診断・状態取得の読み取り専用 |
-| `RenCrow_CMD` | `cmd-control` | process制御、repair実行、Knowledge News owner write、ProfilePromotion retry |
+| `RenCrow_PORTAL` | `portal-chat` | PORTAL Chat allowlistと`chat` foreground presence |
+| `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取りと`idlechat` presence、明示play |
+| `RenCrow_PORTAL` | `portal-games` | Agent-owned gameの選択、起動、観戦、session lifecycle、`games` foreground presence |
+| `RenCrow_CMD` | `cmd-chat` | Chat送信、event購読、CORE経由のWAV文字起こし、`cmd` foreground presence |
+| `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／stopと旧startの明示拒否、`cmd` foreground presence |
+| `RenCrow_CMD` | `cmd-diagnostics` | 診断・状態取得の読み取り専用、`cmd` foreground presence |
+| `RenCrow_CMD` | `cmd-control` | process制御、repair実行、Knowledge News owner write、ProfilePromotion retry、`cmd` foreground presence |
 | `RenCrow_ASSISTANT` | `assistant-core` | COREへのChat送信とevent購読 |
 
 `cmd-diagnostics`と`cmd-control`は、CMDが実装本体を持たずCORE Public API経由で
@@ -1693,59 +1698,108 @@ server binaryはChat client commandを持ちません。`rencrowctl chat --audio
 送ります。`--audio-direct`はWAVを`/viewer/send`の添付としてCOREの
 `input_audio`経路へ渡します。
 
-## PORTAL surface在席API
+## CORE foreground presence API V2
 
-`POST /viewer/surface-presence`はPORTALの画面表示をIdleChat runtimeへ反映する専用APIです。
-browserからCOREへ直接送らず、PORTAL serverがmodeに対応するInteraction profileを付けて
-中継します。
+`POST /viewer/surface-presence`はCOREが所有するforeground在席とIdleChat再生policyのAPIです。
+PORTAL serverは実際の`Chat`／`IdleChat`／`Games` modeだけを対応するInteraction profileで中継し、
+Debug／Ops／Admin画面をproxy公開しません。RenCrow_CMDはCORE接続を伴う各操作で同じlifecycleを使います。
+CORE所有Viewer surfaceと認証済みの独立したPORTAL非Idle画面は`other`を使います。PORTALの`portal-other` profileはpresenceだけを中継し、Debug／Ops／Admin APIは公開しません。
+PORTAL browserはCOREへ直接送らず、PORTAL serverのproxy allowlistを通します。
+CMDはpresenceのV2確認後にだけprompt表示またはCORE request送信を行い、one-shot、対話、状態確認、操作commandを
+区別しません。help/versionなどCORE接続なしで完了する表示は対象外です。
 
-request:
+最初の`register`はsurfaceをclaimせず、再生を開始せず、foreground request readyを成立させません。
+応答の`runtime_epoch`はCORE起動世代、`registration_receipt`は既存presence owner内のRAM登録に
+結び付く一時的な通信世代値です。receipt自体は認証・権限ではなく、各requestの認証主体、client種別、
+Interaction profileとallowlistを毎回検査します。
 
 ```json
 {
-  "viewer_client_id": "tab-scoped-opaque-id",
-  "surface": "chat",
-  "action": "claim"
+  "protocol_version": 2,
+  "viewer_client_id": "client-instance-value",
+  "action": "register"
 }
 ```
-
-| field | contract |
-| --- | --- |
-| `viewer_client_id` | 必須。browser tabごとに生成し、同じtabの再送で維持する不透明ID |
-| `surface` | `chat`または`idlechat`。`portal-chat`は`chat`、`portal-idlechat`は`idlechat`だけを送信可能 |
-| `action` | `claim`、`heartbeat`、`release`のいずれか |
-
-`claim`と`heartbeat`は受理時点から30秒のleaseを作成または更新します。可視状態のclientは
-10秒ごとに`heartbeat`を送り、`visibilitychange`でhiddenになった時と`pagehide`時に
-`release`を送ります。COREはlease失効をreleaseと同じに扱います。未知fieldは互換性のため
-無視できますが、必須field不足、未知の値、profileとsurfaceの不一致は400または403で拒否します。
-
-response:
 
 ```json
 {
   "ok": true,
-  "surface": "chat",
-  "action": "claim",
-  "effective_mode": "chat",
-  "idlechat_active": false,
-  "chat_presence_count": 1,
-  "idlechat_presence_count": 0,
-  "lease_expires_at": "2026-08-04T00:00:30Z"
+  "protocol_version": 2,
+  "runtime_epoch": "core-runtime-generation",
+  "registration_receipt": "opaque-random-value",
+  "registration_expires_at": "2026-10-24T13:00:30+09:00",
+  "last_update_seq": 0
 }
 ```
 
-`release`では`lease_expires_at`を省略できます。countは有効leaseの集約値です。状態遷移は
-CORE内で原子的に行い、同一requestの再送で二重開始／停止しません。優先順位は次を正とします。
+登録応答を受けた後、`claim`／`heartbeat`／`release`には次の値を渡します。`register`にはsurfaceや更新番号を渡しません。
+登録の照合キーは認証主体、client種別、`viewer_client_id`です。同じPORTAL tabのChat／IdleChat遷移ではprofileを
+登録identityへ含めず、profileは個々のclaimとrequestで許可surfaceを検査します。register成立からclaimまでの
+登録有効期間も30秒です。
 
-1. 有効な`chat`在席が1件以上ならIdleChatを停止し、`effective_mode=chat`とする。
-2. `chat`在席が0件で`idlechat`在席が1件以上ならIdleChatを開始し、`effective_mode=idlechat`とする。
-3. 両方0件ならPORTALを理由にIdleChatを開始せず、`effective_mode=none`とする。
+| field | contract |
+| --- | --- |
+| `protocol_version` | `2`。requestとresponseの両方を確認する。旧COREが未知fieldを無視した応答をV2成功とみなさない |
+| `viewer_client_id` | tab／process起動instanceごとの不透明ID。CMDはPIDだけの値を再起動・端末間で再利用しない |
+| `runtime_epoch` | registerで確認したCORE起動世代。再起動前の応答・claimを拒否する |
+| `registration_receipt` | registerで取得したRAM登録参照。認証主体や許可surfaceの代用にはしない |
+| `surface` | `idlechat`、`chat`、`games`、認証済みの独立した非Idle画面用`other`、または認可されたCMDの`cmd` |
+| `action` | `register`、`claim`、`heartbeat`、`release` |
+| `update_seq` | 同じruntime epoch／receipt内で単調増加。同じ番号の再送は同じ内容に限る |
+| `claim_seq` | 現在のsurfaceを成立させたclaimの`update_seq`。heartbeatの更新番号と区別する |
 
-Chat在席による停止はIdleChatの自動再開より優先し、未送信のIdleChat TTS queueも取り消します。
-明示的な`POST /viewer/idlechat/start|stop`は`cmd-idlechat`等の認可client用として維持し、
-PORTALは使用しません。`portal-idlechat`は利用者操作としては引き続き読み取り専用であり、
-このsurface在席APIだけをstate-changingな例外として許可します。
+1 clientにつきactive surfaceは1つです。claimによるsurface置換は原子的に行い、releaseと次のclaimの間に無在席期間を作りません。有効leaseは30秒、heartbeatは10秒ごとです。期限切れまたはreleaseでreceiptを退役させ、古い／未知receiptを新規登録として扱わず409 `registration_required`で拒否します。再開にはregisterから行い、CORE再起動後は新しい`runtime_epoch`を使います。同じ番号・同じ内容の再送だけを冪等にし、同番号で違う内容や過去seqは状態を変えず拒否します。`pagehide`などでreleaseがclaimより先に届いた場合はreceiptを退役させ、遅れたclaimを拒否します。
+
+claim／heartbeat／release responseは、少なくともaccepted update／claim seq、`runtime_epoch`、receipt、
+`state_revision`、`playback_state`、`playback_allowed`、`playback_generation`、foreground presence／turn件数、
+`playback_stopped`、`resume_blocked`、`foreground_ready`、`cleanup_pending`、`generation_state`、`generation_quiesced`、
+`backend_resource_state`、lease期限を返します。`foreground_ready`は、旧再生世代の失効と再生禁止がCOREで
+適用済みで、そのclientが新しいforeground requestを送信できることを表します。Task/Runの終了保存、他端末の
+音声buffer消尽、backend資源の解放完了は表しません。CORE managed workの停止確認と物理backend解放は別にし、
+cancel要求やcontext終了だけで`backend_resource_state=released`にしません。heartbeatによるlease延長だけでは
+`state_revision`を変えませんが、foreground禁止の成立／解除では新しいrevisionを発行します。
+`playback_state`は`disabled`、`blocked`、`stopped`、`playing`を区別します。
+
+`/viewer/send`は現在のclaimを次の参照情報として伴います。
+
+```json
+{
+  "viewer_client_id": "client-instance-value",
+  "presence": {
+    "protocol_version": 2,
+    "runtime_epoch": "core-runtime-generation",
+    "registration_receipt": "opaque-random-value",
+    "claim_seq": 1
+  },
+  "to": "mio",
+  "message": "..."
+}
+```
+
+PORTAL、CMD、CORE Viewerの受付ではtrusted client identity、`viewer_client_id`、runtime epoch、receipt、active leaseと
+surfaceをCOREの同じ短いRAM上の順序で検査し、既存turn lifecycleへforeground使用をpinしてから受付します。
+有効leaseなし、または期限切れ・版違いなら409等のtyped errorで拒否します。検査後に別途pinする順序を設けず、
+lease失効と送信受付の競合はpresence ownerで直列化します。pinはturn terminal時に冪等解放し、HTTP応答完了、
+SSE切断、presence releaseはturn終端とみなしません。
+
+既存の認証済み`RenCrow_ASSISTANT`／`assistant-core`送信は、clientがsurface leaseを登録せず、
+COREが送信受付時に短命のforeground pinを同じpresence ownerへ直接取得します。停止policyの適用を確認してから
+処理へ進め、実処理とerror処理の終端でpinを解放します。この例外を他のclientやprofileへ広げません。
+
+IdleChatの再生要求は`runtime_epoch`、receipt、IdleChat claim seq、`expected_state_revision`を渡します。
+COREは可視IdleChat lease、foreground lease／turn不在、cleanup状態、ready成果物と版一致を検査し、
+I/O後に再生状態を有効化する直前にも再検査します。状態変更後に届いた古い要求は409 `playback_state_changed`で拒否し、clientは
+自動再試行せず最新policyを表示して、新しい明示play操作を待ちます。最後のforeground lease解除は再生を
+自動開始しません。`play`／`next`／stock不足から会話生成LLMを呼ぶこともありません。
+
+V2未確認・register／claim失敗・接続異常・CORE再起動検出時はclientの送信readyを解除します。移行期間中の
+V1非Idle更新は安全側の再生禁止にだけ使え、V1 Idle claim／heartbeatや`/viewer/idlechat/start`から新しい
+再生権を取得できません。V2のresponse.protocol_version、receipt、有効leaseと再生要求版の照合が必須です。
+
+旧`POST /viewer/idlechat/start`、`/forecast`、`/story`、`/story-simple`は、認可済みの直接要求にも
+副作用なしのJSON 409 `legacy_idlechat_start_disabled`を返します。再生開始はV2の可視Idle leaseと
+現在のpolicy版を添えた`/viewer/idlechat/playback`だけで行います。`portal-idlechat`は読み取りと
+明示playだけを許可し、manual start／stopや制作操作を公開しません。
 
 ## Viewer event streamの購読開始位置
 
@@ -1772,6 +1826,20 @@ PORTALは使用しません。`portal-idlechat`は利用者操作としては引
 - 200とheaderは接続の登録直後に確定します。`from`を解釈しない旧版のCOREは`?from=now`を無視し、in-memory履歴のsnapshotを先に返します。
 - CORE再起動時はCanonical Event StoreからMonitorとEventHubの保存済みprojectionをHTTP受付前に復元します。復元に失敗したprocessはlistenせず、最初の購読者へ保存済みEventをliveとして一斉再送しません。live購読中のchannelが満杯になった場合は切断されるため、接続中の任意の大量同時発行まで無欠落を保証するものではありません。
 
+### IdleChat再生制御通知
+
+`GET /viewer/events`は通常の会話eventとは別に、`event: idlechat.control`でCOREの最新制御状態を通知します。
+接続時のsnapshotと、再生policy／停止／cleanup完了の変化を配信します。payloadは
+`runtime_epoch`、`state_revision`、`playback_generation`、`playback_state`、
+`playback_allowed`、`playback_active`、`cleanup_pending`、`generation_state`、
+`generation_quiesced`、`backend_resource_state`です。この通知にEventID、EventSeq、SSE `id:`、
+保存履歴、receipt、claim情報は付けません。会話eventのcursorと監査保存を変更しません。
+
+browserはpresence HTTP応答と制御通知を同じepoch・revisionで比較し、旧版ではreadyを戻しません。
+epoch変更、SSE切断・再接続では旧世代の表示・音声を破棄し、V2 register→claimからやり直します。
+制御通知は各clientの送信権を授与しません。`foreground_ready`は現在のclientの有効claimと
+policyを照合したpresence応答でのみ成立します。
+
 ## Client の注意
 
 - method、status code、content type を確認する。
@@ -1784,10 +1852,11 @@ PORTALは使用しません。`portal-idlechat`は利用者操作としては引
 
 `RenCrow_PORTAL`はCOREの全APIを透過公開しません。
 
-- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りと、`POST /viewer/surface-presence`の`surface=idlechat`、`POST /viewer/idlechat/playback`だけを許可する。手動の開始／停止は許可しない。
-- `Chat`: chat、recipient通知、active audio/input ownership、TTS再生、STT入力と、`POST /viewer/surface-presence`の`surface=chat`だけをallowlistとする。IdleChatの手動開始／停止は許可しない。
-- `Games`: 下記のGames allowlistだけを許可し、Agent decision／result callbackを公開しない。
+- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りと、V2 `POST /viewer/surface-presence`の`surface=idlechat`、`POST /viewer/idlechat/playback`だけを許可する。手動の開始／停止、制作操作、日中生成は許可しない。
+- `Chat`: chat、recipient通知、active audio/input ownership、TTS再生、STT入力と、V2 `POST /viewer/surface-presence`の`surface=chat`だけをallowlistとする。IdleChatの手動開始／停止は許可しない。
+- `Games`: 下記のGames allowlistとV2 `surface=games` foreground presenceだけを許可し、Agent decision／result callbackを公開しない。
 - COREへのproxy requestはmodeに応じて`portal-chat`、`portal-idlechat`、`portal-games` profileを付ける。
+- `other`はCORE所有Viewer surfaceとPORTALの独立した非Idle画面のための値で、PORTALの新しい公開modeやDebug／Ops／Admin proxyを意味しない。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。
 

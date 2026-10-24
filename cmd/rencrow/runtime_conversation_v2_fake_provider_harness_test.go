@@ -376,12 +376,13 @@ func TestResponseFirstV2FixedFakeProviderFrameworkHarness(t *testing.T) {
 	repo := sessionpersistence.NewJSONSessionRepository(t.TempDir())
 	cfg := &config.Config{}
 	cfg.ConversationRuntime.Version = "v2"
-	factories := buildViewerBridgeHandlers(cfg, &Dependencies{
+	deps := &Dependencies{
 		responseFirst:       runtime,
 		eventHub:            hub,
 		eventRelay:          relay,
 		canonicalEventStore: store,
-	}, "", ttsEntryRuntime{}, repo)
+	}
+	factories := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo)
 	handler := factories.ViewerSendFromOrch(&viewerBridgeCountProcessor{})
 
 	const totalTurns = responseFirstFixedHarnessWarmupCount + responseFirstFixedHarnessMeasurementCount
@@ -400,6 +401,7 @@ func TestResponseFirstV2FixedFakeProviderFrameworkHarness(t *testing.T) {
 		}
 		request := httptest.NewRequest(http.MethodPost, "/viewer/send", bytes.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
+		attachViewerBridgeTestPresence(t, deps, request)
 		response := httptest.NewRecorder()
 
 		handlerStarted := time.Now()

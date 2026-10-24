@@ -64,16 +64,23 @@ func taskAdmissionBusy(cause taskAdmissionBusyCause) error {
 type taskAdmissionWrite struct {
 	payloads  map[string][]byte
 	admission *persistencequeue.Admission
+	ticket    persistencequeue.Ticket
 	applyErr  error
 }
 
 type taskAdmissionWriteContextKey struct{}
+type taskTransactionTicketContextKey struct{}
+
+type taskTransactionTicket struct {
+	ticket persistencequeue.Ticket
+}
 
 // taskPersistenceQueueState tracks volatile commands accepted by the shared
 // persistence queue. The JSONL files remain the only durable source of truth.
 type taskPersistenceQueueState struct {
 	mu                sync.Mutex
 	changed           chan struct{}
+	queue             *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 	synchronousWriter bool
 	admittedTxs       int
 	pending           []*taskAdmissionWrite
@@ -81,6 +88,82 @@ type taskPersistenceQueueState struct {
 
 func newTaskPersistenceQueueState() *taskPersistenceQueueState {
 	return &taskPersistenceQueueState{changed: make(chan struct{})}
+}
+
+func (s *taskPersistenceQueueState) bindQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) error {
+	if s == nil || queue == nil {
+		return persistencequeue.ErrNilPersistenceQueue
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.queue != nil && s.queue != queue {
+		return errors.New("Task store is already bound to a different persistence queue")
+	}
+	s.queue = queue
+	return nil
+}
+
+func (s *taskPersistenceQueueState) matchesQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) bool {
+	if s == nil || queue == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.queue == queue
+}
+
+func (s *taskPersistenceQueueState) matchesAdmission(admission *persistencequeue.Admission) bool {
+	if s == nil || admission == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.queue != nil && admission.MatchesQueue(s.queue)
+}
+
+// SetPersistenceQueue binds the writable indexed Task store to the runtime's
+// shared queue. RAM-only Task admission is unavailable for readers and stores
+// without the ID index because they cannot form a bounded committed snapshot.
+func (s *JSONLStore) SetPersistenceQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) error {
+	if s == nil || s.readOnly || s.idx == nil || s.taskPersistence == nil {
+		return ErrTaskAdmissionRequiresIndex
+	}
+	return s.taskPersistence.bindQueue(queue)
+}
+
+// MatchesPersistenceQueue reports whether this Task store is bound to the
+// runtime's shared persistence queue.
+func (s *JSONLStore) MatchesPersistenceQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) bool {
+	return s != nil && !s.readOnly && s.idx != nil && s.taskPersistence.matchesQueue(queue)
+}
+
+// TaskTransactionWithTicket admits one immutable Task transaction to the
+// shared queue and returns its FIFO ticket without waiting for the writer.
+// The caller must wait for the ticket outside the FIFO worker before claiming
+// durable completion.
+func (s *JSONLStore) TaskTransactionWithTicket(
+	ctx context.Context,
+	taskID modulecore.TaskID,
+	fn func(domaintask.Store) error,
+) (persistencequeue.Ticket, error) {
+	if s == nil {
+		return 0, errors.New("Task store is nil")
+	}
+	if ctx == nil {
+		return 0, errors.New("Task transaction context is nil")
+	}
+	admission, ok := persistencequeue.AdmissionFromContext(ctx)
+	if !ok || !s.taskPersistence.matchesAdmission(admission) {
+		return 0, errors.New("Task transaction requires an admission from its bound persistence queue")
+	}
+	ticket := &taskTransactionTicket{}
+	if err := s.TaskTransaction(context.WithValue(ctx, taskTransactionTicketContextKey{}, ticket), taskID, fn); err != nil {
+		return 0, err
+	}
+	if ticket.ticket == 0 {
+		return 0, errors.New("Task transaction produced no persistence ticket")
+	}
+	return ticket.ticket, nil
 }
 
 func (s *taskPersistenceQueueState) signalLocked() {
@@ -353,8 +436,15 @@ func (s *JSONLStore) enqueueTaskTransaction(
 		},
 	}
 	return s.taskPersistence.acceptPendingLocked(write, func() error {
-		_, err := admission.Enqueue(command)
-		return err
+		ticket, err := admission.Enqueue(command)
+		if err != nil {
+			return err
+		}
+		write.ticket = ticket
+		if result, ok := ctx.Value(taskTransactionTicketContextKey{}).(*taskTransactionTicket); ok && result != nil {
+			result.ticket = ticket
+		}
+		return nil
 	})
 }
 

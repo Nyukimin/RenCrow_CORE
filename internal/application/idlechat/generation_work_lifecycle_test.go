@@ -53,6 +53,7 @@ func newGenerationWorkWordFixture(t *testing.T, generator IdleChatCodexGenerator
 	t.Helper()
 	owner := newTestIdleChatRunIssuer(t)
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 60, 1, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.SetRunIssuer(owner)
 	o.SetTopicCodexGenerator(generator)
 	o.SetGenerationCheckpointStore(NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "generation_checkpoints.json")))
@@ -75,8 +76,13 @@ func TestStopJoinsAdmittedWordTopicGenerationBeforeTaskOwnerClose(t *testing.T) 
 	generator := newDelayedGenerationWorkGenerator()
 	o, owner := newGenerationWorkWordFixture(t, generator)
 	t.Cleanup(generator.releaseWork)
+	loc, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := nightGateOrchestratorContext(t, o, time.Date(2026, 10, 24, 3, 0, 0, 0, loc), func() bool { return false })
 
-	if !o.RefillWordTopicStockIfIdle("generation-work-test") {
+	if !o.RefillWordTopicStockIfIdleWithContext(ctx, "generation-work-test") {
 		t.Fatal("word topic refill was not admitted")
 	}
 	waitForGenerationWorkSignal(t, generator.started, "word generation start")
@@ -128,6 +134,7 @@ func TestStopJoinsAdmittedDialogueGenerationBeforeTaskOwnerClose(t *testing.T) {
 	)
 	dialogueService.SetRunIssuer(owner)
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 60, 1, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.SetRunIssuer(owner)
 	o.SetDialogueInterestingnessConfig(config)
 	o.SetDialogueEpisodeService(dialogueService)
@@ -201,6 +208,7 @@ func TestStopManualModeJoinsAdmittedDialogueGenerationAndClosesRun(t *testing.T)
 	)
 	dialogueService.SetRunIssuer(owner)
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 60, 1, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.SetRunIssuer(owner)
 	o.SetDialogueInterestingnessConfig(config)
 	o.SetDialogueEpisodeService(dialogueService)

@@ -17,6 +17,8 @@ func TestIdleChatViewerEventKeepsOwnerSessionTrace(t *testing.T) {
 	threadID := modulecore.NewThreadID()
 	threadSeq := modulecore.ThreadSeq(7)
 	threadKind := modulecore.ThreadKindIdleChat
+	const runtimeEpoch = "runtime-test-epoch"
+	const playbackGeneration = 12
 	event := idleChatViewerEvent(idlechat.TimelineEvent{
 		Type:       "idlechat.message",
 		From:       "mio",
@@ -26,12 +28,17 @@ func TestIdleChatViewerEventKeepsOwnerSessionTrace(t *testing.T) {
 		MessageID:  "msg-1",
 		TurnIndex:  1,
 		TraceID:    traceID,
+		RuntimeEpoch: runtimeEpoch,
+		PlaybackGeneration: playbackGeneration,
 		ThreadID:   threadID,
 		ThreadSeq:  threadSeq,
 		ThreadKind: threadKind,
 	})
 	if event.TraceID != traceID {
 		t.Fatalf("viewer trace_id = %q, want %q", event.TraceID, traceID)
+	}
+	if event.RuntimeEpoch != runtimeEpoch || event.PlaybackGeneration != playbackGeneration {
+		t.Fatalf("viewer generation fence = (%q, %d), want (%q, %d)", event.RuntimeEpoch, event.PlaybackGeneration, runtimeEpoch, playbackGeneration)
 	}
 	if event.SessionID != "idle-trace-topic-00" || event.MessageID != "msg-1" {
 		t.Fatalf("viewer owner identity = (session=%q, message=%q), want (session=%q, message=%q)",
@@ -61,6 +68,9 @@ func TestIdleChatViewerEventKeepsOwnerSessionTrace(t *testing.T) {
 			roundtrip.TraceID, roundtrip.SessionID, roundtrip.MessageID,
 			roundtrip.ThreadID, roundtrip.ThreadSeq, roundtrip.ThreadKind,
 			string(traceID), event.SessionID, event.MessageID, threadID, threadSeq, threadKind)
+	}
+	if roundtrip.RuntimeEpoch != runtimeEpoch || roundtrip.PlaybackGeneration != playbackGeneration {
+		t.Fatalf("roundtrip generation fence = (%q, %d), want (%q, %d)", roundtrip.RuntimeEpoch, roundtrip.PlaybackGeneration, runtimeEpoch, playbackGeneration)
 	}
 }
 

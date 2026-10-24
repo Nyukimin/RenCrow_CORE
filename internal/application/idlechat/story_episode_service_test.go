@@ -89,7 +89,7 @@ func TestStoryEpisodeServiceKeepsInvalidAndGeneratesReplacement(t *testing.T) {
 	})
 	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
 
-	if err := service.PrepareToTarget(context.Background()); err != nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	snapshot := service.Snapshot()
@@ -138,7 +138,7 @@ func TestStoryEpisodeServiceBackfillsReadyTitleWithoutChangingTurns(t *testing.T
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetRunIssuer(owner)
 
-	if err := service.BackfillReadyTitles(context.Background()); err != nil {
+	if err := service.BackfillReadyTitles(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("backfill title: %v", err)
 	}
 	got, ok := service.Episode(artifact.EpisodeID)
@@ -187,7 +187,7 @@ func TestStoryEpisodeServiceRepairsOnlyTitleWithoutRegeneratingTurns(t *testing.
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetRunIssuer(owner)
 
-	if err := service.RepairNeedsRepair(context.Background()); err != nil {
+	if err := service.RepairNeedsRepair(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("repair title: %v", err)
 	}
 	got, ok := service.Episode(artifact.EpisodeID)
@@ -219,7 +219,7 @@ func TestStoryEpisodeServiceRejectsUncertainReview(t *testing.T) {
 	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
 	service.maxAttempts = 1
 
-	err := service.PrepareToTarget(context.Background())
+	err := service.PrepareToTarget(nightGateAllowedContext(t))
 	if err == nil {
 		t.Fatal("prepare must report ready-stock shortage")
 	}
@@ -252,7 +252,7 @@ func TestStoryEpisodeServiceRepairsOnlySuffixAndKeepsPrefixIDs(t *testing.T) {
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetRunIssuer(owner)
 
-	if err := service.RepairNeedsRepair(context.Background()); err != nil {
+	if err := service.RepairNeedsRepair(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("repair: %v", err)
 	}
 	repaired, ok := service.Episode(artifact.EpisodeID)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -241,6 +242,9 @@ func buildViewerBridgeHandlers(
 		v2Options = &viewer.V2SendOptions{
 			Admission:                 sessionProtocolAdmission,
 			LegacyPreSessionAdmission: legacyPreSessionAdmission,
+			ForegroundPin: func(r *http.Request, request viewer.ForegroundPinRequest) (viewer.ForegroundPinLease, error) {
+				return pinViewerForegroundPresence(deps, r, request)
+			},
 		}
 		if cfg != nil && strings.EqualFold(strings.TrimSpace(cfg.ConversationRuntime.Version), "v2") && deps.responseFirst != nil {
 			v2Options.Enabled = true
@@ -353,6 +357,72 @@ func buildViewerBridgeHandlers(
 		SpeechProgress:       speechCancellationRegistry.HandleProgress(activeViewerControl.IsActiveAudio),
 		EntryFromOrch:        entryFromOrch,
 		ChromeBridgeFromOrch: chromeBridgeFromOrch,
+	}
+}
+
+func pinViewerForegroundPresence(deps *Dependencies, r *http.Request, request viewer.ForegroundPinRequest) (viewer.ForegroundPinLease, error) {
+	if deps == nil || deps.surfacePresence == nil {
+		return nil, &viewer.ForegroundPinError{StatusCode: http.StatusServiceUnavailable, ErrorCode: "foreground_not_ready", Message: "foreground presence is unavailable"}
+	}
+	client, profile, ok := surfacePresenceRequestProfile(r)
+	if !ok {
+		return nil, &viewer.ForegroundPinError{StatusCode: http.StatusForbidden, ErrorCode: "profile_surface_mismatch", Message: "trusted interaction profile is required"}
+	}
+	principal, ok := surfacePresenceRequestPrincipal(r)
+	if !ok {
+		return nil, &viewer.ForegroundPinError{StatusCode: http.StatusForbidden, ErrorCode: "authenticated_actor_invalid", Message: "authenticated actor is invalid"}
+	}
+	if client == "RenCrow_ASSISTANT" && profile == "assistant-core" {
+		pin, err := deps.surfacePresence.PinForegroundRequest()
+		if err != nil {
+			return nil, surfacePresenceForegroundPinError(err)
+		}
+		return pin, nil
+	}
+	surface, ok := viewerForegroundPresenceSurface(profile)
+	if !ok || !surfacePresenceProfileAllows(client, profile, surface) {
+		return nil, &viewer.ForegroundPinError{StatusCode: http.StatusForbidden, ErrorCode: "profile_surface_mismatch", Message: "interaction profile does not allow foreground send"}
+	}
+	if !validSurfacePresenceViewerClientIDV2(request.ViewerClientID) {
+		return nil, &viewer.ForegroundPinError{StatusCode: http.StatusBadRequest, ErrorCode: "invalid_viewer_client_id", Message: "viewer_client_id must be 1 to 128 UTF-8 bytes"}
+	}
+	if request.Presence == nil {
+		return nil, &viewer.ForegroundPinError{StatusCode: http.StatusConflict, ErrorCode: "presence_required", Message: "register and claim foreground presence before sending"}
+	}
+	identity := surfacePresenceIdentity{principal: principal, clientType: client, viewerClientID: request.ViewerClientID}
+	pin, err := deps.surfacePresence.PinForeground(identity,
+		request.Presence.RuntimeEpoch,
+		request.Presence.RegistrationReceipt,
+		request.Presence.ClaimSeq,
+	)
+	if err == nil {
+		return pin, nil
+	}
+	return nil, surfacePresenceForegroundPinError(err)
+}
+
+func surfacePresenceForegroundPinError(err error) *viewer.ForegroundPinError {
+	var apiErr *surfacePresenceAPIError
+	if errors.As(err, &apiErr) && apiErr != nil {
+		return &viewer.ForegroundPinError{StatusCode: apiErr.status, ErrorCode: apiErr.code, Message: apiErr.message}
+	}
+	return &viewer.ForegroundPinError{StatusCode: http.StatusServiceUnavailable, ErrorCode: "foreground_not_ready", Message: "foreground presence could not be pinned"}
+}
+
+func viewerForegroundPresenceSurface(profile string) (string, bool) {
+	switch profile {
+	case "portal-chat":
+		return "chat", true
+	case "portal-idlechat":
+		return "idlechat", true
+	case "portal-games":
+		return "games", true
+	case "core-viewer":
+		return "other", true
+	case "cmd-chat", "cmd-idlechat":
+		return "cmd", true
+	default:
+		return "", false
 	}
 }
 

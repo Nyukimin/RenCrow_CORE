@@ -14,39 +14,42 @@ import (
 )
 
 type idleChatTTSPrefetchManager struct {
-	bridge  orchestrator.TTSBridge
-	mu      sync.Mutex
-	streams map[string]*idleChatTTSPrefetchStream
+	bridge                       orchestrator.TTSBridge
+	mu                           sync.Mutex
+	streams                      map[string]*idleChatTTSPrefetchStream
+	cancelledGenerationByRuntime map[string]uint64
 }
 
 type idleChatTTSPrefetchStream struct {
-	manager           *idleChatTTSPrefetchManager
-	bridge            orchestrator.TTSBridge
-	key               string
-	sessionID         string
-	internalSessionID string
-	publicPlaybackRef string
-	publicSessionID   string
-	messageID         string
-	speaker           string
-	target            string
-	turnIndex         int
-	traceID           string
-	voiceProfile      string
-	queue             chan string
-	ctx               context.Context
-	cancel            context.CancelFunc
-	lifecycle         *idleChatTTSLifecycleController
-	mu                sync.Mutex
-	started           bool
-	closed            bool
-	failed            bool
-	expectPlaybackAck bool
-	cleanupOnce       sync.Once
-	endOnce           sync.Once
-	endErr            error
-	finalEvent        idlechat.TimelineEvent
-	chunker           moduletts.StreamChunker
+	manager            *idleChatTTSPrefetchManager
+	bridge             orchestrator.TTSBridge
+	key                string
+	sessionID          string
+	internalSessionID  string
+	publicPlaybackRef  string
+	publicSessionID    string
+	messageID          string
+	speaker            string
+	target             string
+	turnIndex          int
+	traceID            string
+	runtimeEpoch       string
+	playbackGeneration uint64
+	voiceProfile       string
+	queue              chan string
+	ctx                context.Context
+	cancel             context.CancelFunc
+	lifecycle          *idleChatTTSLifecycleController
+	mu                 sync.Mutex
+	started            bool
+	closed             bool
+	failed             bool
+	expectPlaybackAck  bool
+	cleanupOnce        sync.Once
+	endOnce            sync.Once
+	endErr             error
+	finalEvent         idlechat.TimelineEvent
+	chunker            moduletts.StreamChunker
 }
 
 func newIdleChatTTSPrefetchManager(bridge orchestrator.TTSBridge) *idleChatTTSPrefetchManager {
@@ -54,8 +57,9 @@ func newIdleChatTTSPrefetchManager(bridge orchestrator.TTSBridge) *idleChatTTSPr
 		return nil
 	}
 	return &idleChatTTSPrefetchManager{
-		bridge:  bridge,
-		streams: make(map[string]*idleChatTTSPrefetchStream),
+		bridge:                       bridge,
+		streams:                      make(map[string]*idleChatTTSPrefetchStream),
+		cancelledGenerationByRuntime: make(map[string]uint64),
 	}
 }
 
@@ -67,7 +71,9 @@ func (m *idleChatTTSPrefetchManager) Push(ev idlechat.TTSPrefetchEvent) {
 		return
 	}
 	stream := m.stream(ev.SessionID, ev.MessageID, ev)
-	stream.enqueue(ev.Token)
+	if stream != nil {
+		stream.enqueue(ev.Token)
+	}
 }
 
 func (m *idleChatTTSPrefetchManager) Close(ev idlechat.TimelineEvent) (idlechat.TTSLifecycle, bool) {
@@ -115,6 +121,32 @@ func (m *idleChatTTSPrefetchManager) CancelAll() {
 		streams = append(streams, stream)
 	}
 	m.streams = make(map[string]*idleChatTTSPrefetchStream)
+	m.mu.Unlock()
+	for _, stream := range streams {
+		stream.cancelForStale()
+	}
+}
+
+func (m *idleChatTTSPrefetchManager) CancelGeneration(runtimeEpoch string, playbackGeneration uint64) {
+	if m == nil {
+		return
+	}
+	runtimeEpoch = strings.TrimSpace(runtimeEpoch)
+	if runtimeEpoch == "" || playbackGeneration == 0 {
+		return
+	}
+	m.mu.Lock()
+	if playbackGeneration > m.cancelledGenerationByRuntime[runtimeEpoch] {
+		m.cancelledGenerationByRuntime[runtimeEpoch] = playbackGeneration
+	}
+	streams := make([]*idleChatTTSPrefetchStream, 0)
+	for key, stream := range m.streams {
+		if stream == nil || stream.runtimeEpoch != runtimeEpoch || stream.playbackGeneration != playbackGeneration {
+			continue
+		}
+		streams = append(streams, stream)
+		delete(m.streams, key)
+	}
 	m.mu.Unlock()
 	for _, stream := range streams {
 		stream.cancelForStale()
@@ -175,22 +207,27 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 	key := streamKey(sessionID, messageID, string(ev.TraceID))
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.playbackGenerationCancelledLocked(ev.RuntimeEpoch, ev.PlaybackGeneration) {
+		return nil
+	}
 	if stream := m.streams[key]; stream != nil {
 		return stream
 	}
 	stream := &idleChatTTSPrefetchStream{
-		manager:           m,
-		bridge:            m.bridge,
-		key:               key,
-		queue:             make(chan string, 128),
-		speaker:           strings.TrimSpace(ev.From),
-		target:            strings.TrimSpace(ev.To),
-		sessionID:         strings.TrimSpace(ev.SessionID),
-		publicSessionID:   strings.TrimSpace(ev.SessionID),
-		messageID:         strings.TrimSpace(ev.MessageID),
-		turnIndex:         ev.TurnIndex,
-		traceID:           string(ev.TraceID),
-		publicPlaybackRef: nextTTSPublicPlaybackRefForMessage(strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID)),
+		manager:            m,
+		bridge:             m.bridge,
+		key:                key,
+		queue:              make(chan string, 128),
+		speaker:            strings.TrimSpace(ev.From),
+		target:             strings.TrimSpace(ev.To),
+		sessionID:          strings.TrimSpace(ev.SessionID),
+		publicSessionID:    strings.TrimSpace(ev.SessionID),
+		messageID:          strings.TrimSpace(ev.MessageID),
+		turnIndex:          ev.TurnIndex,
+		traceID:            string(ev.TraceID),
+		runtimeEpoch:       strings.TrimSpace(ev.RuntimeEpoch),
+		playbackGeneration: ev.PlaybackGeneration,
+		publicPlaybackRef:  nextTTSPublicPlaybackRefForMessage(strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID)),
 	}
 	// Timeout ownership belongs to the orchestrator's Ready/Done waits. A
 	// prefetch stream may exist before its final utterance is known, so a second
@@ -200,6 +237,11 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 	go stream.run()
 	m.streams[key] = stream
 	return stream
+}
+
+func (m *idleChatTTSPrefetchManager) playbackGenerationCancelledLocked(runtimeEpoch string, playbackGeneration uint64) bool {
+	runtimeEpoch = strings.TrimSpace(runtimeEpoch)
+	return runtimeEpoch != "" && playbackGeneration != 0 && playbackGeneration <= m.cancelledGenerationByRuntime[runtimeEpoch]
 }
 
 func streamKey(sessionID, messageID, traceID string) string {
@@ -373,9 +415,9 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 		})
 
 		expectPlaybackAck := true
-		registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.PublicPlaybackRef, plan.MessageID, plan.TurnIndex)
+		registerTTSPublicSessionForPlayback(plan.SessionID, plan.PublicSessionID, plan.PublicPlaybackRef, plan.MessageID, plan.TurnIndex, s.runtimeEpoch, s.playbackGeneration)
 		if expectPlaybackAck {
-			registerIdleChatTTSPending(plan.SessionID, plan.PublicPlaybackRef)
+			registerIdleChatTTSPendingForPlayback(plan.SessionID, plan.PublicPlaybackRef, s.runtimeEpoch, s.playbackGeneration)
 		} else {
 			log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.PublicPlaybackRef)
 		}

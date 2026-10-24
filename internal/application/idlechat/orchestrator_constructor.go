@@ -96,9 +96,9 @@ func (o *IdleChatOrchestrator) SetTTSTimeoutReporter(report func(TTSTimeoutEvent
 }
 
 // SetInterruptHandler registers the runtime-owned TTS cancellation hook. The
-// orchestrator invokes it after ending the active owner and releasing its
-// state mutex, while the emission lifecycle remains serialized.
-func (o *IdleChatOrchestrator) SetInterruptHandler(handler func()) {
+// hook receives the stopped playback owner so delayed cancellation cannot
+// affect a later generation.
+func (o *IdleChatOrchestrator) SetInterruptHandler(handler func(runtimeEpoch string, playbackGeneration uint64)) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.onInterrupt = handler
@@ -152,6 +152,57 @@ type idleChatInterruptibleProvider struct {
 	inner llm.LLMProvider
 }
 
+type nightPreparationRequiredContextKey struct{}
+
+func requireNightPreparationContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, nightPreparationRequiredContextKey{}, true)
+}
+
+func isNightPreparationRequired(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	required, _ := ctx.Value(nightPreparationRequiredContextKey{}).(bool)
+	return required
+}
+
+func nightPreparationSchedulerFromContext(ctx context.Context) *NightPreparationScheduler {
+	if ctx == nil {
+		return nil
+	}
+	scheduler, _ := ctx.Value(nightPreparationSchedulerContextKey{}).(*NightPreparationScheduler)
+	return scheduler
+}
+
+// runWithNightPreparationGate requires a live scheduler admission for every
+// content-generation send. Task/Run lifecycle admission uses its own helper;
+// it must not make an unscoped provider call appear scheduler-authorized.
+func runWithNightPreparationGate(ctx context.Context, call func(context.Context) error) error {
+	if ctx == nil || call == nil {
+		return ErrNightPreparationBlocked
+	}
+	scheduler := nightPreparationSchedulerFromContext(ctx)
+	if scheduler == nil {
+		return ErrNightPreparationBlocked
+	}
+	return runNightPreparationLLMFromContext(ctx, call)
+}
+
+func (o *IdleChatOrchestrator) nightPreparationWorkContext(ctx context.Context) (context.Context, *NightPreparationScheduler, bool) {
+	if o == nil || ctx == nil || o.ctx == nil {
+		return nil, nil, false
+	}
+	scheduler := nightPreparationSchedulerFromContext(ctx)
+	if scheduler == nil || scheduler != o.currentNightPreparationScheduler() {
+		return nil, nil, false
+	}
+	workCtx := withNightPreparationScheduler(o.ctx, scheduler)
+	return requireNightPreparationContext(workCtx), scheduler, true
+}
+
 func interruptibleIdleChatProvider(provider llm.LLMProvider) llm.LLMProvider {
 	if provider == nil {
 		return nil
@@ -166,7 +217,13 @@ func (p idleChatInterruptibleProvider) Generate(ctx context.Context, req llm.Gen
 	if req.OnToken == nil {
 		req.OnToken = func(string) {}
 	}
-	return p.inner.Generate(ctx, req)
+	var response llm.GenerateResponse
+	err := runWithNightPreparationGate(ctx, func(callCtx context.Context) error {
+		var err error
+		response, err = p.inner.Generate(callCtx, req)
+		return err
+	})
+	return response, err
 }
 
 func (p idleChatInterruptibleProvider) Name() string {

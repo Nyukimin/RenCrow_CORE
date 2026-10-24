@@ -76,7 +76,7 @@ func TestStoryRevisionRequiresCanonicalRunOwnerBeforeLLM(t *testing.T) {
 	generator := &storyRevisionTestGenerator{responses: []storyRevisionGeneratorResponse{storyRevisionTitleResponse("should not be generated")}}
 	service := NewStoryEpisodeService(store, generator, nil)
 
-	err := service.PrepareToTarget(context.Background())
+	err := service.PrepareToTarget(nightGateAllowedContext(t))
 	if err == nil || !strings.Contains(err.Error(), "run issuer") {
 		t.Fatalf("prepare error=%v, want canonical run issuer/owner error", err)
 	}
@@ -99,7 +99,7 @@ func TestStoryRevisionBackfillUsesSameTaskAndFreshRun(t *testing.T) {
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetRunIssuer(owner)
 
-	if err := service.BackfillReadyTitles(context.Background()); err != nil {
+	if err := service.BackfillReadyTitles(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 	runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: artifact.TaskID})
@@ -132,7 +132,7 @@ func TestStoryRevisionTitleProgressSurvivesReviewFailureWithoutRegeneratingTitle
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetRunIssuer(owner)
 
-	if err := service.RepairNeedsRepair(context.Background()); err == nil {
+	if err := service.RepairNeedsRepair(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("first repair must retain the review checkpoint")
 	}
 	checkpointStore := service.generationCheckpointStore()
@@ -144,7 +144,7 @@ func TestStoryRevisionTitleProgressSurvivesReviewFailureWithoutRegeneratingTitle
 		t.Fatalf("first prompts=%d, want title and review", got)
 	}
 	generator.responses = append(generator.responses, storyRevisionReviewResponse(true))
-	if err := service.RepairNeedsRepair(context.Background()); err != nil {
+	if err := service.RepairNeedsRepair(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("review retry: %v", err)
 	}
 	titleCalls := 0
@@ -187,7 +187,7 @@ func TestStoryRevisionSuffixProgressSurvivesReviewFailureWithoutRegeneratingSuff
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetRunIssuer(owner)
 
-	if err := service.RepairNeedsRepair(context.Background()); err == nil {
+	if err := service.RepairNeedsRepair(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("first suffix repair must retain the review checkpoint")
 	}
 	checkpoint, ok := service.generationCheckpointStore().Get(storyGenerationCheckpointKey)
@@ -203,7 +203,7 @@ func TestStoryRevisionSuffixProgressSurvivesReviewFailureWithoutRegeneratingSuff
 		}
 	}
 	generator.responses = append(generator.responses, storyRevisionReviewResponse(true))
-	if err := service.RepairNeedsRepair(context.Background()); err != nil {
+	if err := service.RepairNeedsRepair(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("suffix review retry: %v", err)
 	}
 	suffixCalls := 0
@@ -235,7 +235,7 @@ func TestStoryRevisionCompletionRetryDoesNotRegenerateOrDuplicateAppend(t *testi
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetRunIssuer(owner)
 
-	if err := service.BackfillReadyTitles(context.Background()); err == nil {
+	if err := service.BackfillReadyTitles(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("completion failure must be returned")
 	}
 	checkpoint, ok := service.generationCheckpointStore().Get(storyGenerationCheckpointKey)
@@ -246,7 +246,7 @@ func TestStoryRevisionCompletionRetryDoesNotRegenerateOrDuplicateAppend(t *testi
 		t.Fatalf("pending revision became visible: %+v", got)
 	}
 	owner.failComplete = false
-	if err := service.BackfillReadyTitles(context.Background()); err != nil {
+	if err := service.BackfillReadyTitles(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("completion retry: %v", err)
 	}
 	if len(generator.prompts) != 1 {
@@ -284,7 +284,7 @@ func TestStoryRevisionCleanupRetryDoesNotRegenerateOrDuplicateAppend(t *testing.
 	service.SetGenerationCheckpointStore(checkpointStore)
 	service.SetRunIssuer(owner)
 
-	if err := service.BackfillReadyTitles(context.Background()); err == nil {
+	if err := service.BackfillReadyTitles(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("checkpoint cleanup failure must be returned")
 	}
 	if len(generator.prompts) != 1 {
@@ -306,7 +306,7 @@ func TestStoryRevisionCleanupRetryDoesNotRegenerateOrDuplicateAppend(t *testing.
 	if err := os.Remove(owner.blockedPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.BackfillReadyTitles(context.Background()); err != nil {
+	if err := service.BackfillReadyTitles(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("cleanup retry: %v", err)
 	}
 	if len(generator.prompts) != 1 {
@@ -333,7 +333,7 @@ func TestStoryRevisionRerunPendingAdoptsExistingNewRun(t *testing.T) {
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	newRun, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
+	newRun, err := rerunIdleChatRun(nightGateAllowedContext(t), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestStoryRevisionRerunPendingAdoptsExistingNewRun(t *testing.T) {
 	service.SetGenerationCheckpointStore(checkpointStore)
 	service.SetRunIssuer(owner)
 
-	if err := service.PrepareToTarget(context.Background()); err != nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("recover rerun: %v", err)
 	}
 	runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: artifact.TaskID})
@@ -420,7 +420,7 @@ func TestStoryRevisionTerminalRunWithoutSavedArtifactFailsClosed(t *testing.T) {
 	service.SetGenerationCheckpointStore(checkpointStore)
 	service.SetRunIssuer(owner)
 
-	if err := service.PrepareToTarget(context.Background()); err == nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("terminal run without saved artifact must fail closed")
 	} else if !strings.Contains(err.Error(), "no persisted artifact") {
 		t.Fatalf("terminal run error=%v, want missing artifact", err)
@@ -457,7 +457,7 @@ func TestStoryRevisionFinalPhaseWithoutReviewFailsClosed(t *testing.T) {
 	service.SetGenerationCheckpointStore(checkpointStore)
 	service.SetRunIssuer(owner)
 
-	if err := service.PrepareToTarget(context.Background()); err == nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("final title revision without review must fail closed")
 	} else if !strings.Contains(err.Error(), "no semantic review") {
 		t.Fatalf("final checkpoint error=%v, want missing semantic review", err)
@@ -483,7 +483,7 @@ func TestStoryRevisionRerunPendingBoundRunSurvivesReload(t *testing.T) {
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	newRun, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
+	newRun, err := rerunIdleChatRun(nightGateAllowedContext(t), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +497,7 @@ func TestStoryRevisionRerunPendingBoundRunSurvivesReload(t *testing.T) {
 	service := NewStoryEpisodeService(store, generator, nil)
 	service.SetGenerationCheckpointStore(checkpointStore)
 	service.SetRunIssuer(owner)
-	if err := service.PrepareToTarget(context.Background()); err != nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("recover bound rerun: %v", err)
 	}
 	if len(generator.prompts) != 1 {

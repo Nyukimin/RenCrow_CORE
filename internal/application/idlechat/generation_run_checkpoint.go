@@ -128,7 +128,12 @@ func startGenerationSuccessor(ctx context.Context, issuer idlechatRunIssuer, che
 	if actorID == "" {
 		return domaintask.Run{}, errors.New("generation predecessor assignee is empty")
 	}
-	issued, err := owner.StartRunFromCheckpoint(ctx, persisted.TaskID, persisted.RunID, actorID, reason, digest)
+	var issued domaintask.Run
+	err = runWithNightPreparationGate(ctx, func(admittedCtx context.Context) error {
+		var startErr error
+		issued, startErr = owner.StartRunFromCheckpoint(admittedCtx, persisted.TaskID, persisted.RunID, actorID, reason, digest)
+		return startErr
+	})
 	if err != nil {
 		return domaintask.Run{}, err
 	}
@@ -209,10 +214,12 @@ func generateIdleChatCodexWithRun(ctx context.Context, issuer idlechatRunIssuer,
 		return "", err
 	}
 	var text string
-	err = executeIdleChatRunEffect(ctx, issuer, taskID, runID, run.Assignee, func(effectCtx context.Context) error {
-		var err error
-		text, err = generator.Generate(effectCtx, prompt)
-		return err
+	err = runWithNightPreparationGate(ctx, func(admittedCtx context.Context) error {
+		return executeIdleChatRunEffect(admittedCtx, issuer, taskID, runID, run.Assignee, func(effectCtx context.Context) error {
+			var err error
+			text, err = generator.Generate(effectCtx, prompt)
+			return err
+		})
 	})
 	if err != nil {
 		return "", err

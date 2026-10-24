@@ -228,8 +228,21 @@ func (s *StoryEpisodeService) PrepareToTarget(ctx context.Context) error {
 	if s == nil || s.store == nil {
 		return errors.New("story episode producer is not configured")
 	}
+	return s.PrepareToReadyTarget(ctx, s.store.snapshot().Target)
+}
+
+// PrepareToReadyTarget fills a previously captured absolute ready-count
+// target. Keeping the target fixed across retries prevents partial success
+// from turning into a new relative request and over-generating episodes.
+func (s *StoryEpisodeService) PrepareToReadyTarget(ctx context.Context, target int) error {
+	if s == nil || s.store == nil {
+		return errors.New("story episode producer is not configured")
+	}
+	if target < 1 {
+		return errors.New("story episode ready target must be positive")
+	}
 	titleErr := s.BackfillReadyTitles(ctx)
-	if err := s.prepareUntil(ctx, s.store.target); err != nil {
+	if err := s.prepareUntil(ctx, target); err != nil {
 		return err
 	}
 	return titleErr

@@ -3,6 +3,7 @@ package idlechat
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -26,12 +27,20 @@ type conversationRunOutcome struct {
 }
 
 type conversationRunFinalization struct {
-	generation uint64
-	taskID     modulecore.TaskID
-	runID      modulecore.RunID
-	status     domaintask.Status
-	summary    string
-	reason     string
+	generation         uint64
+	taskID             modulecore.TaskID
+	runID              modulecore.RunID
+	status             domaintask.Status
+	summary            string
+	reason             string
+	completionTicket   uint64
+	completionAdmitted bool
+}
+
+type conversationRunCompletionAdmissionOwner interface {
+	RunCompletionAdmissionAvailable() bool
+	AdmitRunCompletion(context.Context, modulecore.TaskID, modulecore.RunID, domaintask.Status, string, string) (uint64, error)
+	WaitRunCompletion(context.Context, uint64, modulecore.TaskID, modulecore.RunID, domaintask.Status) error
 }
 
 // startIdleRun performs the owner admission outside the orchestrator locks. The
@@ -98,6 +107,7 @@ func (o *IdleChatOrchestrator) startIdleRun() (uint64, error) {
 	}
 	o.mu.Unlock()
 	o.emitMu.Unlock()
+	o.notifyPlaybackControlSnapshotChanged()
 	if issuer == nil {
 		return generation, nil
 	}
@@ -123,6 +133,7 @@ func (o *IdleChatOrchestrator) startIdleRun() (uint64, error) {
 		o.conversationRunStarting = false
 		o.mu.Unlock()
 		o.emitMu.Unlock()
+		o.notifyPlaybackControlSnapshotChanged()
 		return generation, nil
 	}
 	if o.activeGeneration == generation {
@@ -165,6 +176,7 @@ func (o *IdleChatOrchestrator) abortIdleRunStart(generation uint64) {
 	if o.conversationRunStarting {
 		o.conversationRunStarting = false
 	}
+	o.clearIdleEventPublicationLocked()
 	cancel := o.runCancel
 	o.runCancel = nil
 	o.runCtx = o.ctx
@@ -172,6 +184,7 @@ func (o *IdleChatOrchestrator) abortIdleRunStart(generation uint64) {
 	o.activeTraceSessionID = ""
 	o.mu.Unlock()
 	o.emitMu.Unlock()
+	o.notifyPlaybackControlSnapshotChanged()
 	if cancel != nil {
 		cancel()
 	}
@@ -189,8 +202,26 @@ func (o *IdleChatOrchestrator) finalizePendingConversationRun() error {
 	if o == nil {
 		return nil
 	}
+	ctx, cancel := o.conversationRunCleanupContext()
+	defer cancel()
+	return o.finalizePendingConversationRunWithContext(ctx)
+}
+
+func (o *IdleChatOrchestrator) finalizePendingConversationRunWithContext(ctx context.Context) error {
+	if o == nil {
+		return nil
+	}
+	if ctx == nil {
+		return errors.New("idlechat conversation run finalization context is required")
+	}
 	o.conversationRunFinalizeMu.Lock()
-	defer o.conversationRunFinalizeMu.Unlock()
+	cleanupCompleted := false
+	defer func() {
+		o.conversationRunFinalizeMu.Unlock()
+		if cleanupCompleted {
+			o.notifyPlaybackControlSnapshotChanged()
+		}
+	}()
 
 	o.emitMu.Lock()
 	o.mu.Lock()
@@ -207,9 +238,20 @@ func (o *IdleChatOrchestrator) finalizePendingConversationRun() error {
 		return errors.New("idlechat conversation run owner is not configured")
 	}
 
-	ctx, cancel := o.conversationRunCleanupContext()
-	err := completeGenerationRun(ctx, issuer, pending.taskID, pending.runID, pending.status, pending.summary, pending.reason)
-	cancel()
+	err := completePendingGenerationRun(ctx, issuer, pending, func(ticket uint64) error {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		current := o.pendingConversationRun
+		if current == nil || current.generation != pending.generation || current.taskID != pending.taskID || current.runID != pending.runID {
+			return errors.New("idlechat conversation run changed before completion ticket was retained")
+		}
+		if current.completionAdmitted && current.completionTicket != ticket {
+			return errors.New("idlechat conversation run already retains a different completion ticket")
+		}
+		current.completionTicket = ticket
+		current.completionAdmitted = true
+		return nil
+	})
 
 	o.emitMu.Lock()
 	o.mu.Lock()
@@ -217,6 +259,7 @@ func (o *IdleChatOrchestrator) finalizePendingConversationRun() error {
 		current.generation == pending.generation && current.taskID == pending.taskID && current.runID == pending.runID {
 		if err == nil {
 			o.pendingConversationRun = nil
+			cleanupCompleted = true
 			if o.activeTaskID == pending.taskID && o.activeRunID == pending.runID {
 				o.activeTaskID = ""
 				o.activeRunID = ""
@@ -229,6 +272,117 @@ func (o *IdleChatOrchestrator) finalizePendingConversationRun() error {
 	o.mu.Unlock()
 	o.emitMu.Unlock()
 	return err
+}
+
+// completePendingGenerationRun uses RAM admission only when the canonical Task
+// owner confirms it is bound to the shared queue. Queue admission and its
+// durable wait both happen on the managed finalizer goroutine, never in the
+// foreground stop request. Other Task owner configurations retain the
+// existing synchronous CompleteRun contract on that same background worker.
+func completePendingGenerationRun(ctx context.Context, issuer idlechatRunIssuer, pending conversationRunFinalization, retainTicket func(uint64) error) error {
+	queueOwner, ok := issuer.(conversationRunCompletionAdmissionOwner)
+	if pending.completionAdmitted {
+		if !ok {
+			return errors.New("admitted idlechat completion ticket owner is unavailable")
+		}
+		if !queueOwner.RunCompletionAdmissionAvailable() {
+			return errors.New("admitted idlechat completion ticket queue is unavailable")
+		}
+		return queueOwner.WaitRunCompletion(ctx, pending.completionTicket, pending.taskID, pending.runID, pending.status)
+	}
+	if !ok || !queueOwner.RunCompletionAdmissionAvailable() {
+		return completeGenerationRun(ctx, issuer, pending.taskID, pending.runID, pending.status, pending.summary, pending.reason)
+	}
+	if err := validateGenerationRunInputs(ctx, issuer, pending.taskID, pending.runID); err != nil {
+		return err
+	}
+	if pending.status == domaintask.StatusWaiting && strings.TrimSpace(pending.reason) == "" {
+		return errors.New("waiting reason is required")
+	}
+	run, err := inspectGenerationRun(ctx, issuer, pending.taskID, pending.runID)
+	if err != nil {
+		return err
+	}
+	if run.Status != domaintask.RunStatusRunning {
+		owner, err := generationRunOwnerFromIssuer(issuer)
+		if err != nil {
+			return err
+		}
+		return owner.VerifyRunCompletion(ctx, pending.taskID, pending.runID, run.Assignee, pending.status)
+	}
+	ticket, err := queueOwner.AdmitRunCompletion(ctx, pending.taskID, pending.runID, pending.status, pending.summary, pending.reason)
+	if err != nil {
+		return err
+	}
+	if retainTicket == nil {
+		return errors.New("idlechat completion ticket retention is required")
+	}
+	if err := retainTicket(ticket); err != nil {
+		return err
+	}
+	return queueOwner.WaitRunCompletion(ctx, ticket, pending.taskID, pending.runID, pending.status)
+}
+
+// schedulePendingConversationRunFinalization owns at most one asynchronous
+// cleanup attempt at a time. A failed attempt leaves the pending pair intact
+// for the existing retry/recovery paths.
+func (o *IdleChatOrchestrator) schedulePendingConversationRunFinalization() {
+	if o == nil {
+		return
+	}
+	o.conversationRunFinalizeWorkerMu.Lock()
+	if o.conversationRunFinalizeWorkerClosed || o.conversationRunFinalizeWorkerDone != nil {
+		o.conversationRunFinalizeWorkerMu.Unlock()
+		return
+	}
+	o.mu.Lock()
+	pending := o.pendingConversationRun != nil
+	o.mu.Unlock()
+	if !pending {
+		o.conversationRunFinalizeWorkerMu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	o.conversationRunFinalizeWorkerDone = done
+	o.conversationRunFinalizeWorkerMu.Unlock()
+	go func() {
+		ctx, cancel := o.conversationRunCleanupContext()
+		defer cancel()
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			err = o.finalizePendingConversationRunWithContext(ctx)
+			if err == nil || ctx.Err() != nil {
+				break
+			}
+			if attempt < 2 {
+				delay := time.Duration(attempt+1) * 20 * time.Millisecond
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+				case <-timer.C:
+				}
+			}
+		}
+		if err != nil {
+			log.Printf("[IdleChat] background conversation run finalization remains pending after bounded retries: %v", err)
+		}
+		o.conversationRunFinalizeWorkerMu.Lock()
+		if o.conversationRunFinalizeWorkerDone == done {
+			o.conversationRunFinalizeWorkerDone = nil
+		}
+		close(done)
+		o.conversationRunFinalizeWorkerMu.Unlock()
+	}()
+}
+
+func (o *IdleChatOrchestrator) conversationRunFinalizationWorkerDone() <-chan struct{} {
+	if o == nil {
+		return nil
+	}
+	o.conversationRunFinalizeWorkerMu.Lock()
+	defer o.conversationRunFinalizeWorkerMu.Unlock()
+	return o.conversationRunFinalizeWorkerDone
 }
 
 func (o *IdleChatOrchestrator) setConversationRunOutcome(generation uint64, status domaintask.Status, summary, reason string) {
@@ -265,6 +419,7 @@ func (o *IdleChatOrchestrator) markConversationRunFailed(generation uint64, summ
 
 func (o *IdleChatOrchestrator) prepareConversationRunStopLocked(generation uint64, defaultStatus domaintask.Status, summary, reason string) (context.CancelFunc, bool, error) {
 	if o.pendingConversationRun != nil && (generation == 0 || o.pendingConversationRun.generation == generation) {
+		o.clearIdleEventPublicationLocked()
 		return nil, true, nil
 	}
 	if o.pendingConversationRun != nil && generation != 0 {
@@ -273,6 +428,7 @@ func (o *IdleChatOrchestrator) prepareConversationRunStopLocked(generation uint6
 	if generation != 0 && o.activeGeneration != generation {
 		return nil, false, nil
 	}
+	o.clearIdleEventPublicationLocked()
 	cancel := o.runCancel
 	o.runCancel = nil
 	o.runCtx = o.ctx
@@ -322,6 +478,7 @@ func (o *IdleChatOrchestrator) stopConversationRun(generation uint64, defaultSta
 	if !shouldFinalize {
 		return nil
 	}
+	o.notifyPlaybackControlSnapshotChanged()
 	return o.finalizePendingConversationRun()
 }
 
@@ -332,6 +489,7 @@ func (o *IdleChatOrchestrator) resetIdleSessionState(generation uint64) {
 	o.emitMu.Lock()
 	o.mu.Lock()
 	if generation == 0 || o.activeGeneration == generation {
+		o.clearIdleEventPublicationLocked()
 		o.chatActive = false
 		o.sessionMode = ""
 		o.currentTopic = ""
@@ -340,4 +498,5 @@ func (o *IdleChatOrchestrator) resetIdleSessionState(generation uint64) {
 	}
 	o.mu.Unlock()
 	o.emitMu.Unlock()
+	o.notifyPlaybackControlSnapshotChanged()
 }

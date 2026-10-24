@@ -145,11 +145,11 @@ func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBr
 	})
 
 	expectPlaybackAck := true
-	registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.PublicPlaybackRef, plan.MessageID, plan.TurnIndex)
+	registerTTSPublicSessionForPlayback(plan.SessionID, plan.PublicSessionID, plan.PublicPlaybackRef, plan.MessageID, plan.TurnIndex, ev.RuntimeEpoch, ev.PlaybackGeneration)
 	registerIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)
 	defer unregisterIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)
 	if expectPlaybackAck {
-		registerIdleChatTTSPending(plan.SessionID, plan.PublicPlaybackRef)
+		registerIdleChatTTSPendingForPlayback(plan.SessionID, plan.PublicPlaybackRef, ev.RuntimeEpoch, ev.PlaybackGeneration)
 	} else {
 		log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.PublicPlaybackRef)
 	}

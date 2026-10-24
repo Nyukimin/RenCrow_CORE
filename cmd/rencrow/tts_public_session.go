@@ -18,8 +18,24 @@ func registerTTSPublicSessionWithMessage(internalSessionID, publicSessionID, pub
 	})
 }
 
+func registerTTSPublicSessionForPlayback(internalSessionID, publicSessionID, publicPlaybackRef, messageID string, turnIndex int, runtimeEpoch string, playbackGeneration uint64) {
+	ttsPublicSessions.Register(moduletts.PublicSessionRouteRegistration{
+		InternalSessionID:  internalSessionID,
+		PublicSessionID:    publicSessionID,
+		PublicPlaybackRef:  publicPlaybackRef,
+		MessageID:          messageID,
+		TurnIndex:          turnIndex,
+		RuntimeEpoch:       runtimeEpoch,
+		PlaybackGeneration: playbackGeneration,
+	})
+}
+
 func resetTTSPublicSessionRoutesForIdleChat() {
 	ttsPublicSessions.ResetForIdleChat()
+}
+
+func retireTTSPublicSessionGeneration(runtimeEpoch string, playbackGeneration uint64) {
+	ttsPublicSessions.CancelPlaybackGeneration(runtimeEpoch, playbackGeneration)
 }
 
 func isStaleTTSPublicSession(internalSessionID string) bool {

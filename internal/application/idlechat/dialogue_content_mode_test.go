@@ -170,6 +170,7 @@ func TestDialogueQualityCheckerRejectsContentModeViolations(t *testing.T) {
 func TestGenerateResponseSeriousModeSkipsFunCandidate(t *testing.T) {
 	provider := &capturingIdleProvider{response: "避難が続く人の生活を先に見ないと、この地震の被害は数字だけでは捉えられないね。分からない点は分からないまま話したい。"}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 
 	got, err := o.generateResponse("mio", "shiro", "idle-serious-mode", 0, 0, "大地震後の避難と被災地支援")
 	if err != nil {

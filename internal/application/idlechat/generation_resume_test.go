@@ -36,7 +36,7 @@ func TestTopicGeneratorResumesAtJudgeWithoutRegeneratingCandidates(t *testing.T)
 		Enabled: true, CandidatesPerAttempt: 1, MaxAttempts: 1, JudgeEnabled: true,
 		MinJudgeTotal: 24, MinCategoryFit: 4, MinSafety: 4,
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(nightGateAllowedContext(t))
 	var saved TopicGenerationResumeState
 	done := make(chan error, 1)
 	go func() {
@@ -155,7 +155,7 @@ func TestStoryPreparationResumesAtSemanticReview(t *testing.T) {
 	first.SetGenerationCheckpointStore(checkpoints)
 	owner := newTestIdleChatRunIssuer(t)
 	first.SetRunIssuer(owner)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(nightGateAllowedContext(t))
 	done := make(chan error, 1)
 	go func() { done <- first.PrepareToTarget(ctx) }()
 	select {
@@ -178,7 +178,7 @@ func TestStoryPreparationResumesAtSemanticReview(t *testing.T) {
 	second.maxAttempts = 1
 	second.SetGenerationCheckpointStore(checkpoints)
 	second.SetRunIssuer(owner)
-	if err := second.PrepareToTarget(context.Background()); err != nil {
+	if err := second.PrepareToTarget(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("resumed prepare: %v", err)
 	}
 	if len(secondGenerator.prompts) != 1 || second.Snapshot().Ready != 1 {

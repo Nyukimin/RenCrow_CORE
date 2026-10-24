@@ -27,6 +27,7 @@ func TestForecastGenerationRejectsTopicAlreadyInWordStock(t *testing.T) {
 		topicCandidatesJSON(topic, "変化の分岐"),
 	}}
 	o := NewIdleChatOrchestrator(nil, nil, []string{"mio", "shiro"}, 5, 2, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.wordTopicStock = wordStock
 	o.SetTopicCodexGenerator(generator)
 	if got, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生活記録AI"}); failure == nil || got != "" {
@@ -50,6 +51,7 @@ func TestWordGenerationRejectsTopicAlreadyInForecastStock(t *testing.T) {
 		topicCandidatesJSON(topic, "観察"),
 	}}
 	o := NewIdleChatOrchestrator(nil, nil, []string{"mio", "shiro"}, 5, 2, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.topicStockBuf = forecastStock
 	o.SetTopicCodexGenerator(generator)
 	if got, err := o.generateWordTopicWithCodex(TopicSeed{Category: TopicCategorySingle, Genre1: "生活"}); err == nil || got != nil {

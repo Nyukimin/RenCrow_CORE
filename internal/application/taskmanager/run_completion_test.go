@@ -4,13 +4,104 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestManagerAdmitsRunCompletionBeforeDurableQueueApply(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStoreWithOptions(t.TempDir(), taskpersistence.OpenOptions{Index: true, Persist: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits(), WithIDIndex())
+	task, run := newRunningExecutionTaskRun(t, manager, "Mio")
+
+	queue, err := persistencequeue.NewPersistenceQueue(4, 4<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := queue.Shutdown(ctx); err != nil {
+			t.Errorf("shutdown persistence queue: %v", err)
+		}
+	})
+	workerStarted := make(chan struct{})
+	releaseWorker := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseWorker) }) }
+	t.Cleanup(release)
+	if _, err := queue.Enqueue(persistencequeue.PersistenceCommand{
+		Owner: persistencequeue.OwnerTask, Kind: "test.block", SizeBytes: 1,
+		Apply: func(context.Context) error {
+			close(workerStarted)
+			<-releaseWorker
+			return nil
+		},
+	}, 1); err != nil {
+		t.Fatalf("enqueue queue blocker: %v", err)
+	}
+	select {
+	case <-workerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("persistence worker did not reach the blocker")
+	}
+
+	completionOwner, ok := any(manager).(interface {
+		SetPersistenceQueue(*persistencequeue.Queue[persistencequeue.PersistenceCommand]) error
+		AdmitRunCompletion(context.Context, modulecore.TaskID, modulecore.RunID, domaintask.Status, string, string) (uint64, error)
+		WaitRunCompletion(context.Context, uint64, modulecore.TaskID, modulecore.RunID, domaintask.Status) error
+	})
+	if !ok {
+		t.Fatal("Task Manager does not expose queue-backed Run completion admission")
+	}
+	if err := completionOwner.SetPersistenceQueue(queue); err != nil {
+		t.Fatalf("bind Task Manager to shared persistence queue: %v", err)
+	}
+	ticket, err := completionOwner.AdmitRunCompletion(context.Background(), task.TaskID, run.RunID, domaintask.StatusCancelled, "stopped", "")
+	if err != nil {
+		t.Fatalf("admit Run completion while writer is blocked: %v", err)
+	}
+	if ticket == 0 {
+		t.Fatal("Run completion admission returned an empty queue ticket")
+	}
+
+	waitDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		waitDone <- completionOwner.WaitRunCompletion(ctx, ticket, task.TaskID, run.RunID, domaintask.StatusCancelled)
+	}()
+	select {
+	case err := <-waitDone:
+		t.Fatalf("Run completion became durable while the queue writer was blocked: %v", err)
+	default:
+	}
+	release()
+	select {
+	case err := <-waitDone:
+		if err != nil {
+			t.Fatalf("wait for admitted Run completion: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("admitted Run completion did not become durable after releasing the writer")
+	}
+	persisted, err := manager.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != domaintask.RunStatusCancelled {
+		t.Fatalf("persisted Run status=%s, want cancelled", persisted.Status)
+	}
+}
 
 func TestManagerCompleteRunSuccessAtomicallyClosesTaskAndRun(t *testing.T) {
 	ctx := context.Background()

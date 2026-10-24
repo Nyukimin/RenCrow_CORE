@@ -80,7 +80,7 @@ func preparePendingDialogueCompletion(t *testing.T) (string, DialogueInteresting
 	service.SetRunIssuer(owner)
 	sessionID := "dialogue-pending-completion-session"
 	result := dialogueRecoveryInput()
-	if artifact, err := service.Prepare(context.Background(), sessionID, result, 2); err == nil || artifact.EpisodeID != "" {
+	if artifact, err := service.Prepare(nightGateAllowedContext(t), sessionID, result, 2); err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("pending dialogue setup artifact=%+v err=%v", artifact, err)
 	}
 	store := NewGenerationCheckpointStore(path + ".checkpoints.json")

@@ -11,6 +11,20 @@ type PendingPlaybackStore struct {
 	byPublicPlaybackRef map[string]chan struct{}
 	topicGate           map[string]chan struct{}
 	topicByTTS          map[string]string
+	playbackBySession   map[string]PlaybackGenerationIdentity
+	topicPlaybackByTTS  map[string]PlaybackGenerationIdentity
+	cancelledByRuntime  map[string]uint64
+}
+
+// PlaybackGenerationIdentity scopes transient pending playback to the
+// IdleChat runtime and playback generation that created it.
+type PlaybackGenerationIdentity struct {
+	RuntimeEpoch       string
+	PlaybackGeneration uint64
+}
+
+func (g PlaybackGenerationIdentity) valid() bool {
+	return strings.TrimSpace(g.RuntimeEpoch) != "" && g.PlaybackGeneration > 0
 }
 
 func NewPendingPlaybackStore() *PendingPlaybackStore {
@@ -19,10 +33,17 @@ func NewPendingPlaybackStore() *PendingPlaybackStore {
 		byPublicPlaybackRef: map[string]chan struct{}{},
 		topicGate:           map[string]chan struct{}{},
 		topicByTTS:          map[string]string{},
+		playbackBySession:   map[string]PlaybackGenerationIdentity{},
+		topicPlaybackByTTS:  map[string]PlaybackGenerationIdentity{},
+		cancelledByRuntime:  map[string]uint64{},
 	}
 }
 
 func (s *PendingPlaybackStore) Register(ttsSessionID, publicPlaybackRef string) <-chan struct{} {
+	return s.RegisterForPlaybackGeneration(ttsSessionID, publicPlaybackRef, PlaybackGenerationIdentity{})
+}
+
+func (s *PendingPlaybackStore) RegisterForPlaybackGeneration(ttsSessionID, publicPlaybackRef string, identity PlaybackGenerationIdentity) <-chan struct{} {
 	if s == nil {
 		ch := make(chan struct{})
 		close(ch)
@@ -32,7 +53,18 @@ func (s *PendingPlaybackStore) Register(ttsSessionID, publicPlaybackRef string) 
 	publicPlaybackRef = strings.TrimSpace(publicPlaybackRef)
 	ch := make(chan struct{})
 	s.mu.Lock()
+	identity.RuntimeEpoch = strings.TrimSpace(identity.RuntimeEpoch)
+	if identity.valid() && s.playbackGenerationCancelledLocked(identity) {
+		s.mu.Unlock()
+		close(ch)
+		return ch
+	}
 	s.pending[ttsSessionID] = ch
+	if identity.valid() {
+		s.playbackBySession[ttsSessionID] = identity
+	} else {
+		delete(s.playbackBySession, ttsSessionID)
+	}
 	if publicPlaybackRef != "" {
 		s.byPublicPlaybackRef[publicPlaybackRef] = ch
 	}
@@ -41,6 +73,10 @@ func (s *PendingPlaybackStore) Register(ttsSessionID, publicPlaybackRef string) 
 }
 
 func (s *PendingPlaybackStore) RegisterTopicGate(idleSessionID, ttsSessionID string) {
+	s.RegisterTopicGateForPlayback(idleSessionID, ttsSessionID, PlaybackGenerationIdentity{})
+}
+
+func (s *PendingPlaybackStore) RegisterTopicGateForPlayback(idleSessionID, ttsSessionID string, identity PlaybackGenerationIdentity) {
 	if s == nil {
 		return
 	}
@@ -50,10 +86,20 @@ func (s *PendingPlaybackStore) RegisterTopicGate(idleSessionID, ttsSessionID str
 		return
 	}
 	s.mu.Lock()
+	identity.RuntimeEpoch = strings.TrimSpace(identity.RuntimeEpoch)
+	if identity.valid() && s.playbackGenerationCancelledLocked(identity) {
+		s.mu.Unlock()
+		return
+	}
 	if _, ok := s.topicGate[idleSessionID]; !ok {
 		s.topicGate[idleSessionID] = make(chan struct{})
 	}
 	s.topicByTTS[ttsSessionID] = idleSessionID
+	if identity.valid() {
+		s.topicPlaybackByTTS[ttsSessionID] = identity
+	} else {
+		delete(s.topicPlaybackByTTS, ttsSessionID)
+	}
 	s.mu.Unlock()
 }
 
@@ -71,9 +117,11 @@ func (s *PendingPlaybackStore) CompleteByPublicPlaybackRef(publicPlaybackRef str
 		for sessionID, sessionCh := range s.pending {
 			if sessionCh == ch {
 				delete(s.pending, sessionID)
+				delete(s.playbackBySession, sessionID)
 				topicIdleSessionID := ""
 				if idleSessionID, topicOK := s.topicByTTS[sessionID]; topicOK {
 					delete(s.topicByTTS, sessionID)
+					delete(s.topicPlaybackByTTS, sessionID)
 					topicIdleSessionID = idleSessionID
 					topicCh = s.topicGate[idleSessionID]
 					delete(s.topicGate, idleSessionID)
@@ -100,6 +148,7 @@ func (s *PendingPlaybackStore) Clear(ttsSessionID string) PendingPlaybackClearAc
 	if pendingCh, ok := s.pending[ttsSessionID]; ok {
 		ch = pendingCh
 		delete(s.pending, ttsSessionID)
+		delete(s.playbackBySession, ttsSessionID)
 		for publicPlaybackRef, responseCh := range s.byPublicPlaybackRef {
 			if responseCh == pendingCh {
 				delete(s.byPublicPlaybackRef, publicPlaybackRef)
@@ -109,6 +158,7 @@ func (s *PendingPlaybackStore) Clear(ttsSessionID string) PendingPlaybackClearAc
 	topicIdleSessionID := ""
 	if idleSessionID, ok := s.topicByTTS[ttsSessionID]; ok {
 		delete(s.topicByTTS, ttsSessionID)
+		delete(s.topicPlaybackByTTS, ttsSessionID)
 		topicIdleSessionID = idleSessionID
 		if gateCh := s.topicGate[idleSessionID]; gateCh != nil {
 			topicCh = gateCh
@@ -134,6 +184,7 @@ func (s *PendingPlaybackStore) ClearByWait(target <-chan struct{}) PendingPlayba
 	for sessionID, ch := range s.pending {
 		if (<-chan struct{})(ch) == target {
 			delete(s.pending, sessionID)
+			delete(s.playbackBySession, sessionID)
 			targetCh = ch
 			for publicPlaybackRef, responseCh := range s.byPublicPlaybackRef {
 				if responseCh == ch {
@@ -143,6 +194,7 @@ func (s *PendingPlaybackStore) ClearByWait(target <-chan struct{}) PendingPlayba
 			topicIdleSessionID := ""
 			if idleSessionID, ok := s.topicByTTS[sessionID]; ok {
 				delete(s.topicByTTS, sessionID)
+				delete(s.topicPlaybackByTTS, sessionID)
 				topicIdleSessionID = idleSessionID
 				topicCh = s.topicGate[idleSessionID]
 				delete(s.topicGate, idleSessionID)
@@ -180,6 +232,9 @@ func (s *PendingPlaybackStore) ClearAll() []string {
 	s.byPublicPlaybackRef = map[string]chan struct{}{}
 	s.topicGate = map[string]chan struct{}{}
 	s.topicByTTS = map[string]string{}
+	s.playbackBySession = map[string]PlaybackGenerationIdentity{}
+	s.topicPlaybackByTTS = map[string]PlaybackGenerationIdentity{}
+	s.cancelledByRuntime = map[string]uint64{}
 	s.mu.Unlock()
 
 	for _, ch := range pending {
@@ -189,6 +244,78 @@ func (s *PendingPlaybackStore) ClearAll() []string {
 		close(ch)
 	}
 	return sessionIDs
+}
+
+// CancelPlaybackGeneration releases pending waits for a stopped IdleChat
+// generation while preserving waits registered by newer generations.
+func (s *PendingPlaybackStore) CancelPlaybackGeneration(runtimeEpoch string, playbackGeneration uint64) []string {
+	if s == nil {
+		return nil
+	}
+	runtimeEpoch = strings.TrimSpace(runtimeEpoch)
+	if runtimeEpoch == "" || playbackGeneration == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	if playbackGeneration > s.cancelledByRuntime[runtimeEpoch] {
+		s.cancelledByRuntime[runtimeEpoch] = playbackGeneration
+	}
+	pendingChannels := make(map[chan struct{}]struct{})
+	topicChannels := make(map[chan struct{}]struct{})
+	sessions := make([]string, 0)
+	for sessionID, identity := range s.playbackBySession {
+		if identity.RuntimeEpoch != runtimeEpoch || identity.PlaybackGeneration > playbackGeneration {
+			continue
+		}
+		ch := s.pending[sessionID]
+		if ch != nil {
+			pendingChannels[ch] = struct{}{}
+			for ref, response := range s.byPublicPlaybackRef {
+				if response == ch {
+					delete(s.byPublicPlaybackRef, ref)
+				}
+			}
+		}
+		delete(s.pending, sessionID)
+		delete(s.playbackBySession, sessionID)
+		sessions = append(sessions, sessionID)
+	}
+	for ttsSessionID, identity := range s.topicPlaybackByTTS {
+		if identity.RuntimeEpoch != runtimeEpoch || identity.PlaybackGeneration > playbackGeneration {
+			continue
+		}
+		idleSessionID := s.topicByTTS[ttsSessionID]
+		delete(s.topicPlaybackByTTS, ttsSessionID)
+		delete(s.topicByTTS, ttsSessionID)
+		if idleSessionID == "" || s.topicSessionHasOwnerLocked(idleSessionID) {
+			continue
+		}
+		if ch := s.topicGate[idleSessionID]; ch != nil {
+			topicChannels[ch] = struct{}{}
+			delete(s.topicGate, idleSessionID)
+		}
+	}
+	s.mu.Unlock()
+	for ch := range pendingChannels {
+		close(ch)
+	}
+	for ch := range topicChannels {
+		close(ch)
+	}
+	return sessions
+}
+
+func (s *PendingPlaybackStore) playbackGenerationCancelledLocked(identity PlaybackGenerationIdentity) bool {
+	return identity.PlaybackGeneration <= s.cancelledByRuntime[identity.RuntimeEpoch]
+}
+
+func (s *PendingPlaybackStore) topicSessionHasOwnerLocked(idleSessionID string) bool {
+	for _, current := range s.topicByTTS {
+		if current == idleSessionID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *PendingPlaybackStore) WaitTopicGate(idleSessionID string) {

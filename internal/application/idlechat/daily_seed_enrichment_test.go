@@ -14,6 +14,24 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
+func dailyEnrichmentNightContext(t *testing.T, orch *IdleChatOrchestrator) context.Context {
+	t.Helper()
+	loc, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return nightGateOrchestratorContext(t, orch, time.Date(2026, 10, 24, 3, 0, 0, 0, loc), func() bool {
+		orch.mu.Lock()
+		defer orch.mu.Unlock()
+		return orch.chatActive || orch.chatBusy || orch.workerBusy || orch.manualMode
+	})
+}
+
+func enrichDailySeedsWithinNightWindow(t *testing.T, orch *IdleChatOrchestrator) {
+	t.Helper()
+	orch.EnrichCurrentDailySeedsWithContext(dailyEnrichmentNightContext(t, orch))
+}
+
 type failingDailyBriefProvider struct {
 	requests int
 }
@@ -328,7 +346,7 @@ func TestEnrichCurrentDailySeedsPublishesJapaneseSkillOutput(t *testing.T) {
 	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"shiro": chatWorker, "worker": provider})
 	orch.SetDailySourceBriefResearch(research)
 
-	orch.enrichCurrentDailySeeds()
+	enrichDailySeedsWithinNightWindow(t, orch)
 
 	got := getDailyCache()
 	if got.EnrichmentStatus != "ready" || got.EnrichmentProvider != "collection-test-worker" || got.EnrichedAt.IsZero() {
@@ -365,7 +383,7 @@ func TestEnrichCurrentDailySeedsKeepsSafeFallbackOnProviderFailure(t *testing.T)
 	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": provider})
 	orch.SetDailySourceBriefResearch(research)
 
-	orch.enrichCurrentDailySeeds()
+	enrichDailySeedsWithinNightWindow(t, orch)
 
 	got := getDailyCache()
 	if got.EnrichmentStatus != "fallback" || !strings.Contains(got.EnrichmentError, "provider unavailable") {
@@ -388,7 +406,7 @@ func TestEnrichCurrentDailySeedsKeepsUnstartedItemsPendingWhenDependencyIsUnavai
 	})
 	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
 
-	orch.enrichCurrentDailySeeds()
+	enrichDailySeedsWithinNightWindow(t, orch)
 
 	item := getDailyCache().NewsSeedItems[0]
 	if item.SourceReadStatus != "unprocessed" || item.ProcessingStatus != "pending" || item.ProcessingError != "" {
@@ -424,7 +442,7 @@ func TestEnrichCurrentDailySeedsCompletesAndPublishesOneArticleBeforeStartingNex
 	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": provider})
 	orch.SetDailySourceBriefResearch(research)
 
-	orch.enrichCurrentDailySeeds()
+	enrichDailySeedsWithinNightWindow(t, orch)
 
 	got := getDailyCache()
 	if got.EnrichmentStatus != "partial" {
@@ -496,7 +514,7 @@ func TestEnrichCurrentDailySeedsLimitsTargetsAndPublishesAtOriginalIndexes(t *te
 	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": provider})
 	orch.SetDailySourceBriefResearch(research)
 
-	orch.enrichCurrentDailySeeds()
+	enrichDailySeedsWithinNightWindow(t, orch)
 
 	got := getDailyCache()
 	if len(got.NewsSeedItems) != seedCount {
@@ -543,11 +561,12 @@ func TestEnrichCurrentDailySeedsPausesForForegroundChatAndResumesWithoutLosingAr
 	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
 	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": provider})
 	orch.SetDailySourceBriefResearch(research)
+	ctx := dailyEnrichmentNightContext(t, orch)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		orch.enrichCurrentDailySeeds()
+		orch.EnrichCurrentDailySeedsWithContext(ctx)
 	}()
 
 	select {
@@ -892,11 +911,12 @@ func TestNewDailyEnrichmentSupersedesOldJobAndPreventsStalePublication(t *testin
 	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
 	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": provider})
 	orch.SetDailySourceBriefResearch(research)
+	ctx := dailyEnrichmentNightContext(t, orch)
 
 	oldDone := make(chan struct{})
 	go func() {
 		defer close(oldDone)
-		orch.enrichCurrentDailySeeds()
+		orch.EnrichCurrentDailySeedsWithContext(ctx)
 	}()
 	select {
 	case <-provider.oldStarted:
@@ -914,7 +934,7 @@ func TestNewDailyEnrichmentSupersedesOldJobAndPreventsStalePublication(t *testin
 	newDone := make(chan struct{})
 	go func() {
 		defer close(newDone)
-		orch.enrichCurrentDailySeeds()
+		orch.EnrichCurrentDailySeedsWithContext(ctx)
 	}()
 	select {
 	case <-provider.oldCanceled:

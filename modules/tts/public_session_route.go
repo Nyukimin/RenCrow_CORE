@@ -3,23 +3,27 @@ package tts
 import "strings"
 
 type PublicSessionRoute struct {
-	PublicSessionID   string
-	PublicPlaybackRef string
-	MessageID         string
-	TurnIndex         int
-	UtteranceID       string
-	Generation        uint64
-	TimedOut          bool
-	ChunkIndexes      map[int]int
+	PublicSessionID    string
+	PublicPlaybackRef  string
+	MessageID          string
+	TurnIndex          int
+	UtteranceID        string
+	Generation         uint64
+	RuntimeEpoch       string
+	PlaybackGeneration uint64
+	TimedOut           bool
+	ChunkIndexes       map[int]int
 }
 
 type PublicSessionRouteRegistration struct {
-	InternalSessionID string
-	PublicSessionID   string
-	PublicPlaybackRef string
-	MessageID         string
-	TurnIndex         int
-	Generation        uint64
+	InternalSessionID  string
+	PublicSessionID    string
+	PublicPlaybackRef  string
+	MessageID          string
+	TurnIndex          int
+	RuntimeEpoch       string
+	PlaybackGeneration uint64
+	Generation         uint64
 }
 
 func NewPublicSessionRoute(reg PublicSessionRouteRegistration) (PublicSessionRoute, bool) {
@@ -34,13 +38,15 @@ func NewPublicSessionRoute(reg PublicSessionRouteRegistration) (PublicSessionRou
 		utteranceID = messageID + ":utt:0000"
 	}
 	return PublicSessionRoute{
-		PublicSessionID:   publicSessionID,
-		PublicPlaybackRef: strings.TrimSpace(reg.PublicPlaybackRef),
-		MessageID:         messageID,
-		TurnIndex:         reg.TurnIndex,
-		UtteranceID:       utteranceID,
-		Generation:        reg.Generation,
-		ChunkIndexes:      map[int]int{},
+		PublicSessionID:    publicSessionID,
+		PublicPlaybackRef:  strings.TrimSpace(reg.PublicPlaybackRef),
+		MessageID:          messageID,
+		TurnIndex:          reg.TurnIndex,
+		UtteranceID:        utteranceID,
+		Generation:         reg.Generation,
+		RuntimeEpoch:       strings.TrimSpace(reg.RuntimeEpoch),
+		PlaybackGeneration: reg.PlaybackGeneration,
+		ChunkIndexes:       map[int]int{},
 	}, true
 }
 

@@ -213,7 +213,6 @@ const state = {
   },
   agents: {},
   idleChat: {
-    selectedMode: localStorage.getItem('idlechat.selectedMode') || 'manual',
     selectedView: localStorage.getItem('idlechat.selectedView') || 'live',
     mode: '',
     manualMode: false,
@@ -237,6 +236,7 @@ const state = {
     episodeDetailError: '',
     episodeDetailLoading: false,
     episodeRequestToken: 0,
+    controlSnapshot: null,
   },
   openTasks: {},
   progressOpenTasks: {},
@@ -443,6 +443,244 @@ const viewerControl = {
   activeAudioViewerId: '',
   activeInputViewerId: '',
 };
+const viewerForegroundPresence = {
+  protocolVersion: 2,
+  surface: 'other',
+  runtimeEpoch: '',
+  registrationReceipt: '',
+  updateSeq: 0,
+  claimSeq: 0,
+  stateRevision: 0,
+  registered: false,
+  claimed: false,
+  ready: false,
+  requestInFlight: false,
+  requestSettled: null,
+  sendInFlight: false,
+  releasePromise: null,
+  heartbeatTimer: null,
+};
+
+function coreViewerHeaders(extra = {}) {
+  return Object.assign({
+    'X-RenCrow-Client': 'RenCrow_CORE',
+    'X-RenCrow-Interaction-Profile': 'core-viewer',
+  }, extra || {});
+}
+
+function buildViewerPresenceReference() {
+  if (!viewerForegroundPresence.ready || !viewerForegroundPresence.runtimeEpoch || !viewerForegroundPresence.registrationReceipt || !viewerForegroundPresence.claimSeq) {
+    throw new Error('CORE foreground presence is not ready');
+  }
+  return {
+    protocol_version: 2,
+    runtime_epoch: viewerForegroundPresence.runtimeEpoch,
+    registration_receipt: viewerForegroundPresence.registrationReceipt,
+    claim_seq: viewerForegroundPresence.claimSeq,
+  };
+}
+
+function setViewerForegroundReady(ready, statusText) {
+  viewerForegroundPresence.ready = Boolean(ready);
+  const sendButton = document.getElementById('sendBtn');
+  if (sendButton) {
+    sendButton.disabled = !viewerForegroundPresence.ready || viewerForegroundPresence.sendInFlight;
+    sendButton.title = viewerForegroundPresence.ready ? 'Send' : 'CORE presence is not ready';
+  }
+  const status = document.getElementById('viewerPresenceState');
+  if (status) {
+    status.textContent = String(statusText || (viewerForegroundPresence.ready ? 'CORE: ready' : 'CORE: connecting'));
+    status.className = 'stt-state ' + (viewerForegroundPresence.ready ? 'conn-on' : 'conn-off');
+  }
+}
+
+function viewerPageIsVisible() {
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+}
+
+async function postViewerPresence(payload, keepalive = false) {
+  const response = await fetch('/viewer/surface-presence', {
+    method: 'POST',
+    headers: coreViewerHeaders({'Content-Type': 'application/json'}),
+    body: JSON.stringify(payload),
+    keepalive: Boolean(keepalive),
+  });
+  let result = null;
+  try { result = await response.json(); } catch (_) {}
+  if (!response.ok) {
+    const error = new Error(String((result && (result.error || result.error_code)) || response.statusText || 'surface presence failed'));
+    error.status = response.status;
+    error.code = String(result && result.error_code || '');
+    throw error;
+  }
+  if (!result || result.ok !== true || result.protocol_version !== 2) {
+    throw new Error('CORE did not confirm surface presence V2');
+  }
+  return result;
+}
+
+function updateViewerPresenceFromResponse(response, expectedUpdateSeq, expectedClaimSeq) {
+  if (!response || response.ok !== true || response.protocol_version !== 2 ||
+      response.runtime_epoch !== viewerForegroundPresence.runtimeEpoch ||
+      response.registration_receipt !== viewerForegroundPresence.registrationReceipt ||
+      Number(response.accepted_update_seq) !== expectedUpdateSeq ||
+      Number(response.current_claim_seq) !== expectedClaimSeq) {
+    throw new Error('CORE surface presence response did not match the active V2 claim');
+  }
+  const revision = Number(response.state_revision);
+  if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('CORE returned an invalid presence state revision');
+  viewerForegroundPresence.updateSeq = expectedUpdateSeq;
+  viewerForegroundPresence.claimSeq = expectedClaimSeq;
+  viewerForegroundPresence.stateRevision = revision;
+  applyIdleChatControlSnapshot(response);
+  const foregroundReady = response.foreground_ready === true && viewerPageIsVisible() && !viewerForegroundPresence.releasePromise;
+  setViewerForegroundReady(foregroundReady, foregroundReady ? 'CORE: ready' : 'CORE: applying IdleChat stop');
+}
+
+async function registerViewerForegroundPresence() {
+  const response = await postViewerPresence({
+    protocol_version: 2,
+    viewer_client_id: viewerControl.clientId,
+    action: 'register',
+  });
+  const epoch = String(response.runtime_epoch || '').trim();
+  const receipt = String(response.registration_receipt || '').trim();
+  const lastUpdateSeq = Number(response.last_update_seq || 0);
+  if (!epoch || !receipt || !Number.isSafeInteger(lastUpdateSeq) || lastUpdateSeq < 0) {
+    throw new Error('CORE returned an incomplete V2 presence registration');
+  }
+  viewerForegroundPresence.runtimeEpoch = epoch;
+  viewerForegroundPresence.registrationReceipt = receipt;
+  viewerForegroundPresence.updateSeq = lastUpdateSeq;
+  viewerForegroundPresence.claimSeq = 0;
+  viewerForegroundPresence.registered = true;
+  viewerForegroundPresence.claimed = false;
+}
+
+async function claimViewerForegroundSurface() {
+  if (!viewerForegroundPresence.registered) await registerViewerForegroundPresence();
+  const updateSeq = viewerForegroundPresence.updateSeq + 1;
+  const response = await postViewerPresence({
+    protocol_version: 2,
+    viewer_client_id: viewerControl.clientId,
+    runtime_epoch: viewerForegroundPresence.runtimeEpoch,
+    registration_receipt: viewerForegroundPresence.registrationReceipt,
+    surface: 'other',
+    action: 'claim',
+    update_seq: updateSeq,
+  });
+  updateViewerPresenceFromResponse(response, updateSeq, updateSeq);
+  viewerForegroundPresence.claimed = true;
+}
+
+async function heartbeatViewerForegroundSurface() {
+  const updateSeq = viewerForegroundPresence.updateSeq + 1;
+  const claimSeq = viewerForegroundPresence.claimSeq;
+  const response = await postViewerPresence({
+    protocol_version: 2,
+    viewer_client_id: viewerControl.clientId,
+    runtime_epoch: viewerForegroundPresence.runtimeEpoch,
+    registration_receipt: viewerForegroundPresence.registrationReceipt,
+    surface: 'other',
+    action: 'heartbeat',
+    update_seq: updateSeq,
+    claim_seq: claimSeq,
+  });
+  updateViewerPresenceFromResponse(response, updateSeq, claimSeq);
+}
+
+async function maintainViewerForegroundPresence() {
+  if (!viewerPageIsVisible() || viewerForegroundPresence.requestInFlight) return;
+  viewerForegroundPresence.requestInFlight = true;
+  let settleRequest;
+  const requestSettled = new Promise((resolve) => { settleRequest = resolve; });
+  viewerForegroundPresence.requestSettled = requestSettled;
+  try {
+    if (viewerForegroundPresence.releasePromise) await viewerForegroundPresence.releasePromise.catch(() => {});
+    if (!viewerPageIsVisible()) return;
+    if (!viewerForegroundPresence.registered || !viewerForegroundPresence.claimed) {
+      await claimViewerForegroundSurface();
+      return;
+    }
+    await heartbeatViewerForegroundSurface();
+  } catch (error) {
+    setViewerForegroundReady(false, 'CORE: unavailable');
+    invalidateIdleChatControlSnapshot();
+    if (error && (error.status === 403 || error.status === 409)) {
+      viewerForegroundPresence.registered = false;
+      viewerForegroundPresence.claimed = false;
+      viewerForegroundPresence.runtimeEpoch = '';
+      viewerForegroundPresence.registrationReceipt = '';
+      viewerForegroundPresence.updateSeq = 0;
+      viewerForegroundPresence.claimSeq = 0;
+    }
+    console.warn('[ViewerPresence] foreground claim unavailable:', error && error.message ? error.message : error);
+  } finally {
+    viewerForegroundPresence.requestInFlight = false;
+    if (viewerForegroundPresence.requestSettled === requestSettled) viewerForegroundPresence.requestSettled = null;
+    settleRequest();
+  }
+}
+
+function releaseViewerForegroundPresence() {
+  setViewerForegroundReady(false, 'CORE: released');
+  invalidateIdleChatControlSnapshot();
+  if (viewerForegroundPresence.releasePromise) return viewerForegroundPresence.releasePromise;
+  const release = (async () => {
+    if (viewerForegroundPresence.requestInFlight && viewerForegroundPresence.requestSettled) {
+      await viewerForegroundPresence.requestSettled;
+    }
+    if (!viewerForegroundPresence.registered || !viewerForegroundPresence.runtimeEpoch || !viewerForegroundPresence.registrationReceipt) {
+      viewerForegroundPresence.registered = false;
+      viewerForegroundPresence.claimed = false;
+      return;
+    }
+    const updateSeq = viewerForegroundPresence.updateSeq + 1;
+    const payload = {
+      protocol_version: 2,
+      viewer_client_id: viewerControl.clientId,
+      runtime_epoch: viewerForegroundPresence.runtimeEpoch,
+      registration_receipt: viewerForegroundPresence.registrationReceipt,
+      surface: 'other',
+      action: 'release',
+      update_seq: updateSeq,
+      claim_seq: viewerForegroundPresence.claimSeq,
+    };
+    viewerForegroundPresence.updateSeq = updateSeq;
+    viewerForegroundPresence.registered = false;
+    viewerForegroundPresence.claimed = false;
+    viewerForegroundPresence.runtimeEpoch = '';
+    viewerForegroundPresence.registrationReceipt = '';
+    viewerForegroundPresence.claimSeq = 0;
+    await postViewerPresence(payload, true);
+  })()
+    .catch((error) => {
+      console.warn('[ViewerPresence] release unavailable:', error && error.message ? error.message : error);
+    })
+    .finally(() => {
+      if (viewerForegroundPresence.releasePromise === release) viewerForegroundPresence.releasePromise = null;
+    });
+  viewerForegroundPresence.releasePromise = release;
+  return release;
+}
+
+function bindViewerForegroundPresenceLifecycle() {
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', () => {
+      if (viewerPageIsVisible()) maintainViewerForegroundPresence();
+      else releaseViewerForegroundPresence();
+    });
+  }
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', releaseViewerForegroundPresence);
+    window.addEventListener('pageshow', maintainViewerForegroundPresence);
+  }
+  if (!viewerForegroundPresence.heartbeatTimer && typeof setInterval === 'function') {
+    viewerForegroundPresence.heartbeatTimer = setInterval(maintainViewerForegroundPresence, 10000);
+  }
+  setViewerForegroundReady(false, 'CORE: connecting');
+  maintainViewerForegroundPresence();
+}
 const lipSyncMioEl = document.getElementById('lipSyncMio');
 const lipSyncShiroEl = document.getElementById('lipSyncShiro');
 const chatCharacterMioLayeredEl = document.getElementById('chatCharacterMioLayered');
@@ -1371,14 +1609,6 @@ const domainGraphSourceID = document.getElementById('domainGraphSourceID');
 const domainGraphStatus = document.getElementById('domainGraphStatusFilter');
 const newsPackCategory = document.getElementById('newsPackCategory');
 const newsPackRefreshBtn = document.getElementById('newsPackRefreshBtn');
-const idleStartBtn = document.getElementById('idleStart');
-const idleModeNormalBtn = document.getElementById('idleModeNormal');
-const idleModeForecastBtn = document.getElementById('idleModeForecast');
-const idleModeStorySimpleBtn = document.getElementById('idleModeStorySimple');
-const idleStopBtn = document.getElementById('idleStop');
-const idlePlaybackPlayBtn = document.getElementById('idlePlaybackPlay');
-const idlePlaybackNextBtn = document.getElementById('idlePlaybackNext');
-const idlePlaybackPreviousBtn = document.getElementById('idlePlaybackPrevious');
 const idleStateEl = document.getElementById('idleState');
 const idleSubtabs = Array.from(document.querySelectorAll('.idle-subtab'));
 const idleSubviews = Array.from(document.querySelectorAll('.idle-subview'));
@@ -1552,13 +1782,6 @@ if (newsPackRefreshBtn) newsPackRefreshBtn.addEventListener('click', refreshNews
 if (newsPackCategory) newsPackCategory.addEventListener('keydown', (e) => { if (e.key === 'Enter') refreshNewsPack(); });
 
 
-if (idlePlaybackPlayBtn) idlePlaybackPlayBtn.addEventListener('click', () => controlIdlePlayback('play'));
-if (idlePlaybackNextBtn) idlePlaybackNextBtn.addEventListener('click', () => controlIdlePlayback('next'));
-if (idlePlaybackPreviousBtn) idlePlaybackPreviousBtn.addEventListener('click', () => controlIdlePlayback('previous'));
-if (idleModeNormalBtn) idleModeNormalBtn.addEventListener('click', () => setIdleSelectedMode('manual'));
-if (idleModeForecastBtn) idleModeForecastBtn.addEventListener('click', () => setIdleSelectedMode('forecast'));
-if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.addEventListener('click', () => setIdleSelectedMode('story-simple'));
-if (idleStopBtn) idleStopBtn.addEventListener('click', () => controlIdle('/viewer/idlechat/stop'));
 idleSubtabs.forEach((btn) => {
   btn.addEventListener('click', () => setIdleSelectedView(btn.dataset.idleView || 'live'));
 });
@@ -3690,6 +3913,7 @@ function refreshViewerStatus() {
 
 function ingestEvent(ev) {
   handleViewerActiveControlEvent(ev);
+  if (!isCurrentIdleChatPlaybackEvent(ev)) return;
   if (isStaleIdleChatEvent(ev)) return;
   if (ev && ev.type === 'task.notification') {
     const key = taskNotificationEventKey(ev);
@@ -3840,6 +4064,80 @@ function isStaleIdleChatEvent(ev) {
 		}
 	}
 	return false;
+}
+
+function idlePlaybackEventEnvelope(ev) {
+  if (!ev) return null;
+  const type = String(ev.type || '').trim();
+  let payload = {};
+  if (type === 'tts.audio_chunk' || type === 'tts.session_completed') {
+    try { payload = JSON.parse(ev.content || '{}'); } catch (_) { return null; }
+    if (!isIdleChatSessionId(String(ev.session_id || payload.session_id || '').trim())) return null;
+  } else if (!type.startsWith('idlechat.')) {
+    return null;
+  }
+  const generationValue = ev.playback_generation !== undefined ? ev.playback_generation : payload.playback_generation;
+  const generation = Number(generationValue);
+  return {
+    runtimeEpoch: String(ev.runtime_epoch || payload.runtime_epoch || '').trim(),
+    playbackGeneration: Number.isSafeInteger(generation) && generation > 0 ? generation : 0,
+  };
+}
+
+function isCurrentIdleChatPlaybackEvent(ev) {
+  const envelope = idlePlaybackEventEnvelope(ev);
+  if (!envelope) return true;
+  const control = state && state.idleChat ? state.idleChat.controlSnapshot : null;
+  if (!viewerForegroundPresence.ready || !control || !control.runtime_epoch ||
+      control.runtime_epoch !== viewerForegroundPresence.runtimeEpoch || !control.playback_active) return false;
+  return envelope.runtimeEpoch === control.runtime_epoch && envelope.playbackGeneration > 0 &&
+    envelope.playbackGeneration === Number(control.playback_generation);
+}
+
+function resetIdleChatForControlChange() {
+  if (typeof chatAudioSync !== 'undefined' && chatAudioSync && typeof chatAudioSync.resetIdleChat === 'function') {
+    chatAudioSync.resetIdleChat();
+  }
+  if (typeof resetIdleChatLiveForControlChange === 'function') resetIdleChatLiveForControlChange();
+}
+
+function applyIdleChatControlSnapshot(payload) {
+  const epoch = String(payload && payload.runtime_epoch || '').trim();
+  const revision = Number(payload && payload.state_revision);
+  const generation = Number(payload && payload.playback_generation);
+  if (!epoch || !Number.isSafeInteger(revision) || revision < 0 || !Number.isSafeInteger(generation) || generation < 0) {
+    invalidateIdleChatControlSnapshot();
+    return false;
+  }
+  if (viewerForegroundPresence.runtimeEpoch && epoch !== viewerForegroundPresence.runtimeEpoch) return false;
+  const next = {
+    runtime_epoch: epoch,
+    state_revision: revision,
+    playback_generation: generation,
+    playback_state: String(payload.playback_state || ''),
+    playback_active: payload.playback_active === true,
+    playback_allowed: payload.playback_allowed === true,
+    cleanup_pending: payload.cleanup_pending === true,
+    generation_state: String(payload.generation_state || ''),
+    generation_quiesced: payload.generation_quiesced === true,
+    backend_resource_state: String(payload.backend_resource_state || ''),
+  };
+  const current = state.idleChat.controlSnapshot;
+  if (current && current.runtime_epoch === epoch &&
+      (revision < Number(current.state_revision) || generation < Number(current.playback_generation))) return false;
+  const reset = !current || current.runtime_epoch !== epoch ||
+    generation !== Number(current.playback_generation) ||
+    (current.playback_active === true && !next.playback_active);
+  state.idleChat.controlSnapshot = next;
+  if (reset) resetIdleChatForControlChange();
+  return true;
+}
+
+function invalidateIdleChatControlSnapshot() {
+  if (!state || !state.idleChat) return;
+  const hadSnapshot = Boolean(state.idleChat.controlSnapshot);
+  state.idleChat.controlSnapshot = null;
+  if (hadSnapshot) resetIdleChatForControlChange();
 }
 
 function handleTTSAudioEvent(ev) {
@@ -5250,7 +5548,6 @@ updateAudioButton();
 let sending = false;
 let viewerAttachments = [];
 let suppressInputInterrupt = false;
-let lastIdleStopAt = 0;
 const cameraCapture = {
   stream: null,
   sourceType: '',
@@ -5272,21 +5569,6 @@ function autoResize() {
   inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
 }
 function interruptIdleChatForUserInput(reason) {
-  const normalizedReason = String(reason || 'user_input').trim() || 'user_input';
-  const now = Date.now();
-  const mustStopNow = [
-    'user_input',
-    'paste',
-    'composition_start',
-    'chat_send',
-    'stt_button',
-    'stt_test_record',
-    'stt_voice_start',
-    'stt_voice_resume',
-    'vds_voice_start',
-  ].includes(normalizedReason);
-  const shouldNotifyServer = mustStopNow || now - lastIdleStopAt > 500;
-  lastIdleStopAt = now;
   state.idleChat.mode = '';
   state.idleChat.manualMode = false;
   state.idleChat.chatActive = false;
@@ -5298,15 +5580,6 @@ function interruptIdleChatForUserInput(reason) {
   if (typeof chatAudioSync !== 'undefined' && chatAudioSync && typeof chatAudioSync.resetIdleChat === 'function') {
     chatAudioSync.resetIdleChat();
   }
-  if (!shouldNotifyServer) return;
-  fetch('/viewer/idlechat/stop', {
-    method: 'POST',
-    keepalive: true,
-  }).catch((err) => {
-    state.idleChat.controlError = 'IdleChat stop unavailable: ' + String(err && err.message ? err.message : err);
-    if (typeof renderIdleChat === 'function') renderIdleChat();
-    console.warn('[IdleChat] stop failed:', err);
-  });
 }
 function acceptSpeechCancelCapability(payload, requestGeneration) {
   const token = String((payload && payload.speech_cancel_token) || '').trim();
@@ -5806,9 +6079,14 @@ function send() {
   const message = text;
   const attachments = viewerAttachments.slice();
   if ((!text && attachments.length === 0) || sending) return;
+  if (!viewerForegroundPresence.ready) {
+    showToast('CORE foreground presence is not ready; sending is disabled', 'error');
+    return;
+  }
   if (typeof interruptChatOutputForUserInput === 'function') interruptChatOutputForUserInput('chat_send');
   if (typeof interruptIdleChatForUserInput === 'function') interruptIdleChatForUserInput('chat_send');
   sending = true;
+  viewerForegroundPresence.sendInFlight = true;
   sendBtn.disabled = true;
   inp.disabled = true;
   if (typeof attachBtn !== 'undefined' && attachBtn) attachBtn.disabled = true;
@@ -5836,7 +6114,8 @@ function send() {
   })
   .finally(() => {
     sending = false;
-    sendBtn.disabled = false;
+    viewerForegroundPresence.sendInFlight = false;
+    setViewerForegroundReady(viewerForegroundPresence.ready, viewerForegroundPresence.ready ? 'CORE: ready' : 'CORE: unavailable');
     inp.disabled = false;
     if (typeof attachBtn !== 'undefined' && attachBtn) attachBtn.disabled = false;
     if (typeof screenBtn !== 'undefined' && screenBtn) screenBtn.disabled = false;
@@ -5846,19 +6125,24 @@ function send() {
 }
 
 async function sendViewerMessage(message, attachments = []) {
+  if (!viewerForegroundPresence.ready) throw new Error('CORE foreground presence is not ready');
   const requestGeneration = speechCancelGeneration;
   const body = buildViewerSendRequest(message);
+  body.viewer_client_id = viewerControl.clientId;
+  body.presence = buildViewerPresenceReference();
   if (!body.message && (!attachments || attachments.length === 0)) throw new Error('message or attachment is required');
   let request;
   if (attachments && attachments.length > 0) {
     const form = new FormData();
-    Object.entries(body).forEach(([key, value]) => form.append(key, value || ''));
+    Object.entries(body).forEach(([key, value]) => {
+      form.append(key, value && typeof value === 'object' ? JSON.stringify(value) : (value || ''));
+    });
     attachments.forEach((file) => form.append('attachments[]', file, file.name));
-    request = {method: 'POST', body: form};
+    request = {method: 'POST', headers: coreViewerHeaders(), body: form};
   } else {
     request = {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: coreViewerHeaders({'Content-Type': 'application/json'}),
       body: JSON.stringify(body),
     };
   }
@@ -6070,7 +6354,12 @@ function connect() {
     try { ingestEvent(JSON.parse(e.data)); }
     catch (err) { console.error(err); }
   };
+  es.addEventListener('idlechat.control', (e) => {
+    try { applyIdleChatControlSnapshot(JSON.parse(e.data)); }
+    catch (_) { invalidateIdleChatControlSnapshot(); }
+  });
   es.onerror = () => {
+    invalidateIdleChatControlSnapshot();
     dot.className = 'dot off';
     stxt.textContent = 'Reconnecting...';
     if (es.readyState === EventSource.CLOSED && viewerEventSource === es) viewerEventSource = null;
@@ -6085,7 +6374,6 @@ if (typeof bindInstructionsDeskControls === 'function') bindInstructionsDeskCont
 if (typeof bindReportsDeskControls === 'function') bindReportsDeskControls();
 if (typeof bindInvestmentDeskControls === 'function') bindInvestmentDeskControls();
 renderIdleChat();
-setIdleSelectedMode(state.idleChat.selectedMode);
 setIdleSelectedView(state.idleChat.selectedView);
 refreshIdleStatus();
 refreshIdleLogs();
@@ -6109,6 +6397,7 @@ setOptionalPanelRefreshIntervals();
 setInterval(refreshDebugSystem, 5000);
 refreshDebugSystem();
 registerWebMCPTools();
+bindViewerForegroundPresenceLifecycle();
 connect();
 
 // === STT (Speech-to-Text) realtime PCM16 streaming ===

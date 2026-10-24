@@ -98,20 +98,11 @@ const idleViewSummary = document.getElementById('idleViewSummary');
 const idleViewHistory = document.getElementById('idleViewHistory');
 const idleSubtabs = [idleLiveTab, idleSummaryTab, idleHistoryTab];
 const idleSubviews = [idleViewLive, idleViewSummary, idleViewHistory];
-` + idleJs + sourceBetween(js, "if (idlePlaybackPlayBtn) idlePlaybackPlayBtn.addEventListener", 'function stateClass') + `
+` + idleJs + sourceBetween(js, 'idleSubtabs.forEach((btn)', 'function stateClass') + `
 globalThis.__idleHarness = {
   state,
-  setIdleSelectedMode,
   setIdleSelectedView,
   renderIdleChat,
-  idleStartBtn,
-  idleModeNormalBtn,
-  idleModeForecastBtn,
-  idleModeStorySimpleBtn,
-  idleStopBtn,
-  idlePlaybackPlayBtn,
-  idlePlaybackNextBtn,
-  idlePlaybackPreviousBtn,
   idleLiveTab,
   idleSummaryTab,
   idleHistoryTab,
@@ -165,38 +156,15 @@ globalThis.__idleHarness = {
   return {harness: context.__idleHarness, fetchCalls, localStore};
 }
 
-test('idle playback buttons post play, next, and previous actions', async () => {
-  const {harness, fetchCalls} = loadIdleModeHarness();
-
-  await harness.idlePlaybackPlayBtn.click();
-  await tick();
-  await tick();
-  let call = fetchCalls.filter((c) => c.method === 'POST').at(-1);
-  assert.equal(call.path, '/viewer/idlechat/playback');
-  assert.deepEqual(JSON.parse(call.body), {action: 'play', item_id: 'word:item-1'});
-
-  harness.idlePlaybackNextBtn.disabled = false;
-  await harness.idlePlaybackNextBtn.click();
-  await tick();
-  await tick();
-  call = fetchCalls.filter((c) => c.method === 'POST').at(-1);
-  assert.deepEqual(JSON.parse(call.body), {action: 'next'});
-
-  harness.idlePlaybackPreviousBtn.disabled = false;
-  await harness.idlePlaybackPreviousBtn.click();
-  await tick();
-  await tick();
-  call = fetchCalls.filter((c) => c.method === 'POST').at(-1);
-  assert.deepEqual(JSON.parse(call.body), {action: 'previous'});
-});
-
-test('idle bottom controls contain exactly the requested three playback buttons', () => {
+test('CORE Debug Viewer exposes IdleChat as read-only status and playback data', () => {
   const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
-  const controls = sourceBetween(html, '<div class="idle-tools">', '<span id="idleState"');
-  assert.equal((controls.match(/<button/g) || []).length, 3);
-  assert.match(controls, />前の話題<\/button>/);
-  assert.match(controls, />再生<\/button>/);
-  assert.match(controls, />スキップ（次の話題）<\/button>/);
+  const idleJS = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/idlechat.js', 'utf8');
+  for (const id of ['idleStart', 'idleStop', 'idlePlaybackPlay', 'idlePlaybackNext', 'idlePlaybackPrevious']) {
+    assert.equal(html.includes(`id="${id}"`), false, `${id} must not be available in the observer UI`);
+  }
+  assert.doesNotMatch(idleJS, /fetch\(['"]\/viewer\/idlechat\/(?:start|stop|playback)['"]/);
+  assert.match(html, /id="idleState"/);
+  assert.match(html, /id="idleViewEpisodes"/);
 });
 
 test('idle chat history renders full topic without ellipsis truncation', () => {

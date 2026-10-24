@@ -8,8 +8,20 @@ func registerIdleChatTTSPending(sessionID, publicPlaybackRef string) <-chan stru
 	return idleChatTTSPendingStore.Register(sessionID, publicPlaybackRef)
 }
 
+func registerIdleChatTTSPendingForPlayback(sessionID, publicPlaybackRef, runtimeEpoch string, playbackGeneration uint64) <-chan struct{} {
+	return idleChatTTSPendingStore.RegisterForPlaybackGeneration(sessionID, publicPlaybackRef, moduletts.PlaybackGenerationIdentity{
+		RuntimeEpoch: runtimeEpoch, PlaybackGeneration: playbackGeneration,
+	})
+}
+
 func registerIdleChatTopicGate(idleSessionID, ttsSessionID string) {
 	idleChatTTSPendingStore.RegisterTopicGate(idleSessionID, ttsSessionID)
+}
+
+func registerIdleChatTopicGateForPlayback(idleSessionID, ttsSessionID, runtimeEpoch string, playbackGeneration uint64) {
+	idleChatTTSPendingStore.RegisterTopicGateForPlayback(idleSessionID, ttsSessionID, moduletts.PlaybackGenerationIdentity{
+		RuntimeEpoch: runtimeEpoch, PlaybackGeneration: playbackGeneration,
+	})
 }
 
 func notifyIdleChatTTSPlaybackCompleted(publicPlaybackRef string) bool {
@@ -49,6 +61,12 @@ func clearAllIdleChatTTSPending() {
 
 func clearAllIdleChatTTSPendingStale() {
 	for _, sessionID := range idleChatTTSPendingStore.ClearAll() {
+		retireTTSPublicSession(sessionID)
+	}
+}
+
+func clearIdleChatTTSPendingGeneration(runtimeEpoch string, playbackGeneration uint64) {
+	for _, sessionID := range idleChatTTSPendingStore.CancelPlaybackGeneration(runtimeEpoch, playbackGeneration) {
 		retireTTSPublicSession(sessionID)
 	}
 }

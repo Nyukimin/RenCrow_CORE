@@ -88,7 +88,7 @@ func TestViewerV2EventsGetBeforePostDoesNotCreateSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open EventStore: %v", err)
 	}
-	factories, publisher := newViewerV2BridgeTestFactories(t, sessionRepo, store)
+	factories, publisher, deps := newViewerV2BridgeTestFactories(t, sessionRepo, store)
 	events := factories.V2ConversationEvents
 	post := factories.ViewerSendFromOrch(&viewerBridgeCountProcessor{})
 
@@ -104,7 +104,7 @@ func TestViewerV2EventsGetBeforePostDoesNotCreateSession(t *testing.T) {
 		t.Fatalf("initial GET created %d session files, want none", len(entries))
 	}
 
-	accepted := postViewerV2(post, "get-before-post", "first v2 turn")
+	accepted := postViewerV2(t, deps, post, "get-before-post", "first v2 turn")
 	if accepted.Code != http.StatusAccepted {
 		t.Fatalf("POST status=%d body=%s, want 202 after the read-only GET", accepted.Code, accepted.Body.String())
 	}
@@ -131,7 +131,7 @@ func TestViewerV2EventsGetRestartPostKeepsFirstSessionCreationOnPost(t *testing.
 		t.Fatalf("open first EventStore: %v", err)
 	}
 	firstRepo := sessionpersistence.NewJSONSessionRepository(sessionDir)
-	firstFactories, _ := newViewerV2BridgeTestFactories(t, firstRepo, firstStore)
+	firstFactories, _, _ := newViewerV2BridgeTestFactories(t, firstRepo, firstStore)
 	response := getViewerV2Events(firstFactories.V2ConversationEvents)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("initial GET status=%d body=%s, want temporary 503", response.Code, response.Body.String())
@@ -154,8 +154,8 @@ func TestViewerV2EventsGetRestartPostKeepsFirstSessionCreationOnPost(t *testing.
 	if err != nil {
 		t.Fatalf("reopen EventStore after restart: %v", err)
 	}
-	restartedFactories, publisher := newViewerV2BridgeTestFactories(t, restartedRepo, restartedStore)
-	accepted := postViewerV2(restartedFactories.ViewerSendFromOrch(&viewerBridgeCountProcessor{}), "get-restart-post", "first v2 turn after restart")
+	restartedFactories, publisher, restartedDeps := newViewerV2BridgeTestFactories(t, restartedRepo, restartedStore)
+	accepted := postViewerV2(t, restartedDeps, restartedFactories.ViewerSendFromOrch(&viewerBridgeCountProcessor{}), "get-restart-post", "first v2 turn after restart")
 	if accepted.Code != http.StatusAccepted {
 		t.Fatalf("POST after restart status=%d body=%s, want 202", accepted.Code, accepted.Body.String())
 	}
@@ -181,12 +181,12 @@ func TestViewerV2EventsKeepsExistingEmptyLegacyJSONUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open EventStore: %v", err)
 	}
-	factories, _ := newViewerV2BridgeTestFactories(t, repo, store)
+	factories, _, deps := newViewerV2BridgeTestFactories(t, repo, store)
 	getResponse := getViewerV2Events(factories.V2ConversationEvents)
 	if getResponse.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET status=%d body=%s, want unavailable for an existing legacy JSON session", getResponse.Code, getResponse.Body.String())
 	}
-	postResponse := postViewerV2(factories.ViewerSendFromOrch(&viewerBridgeCountProcessor{}), "legacy-empty-json", "must not promote the legacy session")
+	postResponse := postViewerV2(t, deps, factories.ViewerSendFromOrch(&viewerBridgeCountProcessor{}), "legacy-empty-json", "must not promote the legacy session")
 	if postResponse.Code != http.StatusServiceUnavailable {
 		t.Fatalf("POST status=%d body=%s, want strict legacy-session rejection", postResponse.Code, postResponse.Body.String())
 	}
@@ -202,7 +202,7 @@ func TestViewerV2EventsKeepsExistingEmptyLegacyJSONUnavailable(t *testing.T) {
 	}
 }
 
-func newViewerV2BridgeTestFactories(t *testing.T, repo *sessionpersistence.JSONSessionRepository, store *eventstore.SQLiteStore) (viewerBridgeFactories, *responseFirstTestPublisher) {
+func newViewerV2BridgeTestFactories(t *testing.T, repo *sessionpersistence.JSONSessionRepository, store *eventstore.SQLiteStore) (viewerBridgeFactories, *responseFirstTestPublisher, *Dependencies) {
 	t.Helper()
 	publisher := newResponseFirstTestPublisher()
 	runtime, err := newResponseFirstConversationRuntime(store, agent.NewMioAgent(nil, nil, nil, nil, nil, nil), &responseFirstTestProvider{}, publisher, responseFirstTestOwnerID)
@@ -218,7 +218,7 @@ func newViewerV2BridgeTestFactories(t *testing.T, repo *sessionpersistence.JSONS
 	deps := &Dependencies{responseFirst: runtime, eventHub: hub}
 	cfg := &config.Config{}
 	cfg.ConversationRuntime.Version = "v2"
-	return buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo), publisher
+	return buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo), publisher, deps
 }
 
 func getViewerV2Events(handler http.HandlerFunc) *httptest.ResponseRecorder {

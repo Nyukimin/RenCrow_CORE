@@ -36,12 +36,32 @@ func (o *IdleChatOrchestrator) acquireGenerationWork() (*generationWorkLease, bo
 		return nil, false
 	}
 	o.generationWorkMu.Lock()
-	defer o.generationWorkMu.Unlock()
 	if o.generationWorkClosed {
+		o.generationWorkMu.Unlock()
 		return nil, false
 	}
 	o.generationWorkWG.Add(1)
-	return &generationWorkLease{done: o.generationWorkWG.Done}, true
+	o.generationWorkActive++
+	o.generationWorkMu.Unlock()
+	o.notifyPlaybackControlSnapshotChanged()
+	return &generationWorkLease{done: func() {
+		o.generationWorkMu.Lock()
+		if o.generationWorkActive > 0 {
+			o.generationWorkActive--
+		}
+		o.generationWorkMu.Unlock()
+		o.generationWorkWG.Done()
+		o.notifyPlaybackControlSnapshotChanged()
+	}}, true
+}
+
+func (o *IdleChatOrchestrator) generationWorkIsQuiesced() bool {
+	if o == nil {
+		return true
+	}
+	o.generationWorkMu.Lock()
+	defer o.generationWorkMu.Unlock()
+	return o.generationWorkActive == 0
 }
 
 func (o *IdleChatOrchestrator) launchGenerationWork(lease *generationWorkLease, work func()) {

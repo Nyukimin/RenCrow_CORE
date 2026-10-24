@@ -30,6 +30,7 @@ func TestLiveIdleChatTenThemesDoNotUseFallback(t *testing.T) {
 	probeLiveIdleChatProvider(t, "mio", chatProvider)
 	probeLiveIdleChatProvider(t, "shiro", workerProvider)
 	o := NewIdleChatOrchestrator(chatProvider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, cfg.IdleChat.Temperature, appconfig.BuildIdleChatAgentPrompts(cfg.Prompts), "")
+	nightGateAllowOrchestrator(t, o)
 	o.SetSpeakerProviders(map[string]llm.LLMProvider{
 		"mio":   chatProvider,
 		"shiro": workerProvider,

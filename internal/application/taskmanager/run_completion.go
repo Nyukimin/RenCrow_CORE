@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+const taskRunCompletionAdmissionBytes int64 = 2 << 20
 
 // CompleteRun closes one active Run and updates its owning Task as one
 // CAS-like transaction. It validates the current owner at commit time; it does
@@ -53,6 +56,109 @@ func (m *Manager) CompleteRun(
 		return domaintask.Task{}, err
 	}
 	return completed, nil
+}
+
+// AdmitRunCompletion performs the same Task-owner CAS as CompleteRun, but
+// returns as soon as an indexed local store has accepted its immutable
+// transaction into the shared FIFO. The returned ticket must be waited outside
+// the FIFO worker before the caller claims durable completion.
+func (m *Manager) AdmitRunCompletion(
+	ctx context.Context,
+	taskID modulecore.TaskID,
+	runID modulecore.RunID,
+	status domaintask.Status,
+	summary string,
+	waitingReason string,
+) (uint64, error) {
+	if ctx == nil {
+		return 0, errors.New("run completion admission context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err := taskID.Validate(); err != nil {
+		return 0, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if err := runID.Validate(); err != nil {
+		return 0, fmt.Errorf("run_id is invalid: %w", err)
+	}
+	if err := validateRunCompletionInput(status, waitingReason); err != nil {
+		return 0, err
+	}
+	queue := m.sharedPersistenceQueue()
+	if queue == nil {
+		return 0, errors.New("Task Manager has no shared persistence queue")
+	}
+	run, err := m.GetRun(ctx, runID)
+	if err != nil {
+		return 0, err
+	}
+	if err := run.Validate(); err != nil {
+		return 0, fmt.Errorf("run record is invalid: %w", err)
+	}
+	if run.TaskID != taskID || run.RunID != runID {
+		return 0, fmt.Errorf("task and run ownership do not match")
+	}
+	if run.Status != domaintask.RunStatusRunning {
+		return 0, m.VerifyRunCompletion(ctx, taskID, runID, run.Assignee, status)
+	}
+	if strings.TrimSpace(run.Assignee) == "" {
+		return 0, errors.New("actor_id is required")
+	}
+	admission, err := persistencequeue.Admit(queue, 1, taskRunCompletionAdmissionBytes)
+	if err != nil {
+		return 0, fmt.Errorf("reserve Task Run completion persistence capacity: %w", err)
+	}
+	defer func() { _ = admission.Release() }()
+	admittedContext := persistencequeue.WithAdmission(ctx, admission)
+	return m.taskTransactionWithTicket(admittedContext, taskID, func(txManager *Manager) error {
+		if err := txManager.validateRunExecutionInTransaction(admittedContext, taskID, runID, run.Assignee); err != nil {
+			return err
+		}
+		if _, err := txManager.validateLatestRunInTransaction(admittedContext, taskID, runID); err != nil {
+			return err
+		}
+		_, err := txManager.updateStatusInTransaction(admittedContext, taskID, status, summary, waitingReason, nil)
+		return err
+	})
+}
+
+// WaitRunCompletion waits for the FIFO ticket and confirms that the Task owner
+// durably contains the requested terminal pair. It must be called outside the
+// queue's Apply callback.
+func (m *Manager) WaitRunCompletion(ctx context.Context, ticket uint64, taskID modulecore.TaskID, runID modulecore.RunID, status domaintask.Status) error {
+	if ctx == nil {
+		return errors.New("run completion wait context is nil")
+	}
+	queue := m.sharedPersistenceQueue()
+	if queue == nil {
+		return errors.New("Task Manager has no shared persistence queue")
+	}
+	if ticket != 0 {
+		if err := queue.Wait(ctx, ticket); err != nil {
+			return err
+		}
+	}
+	run, err := m.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if err := run.Validate(); err != nil {
+		return fmt.Errorf("run record is invalid after persistence: %w", err)
+	}
+	return m.VerifyRunCompletion(ctx, taskID, runID, run.Assignee, status)
+}
+
+func validateRunCompletionInput(status domaintask.Status, waitingReason string) error {
+	switch status {
+	case domaintask.StatusSucceeded, domaintask.StatusFailed, domaintask.StatusCancelled, domaintask.StatusWaiting:
+	default:
+		return fmt.Errorf("run completion status is not accepted: %s", status)
+	}
+	if status == domaintask.StatusWaiting && strings.TrimSpace(waitingReason) == "" {
+		return errors.New("waiting reason is required")
+	}
+	return nil
 }
 
 // VerifyRunCompletion validates an already terminal Run and its owning Task

@@ -145,6 +145,7 @@ func TestIdleChatCreatesPendingMetaUpdateCandidateFromTimelineEvent(t *testing.T
 func TestIdleChatAppliesPersonaCanonicalResponse(t *testing.T) {
 	provider := &capturingIdleProvider{response: "削除は危険だから一回止めよう。理由を確認しよう。"}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"kuro", "mio"}, 5, 10, 0.8, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	recorder := &idlePersonaRecorder{}
 	o.SetPersonaRuntimeRecorder(recorder, []domainpersona.TriggerDefinition{{
 		TriggerID:   "kuro_danger",

@@ -34,12 +34,23 @@ func (o *IdleChatOrchestrator) tryBeginTopicProduction() bool {
 	if o == nil {
 		return false
 	}
+	return o.tryBeginTopicProductionWithScheduler(nil)
+}
+
+func (o *IdleChatOrchestrator) tryBeginTopicProductionWithScheduler(scheduler *NightPreparationScheduler) bool {
+	if o == nil || (scheduler != nil && scheduler != o.currentNightPreparationScheduler()) {
+		return false
+	}
 	o.topicProducerMu.Lock()
 	defer o.topicProducerMu.Unlock()
 	if o.topicProducerBusy {
 		return false
 	}
-	ctx, cancel := context.WithCancel(o.ctx)
+	parent := o.ctx
+	if scheduler != nil {
+		parent = requireNightPreparationContext(withNightPreparationScheduler(parent, scheduler))
+	}
+	ctx, cancel := context.WithCancel(parent)
 	o.topicProducerBusy = true
 	o.topicProducerCtx = ctx
 	o.topicProducerCancel = cancel
@@ -127,6 +138,12 @@ func (o *IdleChatOrchestrator) topicProductionBusy() bool {
 // InitWordTopicStock loads the persistent single/double stock and bootstraps
 // one item for each empty category without blocking runtime startup.
 func (o *IdleChatOrchestrator) InitWordTopicStock(path string) {
+	o.InitWordTopicStockWithContext(nil, path)
+}
+
+// InitWordTopicStockWithContext loads stock and starts its bootstrap only when
+// called from the configured night-preparation scheduler dispatch.
+func (o *IdleChatOrchestrator) InitWordTopicStockWithContext(ctx context.Context, path string) {
 	if o == nil {
 		return
 	}
@@ -139,7 +156,7 @@ func (o *IdleChatOrchestrator) InitWordTopicStock(path string) {
 	stock := o.wordTopicStock
 	o.mu.Unlock()
 	log.Printf("[IdleChat] Word topic stock initialized (total=%d capacity=%d)", stock.total(), len(wordTopicStockCategories)*wordTopicStockCapacityPerCategory)
-	o.bootstrapWordTopicStockAsync(stock)
+	o.bootstrapWordTopicStockAsyncWithContext(ctx, stock)
 }
 
 func (o *IdleChatOrchestrator) WordTopicStockSnapshot() WordTopicStockSnapshot {
@@ -153,57 +170,95 @@ func (o *IdleChatOrchestrator) WordTopicStockSnapshot() WordTopicStockSnapshot {
 }
 
 func (o *IdleChatOrchestrator) bootstrapWordTopicStockAsync(stock *wordTopicStock) {
+	o.bootstrapWordTopicStockAsyncWithContext(nil, stock)
+}
+
+func (o *IdleChatOrchestrator) bootstrapWordTopicStockAsyncWithContext(ctx context.Context, stock *wordTopicStock) {
 	if stock == nil {
 		return
 	}
-	o.startGenerationWork(func() {
-		for _, category := range wordTopicStockCategories {
-			_, recovering := o.generationCheckpointStore().Get("word:" + string(category))
-			if stock.count(category) > 0 && !recovering {
-				continue
+	workCtx, scheduler, ok := o.nightPreparationWorkContext(ctx)
+	if !ok {
+		return
+	}
+	if err := runWithNightPreparationGate(ctx, func(context.Context) error {
+		if !o.startGenerationWork(func() {
+			for _, category := range wordTopicStockCategories {
+				_, recovering := o.generationCheckpointStore().Get("word:" + string(category))
+				if stock.count(category) > 0 && !recovering {
+					continue
+				}
+				reserved := false
+				admissionErr := runWithNightPreparationGate(workCtx, func(context.Context) error {
+					if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProductionWithScheduler(scheduler) {
+						return nil
+					}
+					target := 1
+					if recovering {
+						target = wordTopicStockCapacityPerCategory + 1
+					}
+					reserved = stock.reserve(category, target, "startup")
+					if !reserved {
+						o.endTopicProduction()
+					}
+					return nil
+				})
+				if admissionErr != nil || !reserved {
+					log.Printf("[IdleChat] Word topic bootstrap deferred: category=%s", category)
+					return
+				}
+				o.fillWordTopicStock(stock, category, "startup")
 			}
-			if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
-				log.Printf("[IdleChat] Word topic bootstrap deferred: category=%s", category)
-				return
-			}
-			target := 1
-			if recovering {
-				target = wordTopicStockCapacityPerCategory + 1
-			}
-			if !stock.reserve(category, target, "startup") {
-				o.endTopicProduction()
-				continue
-			}
-			o.fillWordTopicStock(stock, category, "startup")
+		}) {
+			return errIdleChatGenerationWorkClosed
 		}
-	})
+		return nil
+	}); err != nil {
+		log.Printf("[IdleChat] Word topic bootstrap admission failed: %v", err)
+	}
 }
 
 // RefillWordTopicStockIfIdle starts at most one single/double topic producer.
 func (o *IdleChatOrchestrator) RefillWordTopicStockIfIdle(trigger string) bool {
-	if o == nil || !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
+	return o.RefillWordTopicStockIfIdleWithContext(nil, trigger)
+}
+
+func (o *IdleChatOrchestrator) RefillWordTopicStockIfIdleWithContext(ctx context.Context, trigger string) bool {
+	if o == nil {
 		return false
 	}
-	o.mu.Lock()
-	stock := o.wordTopicStock
-	o.mu.Unlock()
-	if stock == nil {
-		o.endTopicProduction()
+	_, scheduler, admitted := o.nightPreparationWorkContext(ctx)
+	if !admitted {
 		return false
 	}
-	category, ok := o.reserveWordTopicProduction(stock, trigger)
-	if !ok {
-		o.endTopicProduction()
-		return false
-	}
-	if !o.startGenerationWork(func() {
-		o.fillWordTopicStock(stock, category, trigger)
-	}) {
-		stock.done(category, context.Canceled)
-		o.endTopicProduction()
-		return false
-	}
-	return true
+	started := false
+	err := runWithNightPreparationGate(ctx, func(context.Context) error {
+		if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProductionWithScheduler(scheduler) {
+			return nil
+		}
+		o.mu.Lock()
+		stock := o.wordTopicStock
+		o.mu.Unlock()
+		if stock == nil {
+			o.endTopicProduction()
+			return nil
+		}
+		category, ok := o.reserveWordTopicProduction(stock, trigger)
+		if !ok {
+			o.endTopicProduction()
+			return nil
+		}
+		if !o.startGenerationWork(func() {
+			o.fillWordTopicStock(stock, category, trigger)
+		}) {
+			stock.done(category, context.Canceled)
+			o.endTopicProduction()
+			return errIdleChatGenerationWorkClosed
+		}
+		started = true
+		return nil
+	})
+	return err == nil && started
 }
 
 func (o *IdleChatOrchestrator) reserveWordTopicProduction(stock *wordTopicStock, trigger string) (TopicCategory, bool) {

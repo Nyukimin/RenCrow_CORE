@@ -49,6 +49,24 @@ func idleChatAssignee(initiatedBy string) string {
 	}
 }
 
+// runWithIdleChatRunAdmission gates background generation Task/Run issuance
+// when its scheduler is present. Prepared playback may issue its own
+// non-generative Task/Run without a scheduler; actual provider sends always
+// use runWithNightPreparationGate and therefore still fail closed.
+func runWithIdleChatRunAdmission(ctx context.Context, call func(context.Context) error) error {
+	if ctx == nil || call == nil {
+		return ErrNightPreparationBlocked
+	}
+	scheduler := nightPreparationSchedulerFromContext(ctx)
+	if scheduler == nil {
+		if isNightPreparationRequired(ctx) {
+			return ErrNightPreparationBlocked
+		}
+		return call(ctx)
+	}
+	return runNightPreparationLLMFromContext(ctx, call)
+}
+
 func issueIdleChatRun(
 	ctx context.Context,
 	issuer idlechatRunIssuer,
@@ -80,33 +98,39 @@ func issueIdleChatRun(
 		}
 	}
 	var run domaintask.Run
-	if newTask {
-		if reason != domaintask.RunStartReasonFirst {
-			return "", "", fmt.Errorf("a new idlechat task starts with the %s reason, got %s", domaintask.RunStartReasonFirst, reason)
+	err := runWithIdleChatRunAdmission(ctx, func(admittedCtx context.Context) error {
+		if newTask {
+			if reason != domaintask.RunStartReasonFirst {
+				return fmt.Errorf("a new idlechat task starts with the %s reason, got %s", domaintask.RunStartReasonFirst, reason)
+			}
+			task, startedRun, err := issuer.CreateAndStartRun(admittedCtx, domaintask.Task{
+				Title:    title,
+				Route:    domaintask.RouteGeneral,
+				Assignee: idleChatAssignee(assignee),
+			}, domaintask.SharedRoleContext{})
+			if err != nil {
+				// Nothing was persisted, so there is no Task to withdraw.
+				return err
+			}
+			taskID = task.TaskID
+			run = startedRun
+			if err := taskID.Validate(); err != nil {
+				return fmt.Errorf("created task_id is invalid: %w", err)
+			}
+			return nil
 		}
-		task, startedRun, err := issuer.CreateAndStartRun(ctx, domaintask.Task{
-			Title:    title,
-			Route:    domaintask.RouteGeneral,
-			Assignee: idleChatAssignee(assignee),
-		}, domaintask.SharedRoleContext{})
-		if err != nil {
-			// Nothing was persisted, so there is no Task to withdraw.
-			return "", "", err
-		}
-		taskID = task.TaskID
-		run = startedRun
 		if err := taskID.Validate(); err != nil {
-			return "", "", fmt.Errorf("created task_id is invalid: %w", err)
+			return fmt.Errorf("existing task_id is invalid: %w", err)
 		}
-	} else {
-		if err := taskID.Validate(); err != nil {
-			return "", "", fmt.Errorf("existing task_id is invalid: %w", err)
-		}
-		startedRun, err := issuer.StartRunWithReason(ctx, taskID, reason)
+		startedRun, err := issuer.StartRunWithReason(admittedCtx, taskID, reason)
 		if err != nil {
-			return "", "", err
+			return err
 		}
 		run = startedRun
+		return nil
+	})
+	if err != nil {
+		return "", "", err
 	}
 	if err := validateIdleChatRunIdentity(run.TaskID, run.RunID); err != nil {
 		if !newTask {

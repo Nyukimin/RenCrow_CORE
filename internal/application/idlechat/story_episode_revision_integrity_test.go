@@ -34,7 +34,7 @@ func newStoryRevisionIntegrityService(t *testing.T, stage, episodeID string) (*S
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	successor, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
+	successor, err := rerunIdleChatRun(nightGateAllowedContext(t), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func newStoryRevisionIntegrityService(t *testing.T, stage, episodeID string) (*S
 func TestStoryRevisionIntegrityRejectsSourceRunEpisodeMismatchBeforeLLM(t *testing.T) {
 	service, generator, sourceEpisodeID := newStoryRevisionSourceMismatchService(t)
 
-	err := service.PrepareToTarget(context.Background())
+	err := service.PrepareToTarget(nightGateAllowedContext(t))
 	if err == nil || !strings.Contains(err.Error(), "source Run belongs to another episode") {
 		t.Fatalf("error=%v, want source Run belongs to another episode", err)
 	}
@@ -71,7 +71,7 @@ func TestStoryRevisionIntegrityRejectsSourceRunEpisodeMismatchBeforeLLM(t *testi
 func TestStoryRevisionIntegrityRejectsReviewStageWithInputPhaseBeforeLLM(t *testing.T) {
 	service, generator := newStoryRevisionIntegrityService(t, "review", "integrity-source")
 
-	err := service.PrepareToTarget(context.Background())
+	err := service.PrepareToTarget(nightGateAllowedContext(t))
 	if err == nil || !strings.Contains(err.Error(), "stage") || !strings.Contains(err.Error(), "phase") {
 		t.Fatalf("error=%v, want explicit stage/phase mismatch", err)
 	}
@@ -156,7 +156,7 @@ func newStoryRevisionSourceMismatchService(t *testing.T) (*StoryEpisodeService, 
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	runningRun, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
+	runningRun, err := rerunIdleChatRun(nightGateAllowedContext(t), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}

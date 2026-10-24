@@ -79,6 +79,264 @@ func sequencedEvent(eventType string, content string, seq modulecore.EventSeq) o
 	return event
 }
 
+func TestHandleSSEWithFilter_DropsUnsequencedConversationEvents(t *testing.T) {
+	hub := NewEventHub(10)
+	event := orchestrator.NewEvent("conversation.message", "mio", "user", "UNSEQUENCED-CONVERSATION", "CHAT", "", "s1", "viewer", "u1")
+	hub.OnEvent(event)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil).WithContext(ctx)
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSSEWithFilter(rec, req, func(context.Context, orchestrator.OrchestratorEvent) (bool, error) {
+		return true, nil
+	})
+
+	if strings.Contains(rec.Body.String(), "UNSEQUENCED-CONVERSATION") {
+		t.Fatalf("general SSE exposed a seq0 conversation event despite an inclusive caller filter: %q", rec.Body.String())
+	}
+}
+
+type delayedControlReplayReader struct {
+	entered chan struct{}
+	release <-chan struct{}
+	cursor  orchestrator.OrchestratorEvent
+	next    orchestrator.OrchestratorEvent
+	once    sync.Once
+}
+
+type delayedSessionControlReplayReader struct {
+	entered chan struct{}
+	release <-chan struct{}
+	event   orchestrator.OrchestratorEvent
+	once    sync.Once
+}
+
+func (r *delayedSessionControlReplayReader) ReplaySessionPublicPage(ctx context.Context, _ SessionPublicReplayScope, after, through modulecore.EventSeq, _ int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {
+	r.once.Do(func() { close(r.entered) })
+	select {
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	case <-r.release:
+	}
+	if through == 0 {
+		through = r.event.EventSeq
+	}
+	if r.event.EventSeq > after && r.event.EventSeq <= through {
+		return []orchestrator.OrchestratorEvent{r.event}, through, nil
+	}
+	return nil, through, nil
+}
+
+func (r *delayedSessionControlReplayReader) ReadSessionPublicMessage(context.Context, SessionPublicReplayScope, modulecore.EventID, modulecore.EventSeq) (orchestrator.OrchestratorEvent, bool, error) {
+	return orchestrator.OrchestratorEvent{}, false, nil
+}
+
+func (r *delayedControlReplayReader) ReplayPage(ctx context.Context, after, through modulecore.EventSeq, _ int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {
+	r.once.Do(func() { close(r.entered) })
+	select {
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	case <-r.release:
+	}
+	if through == 0 {
+		through = r.next.EventSeq
+	}
+	if r.next.EventSeq > after && r.next.EventSeq <= through {
+		return []orchestrator.OrchestratorEvent{r.next}, through, nil
+	}
+	return nil, through, nil
+}
+
+func (r *delayedControlReplayReader) GetByEventID(_ context.Context, id modulecore.EventID) (orchestrator.OrchestratorEvent, bool, error) {
+	if id == r.cursor.EventID {
+		return r.cursor, true, nil
+	}
+	if id == r.next.EventID {
+		return r.next, true, nil
+	}
+	return orchestrator.OrchestratorEvent{}, false, nil
+}
+
+func TestHandleSSE_ControlSnapshotPrecedesDelayedHistoryAndReconnectsLatest(t *testing.T) {
+	hub := NewEventHub(10)
+	initial := IdleChatControlSnapshot{
+		RuntimeEpoch: "runtime-a", StateRevision: 10, PlaybackState: "playing",
+		PlaybackAllowed: true, PlaybackActive: true, PlaybackGeneration: 7,
+		GenerationState: "idle", GenerationQuiesced: true, BackendResourceState: "unknown",
+	}
+	stopped := initial
+	stopped.StateRevision = 11
+	stopped.PlaybackState = "blocked"
+	stopped.PlaybackAllowed = false
+	stopped.PlaybackActive = false
+	stopped.CleanupPending = true
+	stopped.GenerationState = "pause_requested"
+	stopped.GenerationQuiesced = false
+	hub.PublishIdleChatControlSnapshot(initial)
+
+	cursor := sequencedEvent("entry.stage", "cursor", 1)
+	next := sequencedEvent("entry.stage", "DELAYED-HISTORY", 2)
+	readerRelease := make(chan struct{})
+	reader := &delayedControlReplayReader{entered: make(chan struct{}), release: readerRelease, cursor: cursor, next: next}
+	hub.SetReplayReader(reader)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil).WithContext(ctx)
+	req.Header.Set("Last-Event-ID", string(cursor.EventID))
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 3}
+	done := make(chan struct{})
+	go func() {
+		hub.HandleSSE(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-reader.entered:
+	case <-time.After(time.Second):
+		t.Fatal("durable replay did not reach the intentional delay")
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"state_revision":10`) || strings.Contains(body, "DELAYED-HISTORY") {
+		t.Fatalf("initial control state was not flushed before delayed history: %q", body)
+	}
+	hub.PublishIdleChatControlSnapshot(stopped)
+	close(readerRelease)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler did not finish after history/control delivery")
+	}
+
+	body := rec.Body.String()
+	initialAt := strings.Index(body, `"state_revision":10`)
+	historyAt := strings.Index(body, "DELAYED-HISTORY")
+	stoppedAt := strings.Index(body, `"state_revision":11`)
+	if initialAt < 0 || historyAt < 0 || stoppedAt < 0 || !(initialAt < historyAt && historyAt < stoppedAt) {
+		t.Fatalf("want initial snapshot, delayed history, then stop snapshot: %q", body)
+	}
+	for _, frame := range strings.Split(body, "\n\n") {
+		if strings.HasPrefix(frame, "event: idlechat.control\n") && strings.Contains(frame, "id:") {
+			t.Fatalf("control frame must not carry a canonical SSE id: %q", frame)
+		}
+	}
+	if got := hub.History(); len(got) != 0 {
+		t.Fatalf("control snapshots entered canonical replay history: %+v", got)
+	}
+
+	reconnect := serveTail(t, hub, "/viewer/events?from=now", "", 1)
+	if !strings.Contains(reconnect.Body.String(), `"state_revision":11`) || strings.Contains(reconnect.Body.String(), "DELAYED-HISTORY") {
+		t.Fatalf("reconnect did not receive only the latest control snapshot before tailing: %q", reconnect.Body.String())
+	}
+}
+
+func TestEventHubKeepsActivePlaybackAgainstLateSameGenerationPreparation(t *testing.T) {
+	hub := NewEventHub(10)
+	active := IdleChatControlSnapshot{
+		RuntimeEpoch: "runtime-a", StateRevision: 4, PlaybackState: "playing",
+		PlaybackAllowed: true, PlaybackActive: true, PlaybackGeneration: 8,
+		GenerationState: "running", GenerationQuiesced: false, BackendResourceState: "unknown",
+	}
+	latePreparation := active
+	latePreparation.PlaybackState = "idlechat"
+	latePreparation.PlaybackActive = false
+	hub.PublishIdleChatControlSnapshot(active)
+	hub.PublishIdleChatControlSnapshot(latePreparation)
+
+	reconnect := serveTail(t, hub, "/viewer/events?from=now", "", 1)
+	if !strings.Contains(reconnect.Body.String(), `"playback_active":true`) || !strings.Contains(reconnect.Body.String(), `"playback_generation":8`) {
+		t.Fatalf("late same-generation preparation replaced active playback: %q", reconnect.Body.String())
+	}
+}
+
+func TestHandleSessionPublicSSE_ControlSnapshotPrecedesDelayedHistoryAndStreamsLatest(t *testing.T) {
+	hub := NewEventHub(10)
+	sessionID := modulecore.NewSessionID()
+	turnID := modulecore.NewTurnID()
+	messageID := modulecore.NewMessageID()
+	publicEvent := sequencedEvent("agent.response", "SCOPED-DELAYED-HISTORY", 2)
+	publicEvent.SessionID = sessionID
+	publicEvent.TurnID = turnID
+	publicEvent.MessageID = messageID
+	publicEvent.Visibility = "public"
+	scope := SessionPublicReplayScope{SessionID: sessionID, OwnerID: "owner-1", ActorID: "viewer-user", CutoverSeq: 1}
+	readerRelease := make(chan struct{})
+	reader := &delayedSessionControlReplayReader{entered: make(chan struct{}), release: readerRelease, event: publicEvent}
+	hub.SetSessionPublicReplayReader(reader)
+
+	initial := IdleChatControlSnapshot{
+		RuntimeEpoch: "runtime-session", StateRevision: 20, PlaybackState: "playing",
+		PlaybackAllowed: true, PlaybackActive: true, PlaybackGeneration: 9,
+		GenerationState: "idle", GenerationQuiesced: true, BackendResourceState: "unknown",
+	}
+	stopped := initial
+	stopped.StateRevision = 21
+	stopped.PlaybackState = "blocked"
+	stopped.PlaybackAllowed = false
+	stopped.PlaybackActive = false
+	stopped.CleanupPending = true
+	stopped.GenerationState = "pause_requested"
+	stopped.GenerationQuiesced = false
+	hub.PublishIdleChatControlSnapshot(initial)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events", nil).WithContext(ctx)
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 3}
+	done := make(chan struct{})
+	go func() {
+		hub.HandleSessionPublicSSE(rec, req, scope)
+		close(done)
+	}()
+
+	select {
+	case <-reader.entered:
+	case <-time.After(time.Second):
+		t.Fatal("owner-scoped replay did not reach the intentional delay")
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "event: idlechat.control\n") || !strings.Contains(body, `"state_revision":20`) || strings.Contains(body, "SCOPED-DELAYED-HISTORY") {
+		t.Fatalf("owner-scoped stream did not flush the initial control snapshot before delayed history: %q", body)
+	}
+	hub.PublishIdleChatControlSnapshot(stopped)
+	close(readerRelease)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("owner-scoped SSE handler did not finish after history/control delivery")
+	}
+
+	body := rec.Body.String()
+	initialAt := strings.Index(body, `"state_revision":20`)
+	historyAt := strings.Index(body, "SCOPED-DELAYED-HISTORY")
+	stoppedAt := strings.Index(body, `"state_revision":21`)
+	if rec.Code != http.StatusOK || initialAt < 0 || historyAt < 0 || stoppedAt < 0 || !(initialAt < historyAt && historyAt < stoppedAt) {
+		t.Fatalf("want initial control, authorized delayed history, then latest control; status=%d body=%q", rec.Code, body)
+	}
+	for _, frame := range strings.Split(body, "\n\n") {
+		if strings.HasPrefix(frame, "event: idlechat.control\n") && (strings.Contains(frame, "id:") || strings.Contains(frame, `"event_seq"`)) {
+			t.Fatalf("control frame must not carry canonical identity: %q", frame)
+		}
+	}
+	if strings.Count(body, "SCOPED-DELAYED-HISTORY") != 1 {
+		t.Fatalf("session replay no longer emits exactly one authorized public event: %q", body)
+	}
+
+	reconnect := serveSessionPublicTail(t, hub, scope, 1)
+	if !strings.Contains(reconnect.Body.String(), `"state_revision":21`) {
+		t.Fatalf("owner-scoped reconnect did not receive latest control snapshot: %q", reconnect.Body.String())
+	}
+}
+
+func serveSessionPublicTail(t *testing.T, hub *EventHub, scope SessionPublicReplayScope, cancelOnFlush int) *cancelAfterFlushWriter {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events?from=now", nil).WithContext(ctx)
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: cancelOnFlush}
+	hub.HandleSessionPublicSSE(rec, req, scope)
+	return rec
+}
+
 type failingReplayReader struct{ calls int }
 
 func (r *failingReplayReader) ReplayPage(context.Context, modulecore.EventSeq, modulecore.EventSeq, int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {

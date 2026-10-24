@@ -601,6 +601,11 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if err := initializeRuntimeTaskOwnerWithCriteriaRevision(deps, cfg.WorkspaceDir, expectedCriteriaRevision, storageOwners.TaskStore); err != nil {
 		log.Fatalf("Failed to initialize canonical Task lifecycle owner: %v", err)
 	}
+	if runtimeTaskStoreSupportsRAMAdmission(deps.taskStore) {
+		if err := bindRuntimeOwnerPersistenceQueue(deps.taskManager, deps.persistenceQueue); err != nil {
+			log.Fatalf("Failed to bind indexed Task owner to shared persistence queue: %v", err)
+		}
+	}
 	if err := startWorldProjection(cfg, deps); err != nil {
 		log.Fatalf("Failed to start WORLD projection: %v", err)
 	}

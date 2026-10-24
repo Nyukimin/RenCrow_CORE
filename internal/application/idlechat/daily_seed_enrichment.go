@@ -221,11 +221,32 @@ func (j *dailyEnrichmentJob) closeDone() {
 
 // enrichCurrentDailySeeds は04:00 JSTに収集したURLへSkill契約を適用する。
 func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
+	o.EnrichCurrentDailySeedsWithContext(o.ctx)
+}
+
+// EnrichCurrentDailySeedsWithContext runs IdleChat-specific source enrichment
+// under the scheduler dispatch context so window/foreground cancellation
+// reaches every in-flight fetch and LLM request.
+func (o *IdleChatOrchestrator) EnrichCurrentDailySeedsWithContext(ctx context.Context) {
+	if o == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = o.ctx
+	}
+	if _, _, admitted := o.nightPreparationWorkContext(ctx); !admitted {
+		return
+	}
+	ctx = requireNightPreparationContext(ctx)
+	if err := runWithNightPreparationGate(ctx, func(context.Context) error { return nil }); err != nil {
+		log.Printf("[IdleChat] Daily source brief not admitted by night scheduler: %v", err)
+		return
+	}
 	cache := beginDailySeedEnrichment()
 	if cache == nil {
 		return
 	}
-	job := o.beginDailyEnrichmentJob(cache.FetchedAt)
+	job := o.beginDailyEnrichmentJobWithContext(ctx, cache.FetchedAt)
 	if job == nil {
 		return
 	}
@@ -447,10 +468,20 @@ func (o *IdleChatOrchestrator) beginDailyEnrichmentBatchForJob(job *dailyEnrichm
 }
 
 func (o *IdleChatOrchestrator) beginDailyEnrichmentJob(fetchedAt time.Time) *dailyEnrichmentJob {
+	return o.beginDailyEnrichmentJobWithContext(o.ctx, fetchedAt)
+}
+
+func (o *IdleChatOrchestrator) beginDailyEnrichmentJobWithContext(parent context.Context, fetchedAt time.Time) *dailyEnrichmentJob {
 	if o == nil || o.ctx == nil || o.ctx.Err() != nil {
 		return nil
 	}
-	jobCtx, cancel := context.WithCancel(llm.WithBusySource(o.ctx, "idlechat"))
+	if parent == nil {
+		parent = o.ctx
+	}
+	if err := parent.Err(); err != nil {
+		return nil
+	}
+	jobCtx, cancel := context.WithCancel(llm.WithBusySource(parent, "idlechat"))
 	job := &dailyEnrichmentJob{
 		fetchedAt: fetchedAt,
 		ctx:       jobCtx,

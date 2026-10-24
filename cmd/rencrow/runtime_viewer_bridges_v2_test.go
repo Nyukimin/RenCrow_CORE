@@ -116,8 +116,9 @@ func TestViewerV2ReservationSurvivesAcceptFailureRestartAndSameSubmissionRetry(t
 	firstRuntime.reservations = firstRepo
 	firstConfig := &config.Config{}
 	firstConfig.ConversationRuntime.Version = "v2"
-	firstHandler := buildViewerBridgeHandlers(firstConfig, &Dependencies{responseFirst: firstRuntime}, "", ttsEntryRuntime{}, firstRepo).ViewerSendFromOrch(&viewerBridgeCountProcessor{})
-	failed := postViewerV2(firstHandler, "reservation-restart-submit", "resume after Accept failure")
+	firstDeps := &Dependencies{responseFirst: firstRuntime}
+	firstHandler := buildViewerBridgeHandlers(firstConfig, firstDeps, "", ttsEntryRuntime{}, firstRepo).ViewerSendFromOrch(&viewerBridgeCountProcessor{})
+	failed := postViewerV2(t, firstDeps, firstHandler, "reservation-restart-submit", "resume after Accept failure")
 	if failed.Code != http.StatusServiceUnavailable {
 		t.Fatalf("first POST status=%d body=%s, want temporary failure before EventStore acceptance", failed.Code, failed.Body.String())
 	}
@@ -146,8 +147,9 @@ func TestViewerV2ReservationSurvivesAcceptFailureRestartAndSameSubmissionRetry(t
 	restartedRuntime.reservations = restartedRepo
 	restartedConfig := &config.Config{}
 	restartedConfig.ConversationRuntime.Version = "v2"
-	restartedHandler := buildViewerBridgeHandlers(restartedConfig, &Dependencies{responseFirst: restartedRuntime}, "", ttsEntryRuntime{}, restartedRepo).ViewerSendFromOrch(&viewerBridgeCountProcessor{})
-	accepted := postViewerV2(restartedHandler, "reservation-restart-submit", "resume after Accept failure")
+	restartedDeps := &Dependencies{responseFirst: restartedRuntime}
+	restartedHandler := buildViewerBridgeHandlers(restartedConfig, restartedDeps, "", ttsEntryRuntime{}, restartedRepo).ViewerSendFromOrch(&viewerBridgeCountProcessor{})
+	accepted := postViewerV2(t, restartedDeps, restartedHandler, "reservation-restart-submit", "resume after Accept failure")
 	if accepted.Code != http.StatusAccepted {
 		t.Fatalf("retry POST status=%d body=%s, want 202 from the recovered reservation", accepted.Code, accepted.Body.String())
 	}
@@ -157,7 +159,7 @@ func TestViewerV2ReservationSurvivesAcceptFailureRestartAndSameSubmissionRetry(t
 	if err := json.Unmarshal(accepted.Body.Bytes(), &firstReceipt); err != nil || firstReceipt.TurnID == "" {
 		t.Fatalf("accepted retry receipt=%+v err=%v, want a durable turn id", firstReceipt, err)
 	}
-	replayed := postViewerV2(restartedHandler, "reservation-restart-submit", "resume after Accept failure")
+	replayed := postViewerV2(t, restartedDeps, restartedHandler, "reservation-restart-submit", "resume after Accept failure")
 	if replayed.Code != http.StatusAccepted {
 		t.Fatalf("same-submission retry status=%d body=%s, want idempotent 202", replayed.Code, replayed.Body.String())
 	}
@@ -185,6 +187,7 @@ func TestViewerBridgeV1RemainsLegacyWhenResponseFirstIsEnabled(t *testing.T) {
 		`{"protocol_version":1,"message":"legacy hello","to":"mio"}`,
 	))
 	request.Header.Set("Content-Type", "application/json")
+	attachViewerBridgeTestPresence(t, deps, request)
 	factories.ViewerSendFromOrch(processor).ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s, want legacy 200 response", response.Code, response.Body.String())
@@ -243,6 +246,7 @@ func TestViewerBridgeV1RejectsPersistedV2SessionAfterRestart(t *testing.T) {
 	handler := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, sessionRepo).ViewerSendFromOrch(processor)
 	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"protocol_version":1,"message":"must remain on pinned v2"}`))
 	request.Header.Set("Content-Type", "application/json")
+	attachViewerBridgeTestPresence(t, deps, request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code == http.StatusOK {
@@ -311,9 +315,9 @@ func (p *responseFirstTestPublisher) PublishCommitted(_ context.Context, bundle 
 }
 
 func TestViewerBridgeV2AcceptsCommitsAndPublishesDirectReplyWithoutLegacyTask(t *testing.T) {
-	store, processor, provider, publisher, handler, closeStore := newResponseFirstViewerHandler(t)
+	store, processor, provider, publisher, deps, handler, closeStore := newResponseFirstViewerHandler(t)
 	defer closeStore()
-	response := postViewerV2(handler, "submit-happy", "hello Mio")
+	response := postViewerV2(t, deps, handler, "submit-happy", "hello Mio")
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s, want durable 202 acceptance", response.Code, response.Body.String())
 	}
@@ -358,9 +362,9 @@ func TestViewerBridgeV2AcceptsCommitsAndPublishesDirectReplyWithoutLegacyTask(t 
 }
 
 func TestViewerBridgeV2CompletedRetryRepublishesReceiptWithoutRegenerating(t *testing.T) {
-	_, processor, provider, publisher, handler, closeStore := newResponseFirstViewerHandler(t)
+	_, processor, provider, publisher, deps, handler, closeStore := newResponseFirstViewerHandler(t)
 	defer closeStore()
-	first := postViewerV2(handler, "submit-retry", "retry me")
+	first := postViewerV2(t, deps, handler, "submit-retry", "retry me")
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("first status=%d body=%s, want 202", first.Code, first.Body.String())
 	}
@@ -375,7 +379,7 @@ func TestViewerBridgeV2CompletedRetryRepublishesReceiptWithoutRegenerating(t *te
 	case <-time.After(3 * time.Second):
 		t.Fatal("first response did not complete")
 	}
-	second := postViewerV2(handler, "submit-retry", "retry me")
+	second := postViewerV2(t, deps, handler, "submit-retry", "retry me")
 	if second.Code != http.StatusAccepted {
 		t.Fatalf("retry status=%d body=%s, want idempotent 202", second.Code, second.Body.String())
 	}
@@ -607,8 +611,9 @@ func TestViewerBridgeV2RefusesExistingLegacyViewerSession(t *testing.T) {
 	processor := &viewerBridgeCountProcessor{}
 	cfg := &config.Config{}
 	cfg.ConversationRuntime.Version = "v2"
-	factories := buildViewerBridgeHandlers(cfg, &Dependencies{responseFirst: runtime}, "", ttsEntryRuntime{}, repo)
-	response := postViewerV2(factories.ViewerSendFromOrch(processor), "legacy-json-session", "must not cut over")
+	deps := &Dependencies{responseFirst: runtime}
+	factories := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo)
+	response := postViewerV2(t, deps, factories.ViewerSendFromOrch(processor), "legacy-json-session", "must not cut over")
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s, want fail-closed response for existing legacy session", response.Code, response.Body.String())
 	}
@@ -627,7 +632,7 @@ func responseFirstRequest(sessionID modulecore.SessionID, submissionID, message 
 
 const responseFirstTestOwnerID = "ren"
 
-func newResponseFirstViewerHandler(t *testing.T) (*eventstore.SQLiteStore, *viewerBridgeCountProcessor, *responseFirstTestProvider, *responseFirstTestPublisher, http.HandlerFunc, func()) {
+func newResponseFirstViewerHandler(t *testing.T) (*eventstore.SQLiteStore, *viewerBridgeCountProcessor, *responseFirstTestProvider, *responseFirstTestPublisher, *Dependencies, http.HandlerFunc, func()) {
 	t.Helper()
 	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))
 	if err != nil {
@@ -645,15 +650,17 @@ func newResponseFirstViewerHandler(t *testing.T) (*eventstore.SQLiteStore, *view
 	cfg := &config.Config{}
 	cfg.ConversationRuntime.Version = "v2"
 	factories := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, sessionpersistence.NewJSONSessionRepository(t.TempDir()))
-	return store, processor, provider, publisher, factories.ViewerSendFromOrch(processor), func() { _ = store.Close() }
+	return store, processor, provider, publisher, deps, factories.ViewerSendFromOrch(processor), func() { _ = store.Close() }
 }
 
-func postViewerV2(handler http.HandlerFunc, submissionID, message string) *httptest.ResponseRecorder {
+func postViewerV2(t *testing.T, deps *Dependencies, handler http.HandlerFunc, submissionID, message string) *httptest.ResponseRecorder {
+	t.Helper()
 	body, _ := json.Marshal(map[string]any{
 		"protocol_version": 2, "message": message, "client_submission_id": submissionID, "to": "mio", "user_id": "untrusted-body-user",
 	})
 	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(string(body)))
 	request.Header.Set("Content-Type", "application/json")
+	attachViewerBridgeTestPresence(t, deps, request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response

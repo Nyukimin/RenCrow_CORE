@@ -335,6 +335,20 @@ distributed:
 # Agent間雑談モード（v4.0）
 idle_chat:
   enabled: false
+  episode_preparation:
+    enabled: true
+    generator: "codex_exe"
+    ready_target: 3
+    no_ready_behavior: "wait"
+    max_suffix_regenerations: 3
+    schedule:
+      timezone: "Asia/Tokyo"
+      start: "02:00"
+      end: "06:00"
+      catch_up_outside_window: false
+    codex_exe:
+      sandbox: "read-only"
+      ephemeral: true
   participants:
     - "mio"
     - "shiro"

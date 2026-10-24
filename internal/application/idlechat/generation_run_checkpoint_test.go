@@ -48,7 +48,7 @@ func TestGenerationCheckpointSHA256IgnoresOnlyUpdatedAt(t *testing.T) {
 }
 
 func TestResumeIdleChatRunUsesExactPersistedCheckpointAndAssignee(t *testing.T) {
-	ctx := context.Background()
+	ctx := nightGateAllowedContext(t)
 	owner := newTestIdleChatRunIssuer(t)
 	taskID, predecessorID, err := issueIdleChatRun(ctx, owner, "checkpoint successor", "shiro", domaintask.RunStartReasonFirst, "")
 	if err != nil {

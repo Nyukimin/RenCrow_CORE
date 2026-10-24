@@ -1,12 +1,14 @@
 package idlechat
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -17,9 +19,10 @@ const (
 )
 
 var (
-	ErrTopicStockEmpty      = errors.New("topic stock has no playable items")
-	ErrTopicStockNotFound   = errors.New("topic stock item was not found")
-	ErrTopicStockNoPrevious = errors.New("previous topic is not available")
+	ErrTopicStockEmpty         = ErrPreparedDialogueEmpty
+	ErrTopicStockNotFound      = errors.New("topic stock item was not found")
+	ErrTopicStockNoPrevious    = errors.New("previous topic is not available")
+	ErrTopicStockPlaybackStale = errors.New("topic stock playback request became stale")
 )
 
 // TopicStockPlaybackItem is the stable Viewer-facing identity of one prepared
@@ -31,6 +34,7 @@ type TopicStockPlaybackItem struct {
 	Topic    string `json:"topic"`
 	word     *WordPreparedTopic
 	forecast *PreparedTopic
+	dialogue *DialogueEpisodeArtifact
 	story    *StoryEpisodeArtifact
 }
 
@@ -48,102 +52,127 @@ func forecastPlaybackID(runID modulecore.RunID) string {
 }
 func storyPlaybackID(id string) string { return "story:" + strings.TrimSpace(id) }
 
+func dialogueArtifactPlaybackID(artifact DialogueEpisodeArtifact) string {
+	prefix := "word:"
+	if artifact.TopicResult.Category == TopicCategoryForecast {
+		prefix = "forecast:"
+	}
+	return prefix + strings.TrimSpace(artifact.EpisodeID) + "#" + fmt.Sprint(artifact.Revision)
+}
+
+func storyArtifactPlaybackID(artifact StoryEpisodeArtifact) string {
+	return storyPlaybackID(artifact.EpisodeID) + "#" + fmt.Sprint(artifact.Revision)
+}
+
 func (o *IdleChatOrchestrator) availableTopicStockPlaybackItems() []TopicStockPlaybackItem {
-	if o == nil {
+	items, err := o.loadReadyTopicStockPlaybackItems()
+	if err != nil {
 		return nil
-	}
-	items := make([]TopicStockPlaybackItem, 0)
-	for _, category := range o.WordTopicStockSnapshot().Categories {
-		for _, prepared := range category.Topics {
-			pending, err := o.wordTopicPublicationPending(category.Name, prepared.RunID)
-			if err != nil || pending {
-				continue
-			}
-			copy := prepared
-			items = append(items, TopicStockPlaybackItem{
-				ID: wordPlaybackID(prepared.RunID), Stock: string(prepared.Category),
-				Label: wordTopicCategoryLabel(prepared.Category), Topic: prepared.Topic, word: &copy,
-			})
-		}
-	}
-	for _, domain := range o.ForecastTopicStockSnapshot().Domains {
-		for _, prepared := range domain.Topics {
-			pending, err := o.forecastTopicPublicationPending(domain.Name, prepared.RunID)
-			if err != nil || pending {
-				continue
-			}
-			copy := prepared
-			items = append(items, TopicStockPlaybackItem{
-				ID: forecastPlaybackID(prepared.RunID), Stock: "forecast",
-				Label: domain.Name, Topic: prepared.Topic, forecast: &copy,
-			})
-		}
-	}
-	for _, artifact := range o.StoryEpisodeStockSnapshot().Episodes {
-		if artifact.ProductionStatus != StoryProductionReady || !artifact.Validation.Valid {
-			continue
-		}
-		copy := cloneStoryEpisode(artifact)
-		items = append(items, TopicStockPlaybackItem{
-			ID: storyPlaybackID(artifact.EpisodeID), Stock: "story", Label: "物語",
-			Topic: storyEpisodeDisplayTitle(artifact), story: &copy,
-		})
 	}
 	return items
 }
 
-func (o *IdleChatOrchestrator) consumeTopicStockPlaybackItem(id string) (TopicStockPlaybackItem, error) {
-	id = strings.TrimSpace(id)
+func (o *IdleChatOrchestrator) loadReadyTopicStockPlaybackItems() ([]TopicStockPlaybackItem, error) {
+	if o == nil {
+		return nil, errors.New("idlechat is not configured")
+	}
 	o.mu.Lock()
-	wordStock := o.wordTopicStock
-	forecastStock := o.topicStockBuf
+	dialogueService := o.dialogueEpisodeService
 	storyService := o.storyEpisodeService
 	o.mu.Unlock()
-	switch {
-	case strings.HasPrefix(id, "word:"):
-		if wordStock != nil {
-			for _, category := range wordTopicStockCategories {
-				pending, err := o.wordTopicPublicationPending(category, modulecore.RunID(strings.TrimPrefix(id, "word:")))
-				if err != nil {
-					return TopicStockPlaybackItem{}, err
-				}
-				if pending {
-					return TopicStockPlaybackItem{}, errors.New("word topic publication is pending")
-				}
-			}
-			prepared, err := wordStock.takeByRunID(modulecore.RunID(strings.TrimPrefix(id, "word:")))
-			if err != nil {
-				return TopicStockPlaybackItem{}, err
-			}
-			if prepared != nil {
-				return TopicStockPlaybackItem{ID: id, Stock: string(prepared.Category), Label: wordTopicCategoryLabel(prepared.Category), Topic: prepared.Topic, word: prepared}, nil
-			}
+	items := make([]TopicStockPlaybackItem, 0)
+	if dialogueService != nil {
+		artifacts, err := dialogueService.ListReady(context.Background())
+		if err != nil {
+			return nil, err
 		}
-	case strings.HasPrefix(id, "forecast:"):
-		if forecastStock != nil {
-			runID := modulecore.RunID(strings.TrimPrefix(id, "forecast:"))
-			for _, domain := range forecastDomains {
-				pending, err := o.forecastTopicPublicationPending(domain.Name, runID)
-				if err != nil {
-					return TopicStockPlaybackItem{}, err
-				}
-				if pending {
-					return TopicStockPlaybackItem{}, errors.New("forecast topic publication is pending")
-				}
+		for _, artifact := range artifacts {
+			if artifact.TopicResult.Category != TopicCategorySingle && artifact.TopicResult.Category != TopicCategoryDouble && artifact.TopicResult.Category != TopicCategoryForecast {
+				continue
 			}
-			prepared, err := forecastStock.takeByRunID(runID)
-			if err != nil {
-				return TopicStockPlaybackItem{}, err
+			if artifact.TopicResult.Category == TopicCategoryForecast && !preparedForecastArtifactFresh(artifact, time.Now()) {
+				continue
 			}
-			if prepared != nil {
-				return TopicStockPlaybackItem{ID: id, Stock: "forecast", Label: prepared.Domain.Name, Topic: prepared.Topic, forecast: prepared}, nil
+			copy := cloneDialogueEpisode(artifact)
+			label := wordTopicCategoryLabel(artifact.TopicResult.Category)
+			stock := string(artifact.TopicResult.Category)
+			if artifact.TopicResult.Category == TopicCategoryForecast {
+				stock = "forecast"
+				label = strings.TrimSpace(artifact.TopicResult.Seed.ForecastDomain)
 			}
+			title := strings.TrimSpace(artifact.PreparedTitle)
+			if title == "" {
+				title = strings.TrimSpace(artifact.TopicResult.Topic)
+			}
+			items = append(items, TopicStockPlaybackItem{
+				ID: dialogueArtifactPlaybackID(artifact), Stock: stock,
+				Label: label, Topic: title, dialogue: &copy,
+			})
 		}
-	case strings.HasPrefix(id, "story:"):
-		if storyService != nil {
-			if artifact, ok := storyService.Episode(strings.TrimPrefix(id, "story:")); ok && artifact.ProductionStatus == StoryProductionReady && artifact.Validation.Valid {
-				return TopicStockPlaybackItem{ID: id, Stock: "story", Label: "物語", Topic: storyEpisodeDisplayTitle(artifact), story: &artifact}, nil
+	}
+	if storyService != nil {
+		for _, artifact := range storyService.Snapshot().Episodes {
+			if artifact.ProductionStatus != StoryProductionReady || !artifact.Validation.Valid || !o.storyProductionRunSucceeded(artifact) {
+				continue
 			}
+			copy := cloneStoryEpisode(artifact)
+			items = append(items, TopicStockPlaybackItem{
+				ID: storyArtifactPlaybackID(artifact), Stock: "story", Label: "物語",
+				Topic: storyEpisodeDisplayTitle(artifact), story: &copy,
+			})
+		}
+	}
+	return items, nil
+}
+
+func preparedForecastArtifactFresh(artifact DialogueEpisodeArtifact, now time.Time) bool {
+	if artifact.CreatedAt.IsZero() {
+		return false
+	}
+	return artifact.CreatedAt.In(jst).Format("2006-01-02") == now.In(jst).Format("2006-01-02")
+}
+
+func (o *IdleChatOrchestrator) storyProductionRunSucceeded(artifact StoryEpisodeArtifact) bool {
+	o.mu.Lock()
+	issuer := o.runIssuer
+	o.mu.Unlock()
+	if issuer == nil {
+		return false
+	}
+	ctx := context.Background()
+	run, err := inspectGenerationRun(ctx, issuer, artifact.TaskID, artifact.RunID)
+	if err != nil || run.Status != domaintask.RunStatusSucceeded {
+		return false
+	}
+	owner, err := generationRunOwnerFromIssuer(issuer)
+	if err != nil {
+		return false
+	}
+	task, err := owner.Get(ctx, artifact.TaskID)
+	return err == nil && task.TaskID == artifact.TaskID && task.Status == domaintask.StatusSucceeded
+}
+
+func (o *IdleChatOrchestrator) consumeTopicStockPlaybackItem(id string) (TopicStockPlaybackItem, error) {
+	id = strings.TrimSpace(id)
+	items, err := o.loadReadyTopicStockPlaybackItems()
+	if err != nil {
+		return TopicStockPlaybackItem{}, err
+	}
+	if len(items) == 0 {
+		return TopicStockPlaybackItem{}, ErrPreparedDialogueEmpty
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+		if item.dialogue != nil && strings.HasPrefix(id, "word:") && strings.TrimPrefix(id, "word:") == string(item.dialogue.RunID) {
+			return item, nil
+		}
+		if item.dialogue != nil && strings.HasPrefix(id, "forecast:") && strings.TrimPrefix(id, "forecast:") == string(item.dialogue.RunID) {
+			return item, nil
+		}
+		if item.story != nil && id == storyPlaybackID(item.story.EpisodeID) {
+			return item, nil
 		}
 	}
 	return TopicStockPlaybackItem{}, fmt.Errorf("%w: %s", ErrTopicStockNotFound, id)
@@ -155,31 +184,67 @@ func (o *IdleChatOrchestrator) selectTopicStockPlaybackItem(action, requestedID 
 	if len(o.topicPlaybackHistory) == 0 {
 		o.topicPlaybackIndex = -1
 	}
-
 	action = strings.ToLower(strings.TrimSpace(action))
+	if action == TopicStockPlaybackPrevious && o.topicPlaybackIndex <= 0 {
+		return TopicStockPlaybackItem{}, ErrTopicStockNoPrevious
+	}
+	if action != TopicStockPlaybackPrevious && action != TopicStockPlaybackPlay && action != TopicStockPlaybackNext {
+		return TopicStockPlaybackItem{}, fmt.Errorf("unsupported topic stock playback action %q", action)
+	}
+	items, err := o.loadReadyTopicStockPlaybackItems()
+	if err != nil {
+		return TopicStockPlaybackItem{}, err
+	}
+	if len(items) == 0 {
+		return TopicStockPlaybackItem{}, ErrPreparedDialogueEmpty
+	}
+	resolve := func(id string) (TopicStockPlaybackItem, error) {
+		for _, candidate := range items {
+			aliasMatches := candidate.dialogue != nil &&
+				((strings.HasPrefix(id, "word:") && strings.TrimPrefix(id, "word:") == string(candidate.dialogue.RunID)) ||
+					(strings.HasPrefix(id, "forecast:") && strings.TrimPrefix(id, "forecast:") == string(candidate.dialogue.RunID)))
+			if candidate.ID == id || aliasMatches || (candidate.story != nil && id == storyPlaybackID(candidate.story.EpisodeID)) {
+				return candidate, nil
+			}
+		}
+		return TopicStockPlaybackItem{}, fmt.Errorf("%w: %s", ErrTopicStockNotFound, id)
+	}
 	switch action {
 	case TopicStockPlaybackPrevious:
 		if o.topicPlaybackIndex <= 0 {
 			return TopicStockPlaybackItem{}, ErrTopicStockNoPrevious
 		}
-		o.topicPlaybackIndex--
-		return o.topicPlaybackHistory[o.topicPlaybackIndex], nil
+		nextIndex := o.topicPlaybackIndex - 1
+		item, err := resolve(o.topicPlaybackHistory[nextIndex].ID)
+		if err != nil {
+			return TopicStockPlaybackItem{}, err
+		}
+		o.topicPlaybackIndex = nextIndex
+		return item, nil
 	case TopicStockPlaybackPlay:
 		requestedID = strings.TrimSpace(requestedID)
 		if requestedID != "" {
 			for index, item := range o.topicPlaybackHistory {
 				if item.ID == requestedID {
+					resolved, err := resolve(item.ID)
+					if err != nil {
+						return TopicStockPlaybackItem{}, err
+					}
 					o.topicPlaybackIndex = index
-					return item, nil
+					return resolved, nil
 				}
 			}
 		} else if o.topicPlaybackIndex >= 0 && o.topicPlaybackIndex < len(o.topicPlaybackHistory) {
-			return o.topicPlaybackHistory[o.topicPlaybackIndex], nil
+			return resolve(o.topicPlaybackHistory[o.topicPlaybackIndex].ID)
 		}
 	case TopicStockPlaybackNext:
 		if next := o.topicPlaybackIndex + 1; next >= 0 && next < len(o.topicPlaybackHistory) {
+			item, err := resolve(o.topicPlaybackHistory[next].ID)
+			if err != nil {
+				return TopicStockPlaybackItem{}, err
+			}
 			o.topicPlaybackIndex = next
-			return o.topicPlaybackHistory[next], nil
+			return item, nil
 		}
 	default:
 		return TopicStockPlaybackItem{}, fmt.Errorf("unsupported topic stock playback action %q", action)
@@ -190,7 +255,7 @@ func (o *IdleChatOrchestrator) selectTopicStockPlaybackItem(action, requestedID 
 		for _, item := range o.topicPlaybackHistory {
 			seen[item.ID] = struct{}{}
 		}
-		for _, item := range o.availableTopicStockPlaybackItems() {
+		for _, item := range items {
 			if _, played := seen[item.ID]; !played {
 				requestedID = item.ID
 				break
@@ -200,7 +265,7 @@ func (o *IdleChatOrchestrator) selectTopicStockPlaybackItem(action, requestedID 
 	if requestedID == "" {
 		return TopicStockPlaybackItem{}, ErrTopicStockEmpty
 	}
-	item, err := o.consumeTopicStockPlaybackItem(requestedID)
+	item, err := resolve(requestedID)
 	if err != nil {
 		return TopicStockPlaybackItem{}, err
 	}
@@ -240,7 +305,29 @@ func (o *IdleChatOrchestrator) TopicStockPlaybackSnapshot() TopicStockPlaybackSn
 	return snapshot
 }
 
+func (o *IdleChatOrchestrator) rollbackTopicPlaybackSelection(item TopicStockPlaybackItem, priorIndex, priorSize, selectedIndex int) {
+	o.topicPlaybackMu.Lock()
+	defer o.topicPlaybackMu.Unlock()
+	if len(o.topicPlaybackHistory) == priorSize+1 && len(o.topicPlaybackHistory) > 0 && o.topicPlaybackHistory[len(o.topicPlaybackHistory)-1].ID == item.ID {
+		o.topicPlaybackHistory = o.topicPlaybackHistory[:priorSize]
+		o.topicPlaybackIndex = priorIndex
+		return
+	}
+	if len(o.topicPlaybackHistory) == priorSize && o.topicPlaybackIndex == selectedIndex {
+		o.topicPlaybackIndex = priorIndex
+	}
+}
+
 func (o *IdleChatOrchestrator) StartTopicStockPlayback(action, requestedID string) (TopicStockPlaybackSnapshot, error) {
+	return o.StartTopicStockPlaybackWithGuard(action, requestedID, nil)
+}
+
+// StartTopicStockPlaybackWithGuard checks a caller-owned policy/revision guard
+// after ready-artifact selection and again after reservation, immediately
+// before launching playback. The callback must be read-only and repeatable.
+// A failed check rejects this request, rolls back its selection, and finalizes
+// any Task/Run and artifact reservation created for it.
+func (o *IdleChatOrchestrator) StartTopicStockPlaybackWithGuard(action, requestedID string, beforeActivation func() error) (TopicStockPlaybackSnapshot, error) {
 	if o == nil {
 		return TopicStockPlaybackSnapshot{}, errors.New("idlechat is not configured")
 	}
@@ -265,9 +352,21 @@ func (o *IdleChatOrchestrator) StartTopicStockPlayback(action, requestedID strin
 		}
 	}()
 
+	o.topicPlaybackMu.Lock()
+	priorIndex, priorSize := o.topicPlaybackIndex, len(o.topicPlaybackHistory)
+	o.topicPlaybackMu.Unlock()
 	item, err := o.selectTopicStockPlaybackItem(action, requestedID)
 	if err != nil {
 		return o.TopicStockPlaybackSnapshot(), err
+	}
+	o.topicPlaybackMu.Lock()
+	selectedIndex := o.topicPlaybackIndex
+	o.topicPlaybackMu.Unlock()
+	if beforeActivation != nil {
+		if err := beforeActivation(); err != nil {
+			o.rollbackTopicPlaybackSelection(item, priorIndex, priorSize, selectedIndex)
+			return o.TopicStockPlaybackSnapshot(), errors.Join(ErrTopicStockPlaybackStale, err)
+		}
 	}
 	if o.IsChatActive() || o.IsManualMode() {
 		o.Interrupt("topic_stock_" + strings.ToLower(strings.TrimSpace(action)))
@@ -284,35 +383,64 @@ func (o *IdleChatOrchestrator) StartTopicStockPlayback(action, requestedID strin
 	generation, err := o.startIdleRun()
 	if err != nil {
 		o.resetIdleSessionState(generation)
+		o.rollbackTopicPlaybackSelection(item, priorIndex, priorSize, selectedIndex)
 		return o.TopicStockPlaybackSnapshot(), fmt.Errorf("start topic stock conversation: %w", err)
 	}
+	var playbackTaskID modulecore.TaskID
+	var playbackRunID modulecore.RunID
 	o.mu.Lock()
+	playbackTaskID = o.activeTaskID
+	playbackRunID = o.activeRunID
 	o.lastActivity = time.Now()
+	dialogueService := o.dialogueEpisodeService
 	o.mu.Unlock()
+	if item.dialogue != nil {
+		if dialogueService == nil {
+			err = ErrPreparedDialogueInvalid
+		} else {
+			var reserved DialogueEpisodeArtifact
+			reserved, err = dialogueService.ReserveReady(o.idleRunContext(), item.dialogue.EpisodeID, item.dialogue.Revision, playbackTaskID, playbackRunID)
+			if err == nil {
+				item.dialogue = &reserved
+			}
+		}
+		if err != nil {
+			o.resetIdleSessionState(generation)
+			finalizeErr := o.cancelIdleRunIfGeneration(generation)
+			o.rollbackTopicPlaybackSelection(item, priorIndex, priorSize, selectedIndex)
+			return o.TopicStockPlaybackSnapshot(), errors.Join(fmt.Errorf("reserve prepared dialogue playback: %w", err), finalizeErr)
+		}
+	}
+	if beforeActivation != nil {
+		if err := beforeActivation(); err != nil {
+			if item.dialogue != nil && dialogueService != nil {
+				dialogueService.ReleaseReadyReservation(*item.dialogue, playbackTaskID, playbackRunID)
+			}
+			o.resetIdleSessionState(generation)
+			finalizeErr := o.cancelIdleRunIfGeneration(generation)
+			o.rollbackTopicPlaybackSelection(item, priorIndex, priorSize, selectedIndex)
+			return o.TopicStockPlaybackSnapshot(), errors.Join(ErrTopicStockPlaybackStale, err, finalizeErr)
+		}
+	}
 	o.launchGenerationWork(lease, func() {
-		o.runTopicStockPlayback(item, generation)
+		o.runTopicStockPlayback(item, generation, playbackTaskID, playbackRunID, dialogueService)
 	})
 	transferred = true
 	return o.TopicStockPlaybackSnapshot(), nil
 }
 
-func (o *IdleChatOrchestrator) runTopicStockPlayback(item TopicStockPlaybackItem, generation uint64) {
+func (o *IdleChatOrchestrator) runTopicStockPlayback(item TopicStockPlaybackItem, generation uint64, playbackTaskID modulecore.TaskID, playbackRunID modulecore.RunID, dialogueService *DialogueEpisodeService) {
 	if item.story != nil {
-		o.RunPreparedStorySession(*item.story)
+		o.runPreparedStorySessionForPlayback(*item.story, generation, playbackTaskID, playbackRunID)
+		return
+	}
+	if item.dialogue != nil {
+		defer dialogueService.ReleaseReadyReservation(*item.dialogue, playbackTaskID, playbackRunID)
+		o.runPreparedDialogueSession(*item.dialogue, generation)
 		return
 	}
 	defer o.finishTopicStockPlayback(generation)
-	if item.forecast != nil {
-		o.runForecastDomainSession(item.forecast.Domain, *item.forecast)
-		return
-	}
-	if item.word != nil {
-		strategy := StrategySingleGenre
-		if item.word.Category == TopicCategoryDouble {
-			strategy = StrategyDoubleGenre
-		}
-		o.runChatSession(strategy, wordTopicResultFromItem(*item.word))
-	}
+	o.markConversationRunFailed(generation, "prepared playback item is missing its artifact", ErrPreparedDialogueInvalid.Error())
 }
 
 func (o *IdleChatOrchestrator) finishTopicStockPlayback(generation uint64) {
@@ -323,6 +451,9 @@ func (o *IdleChatOrchestrator) finishTopicStockPlayback(generation uint64) {
 		o.currentTopic = ""
 		o.sessionContext = ""
 		o.activeSessionID = ""
+		o.currentTopicResult = nil
+		o.currentDialoguePlan = nil
+		o.currentDialogueState = nil
 	}
 	o.lastActivity = time.Now()
 	o.mu.Unlock()

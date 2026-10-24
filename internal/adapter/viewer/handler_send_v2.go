@@ -220,6 +220,7 @@ type V2AcceptedTurn struct {
 	ClientSubmissionID string
 	ActorID            string
 	IdempotentReplay   bool
+	foregroundPin      ForegroundPinLease
 }
 
 type V2TurnAcceptor func(context.Context, V2SendRequest) (V2AcceptedTurn, error)
@@ -341,6 +342,7 @@ type V2SendOptions struct {
 	OnError                   V2ProcessingErrorHandler
 	Timing                    *turntiming.BatchRecorder
 	Processing                *V2ProcessingLifecycle
+	ForegroundPin             ForegroundPinHook
 }
 
 // LegacyPreSessionAdmissionIdentity contains the canonical correlation IDs
@@ -416,11 +418,13 @@ func releaseLegacyRAMAdmission(release func(), admission *persistencequeue.Admis
 func HandleSendWithProtocolV2(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, options *V2SendOptions) http.HandlerFunc {
 	var admission *SessionProtocolAdmission
 	var preSessionAdmission LegacyPreSessionAdmissionHook
+	var foregroundPinHook ForegroundPinHook
 	if options != nil {
 		admission = options.Admission
 		preSessionAdmission = options.LegacyPreSessionAdmission
+		foregroundPinHook = options.ForegroundPin
 	}
-	legacy := handleSendLegacyWithSpeechCancellationAndAdmission(handler, onError, saver, resolveSessionID, cancellations, admission, preSessionAdmission)
+	legacy := handleSendLegacyWithForegroundPin(handler, onError, saver, resolveSessionID, cancellations, admission, preSessionAdmission, foregroundPinHook)
 	return dispatchViewerSendProtocol(legacy, options)
 }
 
@@ -638,6 +642,7 @@ type viewerV2Body struct {
 	UserID             string
 	DeviceName         string
 	AudioOutput        string
+	Presence           *ForegroundPresenceReference
 }
 
 func handleViewerSendV2(w http.ResponseWriter, r *http.Request, body []byte, multipartBody bool, options *V2SendOptions) {
@@ -718,6 +723,21 @@ func handleViewerSendV2(w http.ResponseWriter, r *http.Request, body []byte, mul
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	foregroundPin, err := acquireViewerForegroundPin(r, options.ForegroundPin, ForegroundPinRequest{
+		ViewerClientID: request.ViewerClientID,
+		Presence:       request.Presence,
+	})
+	if err != nil {
+		markViewerV2TimingError(turn, timingEnabled, turntiming.PointV2Ingress, err)
+		writeViewerForegroundPinError(w, err)
+		return
+	}
+	foregroundPinTransferred := false
+	defer func() {
+		if !foregroundPinTransferred {
+			releaseViewerForegroundPin(foregroundPin)
+		}
+	}()
 
 	acceptCtx := r.Context()
 	if timingEnabled {
@@ -795,6 +815,8 @@ func handleViewerSendV2(w http.ResponseWriter, r *http.Request, body []byte, mul
 		accepted.SessionID, accepted.TurnID, accepted.TraceID, accepted.InputMessageID, accepted.IdempotentReplay)
 
 	if !accepted.IdempotentReplay {
+		accepted.foregroundPin = foregroundPin
+		foregroundPinTransferred = true
 		asyncOwnsLifecycle = true
 		go runAcceptedViewerV2Turn(options, accepted, processCtx, turn, timingEnabled, tracked)
 	}
@@ -830,6 +852,7 @@ func runAcceptedViewerV2Turn(options *V2SendOptions, accepted V2AcceptedTurn, ct
 			options.Processing.Done()
 		}
 	}()
+	defer releaseViewerForegroundPin(accepted.foregroundPin)
 	if timingEnabled {
 		turn.Mark(turntiming.PointV2AsyncStart, turntiming.ComponentV2ViewerHandler, 1, 0)
 	}
@@ -878,7 +901,7 @@ func decodeViewerV2Body(body []byte) (viewerV2Body, error) {
 	}
 	allowed := map[string]struct{}{
 		"protocol_version": {}, "message": {}, "client_submission_id": {}, "to": {},
-		"reply_to_message_id": {}, "viewer_client_id": {}, "input_source": {}, "user_id": {}, "device_name": {}, "audio_output": {},
+		"reply_to_message_id": {}, "viewer_client_id": {}, "input_source": {}, "user_id": {}, "device_name": {}, "audio_output": {}, "presence": {},
 	}
 	values := make(map[string]json.RawMessage, len(allowed))
 	for decoder.More() {
@@ -935,6 +958,12 @@ func decodeViewerV2Body(body []byte) (viewerV2Body, error) {
 		request.ReplyToMessageID = modulecore.MessageID(value)
 		if request.ReplyToMessageID.Validate() != nil {
 			return viewerV2Body{}, errors.New(`v2 field "reply_to_message_id" must be a canonical message ID`)
+		}
+	}
+	if raw, exists := values["presence"]; exists {
+		request.Presence, err = parseForegroundPresenceReference(raw)
+		if err != nil {
+			return viewerV2Body{}, fmt.Errorf("v2 presence reference: %w", err)
 		}
 	}
 	return request, nil

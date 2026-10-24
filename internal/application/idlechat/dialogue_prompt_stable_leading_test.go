@@ -16,6 +16,7 @@ import (
 func TestGenerateResponseKeepsLeadingSystemStableAndTypesDialogueOrder(t *testing.T) {
 	provider := &capturingIdleProvider{response: "郵便配達員が古書店の棚で宛先不明の手紙を見つける入口がよさそう。しろなら、誰が隠したと思う？"}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	sessionContext := "SESSION-MARK-A"
 	glossary := "GLOSSARY-MARK-あおぞら"
 	director := NewDialogueDirector(DefaultDialogueInterestingnessConfig())

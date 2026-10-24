@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -146,14 +148,16 @@ func TestHandleIdleChatStatusIncludesWordAndForecastStockSnapshots(t *testing.T)
 	if got := payload.ForecastStock.Domains[0].Topics[0].Topic; got != "保存済みのAI技術お題" {
 		t.Fatalf("forecast topic = %q", got)
 	}
-	if !payload.Playback.CanNext {
-		t.Fatalf("playback snapshot = %+v", payload.Playback)
+	if payload.Playback.CanNext || payload.Playback.Current != nil || payload.Playback.HistorySize != 0 {
+		t.Fatalf("raw word/forecast stock must not appear as prepared playback: %+v", payload.Playback)
 	}
 }
 
 func TestHandleIdleChatPlaybackValidatesMethodAndAction(t *testing.T) {
 	orch := idlechat.NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
-	deps := &Dependencies{idleChatOrch: orch}
+	presence := newSurfacePresenceController(nil, time.Minute)
+	t.Cleanup(presence.Close)
+	deps := &Dependencies{idleChatOrch: orch, surfacePresence: presence}
 
 	getRecorder := httptest.NewRecorder()
 	deps.handleIdleChatPlayback().ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/viewer/idlechat/playback", nil))
@@ -162,11 +166,65 @@ func TestHandleIdleChatPlaybackValidatesMethodAndAction(t *testing.T) {
 	}
 
 	badRecorder := httptest.NewRecorder()
-	badRequest := httptest.NewRequest(http.MethodPost, "/viewer/idlechat/playback", strings.NewReader(`{"action":"stop"}`))
+	badRequest := httptest.NewRequest(http.MethodPost, "/viewer/idlechat/playback", strings.NewReader(`{"protocol_version":2,"viewer_client_id":"idle-tab","runtime_epoch":"epoch","registration_receipt":"receipt","claim_seq":1,"expected_state_revision":1,"action":"stop"}`))
 	badRequest.Header.Set("Content-Type", "application/json")
+	badRequest.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+	badRequest.Header.Set(interactionProfileHeader, "portal-idlechat")
 	deps.handleIdleChatPlayback().ServeHTTP(badRecorder, badRequest)
 	if badRecorder.Code != http.StatusBadRequest {
 		t.Fatalf("bad action status=%d body=%s", badRecorder.Code, badRecorder.Body.String())
+	}
+}
+
+func TestHandleIdleChatPlaybackRejectionPreservesQueuedSpeech(t *testing.T) {
+	resetIdleChatTTSQueue()
+	t.Cleanup(resetIdleChatTTSQueue)
+	ctx, cancel := context.WithCancel(context.Background())
+	item := &idleChatTTSItem{ev: idlechat.TimelineEvent{SessionID: "presence-rejected-play", MessageID: "response-1"}, ctx: ctx, cancel: cancel}
+	registerIdleChatTTSItem(item)
+	t.Cleanup(func() {
+		unregisterIdleChatTTSItem(item)
+		cancel()
+	})
+
+	orch := idlechat.NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	presence := newSurfacePresenceController(orch, time.Minute)
+	t.Cleanup(presence.Close)
+	identity := surfacePresenceIdentity{principal: "local", clientType: "RenCrow_PORTAL", viewerClientID: "idle-tab"}
+	registered, err := presence.RegisterV2(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idleClaim := surfacePresenceV2Request{ProtocolVersion: 2, ViewerClientID: identity.viewerClientID, RuntimeEpoch: registered.RuntimeEpoch, RegistrationReceipt: registered.RegistrationReceipt, Surface: "idlechat", Action: "claim", UpdateSeq: 1}
+	ready, err := presence.UpdateV2(identity, idleClaim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdIdentity := surfacePresenceIdentity{principal: "local", clientType: "RenCrow_CMD", viewerClientID: "cmd-instance"}
+	cmdRegistration, err := presence.RegisterV2(cmdIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdClaim := surfacePresenceV2Request{ProtocolVersion: 2, ViewerClientID: cmdIdentity.viewerClientID, RuntimeEpoch: cmdRegistration.RuntimeEpoch, RegistrationReceipt: cmdRegistration.RegistrationReceipt, Surface: "cmd", Action: "claim", UpdateSeq: 1}
+	if _, err := presence.UpdateV2(cmdIdentity, cmdClaim); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &Dependencies{idleChatOrch: orch, surfacePresence: presence}
+	body := `{"protocol_version":2,"viewer_client_id":"idle-tab","runtime_epoch":"` + registered.RuntimeEpoch + `","registration_receipt":"` + registered.RegistrationReceipt + `","claim_seq":1,"expected_state_revision":` + strconv.FormatUint(ready.StateRevision, 10) + `,"action":"play"}`
+	req := httptest.NewRequest(http.MethodPost, "/viewer/idlechat/playback", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+	req.Header.Set(interactionProfileHeader, "portal-idlechat")
+	recorder := httptest.NewRecorder()
+	deps.handleIdleChatPlayback().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("stale playback status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatal("rejected playback canceled the existing queued TTS item")
+	default:
 	}
 }
 

@@ -172,7 +172,7 @@ func TestDialogueEpisodeResumesSavedResultWithoutGeneration(t *testing.T) {
 	service.SetGenerationCheckpointStore(checkpoints)
 	service.SetRunIssuer(owner)
 
-	artifact, err := service.Prepare(context.Background(), "dialogue-recovery-session", dialogueRecoveryInput(), 2)
+	artifact, err := service.Prepare(nightGateAllowedContext(t), "dialogue-recovery-session", dialogueRecoveryInput(), 2)
 	if err != nil {
 		t.Fatalf("resume saved dialogue: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestDialogueEpisodeRetriesSeedWithFullGenerationAfterGeneratorFailure(t *te
 	firstGenerator := &dialogueRecoveryGenerator{err: errors.New("injected first generation failure")}
 	service := NewPersistentDialogueEpisodeService(path, firstGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	service.SetRunIssuer(owner)
-	if artifact, err := service.Prepare(context.Background(), sessionID, result, 2); err == nil || artifact.EpisodeID != "" {
+	if artifact, err := service.Prepare(nightGateAllowedContext(t), sessionID, result, 2); err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("first generation result artifact=%+v err=%v", artifact, err)
 	}
 	checkpointPath := path + ".checkpoints.json"
@@ -226,7 +226,7 @@ func TestDialogueEpisodeRetriesSeedWithFullGenerationAfterGeneratorFailure(t *te
 	retry := NewPersistentDialogueEpisodeService(path, retryGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	retry.SetGenerationCheckpointStore(reloaded)
 	retry.SetRunIssuer(owner)
-	artifact, err := retry.Prepare(context.Background(), sessionID, result, 2)
+	artifact, err := retry.Prepare(nightGateAllowedContext(t), sessionID, result, 2)
 	if err != nil || artifact.EpisodeID == "" {
 		t.Fatalf("seed retry artifact=%+v err=%v", artifact, err)
 	}
@@ -254,7 +254,7 @@ func TestDialogueEpisodeRetriesCompletionWithoutStartingAnotherRun(t *testing.T)
 	generator := &dialogueRecoveryGenerator{responses: []string{dialogueRecoveryResponse()}}
 	service := NewPersistentDialogueEpisodeService(path, generator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	service.SetRunIssuer(owner)
-	if artifact, err := service.Prepare(context.Background(), "dialogue-completion-retry", dialogueRecoveryInput(), 2); err == nil || artifact.EpisodeID != "" {
+	if artifact, err := service.Prepare(nightGateAllowedContext(t), "dialogue-completion-retry", dialogueRecoveryInput(), 2); err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("first completion result artifact=%+v err=%v", artifact, err)
 	}
 	checkpointStore := NewGenerationCheckpointStore(path + ".checkpoints.json")
@@ -269,7 +269,7 @@ func TestDialogueEpisodeRetriesCompletionWithoutStartingAnotherRun(t *testing.T)
 	retry := NewPersistentDialogueEpisodeService(path, retryGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	retry.SetGenerationCheckpointStore(checkpointStore)
 	retry.SetRunIssuer(owner)
-	artifact, err := retry.Prepare(context.Background(), "dialogue-completion-retry", dialogueRecoveryInput(), 2)
+	artifact, err := retry.Prepare(nightGateAllowedContext(t), "dialogue-completion-retry", dialogueRecoveryInput(), 2)
 	if err != nil || artifact.EpisodeID == "" {
 		t.Fatalf("completion retry artifact=%+v err=%v", artifact, err)
 	}
@@ -294,7 +294,7 @@ func TestDialogueEpisodeCompletionFailureBlocksDifferentKeyBeforeProvider(t *tes
 	firstGenerator := &dialogueRecoveryGenerator{responses: []string{dialogueRecoveryResponse()}}
 	service := NewPersistentDialogueEpisodeService(path, firstGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	service.SetRunIssuer(owner)
-	if artifact, err := service.Prepare(context.Background(), "dialogue-pending-one", dialogueRecoveryInput(), 2); err == nil || artifact.EpisodeID != "" {
+	if artifact, err := service.Prepare(nightGateAllowedContext(t), "dialogue-pending-one", dialogueRecoveryInput(), 2); err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("first dialogue artifact=%+v err=%v, want completion failure", artifact, err)
 	}
 
@@ -304,7 +304,7 @@ func TestDialogueEpisodeCompletionFailureBlocksDifferentKeyBeforeProvider(t *tes
 	second := NewPersistentDialogueEpisodeService(path, secondGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	second.SetRunIssuer(owner)
 	owner.failCompleteOnce = errors.New("completion remains unavailable")
-	artifact, err := second.Prepare(context.Background(), "dialogue-pending-two", secondInput, 2)
+	artifact, err := second.Prepare(nightGateAllowedContext(t), "dialogue-pending-two", secondInput, 2)
 	if err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("different-key admission artifact=%+v err=%v, want pending completion rejection", artifact, err)
 	}
@@ -332,7 +332,7 @@ func TestDialogueEpisodeCleanupFailureReloadsSavedResultWithoutGeneration(t *tes
 	}
 	sessionID := "dialogue-cleanup-retry"
 	result := dialogueRecoveryInput()
-	artifact, err := service.Prepare(context.Background(), sessionID, result, 2)
+	artifact, err := service.Prepare(nightGateAllowedContext(t), sessionID, result, 2)
 	if err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("cleanup failure artifact=%+v err=%v", artifact, err)
 	}
@@ -350,7 +350,7 @@ func TestDialogueEpisodeCleanupFailureReloadsSavedResultWithoutGeneration(t *tes
 	retry := NewPersistentDialogueEpisodeService(path, retryGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	retry.SetGenerationCheckpointStore(reloaded)
 	retry.SetRunIssuer(owner)
-	artifact, err = retry.Prepare(context.Background(), sessionID, result, 2)
+	artifact, err = retry.Prepare(nightGateAllowedContext(t), sessionID, result, 2)
 	if err != nil || artifact.EpisodeID == "" {
 		t.Fatalf("cleanup retry artifact=%+v err=%v", artifact, err)
 	}
@@ -381,7 +381,7 @@ func TestDialogueEpisodeReconcilesSuccessorAfterCheckpointPutFailure(t *testing.
 	if err := checkpoints.Put(checkpoint); err != nil {
 		t.Fatalf("save pending checkpoint: %v", err)
 	}
-	successor, err := resumeIdleChatRun(context.Background(), owner, &checkpoint, checkpoints)
+	successor, err := resumeIdleChatRun(nightGateAllowedContext(t), owner, &checkpoint, checkpoints)
 	if err != nil {
 		t.Fatalf("issue successor: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestDialogueEpisodeReconcilesSuccessorAfterCheckpointPutFailure(t *testing.
 	first := NewPersistentDialogueEpisodeService(path, &dialogueRecoveryGenerator{err: errors.New("reconcile failure must not generate")}, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	first.SetGenerationCheckpointStore(failedStore)
 	first.SetRunIssuer(owner)
-	if artifact, err := first.Prepare(context.Background(), "dialogue-recovery-session", dialogueRecoveryInput(), 2); err == nil || artifact.EpisodeID != "" {
+	if artifact, err := first.Prepare(nightGateAllowedContext(t), "dialogue-recovery-session", dialogueRecoveryInput(), 2); err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("reconcile Put failure artifact=%+v err=%v", artifact, err)
 	}
 	if runs := dialogueRecoveryRuns(t, owner, task.TaskID); len(runs) != 2 || runs[0].RunID != oldRun.RunID || runs[0].Status != domaintask.RunStatusWaiting || runs[1].RunID != successor.RunID || runs[1].Status != domaintask.RunStatusWaiting {
@@ -406,7 +406,7 @@ func TestDialogueEpisodeReconcilesSuccessorAfterCheckpointPutFailure(t *testing.
 	retry := NewPersistentDialogueEpisodeService(path, retryGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	retry.SetGenerationCheckpointStore(reloaded)
 	retry.SetRunIssuer(owner)
-	artifact, err := retry.Prepare(context.Background(), "dialogue-recovery-session", dialogueRecoveryInput(), 2)
+	artifact, err := retry.Prepare(nightGateAllowedContext(t), "dialogue-recovery-session", dialogueRecoveryInput(), 2)
 	if err != nil || artifact.EpisodeID == "" {
 		t.Fatalf("reconcile retry artifact=%+v err=%v", artifact, err)
 	}
@@ -445,7 +445,7 @@ func TestDialogueEpisodePersistenceFailureDoesNotReportSuccess(t *testing.T) {
 	}
 	service = NewPersistentDialogueEpisodeService(path, generator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
 	service.SetRunIssuer(owner)
-	artifact, err := service.Prepare(context.Background(), "dialogue-persistence-failure", dialogueRecoveryInput(), 2)
+	artifact, err := service.Prepare(nightGateAllowedContext(t), "dialogue-persistence-failure", dialogueRecoveryInput(), 2)
 	if err == nil || artifact.EpisodeID != "" {
 		t.Fatalf("persistence failure artifact=%+v err=%v", artifact, err)
 	}

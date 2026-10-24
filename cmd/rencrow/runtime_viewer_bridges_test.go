@@ -46,6 +46,7 @@ func TestViewerBridgeResolvesProductionCanonicalSessionBeforeAcceptance(t *testi
 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
 	req.Header.Set("Content-Type", "application/json")
+	attachViewerBridgeTestPresence(t, deps, req)
 	response := httptest.NewRecorder()
 	handler(response, req)
 
@@ -99,6 +100,7 @@ func TestViewerBridgeKeepsLegacyRouteWhenCombinedChatProcessorIsIneligible(t *te
 	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	attachViewerBridgeTestPresence(t, deps, request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -145,6 +147,7 @@ func TestViewerBridgeFailsClosedBeforeProcessorWhenEligibleOwnerQueueIsUnavailab
 	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	attachViewerBridgeTestPresence(t, deps, request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -186,6 +189,7 @@ func TestViewerBridgeCancellationUsesSharedRegistryAndLatchesBeforeSpeechStart(t
 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
 	req.Header.Set("Content-Type", "application/json")
+	attachViewerBridgeTestPresence(t, deps, req)
 	response := httptest.NewRecorder()
 	handler(response, req)
 	if response.Code != http.StatusOK {
@@ -267,6 +271,7 @@ func TestViewerBridgePlaybackProgressUsesAcceptedTurnAndActiveAudioOwner(t *test
 	handler := factories.ViewerSendFromOrch(processor)
 	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio","viewer_client_id":"untrusted-send-id"}`))
 	request.Header.Set("Content-Type", "application/json")
+	attachViewerBridgeTestPresence(t, deps, request)
 	response := httptest.NewRecorder()
 	handler(response, request)
 	if response.Code != http.StatusOK {
@@ -356,6 +361,7 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	handler := factories.ViewerSendFromOrch(viewerBridgeErrorProcessor{})
 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio","timings":true}`))
+	attachViewerBridgeTestPresence(t, deps, req)
 	response := httptest.NewRecorder()
 	handler(response, req)
 

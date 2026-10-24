@@ -34,6 +34,11 @@ Development Methodology v1は別正本を持たず、上記Atlas仕様の第16�
   User Messageの責務、順序、AI使用境界、KVキャッシュ、Viewer表示、必須検証は
   [アーキテクチャ概要の「Prompt Context Assembly」](04_アーキテクチャ概要.md#prompt-context-assembly)を
   唯一の現行正本とし、実装、ログ、test、兄弟moduleのdocsで別構造を再定義しません。
+- IdleChatの夜間制作、完成成果物だけの画面限定再生、前景優先と自動再開禁止は
+  [機能仕様の採用済み契約](02_機能仕様.md#夜間制作画面限定再生の採用済み契約)を正本とします。
+  presence・quick stop・終了保存の責務は
+  [アーキテクチャ概要](04_アーキテクチャ概要.md#core-foreground-presenceとidlechat排他ライフサイクル)、
+  transportとV2 requestは[Public API仕様](06_Public_API仕様.md#core-foreground-presence-api-v2)を参照します。
 - Durable Data Storeの媒体role、mount、module別subtree、CORE DB path、追加判断主体、impact class、
   Storage Proposal、Manifest、lifecycle、backup／restore契約は
   [設定リファレンスの「DB物理配置とbackup」](05_設定リファレンス.md#db物理配置とbackup)を
@@ -61,4 +66,4 @@ Development Methodology v1は別正本を持たず、上記Atlas仕様の第16�
 - 実装済み、未実装、deployment依存を区別します。
 - 現行正本に必要な情報が不足している場合は、該当する `01` から `10`、Atlas仕様、またはIdentity Canonical仕様を更新します。Identity Canonical仕様の正規配置である`docs/architecture/identity/`を除き、別の正本ディレクトリ、版付き正本、補助正本を追加しません。
 
-最終整理日: 2026-10-07
+最終整理日: 2026-10-24

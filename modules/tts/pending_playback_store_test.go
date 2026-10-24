@@ -58,3 +58,39 @@ func TestPendingPlaybackStoreClearAll(t *testing.T) {
 		t.Fatalf("pending state should be empty: %+v", got)
 	}
 }
+
+func TestPendingPlaybackStoreCancelPlaybackGenerationPreservesNewerWait(t *testing.T) {
+	store := NewPendingPlaybackStore()
+	oldWait := store.RegisterForPlaybackGeneration("tts-old", "ref-old", PlaybackGenerationIdentity{
+		RuntimeEpoch: "runtime-a", PlaybackGeneration: 4,
+	})
+	newWait := store.RegisterForPlaybackGeneration("tts-new", "ref-new", PlaybackGenerationIdentity{
+		RuntimeEpoch: "runtime-a", PlaybackGeneration: 5,
+	})
+
+	sessions := store.CancelPlaybackGeneration("runtime-a", 4)
+	if len(sessions) != 1 || sessions[0] != "tts-old" {
+		t.Fatalf("cancelled sessions = %#v, want only tts-old", sessions)
+	}
+	select {
+	case <-oldWait:
+	case <-time.After(time.Second):
+		t.Fatal("old playback wait should close")
+	}
+	select {
+	case <-newWait:
+		t.Fatal("newer playback wait should remain open")
+	default:
+	}
+	lateOld := store.RegisterForPlaybackGeneration("tts-old-late", "ref-old-late", PlaybackGenerationIdentity{
+		RuntimeEpoch: "runtime-a", PlaybackGeneration: 4,
+	})
+	select {
+	case <-lateOld:
+	default:
+		t.Fatal("late old playback wait should be rejected as already complete")
+	}
+	if got := store.Snapshot(); got.PendingSessionCount != 1 || got.PendingPublicPlaybackCount != 1 {
+		t.Fatalf("pending state should contain only the newer playback: %+v", got)
+	}
+}

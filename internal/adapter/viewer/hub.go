@@ -32,6 +32,10 @@ type EventStream interface {
 type EventHub struct {
 	mu                  sync.RWMutex
 	clients             map[chan []byte]struct{}
+	controlClients      map[chan []byte]chan IdleChatControlSnapshot
+	controlSnapshot     IdleChatControlSnapshot
+	hasControlSnapshot  bool
+	controlSnapshotRead IdleChatControlSnapshotProvider
 	history             []orchestrator.OrchestratorEvent
 	acceptedTail        []orchestrator.OrchestratorEvent
 	acceptedGap         *EventReplayGap
@@ -51,6 +55,24 @@ type EventReplaySnapshot struct {
 	Events      []orchestrator.OrchestratorEvent
 	AcceptedGap *EventReplayGap
 }
+
+// IdleChatControlSnapshot is the latest RAM-only playback-control projection
+// shared by SSE clients. It is not a canonical event and carries no
+// EventSeq/EventID, receipt, claim, or client-specific readiness data.
+type IdleChatControlSnapshot struct {
+	RuntimeEpoch         string `json:"runtime_epoch"`
+	StateRevision        uint64 `json:"state_revision"`
+	PlaybackState        string `json:"playback_state"`
+	PlaybackAllowed      bool   `json:"playback_allowed"`
+	PlaybackActive       bool   `json:"playback_active"`
+	PlaybackGeneration   uint64 `json:"playback_generation"`
+	CleanupPending       bool   `json:"cleanup_pending"`
+	GenerationState      string `json:"generation_state"`
+	GenerationQuiesced   bool   `json:"generation_quiesced"`
+	BackendResourceState string `json:"backend_resource_state"`
+}
+
+type IdleChatControlSnapshotProvider func() (IdleChatControlSnapshot, bool)
 
 // EventReplayGap describes accepted RAM-only history that was evicted before
 // a durable replay confirmed its commit.
@@ -80,8 +102,9 @@ var errEventHubLiveSequenceNotIncreasing = errors.New("live EventSeq is not incr
 // NewEventHub creates a new EventHub with the given history capacity.
 func NewEventHub(maxHistory int) *EventHub {
 	return &EventHub{
-		clients: make(map[chan []byte]struct{}),
-		maxHist: maxHistory,
+		clients:        make(map[chan []byte]struct{}),
+		controlClients: make(map[chan []byte]chan IdleChatControlSnapshot),
+		maxHist:        maxHistory,
 	}
 }
 
@@ -104,6 +127,72 @@ func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
 	clientCount := len(h.clients)
 	h.mu.Unlock()
 	h.logPublishedEvent(ev, clientDropped, clientCount)
+}
+
+// PublishIdleChatControlSnapshot replaces the latest RAM-only control state
+// and non-blockingly fans it out. A slow subscriber keeps only the newest
+// state; control updates never enter canonical history or consume EventSeq.
+func (h *EventHub) PublishIdleChatControlSnapshot(snapshot IdleChatControlSnapshot) {
+	if h == nil || snapshot.RuntimeEpoch == "" {
+		return
+	}
+	h.mu.Lock()
+	if h.hasControlSnapshot && h.controlSnapshot.RuntimeEpoch == snapshot.RuntimeEpoch {
+		if !shouldReplaceIdleChatControlSnapshot(h.controlSnapshot, snapshot) {
+			h.mu.Unlock()
+			return
+		}
+	}
+	h.publishIdleChatControlSnapshotLocked(snapshot)
+	h.mu.Unlock()
+}
+
+func shouldReplaceIdleChatControlSnapshot(current, next IdleChatControlSnapshot) bool {
+	if next.RuntimeEpoch != current.RuntimeEpoch || next.StateRevision < current.StateRevision || next.PlaybackGeneration < current.PlaybackGeneration || next == current {
+		return false
+	}
+	if next.StateRevision == current.StateRevision && next.PlaybackGeneration == current.PlaybackGeneration {
+		// A same-generation start can publish its inactive preparation snapshot
+		// after the active state. Keep the active state until a newer policy
+		// revision or generation proves that playback stopped.
+		if current.PlaybackActive && !next.PlaybackActive && !next.CleanupPending {
+			return false
+		}
+		if current.CleanupPending && !next.CleanupPending {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *EventHub) publishIdleChatControlSnapshotLocked(snapshot IdleChatControlSnapshot) {
+	h.controlSnapshot = snapshot
+	h.hasControlSnapshot = true
+	for _, ch := range h.controlClients {
+		select {
+		case ch <- snapshot:
+		default:
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- snapshot:
+			default:
+			}
+		}
+	}
+}
+
+// SetIdleChatControlSnapshotProvider installs a short RAM-only refresh hook.
+// It is called outside the EventHub lock when a control SSE client connects.
+func (h *EventHub) SetIdleChatControlSnapshotProvider(provider IdleChatControlSnapshotProvider) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.controlSnapshotRead = provider
+	h.mu.Unlock()
 }
 
 // PublishLive appends one canonical sequenced event and fans it out only when
@@ -220,6 +309,10 @@ func (h *EventHub) appendEventLocked(ev orchestrator.OrchestratorEvent, data []b
 		default:
 			delete(h.clients, ch)
 			close(ch)
+			if controlCh := h.controlClients[ch]; controlCh != nil {
+				delete(h.controlClients, ch)
+				close(controlCh)
+			}
 			clientDropped = true
 		}
 	}
@@ -287,6 +380,51 @@ func (h *EventHub) SubscribeForReplay() (chan []byte, EventReplaySnapshot) {
 	h.mu.Lock()
 	h.clients[ch] = struct{}{}
 	clientCount := len(h.clients)
+	snapshot := h.replaySnapshotLocked()
+	h.mu.Unlock()
+	log.Printf("[EventHub] Subscribe: new client connected (total clients=%d)", clientCount)
+	h.notifyClientCountChanged(clientCount)
+	return ch, snapshot
+}
+
+// SubscribeForReplayWithControl atomically captures the latest control
+// snapshot, registers both live lanes, and captures canonical replay history.
+// The optional provider runs before taking the hub lock. Its sample only
+// replaces the cached snapshot when its existing revision/generation is newer.
+func (h *EventHub) SubscribeForReplayWithControl() (chan []byte, chan IdleChatControlSnapshot, EventReplaySnapshot, *IdleChatControlSnapshot) {
+	h.mu.RLock()
+	provider := h.controlSnapshotRead
+	h.mu.RUnlock()
+	var refreshed IdleChatControlSnapshot
+	var hasRefreshed bool
+	if provider != nil {
+		refreshed, hasRefreshed = provider()
+	}
+
+	ch := make(chan []byte, 64)
+	controlCh := make(chan IdleChatControlSnapshot, 1)
+	h.mu.Lock()
+	if hasRefreshed && refreshed.RuntimeEpoch != "" {
+		if !h.hasControlSnapshot || refreshed.RuntimeEpoch != h.controlSnapshot.RuntimeEpoch || shouldReplaceIdleChatControlSnapshot(h.controlSnapshot, refreshed) {
+			h.publishIdleChatControlSnapshotLocked(refreshed)
+		}
+	}
+	h.clients[ch] = struct{}{}
+	h.controlClients[ch] = controlCh
+	clientCount := len(h.clients)
+	snapshot := h.replaySnapshotLocked()
+	var controlSnapshot *IdleChatControlSnapshot
+	if h.hasControlSnapshot {
+		copy := h.controlSnapshot
+		controlSnapshot = &copy
+	}
+	h.mu.Unlock()
+	log.Printf("[EventHub] Subscribe: new client connected (total clients=%d)", clientCount)
+	h.notifyClientCountChanged(clientCount)
+	return ch, controlCh, snapshot, controlSnapshot
+}
+
+func (h *EventHub) replaySnapshotLocked() EventReplaySnapshot {
 	events := make([]orchestrator.OrchestratorEvent, 0, len(h.history)+len(h.acceptedTail))
 	events = append(events, h.history...)
 	seen := make(map[modulecore.EventSeq]struct{}, len(events)+len(h.acceptedTail))
@@ -307,10 +445,7 @@ func (h *EventHub) SubscribeForReplay() (chan []byte, EventReplaySnapshot) {
 		gap := *h.acceptedGap
 		snapshot.AcceptedGap = &gap
 	}
-	h.mu.Unlock()
-	log.Printf("[EventHub] Subscribe: new client connected (total clients=%d)", clientCount)
-	h.notifyClientCountChanged(clientCount)
-	return ch, snapshot
+	return snapshot
 }
 
 // Unsubscribe removes a client and closes its channel.
@@ -321,6 +456,10 @@ func (h *EventHub) Unsubscribe(ch chan []byte) {
 		return
 	}
 	delete(h.clients, ch)
+	if controlCh := h.controlClients[ch]; controlCh != nil {
+		delete(h.controlClients, ch)
+		close(controlCh)
+	}
 	clientCount := len(h.clients)
 	close(ch)
 	h.mu.Unlock()

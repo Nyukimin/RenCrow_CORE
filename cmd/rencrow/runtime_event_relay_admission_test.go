@@ -68,6 +68,42 @@ type relayObservedErrContext struct {
 	doneOnce sync.Once
 }
 
+type relayObservedWaitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *relayObservedWaitContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
+type relayIdleEventGate struct {
+	ctx     context.Context
+	current atomic.Bool
+}
+
+func (g *relayIdleEventGate) EventContext(modulecore.TraceID, modulecore.SessionID) (context.Context, bool) {
+	if g == nil || !g.current.Load() || g.ctx == nil || g.ctx.Err() != nil {
+		return nil, false
+	}
+	return g.ctx, true
+}
+
+func (g *relayIdleEventGate) IsCurrentEvent(modulecore.TraceID, modulecore.SessionID) bool {
+	return g != nil && g.current.Load() && g.ctx != nil && g.ctx.Err() == nil
+}
+
+func (g *relayIdleEventGate) PublishIfCurrentEvent(_ modulecore.TraceID, _ modulecore.SessionID, publish func() error) (bool, error) {
+	if !g.IsCurrentEvent("", "") {
+		return false, nil
+	}
+	return true, publish()
+}
+
+func (g *relayIdleEventGate) NotifyActivity() {}
+
 func (c *relayObservedErrContext) Err() error {
 	c.errOnce.Do(func() { close(c.checked) })
 	return c.Context.Err()
@@ -526,6 +562,160 @@ func TestEventRelayForeignChatWaitsForActiveLeaseThenUsesSynchronousPublication(
 	}
 	if err := admission.Release(); err != nil {
 		t.Fatalf("release admission: %v", err)
+	}
+}
+
+func TestEventRelayIdleChatBindingWaitCancelsWithForegroundStop(t *testing.T) {
+	_, store, _, admittedContext := newRelayAdmissionFixture(t, 4)
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog: %v", err)
+	}
+	hub := viewer.NewEventHub(8)
+	relay := &idleAwareEventListener{archive: archive, hub: hub}
+	boundTraceID := modulecore.NewTraceID()
+	releaseChat, err := relay.BindChat(boundTraceID, admittedContext)
+	if err != nil {
+		t.Fatalf("BindChat: %v", err)
+	}
+	defer releaseChat()
+
+	idleBaseContext, cancelIdle := context.WithCancel(context.Background())
+	idleContext := &relayObservedWaitContext{Context: idleBaseContext, waiting: make(chan struct{})}
+	gate := &relayIdleEventGate{ctx: idleContext}
+	gate.current.Store(true)
+	relay.mu.Lock()
+	relay.idleChat = gate
+	relay.mu.Unlock()
+	idleEvent := orchestrator.NewEventWithTraceID(
+		modulecore.NewTraceID(), "idlechat.message", "mio", "shiro", "old idle line",
+		"IDLECHAT", "", string(modulecore.NewSessionID()), "idlechat", "idlechat",
+	)
+	eventDone := make(chan error, 1)
+	go func() { eventDone <- relay.OnEvent(idleEvent) }()
+	select {
+	case <-idleContext.waiting:
+	case <-time.After(time.Second):
+		cancelIdle()
+		t.Fatal("IdleChat event did not enter the CHAT binding wait")
+	}
+
+	// Foreground stop cancels the owner context while the CHAT binding remains
+	// active; the IdleChat relay must leave without appending or publishing.
+	gate.current.Store(false)
+	cancelIdle()
+	select {
+	case err := <-eventDone:
+		if err != nil {
+			t.Fatalf("cancelled IdleChat relay event: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("IdleChat event remained blocked after its owner context was cancelled")
+	}
+	if history := hub.History(); len(history) != 0 {
+		t.Fatalf("hub history after cancelled IdleChat wait=%+v, want empty", history)
+	}
+	if relay.publicationCursor != 0 {
+		t.Fatalf("durable publication cursor=%d, want 0 for cancelled event", relay.publicationCursor)
+	}
+}
+
+type relayStopRaceGate struct {
+	ctx              context.Context
+	mu               sync.Mutex
+	current          bool
+	publishRequested chan struct{}
+	allowPublish     chan struct{}
+	requestOnce      sync.Once
+}
+
+func (g *relayStopRaceGate) EventContext(modulecore.TraceID, modulecore.SessionID) (context.Context, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.ctx, g.current && g.ctx != nil && g.ctx.Err() == nil
+}
+
+func (g *relayStopRaceGate) IsCurrentEvent(modulecore.TraceID, modulecore.SessionID) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.current && g.ctx != nil && g.ctx.Err() == nil
+}
+
+func (g *relayStopRaceGate) PublishIfCurrentEvent(_ modulecore.TraceID, _ modulecore.SessionID, publish func() error) (bool, error) {
+	g.requestOnce.Do(func() { close(g.publishRequested) })
+	<-g.allowPublish
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.current || g.ctx == nil || g.ctx.Err() != nil {
+		return false, nil
+	}
+	return true, publish()
+}
+
+func (g *relayStopRaceGate) stop() {
+	g.mu.Lock()
+	g.current = false
+	g.mu.Unlock()
+}
+
+func (*relayStopRaceGate) NotifyActivity() {}
+
+func TestEventRelayDoesNotPublishIdleEventAfterStopWinsFinalAcceptance(t *testing.T) {
+	_, store, admission, admittedContext := newRelayAdmissionFixture(t, 4)
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog: %v", err)
+	}
+	hub := viewer.NewEventHub(8)
+	relay := &idleAwareEventListener{archive: archive, hub: hub}
+	traceID, sessionID := modulecore.NewTraceID(), modulecore.NewSessionID()
+	releaseChat, err := relay.BindChat(traceID, admittedContext)
+	if err != nil {
+		t.Fatalf("BindChat: %v", err)
+	}
+	defer releaseChat()
+	gate := &relayStopRaceGate{
+		ctx: context.Background(), current: true,
+		publishRequested: make(chan struct{}), allowPublish: make(chan struct{}),
+	}
+	relay.mu.Lock()
+	relay.idleChat = gate
+	relay.mu.Unlock()
+	event := orchestrator.NewEventWithTraceID(traceID, "idlechat.message", "mio", "shiro", "stale idle line", "IDLECHAT", "", string(sessionID), "idlechat", "idlechat")
+	eventDone := make(chan error, 1)
+	go func() { eventDone <- relay.OnEvent(event) }()
+	select {
+	case <-gate.publishRequested:
+	case err := <-eventDone:
+		t.Fatalf("IdleChat relay bypassed the final generation acceptance gate: err=%v history=%+v", err, hub.History())
+	case <-time.After(time.Second):
+		t.Fatal("IdleChat relay did not reach the final live publication boundary")
+	}
+
+	// Stop wins after the relay's early current-generation checks but before
+	// final presentation acceptance. The owner gate must reject the old event.
+	gate.stop()
+	close(gate.allowPublish)
+	select {
+	case err := <-eventDone:
+		if err != nil {
+			t.Fatalf("stale IdleChat relay event: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("IdleChat relay did not finish after stop won publication acceptance")
+	}
+	if got := hub.History(); len(got) != 0 {
+		t.Fatalf("Hub presented old IdleChat generation after stop: %+v", got)
+	}
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("wait for admitted event durability: %v", err)
+	}
+	releaseChat()
+	if err := relay.PublishCommitted(context.Background(), conversationruntime.CommittedBundle{}); err != nil {
+		t.Fatalf("drain durable stale event: %v", err)
+	}
+	if got := hub.History(); len(got) != 0 {
+		t.Fatalf("durable replay presented old IdleChat generation: %+v", got)
 	}
 }
 

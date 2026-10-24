@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -87,22 +88,24 @@ type ActiveTranscriptEntry struct {
 }
 
 type TimelineEvent struct {
-	Type       string
-	From       string
-	To         string
-	Content    string
-	RawContent string
-	SessionID  string
-	ThreadID   modulecore.ThreadID
-	ThreadSeq  modulecore.ThreadSeq
-	ThreadKind modulecore.ThreadKind
-	MessageID  string
-	TurnIndex  int
-	Category   TopicCategory
-	Strategy   TopicStrategy
-	TraceID    modulecore.TraceID
-	TaskID     modulecore.TaskID
-	RunID      modulecore.RunID
+	Type               string
+	From               string
+	To                 string
+	Content            string
+	RawContent         string
+	SessionID          string
+	ThreadID           modulecore.ThreadID
+	ThreadSeq          modulecore.ThreadSeq
+	ThreadKind         modulecore.ThreadKind
+	MessageID          string
+	TurnIndex          int
+	Category           TopicCategory
+	Strategy           TopicStrategy
+	TraceID            modulecore.TraceID
+	TaskID             modulecore.TaskID
+	RunID              modulecore.RunID
+	RuntimeEpoch       string
+	PlaybackGeneration uint64
 	// ownerEpoch is the immutable IdleChat run owner captured by the caller.
 	// SessionID alone is not sufficient because a prepared episode may be
 	// replayed with the same public session identifier after an interrupt.
@@ -118,16 +121,18 @@ type TTSLifecycle struct {
 }
 
 type TTSPrefetchEvent struct {
-	SessionID  string
-	MessageID  string
-	From       string
-	To         string
-	TurnIndex  int
-	Token      string
-	TraceID    modulecore.TraceID
-	TaskID     modulecore.TaskID
-	RunID      modulecore.RunID
-	ownerEpoch uint64
+	SessionID          string
+	MessageID          string
+	From               string
+	To                 string
+	TurnIndex          int
+	Token              string
+	TraceID            modulecore.TraceID
+	TaskID             modulecore.TaskID
+	RunID              modulecore.RunID
+	RuntimeEpoch       string
+	PlaybackGeneration uint64
+	ownerEpoch         uint64
 }
 
 type PersonaRuntimeRecorder interface {
@@ -185,7 +190,7 @@ type IdleChatOrchestrator struct {
 	emitEvent                 func(TimelineEvent) TTSLifecycle
 	emitTTSPrefetch           func(TTSPrefetchEvent)
 	reportTTSTimeout          func(TTSTimeoutEvent)
-	onInterrupt               func()
+	onInterrupt               func(runtimeEpoch string, playbackGeneration uint64)
 	topicStore                *TopicStore
 	topicStockBuf             *forecastTopicStock // 未来展望お題ストック
 	wordTopicStock            *wordTopicStock     // 1ワード／2ワードお題ストック
@@ -212,9 +217,11 @@ type IdleChatOrchestrator struct {
 	cancel                    context.CancelFunc
 	runCtx                    context.Context
 	runCancel                 context.CancelFunc
+	nightPreparationScheduler *NightPreparationScheduler
 	dailyEnrichmentJob        *dailyEnrichmentJob
 	dailyEnrichmentGeneration uint64
 	activeSessionID           string
+	idleEventPublicationToken atomic.Pointer[idleEventPublicationToken]
 	activeThread              *domconv.Thread
 	topicThreadSeq            map[string]modulecore.ThreadSeq
 	activeTraceID             modulecore.TraceID
@@ -222,9 +229,14 @@ type IdleChatOrchestrator struct {
 	activeTaskID              modulecore.TaskID
 	activeRunID               modulecore.RunID
 	activeGeneration          uint64
+	runtimeEpoch              string
+	playbackControlChanged    func()
 	conversationRunStarting   bool
 	conversationRunOutcome    *conversationRunOutcome
 	pendingConversationRun    *conversationRunFinalization
+	foregroundStopEpoch       string
+	foregroundStopRevision    uint64
+	foregroundStopReceipt     PlaybackStopReceipt
 	interruptedSessions       map[string]struct{}
 	watchdogStage             string
 	watchdogDetail            string
@@ -238,14 +250,18 @@ type IdleChatOrchestrator struct {
 	// emitMu serializes owner validation with the runtime callback. The lock
 	// order is emitMu -> mu; it prevents a stale callback from passing the
 	// generation check and emitting after Interrupt has ended the owner.
-	emitMu                    sync.Mutex
-	mu                        sync.Mutex
-	conversationRunStartMu    sync.Mutex
-	conversationRunFinalizeMu sync.Mutex
-	generationWorkMu          sync.Mutex
-	generationWorkClosed      bool
-	generationWorkWG          sync.WaitGroup
-	wg                        sync.WaitGroup
+	emitMu                              sync.Mutex
+	mu                                  sync.Mutex
+	conversationRunStartMu              sync.Mutex
+	conversationRunFinalizeMu           sync.Mutex
+	conversationRunFinalizeWorkerMu     sync.Mutex
+	conversationRunFinalizeWorkerDone   chan struct{}
+	conversationRunFinalizeWorkerClosed bool
+	generationWorkMu                    sync.Mutex
+	generationWorkClosed                bool
+	generationWorkActive                int
+	generationWorkWG                    sync.WaitGroup
+	wg                                  sync.WaitGroup
 }
 
 // SetNewsSourceConfig はIdleChatのお題に使うSNS取得先を設定する。

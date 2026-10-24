@@ -246,6 +246,78 @@ func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy Top
 	return summary
 }
 
+// savePreparedDialogueSummary persists only metadata already stored with the
+// ready artifact. Playback must not call the generation-backed summary/review
+// path used by live sessions.
+func (o *IdleChatOrchestrator) savePreparedDialogueSummary(artifact DialogueEpisodeArtifact, sessionID string, generation uint64, transcript []string, startedAt time.Time) {
+	endedAt := time.Now().In(jst)
+	title := strings.TrimSpace(artifact.PreparedTitle)
+	summary := strings.TrimSpace(artifact.PreparedSummary)
+	review := strings.TrimSpace(artifact.PreparedQualityReview)
+	record := SessionSummary{
+		SessionID:       sessionID,
+		Title:           title,
+		Topic:           strings.TrimSpace(artifact.TopicResult.Topic),
+		Category:        artifact.TopicResult.Category,
+		Strategy:        TopicStrategy(strings.TrimSpace(artifact.TopicResult.Strategy)),
+		Summary:         summary,
+		QualityReview:   review,
+		PromptGuidance:  extractPromptGuidance(review),
+		StartedAt:       startedAt.Format(time.RFC3339),
+		EndedAt:         endedAt.Format(time.RFC3339),
+		Turns:           len(transcript),
+		TopicProvider:   "prepared",
+		SummaryProvider: "prepared",
+		Transcript:      append([]string(nil), transcript...),
+	}
+	o.emitMu.Lock()
+	o.mu.Lock()
+	if !o.copyActiveThreadIdentityLocked(&record, sessionID, generation) {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		log.Printf("[IdleChat] prepared dialogue summary rejected without active thread owner: session=%s generation=%d", sessionID, generation)
+		return
+	}
+	o.history = append(o.history, record)
+	if len(o.history) > 200 {
+		o.history = o.history[len(o.history)-200:]
+	}
+	store := o.topicStore
+	o.mu.Unlock()
+	if store != nil {
+		if err := store.Append(record); err != nil {
+			log.Printf("[IdleChat] prepared dialogue summary persistence failed: %v", err)
+		}
+	}
+	o.emitMu.Unlock()
+
+	messageID := newIdleChatMessageID()
+	message := domaintransport.NewMessage("shiro", "idlechat_summary", sessionID, "", title+"\n"+summary)
+	message.Type = domaintransport.MessageTypeIdleChat
+	message.Context = map[string]any{
+		"message_id":          messageID,
+		"prepared_episode_id": artifact.EpisodeID,
+		"prepared_revision":   artifact.Revision,
+		"prepared_summary":    true,
+	}
+	if !o.recordIdleMessageForGeneration(generation, sessionID, message) {
+		log.Printf("[IdleChat] prepared dialogue summary message rejected without active owner: session=%s generation=%d", sessionID, generation)
+		return
+	}
+	o.emitTimelineEvent(TimelineEvent{
+		Type:       "idlechat.summary",
+		From:       "shiro",
+		To:         "idlechat_summary",
+		Content:    title + "\n" + summary,
+		SessionID:  sessionID,
+		MessageID:  messageID,
+		TurnIndex:  len(transcript) + 1,
+		Category:   artifact.TopicResult.Category,
+		Strategy:   record.Strategy,
+		ownerEpoch: generation,
+	})
+}
+
 // speakSummary は Mio にまとめを読み上げさせる。
 
 func (o *IdleChatOrchestrator) summarizeByWorker(topic string, transcript []string) string {

@@ -79,6 +79,7 @@ func newForecastTopicRecoveryFixture(t *testing.T) *forecastTopicRecoveryFixture
 	checkpoints := NewGenerationCheckpointStore(checkpointPath)
 	generator := &savedForecastTopicGenerator{}
 	orchestrator := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"shiro"}, 60, 1, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, orchestrator)
 	orchestrator.SetRunIssuer(owner)
 	orchestrator.SetGenerationCheckpointStore(checkpoints)
 	orchestrator.mu.Lock()

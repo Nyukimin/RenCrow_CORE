@@ -21,11 +21,12 @@ type idleChatTTSItem struct {
 }
 
 var (
-	idleChatTTSOnce     sync.Once
-	idleChatTTSQueue    chan *idleChatTTSItem
-	idleChatTTSGen      atomic.Uint64
-	idleChatTTSActiveMu sync.Mutex
-	idleChatTTSActive   = make(map[string]map[*idleChatTTSItem]struct{})
+	idleChatTTSOnce                       sync.Once
+	idleChatTTSQueue                      chan *idleChatTTSItem
+	idleChatTTSGen                        atomic.Uint64
+	idleChatTTSActiveMu                   sync.Mutex
+	idleChatTTSActive                     = make(map[string]map[*idleChatTTSItem]struct{})
+	idleChatTTSCancelledGenerationByEpoch = make(map[string]uint64)
 )
 
 func emitIdleChatTTSAsync(bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent) idlechat.TTSLifecycle {
@@ -53,7 +54,9 @@ func emitIdleChatTTSAsync(bridge orchestrator.TTSBridge, ev idlechat.TimelineEve
 		cancel:    cancel,
 		gen:       idleChatTTSGen.Load(),
 	}
-	registerIdleChatTTSItem(item)
+	if !registerIdleChatTTSItem(item) {
+		return idlechat.TTSLifecycle{}
+	}
 	ensureIdleChatTTSQueue()
 	select {
 	case idleChatTTSQueue <- item:
@@ -65,17 +68,24 @@ func emitIdleChatTTSAsync(bridge orchestrator.TTSBridge, ev idlechat.TimelineEve
 	return controller.lifecycle()
 }
 
-func registerIdleChatTTSItem(item *idleChatTTSItem) {
+func registerIdleChatTTSItem(item *idleChatTTSItem) bool {
 	if item == nil {
-		return
+		return false
 	}
 	key := streamKey(item.ev.SessionID, item.ev.MessageID, string(item.ev.TraceID))
 	idleChatTTSActiveMu.Lock()
+	if idleChatTTSGenerationCancelledLocked(item.ev.RuntimeEpoch, item.ev.PlaybackGeneration) {
+		idleChatTTSActiveMu.Unlock()
+		cancelIdleChatTTSItem(item)
+		item.lifecycle.signalDone()
+		return false
+	}
 	if idleChatTTSActive[key] == nil {
 		idleChatTTSActive[key] = make(map[*idleChatTTSItem]struct{})
 	}
 	idleChatTTSActive[key][item] = struct{}{}
 	idleChatTTSActiveMu.Unlock()
+	return true
 }
 
 func unregisterIdleChatTTSItem(item *idleChatTTSItem) {
@@ -160,6 +170,47 @@ func cancelAllIdleChatTTS() {
 	}
 }
 
+func cancelIdleChatTTSGeneration(runtimeEpoch string, playbackGeneration uint64) {
+	runtimeEpoch = strings.TrimSpace(runtimeEpoch)
+	if runtimeEpoch == "" || playbackGeneration == 0 {
+		return
+	}
+	idleChatTTSActiveMu.Lock()
+	if playbackGeneration > idleChatTTSCancelledGenerationByEpoch[runtimeEpoch] {
+		idleChatTTSCancelledGenerationByEpoch[runtimeEpoch] = playbackGeneration
+	}
+	items := make([]*idleChatTTSItem, 0)
+	for _, keyed := range idleChatTTSActive {
+		for item := range keyed {
+			if item.ev.RuntimeEpoch == runtimeEpoch && item.ev.PlaybackGeneration == playbackGeneration {
+				items = append(items, item)
+			}
+		}
+	}
+	idleChatTTSActiveMu.Unlock()
+	for _, item := range items {
+		cancelIdleChatTTSItem(item)
+		item.lifecycle.signalDone()
+	}
+
+	if idleChatTTSPrefetch != nil {
+		idleChatTTSPrefetch.CancelGeneration(runtimeEpoch, playbackGeneration)
+	}
+	clearIdleChatTTSPendingGeneration(runtimeEpoch, playbackGeneration)
+	retireTTSPublicSessionGeneration(runtimeEpoch, playbackGeneration)
+}
+
+func idleChatTTSGenerationCancelledLocked(runtimeEpoch string, playbackGeneration uint64) bool {
+	runtimeEpoch = strings.TrimSpace(runtimeEpoch)
+	return runtimeEpoch != "" && playbackGeneration != 0 && playbackGeneration <= idleChatTTSCancelledGenerationByEpoch[runtimeEpoch]
+}
+
+func idleChatTTSGenerationCancelled(runtimeEpoch string, playbackGeneration uint64) bool {
+	idleChatTTSActiveMu.Lock()
+	defer idleChatTTSActiveMu.Unlock()
+	return idleChatTTSGenerationCancelledLocked(runtimeEpoch, playbackGeneration)
+}
+
 func ensureIdleChatTTSQueue() {
 	idleChatTTSOnce.Do(func() {
 		idleChatTTSQueue = make(chan *idleChatTTSItem, 512)
@@ -168,7 +219,7 @@ func ensureIdleChatTTSQueue() {
 				if item == nil {
 					continue
 				}
-				if item.gen != idleChatTTSGen.Load() || item.ctx == nil || item.ctx.Err() != nil {
+				if item.gen != idleChatTTSGen.Load() || idleChatTTSGenerationCancelled(item.ev.RuntimeEpoch, item.ev.PlaybackGeneration) || item.ctx == nil || item.ctx.Err() != nil {
 					cancelIdleChatTTSItem(item)
 					item.lifecycle.signalDone()
 					unregisterIdleChatTTSItem(item)

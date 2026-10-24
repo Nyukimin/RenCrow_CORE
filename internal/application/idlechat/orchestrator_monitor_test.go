@@ -99,6 +99,7 @@ func TestRunChatSessionDoesNotSwitchTopicWithinSingleIdleSession(t *testing.T) {
 		responses: responses,
 	}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 4, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	dialogueGenerator := attachPreparedWordDialogue(t, o, "郵便と古書店に残る、宛先不明の手紙の扱い方", "郵便", 4)
 	o.mu.Lock()
 	o.chatActive = true
@@ -133,6 +134,7 @@ func TestRunChatSessionPlaysValidatedEpisodeToTurnLimit(t *testing.T) {
 		responses: responses,
 	}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, maxTurnsPerTopic, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	attachPreparedWordDialogue(t, o, "映画館に残った鍵の使い道", "鍵", maxTurnsPerTopic)
 	o.mu.Lock()
 	o.chatActive = true

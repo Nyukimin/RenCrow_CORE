@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -43,8 +45,10 @@ type Manager struct {
 	expectedCriteriaRevision string
 	// idIndexed is set only by WithIDIndex. It is a declaration about the store,
 	// not behavior the Manager can discover: see WithIDIndex.
-	idIndexed bool
-	now       func() time.Time
+	idIndexed          bool
+	now                func() time.Time
+	persistenceQueueMu sync.RWMutex
+	persistenceQueue   *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 }
 
 // Option configures a Manager at construction.
@@ -69,6 +73,70 @@ func WithIDIndex() Option {
 // (WithIDIndex).
 func (m *Manager) IDIndexed() bool {
 	return m != nil && m.idIndexed
+}
+
+// SetPersistenceQueue binds a local indexed Task owner to the runtime's
+// bounded shared persistence queue. Other Task owners keep their existing
+// synchronous completion contract.
+func (m *Manager) SetPersistenceQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) error {
+	if m == nil || queue == nil {
+		return persistencequeue.ErrNilPersistenceQueue
+	}
+	m.persistenceQueueMu.Lock()
+	defer m.persistenceQueueMu.Unlock()
+	if m.persistenceQueue != nil && m.persistenceQueue != queue {
+		return errors.New("Task Manager is already bound to a different persistence queue")
+	}
+	store, ok := m.store.(interface {
+		SetPersistenceQueue(*persistencequeue.Queue[persistencequeue.PersistenceCommand]) error
+	})
+	if !ok {
+		return errors.New("Task store does not support shared queue admission")
+	}
+	if err := store.SetPersistenceQueue(queue); err != nil {
+		return err
+	}
+	m.persistenceQueue = queue
+	return nil
+}
+
+// MatchesPersistenceQueue reports whether this manager and its Task store are
+// both bound to the supplied runtime queue.
+func (m *Manager) MatchesPersistenceQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) bool {
+	if m == nil || queue == nil {
+		return false
+	}
+	m.persistenceQueueMu.RLock()
+	bound := m.persistenceQueue == queue
+	m.persistenceQueueMu.RUnlock()
+	if !bound {
+		return false
+	}
+	store, ok := m.store.(interface {
+		MatchesPersistenceQueue(*persistencequeue.Queue[persistencequeue.PersistenceCommand]) bool
+	})
+	return ok && store.MatchesPersistenceQueue(queue)
+}
+
+func (m *Manager) sharedPersistenceQueue() *persistencequeue.Queue[persistencequeue.PersistenceCommand] {
+	if m == nil {
+		return nil
+	}
+	m.persistenceQueueMu.RLock()
+	defer m.persistenceQueueMu.RUnlock()
+	return m.persistenceQueue
+}
+
+// RunCompletionAdmissionAvailable reports whether this Manager has been bound
+// to a writable indexed Task store and the runtime's shared persistence queue.
+func (m *Manager) RunCompletionAdmissionAvailable() bool {
+	if m == nil || m.sharedPersistenceQueue() == nil {
+		return false
+	}
+	_, ok := m.store.(interface {
+		TaskTransactionWithTicket(context.Context, modulecore.TaskID, func(domaintask.Store) error) (persistencequeue.Ticket, error)
+	})
+	return ok
 }
 
 func New(store Store, limits ParallelLimits, options ...Option) *Manager {
@@ -114,6 +182,35 @@ func (m *Manager) taskTransaction(ctx context.Context, taskID modulecore.TaskID,
 		txManager := &Manager{store: store, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, idIndexed: m.idIndexed, now: m.now}
 		return fn(txManager)
 	})
+}
+
+func (m *Manager) taskTransactionWithTicket(ctx context.Context, taskID modulecore.TaskID, fn func(*Manager) error) (uint64, error) {
+	if m == nil || m.store == nil {
+		return 0, errors.New("task manager store is unavailable")
+	}
+	if ctx == nil {
+		return 0, errors.New("task transaction context is nil")
+	}
+	if err := taskID.Validate(); err != nil {
+		return 0, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if fn == nil {
+		return 0, errors.New("task transaction callback is nil")
+	}
+	store, ok := m.store.(interface {
+		TaskTransactionWithTicket(context.Context, modulecore.TaskID, func(domaintask.Store) error) (persistencequeue.Ticket, error)
+	})
+	if !ok {
+		return 0, errors.New("Task store does not support queue-backed transaction tickets")
+	}
+	ticket, err := store.TaskTransactionWithTicket(ctx, taskID, func(txStore domaintask.Store) error {
+		if txStore == nil {
+			return errors.New("task transaction store is unavailable")
+		}
+		txManager := &Manager{store: txStore, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, idIndexed: m.idIndexed, now: m.now}
+		return fn(txManager)
+	})
+	return uint64(ticket), err
 }
 
 func (m *Manager) readTransaction(ctx context.Context, fn func(*Manager) error) error {

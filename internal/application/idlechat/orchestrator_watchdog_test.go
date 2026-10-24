@@ -134,6 +134,7 @@ func TestForecastMarksBoundedDialogueGenerationStage(t *testing.T) {
 	}, config)
 	dialogueService.SetRunIssuer(newTestIdleChatRunIssuer(t))
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.SetDialogueEpisodeService(dialogueService)
 	stock := newForecastTopicStock("")
 	forecastTaskID, forecastRunID := testIdleChatRunIdentityPair()

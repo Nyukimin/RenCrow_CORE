@@ -25,13 +25,28 @@ func (o *IdleChatOrchestrator) monitorLoop() {
 		case <-ticker.C:
 			if err := o.retryPendingTopicCompletions(); err != nil {
 				log.Printf("[IdleChat] topic generation completion retry failed during maintenance: %v", err)
-				continue
 			}
-			o.RefillWordTopicStockIfIdle("idle")
-			o.RefillForecastTopicStockIfIdle("idle")
-			o.RefillStoryEpisodesAsync("idle")
-			o.startGenerationWork(o.checkAndStartChat)
+			o.schedulePendingConversationRunFinalization()
+			o.retryPendingDialogueCompletions()
+			o.RequestNightPreparation("monitor_tick")
 		}
+	}
+}
+
+func (o *IdleChatOrchestrator) retryPendingDialogueCompletions() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	dialogueService := o.dialogueEpisodeService
+	o.mu.Unlock()
+	if dialogueService == nil {
+		return
+	}
+	ctx, cancel := o.conversationRunCleanupContext()
+	defer cancel()
+	if err := dialogueService.FinalizePendingRuns(ctx); err != nil {
+		log.Printf("[IdleChat] dialogue generation completion retry failed during maintenance: %v", err)
 	}
 }
 

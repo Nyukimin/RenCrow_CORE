@@ -37,6 +37,7 @@ func TestGenerateResponseWithRawStreamsPrimaryTokensToPrefetchEmitter(t *testing
 		},
 	}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 
 	var got []TTSPrefetchEvent
 	o.SetTTSPrefetchEmitter(func(ev TTSPrefetchEvent) {

@@ -76,6 +76,12 @@ func TestBuildForecastLLMTopicNeverStartsWithEmptyTopic(t *testing.T) {
 	}
 }
 
+func allowedForecastNightContext(t *testing.T, o *IdleChatOrchestrator) context.Context {
+	t.Helper()
+	nightGateAllowOrchestrator(t, o)
+	return o.ctx
+}
+
 func TestInitForecastTopicStockBootstrapsOneTopicPerDomainWhenEmpty(t *testing.T) {
 	o := NewIdleChatOrchestrator(
 		failingForecastProvider{err: errors.New("provider should not be called directly")},
@@ -96,7 +102,8 @@ func TestInitForecastTopicStockBootstrapsOneTopicPerDomainWhenEmpty(t *testing.T
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
 	o.SetGenerationCheckpointStore(NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "generation_checkpoints.json")))
 
-	o.InitForecastTopicStock(path)
+	ctx := allowedForecastNightContext(t, o)
+	o.InitForecastTopicStockWithContext(ctx, path)
 	waitForForecastStock(t, o, func(snapshot ForecastTopicStockSnapshot) bool {
 		return snapshot.Total == len(forecastDomains) && !snapshot.Filling
 	})
@@ -139,7 +146,8 @@ func TestInitForecastTopicStockReusesPersistedStockWithoutBootstrap(t *testing.T
 		return domain.Name + "の再生成", nil, nil
 	}
 
-	o.InitForecastTopicStock(path)
+	ctx := allowedForecastNightContext(t, o)
+	o.InitForecastTopicStockWithContext(ctx, path)
 	time.Sleep(50 * time.Millisecond)
 
 	if got := calls.Load(); got != 0 {
@@ -170,9 +178,10 @@ func TestRefillForecastTopicStockIfIdleAddsOneAndDefersWhenBusy(t *testing.T) {
 		n := calls.Add(1)
 		return domain.Name + "の補充お題" + string(rune('0'+n)), nil, nil
 	}
-	o.InitForecastTopicStock(path)
+	ctx := allowedForecastNightContext(t, o)
+	o.InitForecastTopicStockWithContext(ctx, path)
 
-	if !o.RefillForecastTopicStockIfIdle("heartbeat") {
+	if !o.RefillForecastTopicStockIfIdleWithContext(ctx, "heartbeat") {
 		t.Fatal("heartbeat refill was not started")
 	}
 	waitForForecastStock(t, o, func(snapshot ForecastTopicStockSnapshot) bool {
@@ -183,7 +192,7 @@ func TestRefillForecastTopicStockIfIdleAddsOneAndDefersWhenBusy(t *testing.T) {
 	}
 
 	o.SetExternalLLMBusyFunc(func() bool { return true })
-	if o.RefillForecastTopicStockIfIdle("idle") {
+	if o.RefillForecastTopicStockIfIdleWithContext(ctx, "idle") {
 		t.Fatal("refill must be deferred while an external LLM is busy")
 	}
 	if got := calls.Load(); got != 1 {
@@ -215,9 +224,10 @@ func TestRefillForecastTopicStockIfIdleIsSingleFlightAcrossTriggers(t *testing.T
 		<-release
 		return domain.Name + "の補充お題", nil, nil
 	}
-	o.InitForecastTopicStock(path)
+	ctx := allowedForecastNightContext(t, o)
+	o.InitForecastTopicStockWithContext(ctx, path)
 
-	if !o.RefillForecastTopicStockIfIdle("idle") {
+	if !o.RefillForecastTopicStockIfIdleWithContext(ctx, "idle") {
 		t.Fatal("first refill was not started")
 	}
 	select {
@@ -225,7 +235,7 @@ func TestRefillForecastTopicStockIfIdleIsSingleFlightAcrossTriggers(t *testing.T
 	case <-time.After(time.Second):
 		t.Fatal("first refill did not reach generator")
 	}
-	if o.RefillForecastTopicStockIfIdle("heartbeat") {
+	if o.RefillForecastTopicStockIfIdleWithContext(ctx, "heartbeat") {
 		t.Fatal("concurrent heartbeat must not start a second stock generation")
 	}
 	close(release)
@@ -349,6 +359,7 @@ func TestGenerateForecastTopicReturnsGenerationFailure(t *testing.T) {
 		"",
 	)
 	o.SetForecastTopicProviderWithLabel(failingForecastProvider{err: errors.New("gateway error: insufficient_quota")}, "Shiro")
+	allowedForecastNightContext(t, o)
 
 	topic, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生成AI規制の新指針"})
 	if topic != "" {
@@ -387,6 +398,7 @@ func TestGenerateForecastTopicUsesInterestingJudge(t *testing.T) {
 		"",
 	)
 	o.SetForecastTopicProviderWithLabel(provider, "Shiro")
+	allowedForecastNightContext(t, o)
 
 	topic, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生成AI規制の新指針"})
 	if failure != nil {
@@ -427,6 +439,7 @@ func TestGenerateForecastTopicUsesDedicatedShiroProvider(t *testing.T) {
 	)
 	o.SetForecastProviderWithLabel(coder, "Coder1 via RenCrow_LLM")
 	o.SetForecastTopicProviderWithLabel(shiro, "Shiro")
+	allowedForecastNightContext(t, o)
 
 	topic, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生成AI規制の新指針"})
 	if failure != nil {
@@ -480,6 +493,7 @@ func TestForecastLLMReturnsShiroProviderError(t *testing.T) {
 		"",
 	)
 	o.SetForecastTopicProviderWithLabel(primary, "Shiro")
+	allowedForecastNightContext(t, o)
 
 	resp, label, err := o.generateForecastLLM("topic", "AI技術", llm.GenerateRequest{
 		Messages: []llm.Message{{Role: "user", Content: "topic"}},
@@ -514,6 +528,7 @@ func TestForecastLLMUsesDedicatedShiroProvider(t *testing.T) {
 		"",
 	)
 	o.SetForecastTopicProviderWithLabel(shiro, "Shiro")
+	allowedForecastNightContext(t, o)
 
 	resp, label, err := o.generateForecastLLM("topic", "AI技術", llm.GenerateRequest{
 		Messages: []llm.Message{{Role: "user", Content: "topic"}},

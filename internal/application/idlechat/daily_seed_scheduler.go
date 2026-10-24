@@ -17,7 +17,7 @@ func nextDailySeedRefreshAt(now time.Time) time.Time {
 	return next
 }
 
-func (o *IdleChatOrchestrator) startDailySeedRefreshScheduler(sourceConfig NewsSourceConfig) {
+func (o *IdleChatOrchestrator) startDailySeedRefreshScheduler(_ NewsSourceConfig) {
 	log.Printf("[IdleChat] Daily seed scheduler enabled: skill=%s schedule=04:00 timezone=JST tools=go_http,rss,atom,wikipedia_api,reddit_atom,x_recent_search,web_gather.fetch,web_search_unknown_terms_only,shiro_worker_llm sources=%s",
 		dailySourceBriefSkillID, dailySeedSourceLogValue(defaultNewsSeedSources))
 
@@ -37,13 +37,7 @@ func (o *IdleChatOrchestrator) startDailySeedRefreshScheduler(sourceConfig NewsS
 				}
 				return
 			case <-timer.C:
-				go func() {
-					if err := refreshDailySeeds(sourceConfig, true); err != nil {
-						log.Printf("[IdleChat] Scheduled daily seeds refresh failed: %v", err)
-						return
-					}
-					o.enrichCurrentDailySeeds()
-				}()
+				o.RequestNightPreparation("daily_seed_refresh")
 			}
 		}
 	}()

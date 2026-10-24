@@ -102,6 +102,7 @@ func newWordTopicRecoveryFixture(t *testing.T) *wordTopicRecoveryFixture {
 	checkpoints := NewGenerationCheckpointStore(checkpointPath)
 	generator := &savedWordTopicGenerator{}
 	orchestrator := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"shiro"}, 60, 1, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, orchestrator)
 	orchestrator.SetRunIssuer(owner)
 	orchestrator.SetGenerationCheckpointStore(checkpoints)
 	orchestrator.SetTopicCodexGenerator(generator)
@@ -282,8 +283,11 @@ func TestProduceWordTopicResumesSavedResultWithRealTaskManager(t *testing.T) {
 		t.Fatalf("task status = %s, want succeeded", updated.Status)
 	}
 	playable := fixture.orchestrator.availableTopicStockPlaybackItems()
-	if len(playable) != 1 || playable[0].ID != wordPlaybackID(resumed.RunID) {
-		t.Fatalf("playable items = %#v", playable)
+	if len(playable) != 0 {
+		t.Fatalf("raw topic stock became playable without a saved DialogueEpisode: %#v", playable)
+	}
+	if _, err := fixture.orchestrator.selectTopicStockPlaybackItem(TopicStockPlaybackPlay, wordPlaybackID(resumed.RunID)); !errors.Is(err, ErrPreparedDialogueEmpty) {
+		t.Fatalf("raw topic stock playback error = %v, want typed empty prepared dialogue", err)
 	}
 }
 

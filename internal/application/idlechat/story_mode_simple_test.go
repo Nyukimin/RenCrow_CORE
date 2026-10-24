@@ -58,6 +58,7 @@ func TestRunSimpleStorySessionDoesNotDropGeneratedBodyWithValidationText(t *test
 		"QUALITY: pass\nISSUES:\n- なし\nPROMPT_FIX: ",
 	}}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	closed := make(chan struct{})
 	close(closed)
 	o.SetEventEmitter(func(TimelineEvent) TTSLifecycle {
@@ -105,6 +106,7 @@ func TestRunSimpleStorySessionDoesNotPublishBeforeGenerationCompletes(t *testing
 		release: make(chan struct{}),
 	}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
+	nightGateAllowOrchestrator(t, o)
 
 	events := make(chan TimelineEvent, 32)
 	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
@@ -157,6 +159,7 @@ func TestRunSimpleStorySessionEmitsUniqueStoryTTSMessageIDs(t *testing.T) {
 		"QUALITY: pass\nISSUES:\n- なし\nPROMPT_FIX: ",
 	}}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
+	nightGateAllowOrchestrator(t, o)
 
 	seen := map[string]bool{}
 	var ttsIDs []string

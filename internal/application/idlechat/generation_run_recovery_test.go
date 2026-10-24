@@ -1,7 +1,6 @@
 package idlechat
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -9,7 +8,7 @@ import (
 )
 
 func TestGenerationResumePersistsArtifactRevisionWithSuccessorIdentity(t *testing.T) {
-	ctx := context.Background()
+	ctx := nightGateAllowedContext(t)
 	owner := newTestIdleChatRunIssuer(t)
 	taskID, oldID, err := issueIdleChatRun(ctx, owner, "recovery", "shiro", domaintask.RunStartReasonFirst, "")
 	if err != nil {
@@ -47,7 +46,7 @@ func TestGenerationResumePersistsArtifactRevisionWithSuccessorIdentity(t *testin
 }
 
 func TestGenerationRerunPersistsExactSuccessor(t *testing.T) {
-	ctx := context.Background()
+	ctx := nightGateAllowedContext(t)
 	owner := newTestIdleChatRunIssuer(t)
 	taskID, oldID, err := issueIdleChatRun(ctx, owner, "revision", "shiro", domaintask.RunStartReasonFirst, "")
 	if err != nil {
@@ -83,7 +82,7 @@ func TestGenerationRerunPersistsExactSuccessor(t *testing.T) {
 }
 
 func TestGenerationRerunSaveFailureRetainsVerifiedSuccessorForWaiting(t *testing.T) {
-	ctx := context.Background()
+	ctx := nightGateAllowedContext(t)
 	owner := newTestIdleChatRunIssuer(t)
 	taskID, oldID, err := issueIdleChatRun(ctx, owner, "revision", "shiro", domaintask.RunStartReasonFirst, "")
 	if err != nil {

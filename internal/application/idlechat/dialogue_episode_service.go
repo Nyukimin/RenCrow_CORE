@@ -31,6 +31,13 @@ type DialogueEpisodeService struct {
 	checkpoints            *GenerationCheckpointStore
 	pendingCompletions     map[string]GenerationCheckpoint
 	mu                     sync.Mutex
+	readyLoadMu            sync.Mutex
+	readyMu                sync.RWMutex
+	readyIssuer            idlechatRunIssuer
+	readyArtifacts         []DialogueEpisodeArtifact
+	readyLoadErr           error
+	readyLoaded            bool
+	playbackReservations   map[string]dialoguePlaybackReservation
 }
 
 func (o *IdleChatOrchestrator) SetDialogueEpisodeService(service *DialogueEpisodeService) {
@@ -73,6 +80,7 @@ func NewPersistentDialogueEpisodeService(path string, generator IdleChatCodexGen
 		maxSuffixRegenerations: 3,
 		checkpoints:            checkpoints,
 		pendingCompletions:     make(map[string]GenerationCheckpoint),
+		playbackReservations:   make(map[string]dialoguePlaybackReservation),
 	}
 }
 
@@ -89,6 +97,16 @@ func (s *DialogueEpisodeService) SetRunIssuer(issuer idlechatRunIssuer) {
 	s.mu.Lock()
 	s.runIssuer = issuer
 	s.mu.Unlock()
+	s.readyLoadMu.Lock()
+	s.readyMu.Lock()
+	s.readyIssuer = issuer
+	s.readyArtifacts = nil
+	s.readyLoadErr = nil
+	s.readyLoaded = false
+	s.playbackReservations = make(map[string]dialoguePlaybackReservation)
+	s.readyMu.Unlock()
+	s.readyLoadMu.Unlock()
+	_, _ = s.ListReady(context.Background())
 }
 
 func (s *DialogueEpisodeService) SetGenerationCheckpointStore(store *GenerationCheckpointStore) {
@@ -151,7 +169,7 @@ func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, 
 	if found {
 		return s.resumeDialogueCheckpoint(ctx, checkpointKey, checkpoint, sessionID, result, turnCount, persisted)
 	}
-	if existing, ok := latestDialogueReadyArtifact(persisted, checkpointKey); ok {
+	if existing, ok := latestDialogueReadyArtifact(persisted, checkpointKey, s.config); ok {
 		run, err := inspectGenerationRun(ctx, s.runIssuer, existing.TaskID, existing.RunID)
 		if err != nil {
 			return DialogueEpisodeArtifact{}, err
@@ -170,6 +188,7 @@ func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, 
 			return DialogueEpisodeArtifact{}, err
 		}
 		s.forgetPendingCompletion(checkpointKey)
+		s.publishReadyDialogueArtifact(existing)
 		return existing, nil
 	}
 
@@ -304,7 +323,7 @@ func validateDialogueCheckpoint(checkpoint GenerationCheckpoint, key, sessionID 
 	if artifact == nil {
 		return errors.New("dialogue checkpoint artifact is missing")
 	}
-	if artifact.SchemaVersion != DialogueEpisodeSchemaVersion {
+	if !validDialogueEpisodeSchemaVersion(artifact.SchemaVersion) {
 		return fmt.Errorf("unsupported dialogue artifact schema version %d", artifact.SchemaVersion)
 	}
 	if artifact.EpisodeID == "" || artifact.Revision < 1 {
@@ -346,6 +365,9 @@ func (s *DialogueEpisodeService) resumeDialogueCheckpoint(ctx context.Context, k
 		}
 	}
 	artifact := cloneDialogueEpisode(*checkpoint.DialogueArtifact)
+	if artifact.SchemaVersion == DialogueEpisodeLegacySchemaVersion {
+		artifact.SchemaVersion = DialogueEpisodeSchemaVersion
+	}
 	run, err := inspectGenerationRun(ctx, s.runIssuer, checkpoint.TaskID, checkpoint.RunID)
 	if err != nil {
 		return DialogueEpisodeArtifact{}, err
@@ -465,6 +487,7 @@ func (s *DialogueEpisodeService) continueDialogueCheckpoint(ctx context.Context,
 		return DialogueEpisodeArtifact{}, failure
 	}
 	artifact.ProductionStatus = DialogueProductionReady
+	prepareDialogueArtifactForPlayback(&artifact)
 	if err := ctx.Err(); err != nil {
 		return s.waitDialogueCheckpoint(ctx, checkpoint, err)
 	}
@@ -477,6 +500,7 @@ func (s *DialogueEpisodeService) continueDialogueCheckpoint(ctx context.Context,
 	if err := s.finishDialogueGenerationRun(ctx, checkpoint, domaintask.StatusSucceeded, "dialogue episode saved", ""); err != nil {
 		return DialogueEpisodeArtifact{}, err
 	}
+	s.publishReadyDialogueArtifact(artifact)
 	if err := s.checkpoints.Delete(key); err != nil {
 		return DialogueEpisodeArtifact{}, err
 	}
@@ -509,7 +533,7 @@ func dialogueArtifactIsDurable(persisted []DialogueEpisodeArtifact, candidate Di
 	return false
 }
 
-func latestDialogueReadyArtifact(persisted []DialogueEpisodeArtifact, key string) (DialogueEpisodeArtifact, bool) {
+func latestDialogueReadyArtifact(persisted []DialogueEpisodeArtifact, key string, config DialogueInterestingnessConfig) (DialogueEpisodeArtifact, bool) {
 	var latest DialogueEpisodeArtifact
 	found := false
 	for _, artifact := range persisted {
@@ -520,6 +544,15 @@ func latestDialogueReadyArtifact(persisted []DialogueEpisodeArtifact, key string
 		found = true
 	}
 	if !found || latest.ProductionStatus != DialogueProductionReady || !latest.Validation.Valid {
+		return DialogueEpisodeArtifact{}, false
+	}
+	if strings.TrimSpace(latest.PreparedTitle) == "" || strings.TrimSpace(latest.PreparedSummary) == "" || strings.TrimSpace(latest.PreparedQualityReview) == "" {
+		prepareDialogueArtifactForPlayback(&latest)
+	}
+	if !dialogueArtifactPreparedForPlayback(latest) {
+		return DialogueEpisodeArtifact{}, false
+	}
+	if !ValidateDialogueEpisode(latest, config).Valid {
 		return DialogueEpisodeArtifact{}, false
 	}
 	return cloneDialogueEpisode(latest), true
@@ -575,7 +608,7 @@ func (s *DialogueEpisodeService) readPersistedDialogueArtifacts() ([]DialogueEpi
 }
 
 func validatePersistedDialogueArtifact(artifact DialogueEpisodeArtifact) error {
-	if artifact.SchemaVersion != DialogueEpisodeSchemaVersion {
+	if !validDialogueEpisodeSchemaVersion(artifact.SchemaVersion) {
 		return fmt.Errorf("unsupported dialogue artifact schema version %d", artifact.SchemaVersion)
 	}
 	if strings.TrimSpace(artifact.EpisodeID) == "" || artifact.Revision < 1 {
@@ -588,6 +621,9 @@ func validatePersistedDialogueArtifact(artifact DialogueEpisodeArtifact) error {
 	case DialogueProductionValidating, DialogueProductionReady, DialogueProductionNeedsRepair, DialogueProductionFailed:
 	default:
 		return fmt.Errorf("invalid dialogue production status %q", artifact.ProductionStatus)
+	}
+	if artifact.SchemaVersion == DialogueEpisodeSchemaVersion && artifact.ProductionStatus == DialogueProductionReady && !dialogueArtifactPreparedForPlayback(artifact) {
+		return errors.New("ready dialogue artifact is missing prepared playback metadata")
 	}
 	return nil
 }
@@ -653,6 +689,7 @@ func normalizeDialogueTurns(turns []DialogueEpisodeTurn, prefixLength int) []Dia
 func setDialogueProductionStatus(artifact *DialogueEpisodeArtifact, maxRepairs int) {
 	if artifact.Validation.Valid {
 		artifact.ProductionStatus = DialogueProductionReady
+		prepareDialogueArtifactForPlayback(artifact)
 	} else if artifact.SuffixRegenerations >= maxRepairs {
 		artifact.ProductionStatus = DialogueProductionFailed
 	} else {

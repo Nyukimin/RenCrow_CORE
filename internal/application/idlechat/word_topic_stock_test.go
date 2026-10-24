@@ -242,6 +242,7 @@ func TestGenerateWordTopicUsesCodexExeForCandidatesAndJudgeOnly(t *testing.T) {
 	}}
 	worker := &countingWordTopicLLM{}
 	o := NewIdleChatOrchestrator(worker, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 8, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": worker, "chatworker": worker, "shiro": worker})
 	o.SetTopicCodexGenerator(generator)
 	result, err := o.generateWordTopicWithCodex(TopicSeed{Category: TopicCategorySingle, Genre1: "生成AI"})
@@ -265,6 +266,7 @@ func TestGenerateWordTopicUsesCodexExeForCandidatesAndJudgeOnly(t *testing.T) {
 func TestGenerateWordTopicDoesNotFallbackWhenCodexExeFails(t *testing.T) {
 	worker := &countingWordTopicLLM{}
 	o := NewIdleChatOrchestrator(worker, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 8, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	o.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": worker, "chatworker": worker, "shiro": worker})
 	o.SetTopicCodexGenerator(&queuedIdleChatCodexGenerator{err: errors.New("CodexExe unavailable")})
 	if _, err := o.generateWordTopicWithCodex(TopicSeed{Category: TopicCategorySingle, Genre1: "生成AI"}); err == nil {

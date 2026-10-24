@@ -877,10 +877,23 @@ func (c *Config) applyIdleChatEpisodePreparationDefaults() {
 		p.ReadyTarget = 3
 	}
 	if p.NoReadyBehavior == "" {
-		p.NoReadyBehavior = "preparing"
+		p.NoReadyBehavior = "wait"
 	}
 	if p.MaxSuffixRegenerations == 0 {
 		p.MaxSuffixRegenerations = 3
+	}
+	if p.Schedule.Timezone == "" {
+		p.Schedule.Timezone = "Asia/Tokyo"
+	}
+	if p.Schedule.Start == "" {
+		p.Schedule.Start = "02:00"
+	}
+	if p.Schedule.End == "" {
+		p.Schedule.End = "06:00"
+	}
+	if p.Schedule.CatchUpOutsideWindow == nil {
+		catchUp := false
+		p.Schedule.CatchUpOutsideWindow = &catchUp
 	}
 	if p.CodexExe.Sandbox == "" {
 		p.CodexExe.Sandbox = "read-only"

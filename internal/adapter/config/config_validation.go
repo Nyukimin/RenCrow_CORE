@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
@@ -575,7 +576,13 @@ func (c *Config) Validate() error {
 			}
 		}
 		p := c.IdleChat.EpisodePreparation
-		episodePreparationConfigured := p.Enabled != nil || p.Generator != "" || p.ReadyTarget != 0 || p.NoReadyBehavior != "" || p.MaxSuffixRegenerations != 0 || p.CodexExe.Sandbox != "" || p.CodexExe.Ephemeral != nil
+		scheduleConfigured := p.Schedule.Timezone != "" || p.Schedule.Start != "" || p.Schedule.End != "" || p.Schedule.CatchUpOutsideWindow != nil
+		episodePreparationConfigured := p.Enabled != nil || p.Generator != "" || p.ReadyTarget != 0 || p.NoReadyBehavior != "" || p.MaxSuffixRegenerations != 0 || scheduleConfigured || p.CodexExe.Sandbox != "" || p.CodexExe.Ephemeral != nil
+		if scheduleConfigured {
+			if err := validateIdleChatNightPreparationSchedule(p.Schedule); err != nil {
+				return err
+			}
+		}
 		if episodePreparationConfigured && p.EnabledValue() {
 			if p.Generator != "codex_exe" {
 				return fmt.Errorf("idle_chat.episode_preparation.generator must be codex_exe")
@@ -583,8 +590,8 @@ func (c *Config) Validate() error {
 			if p.ReadyTarget < 1 {
 				return fmt.Errorf("idle_chat.episode_preparation.ready_target must be >= 1")
 			}
-			if p.NoReadyBehavior != "preparing" {
-				return fmt.Errorf("idle_chat.episode_preparation.no_ready_behavior must be preparing")
+			if p.NoReadyBehavior != "wait" {
+				return fmt.Errorf("idle_chat.episode_preparation.no_ready_behavior must be wait")
 			}
 			if p.MaxSuffixRegenerations < 1 {
 				return fmt.Errorf("idle_chat.episode_preparation.max_suffix_regenerations must be >= 1")
@@ -946,6 +953,45 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func validateIdleChatNightPreparationSchedule(schedule IdleChatNightPreparationScheduleConfig) error {
+	timezone := schedule.Timezone
+	if timezone == "" {
+		return fmt.Errorf("idle_chat.episode_preparation.schedule.timezone is required")
+	}
+	if strings.TrimSpace(timezone) != timezone || timezone == "Local" {
+		return fmt.Errorf("idle_chat.episode_preparation.schedule.timezone must be a valid IANA timezone")
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return fmt.Errorf("idle_chat.episode_preparation.schedule.timezone must be a valid IANA timezone")
+	}
+	start, err := parseIdleChatClockTime(schedule.Start)
+	if err != nil {
+		return fmt.Errorf("idle_chat.episode_preparation.schedule.start must use HH:MM 24-hour time")
+	}
+	end, err := parseIdleChatClockTime(schedule.End)
+	if err != nil {
+		return fmt.Errorf("idle_chat.episode_preparation.schedule.end must use HH:MM 24-hour time")
+	}
+	if start == end {
+		return fmt.Errorf("idle_chat.episode_preparation.schedule.start and end must differ")
+	}
+	if schedule.CatchUpOutsideWindow != nil && *schedule.CatchUpOutsideWindow {
+		return fmt.Errorf("idle_chat.episode_preparation.schedule.catch_up_outside_window must be false")
+	}
+	return nil
+}
+
+func parseIdleChatClockTime(value string) (int, error) {
+	if strings.TrimSpace(value) != value {
+		return 0, fmt.Errorf("invalid clock time %q", value)
+	}
+	parsed, err := time.Parse("15:04", value)
+	if err != nil || parsed.Format("15:04") != value {
+		return 0, fmt.Errorf("invalid clock time %q", value)
+	}
+	return parsed.Hour()*60 + parsed.Minute(), nil
 }
 
 var llmOpsNodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)

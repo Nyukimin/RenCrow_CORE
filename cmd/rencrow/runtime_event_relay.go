@@ -38,7 +38,29 @@ type idleAwareEventListener struct {
 	durableCursorAtomic   atomic.Int64
 	chatBinding           *chatPublicationBinding
 	chatTraceScopes       map[modulecore.TraceID]chatTracePublicationScope
-	idleChat              *idlechat.IdleChatOrchestrator
+	idleChat              idleChatEventGate
+}
+
+type idleChatEventGate interface {
+	EventContext(modulecore.TraceID, modulecore.SessionID) (context.Context, bool)
+	IsCurrentEvent(modulecore.TraceID, modulecore.SessionID) bool
+	PublishIfCurrentEvent(modulecore.TraceID, modulecore.SessionID, func() error) (bool, error)
+	NotifyActivity()
+}
+
+type idleChatPlaybackEventGate interface {
+	PlaybackEventContext(modulecore.TraceID, modulecore.SessionID, string, uint64) (context.Context, bool)
+	IsCurrentPlaybackEvent(modulecore.TraceID, modulecore.SessionID, string, uint64) bool
+	PublishIfCurrentPlaybackEvent(modulecore.TraceID, modulecore.SessionID, string, uint64, func() error) (bool, error)
+}
+
+type idleEventFinalAcceptance struct {
+	eventID            modulecore.EventID
+	gate               idleChatEventGate
+	traceID            modulecore.TraceID
+	sessionID          modulecore.SessionID
+	runtimeEpoch       string
+	playbackGeneration uint64
 }
 
 type chatPublicationBinding struct {
@@ -71,6 +93,43 @@ func (l *idleAwareEventListener) SetIdleChat(idle *idlechat.IdleChatOrchestrator
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.idleChat = idle
+}
+
+func isIdleChatTimelineEvent(ev orchestrator.OrchestratorEvent) bool {
+	return strings.EqualFold(strings.TrimSpace(ev.Route), "IDLECHAT") || strings.HasPrefix(strings.ToLower(strings.TrimSpace(ev.Type)), "idlechat.")
+}
+
+func waitForChatBinding(done <-chan struct{}, eventContext context.Context) bool {
+	if eventContext == nil {
+		<-done
+		return true
+	}
+	select {
+	case <-done:
+		return true
+	case <-eventContext.Done():
+		return false
+	}
+}
+
+func (l *idleAwareEventListener) idleEventCurrent(gate idleChatEventGate, ev orchestrator.OrchestratorEvent, eventContext context.Context) bool {
+	if gate == nil {
+		return true
+	}
+	if eventContext != nil && eventContext.Err() != nil {
+		return false
+	}
+	if playbackGate, ok := gate.(idleChatPlaybackEventGate); ok {
+		return playbackGate.IsCurrentPlaybackEvent(ev.TraceID, ev.SessionID, ev.RuntimeEpoch, ev.PlaybackGeneration)
+	}
+	return gate.IsCurrentEvent(ev.TraceID, ev.SessionID)
+}
+
+func publishIdleEventIfCurrent(gate idleChatEventGate, ev orchestrator.OrchestratorEvent, publish func() error) (bool, error) {
+	if playbackGate, ok := gate.(idleChatPlaybackEventGate); ok {
+		return playbackGate.PublishIfCurrentPlaybackEvent(ev.TraceID, ev.SessionID, ev.RuntimeEpoch, ev.PlaybackGeneration, publish)
+	}
+	return gate.PublishIfCurrentEvent(ev.TraceID, ev.SessionID, publish)
 }
 
 // BindChat activates the EventStore RAM admission lease for one explicitly
@@ -185,7 +244,28 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 	if l == nil || l.archive == nil {
 		return errCanonicalEventArchiveRequired
 	}
+	var idleGate idleChatEventGate
+	var idleEventContext context.Context
+	if isIdleChatTimelineEvent(ev) {
+		l.mu.RLock()
+		idleGate = l.idleChat
+		l.mu.RUnlock()
+		if idleGate != nil {
+			var current bool
+			if playbackGate, ok := idleGate.(idleChatPlaybackEventGate); ok {
+				idleEventContext, current = playbackGate.PlaybackEventContext(ev.TraceID, ev.SessionID, ev.RuntimeEpoch, ev.PlaybackGeneration)
+			} else {
+				idleEventContext, current = idleGate.EventContext(ev.TraceID, ev.SessionID)
+			}
+			if !current {
+				return nil
+			}
+		}
+	}
 	for {
+		if !l.idleEventCurrent(idleGate, ev, idleEventContext) {
+			return nil
+		}
 		l.mu.RLock()
 		binding := l.chatBinding
 		scope := l.chatTraceScopes[ev.TraceID]
@@ -193,7 +273,9 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 		if binding != nil {
 			if ev.TraceID == binding.traceID {
 				if scope == chatTraceScopeSynchronous {
-					<-binding.done
+					if !waitForChatBinding(binding.done, idleEventContext) {
+						return nil
+					}
 					continue
 				}
 				if scope != chatTraceScopeAdmitted {
@@ -208,9 +290,15 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 					l.publicationMu.Unlock()
 					continue
 				}
+				if !l.idleEventCurrent(idleGate, ev, idleEventContext) {
+					l.publicationMu.Unlock()
+					return nil
+				}
 				if currentScope == chatTraceScopeSynchronous {
 					l.publicationMu.Unlock()
-					<-binding.done
+					if !waitForChatBinding(binding.done, idleEventContext) {
+						return nil
+					}
 					continue
 				}
 				if currentScope != chatTraceScopeAdmitted {
@@ -226,23 +314,42 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 					l.publicationMu.Unlock()
 					return fmt.Errorf("accepted CHAT EventSeq %d does not follow relay live cursor %d", accepted.EventSeq, l.livePublicationCursor)
 				}
-				if l.hub != nil {
-					if _, err := l.hub.PublishAccepted(accepted); err != nil {
-						l.publicationMu.Unlock()
-						return err
+				publishAccepted := func() error {
+					if l.hub != nil {
+						if _, err := l.hub.PublishAccepted(accepted); err != nil {
+							return err
+						}
 					}
+					if l.monitor != nil {
+						l.monitor.OnEvent(accepted)
+					}
+					l.livePublicationCursor = accepted.EventSeq
+					return nil
 				}
-				if l.monitor != nil {
-					l.monitor.OnEvent(accepted)
+				if idleGate != nil {
+					liveAccepted, publishErr := publishIdleEventIfCurrent(idleGate, ev, publishAccepted)
+					if publishErr != nil {
+						l.publicationMu.Unlock()
+						return publishErr
+					}
+					if !liveAccepted {
+						// The owner declined this accepted event. Advancing this cursor prevents durable replay from
+						// presenting it and avoids retaining a suppression map entry.
+						l.livePublicationCursor = accepted.EventSeq
+					}
+				} else if err := publishAccepted(); err != nil {
+					l.publicationMu.Unlock()
+					return err
 				}
-				l.livePublicationCursor = accepted.EventSeq
 				l.publicationMu.Unlock()
 				l.afterCanonicalPublication([]orchestrator.OrchestratorEvent{accepted}, "")
 				return nil
 			}
 			// Non-admitted and foreign traces wait outside the publication mutex,
 			// then use the legacy durable path after the active lease is released.
-			<-binding.done
+			if !waitForChatBinding(binding.done, idleEventContext) {
+				return nil
+			}
 			continue
 		}
 		if scope == chatTraceScopeAdmitted {
@@ -264,12 +371,23 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 			l.publicationMu.Unlock()
 			return fmt.Errorf("%w: admitted trace %s has no active relay binding", errChatTraceIDNotBound, ev.TraceID)
 		}
+		if !l.idleEventCurrent(idleGate, ev, idleEventContext) {
+			l.publicationMu.Unlock()
+			return nil
+		}
 		persisted, err := l.archive.AppendSequenced(ev)
 		if err != nil {
 			l.publicationMu.Unlock()
 			return err
 		}
-		published, err := l.drainCanonicalEvents(context.Background(), persisted.EventID)
+		var finalAcceptance *idleEventFinalAcceptance
+		if idleGate != nil {
+			finalAcceptance = &idleEventFinalAcceptance{
+				eventID: persisted.EventID, gate: idleGate, traceID: ev.TraceID, sessionID: ev.SessionID,
+				runtimeEpoch: ev.RuntimeEpoch, playbackGeneration: ev.PlaybackGeneration,
+			}
+		}
+		published, err := l.drainCanonicalEventsWithAcceptance(context.Background(), persisted.EventID, finalAcceptance)
 		l.publicationMu.Unlock()
 		l.afterCanonicalPublication(published, persisted.EventID)
 		return err
@@ -384,6 +502,10 @@ func (l *idleAwareEventListener) lockCanonicalDrain(ctx context.Context) error {
 // It follows the component watermark instead of requiring contiguous global
 // EventSeq values because private components can occupy sequence gaps.
 func (l *idleAwareEventListener) drainCanonicalEvents(ctx context.Context, allowLiveTransientID modulecore.EventID) ([]orchestrator.OrchestratorEvent, error) {
+	return l.drainCanonicalEventsWithAcceptance(ctx, allowLiveTransientID, nil)
+}
+
+func (l *idleAwareEventListener) drainCanonicalEventsWithAcceptance(ctx context.Context, allowLiveTransientID modulecore.EventID, finalAcceptance *idleEventFinalAcceptance) ([]orchestrator.OrchestratorEvent, error) {
 	cursor := l.publicationCursor
 	through := modulecore.EventSeq(0)
 	published := make([]orchestrator.OrchestratorEvent, 0)
@@ -417,19 +539,33 @@ func (l *idleAwareEventListener) drainCanonicalEvents(ctx context.Context, allow
 				return published, errors.New("canonical event replay is not in ascending EventSeq order")
 			}
 			if event.EventSeq > l.livePublicationCursor && (!viewer.IsTransientReplayEvent(event) || event.EventID == allowLiveTransientID) {
-				projected := true
-				if l.hub != nil {
-					var hubErr error
-					projected, hubErr = l.hub.PublishLive(event)
-					if hubErr != nil {
-						return published, hubErr
+				publishLive := func() error {
+					if l.hub != nil {
+						projected, hubErr := l.hub.PublishLive(event)
+						if hubErr != nil {
+							return hubErr
+						}
+						if !projected {
+							return nil
+						}
 					}
-				}
-				if projected {
 					if l.monitor != nil {
 						l.monitor.OnEvent(event)
 					}
 					published = append(published, event)
+					return nil
+				}
+				if finalAcceptance != nil && event.EventID == finalAcceptance.eventID {
+					if playbackGate, ok := finalAcceptance.gate.(idleChatPlaybackEventGate); ok {
+						_, err = playbackGate.PublishIfCurrentPlaybackEvent(finalAcceptance.traceID, finalAcceptance.sessionID, finalAcceptance.runtimeEpoch, finalAcceptance.playbackGeneration, publishLive)
+					} else {
+						_, err = finalAcceptance.gate.PublishIfCurrentEvent(finalAcceptance.traceID, finalAcceptance.sessionID, publishLive)
+					}
+					if err != nil {
+						return published, err
+					}
+				} else if err := publishLive(); err != nil {
+					return published, err
 				}
 			}
 			if event.EventSeq > l.livePublicationCursor {

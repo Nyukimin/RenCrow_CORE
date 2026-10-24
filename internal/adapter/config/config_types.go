@@ -367,12 +367,20 @@ type IdleChatConfig struct {
 }
 
 type IdleChatEpisodePreparationConfig struct {
-	Enabled                *bool                         `yaml:"enabled"`
-	Generator              string                        `yaml:"generator"`
-	ReadyTarget            int                           `yaml:"ready_target"`
-	NoReadyBehavior        string                        `yaml:"no_ready_behavior"`
-	MaxSuffixRegenerations int                           `yaml:"max_suffix_regenerations"`
-	CodexExe               IdleChatEpisodeCodexExeConfig `yaml:"codex_exe"`
+	Enabled                *bool                                  `yaml:"enabled"`
+	Generator              string                                 `yaml:"generator"`
+	ReadyTarget            int                                    `yaml:"ready_target"`
+	NoReadyBehavior        string                                 `yaml:"no_ready_behavior"`
+	MaxSuffixRegenerations int                                    `yaml:"max_suffix_regenerations"`
+	Schedule               IdleChatNightPreparationScheduleConfig `yaml:"schedule"`
+	CodexExe               IdleChatEpisodeCodexExeConfig          `yaml:"codex_exe"`
+}
+
+type IdleChatNightPreparationScheduleConfig struct {
+	Timezone             string `yaml:"timezone"`
+	Start                string `yaml:"start"`
+	End                  string `yaml:"end"`
+	CatchUpOutsideWindow *bool  `yaml:"catch_up_outside_window"`
 }
 
 type IdleChatEpisodeCodexExeConfig struct {

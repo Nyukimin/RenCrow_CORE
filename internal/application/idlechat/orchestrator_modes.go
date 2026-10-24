@@ -15,6 +15,28 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+// PlaybackStopRequest carries the foreground policy revision that caused an
+// IdleChat playback stop. Surface presence remains the owner of these values;
+// IdleChat only returns the applied revision in its receipt.
+type PlaybackStopRequest struct {
+	RuntimeEpoch  string
+	StateRevision uint64
+	Reason        string
+}
+
+// PlaybackStopReceipt reports the in-memory playback transition. Cleanup is
+// tracked separately because Task/Run durability may finish after the caller
+// has moved to the foreground surface.
+type PlaybackStopReceipt struct {
+	RuntimeEpoch         string
+	AppliedStateRevision uint64
+	Generation           uint64
+	PlaybackStopped      bool
+	ResumeBlocked        bool
+	CleanupPending       bool
+	GenerationQuiesced   bool
+}
+
 func (o *IdleChatOrchestrator) Start() {
 	if err := o.finalizePendingConversationRun(); err != nil {
 		log.Printf("[IdleChat] conversation run finalization retry during start failed: %v", err)
@@ -25,16 +47,9 @@ func (o *IdleChatOrchestrator) Start() {
 	newsSourceConfig.XQueries = append([]XNewsQuery(nil), newsSourceConfig.XQueries...)
 	o.mu.Unlock()
 
-	// 起動時に外部シード取得（非同期）
-	go func() {
-		if err := fetchDailySeeds(newsSourceConfig); err != nil {
-			log.Printf("[IdleChat] Daily seeds fetch failed: %v", err)
-			return
-		}
-		o.enrichCurrentDailySeeds()
-	}()
+	o.runNightPreparationScheduler()
 	o.startDailySeedRefreshScheduler(newsSourceConfig)
-	o.RefillStoryEpisodesAsync("bootstrap")
+	o.RequestNightPreparation("startup")
 
 	o.wg.Add(1)
 	go o.monitorLoop()
@@ -56,7 +71,14 @@ func (o *IdleChatOrchestrator) SetIntervalSeconds(seconds int) {
 
 func (o *IdleChatOrchestrator) Stop() {
 	o.closeGenerationWorkAdmission()
+	if scheduler := o.currentNightPreparationScheduler(); scheduler != nil {
+		scheduler.Close()
+	}
 	o.cancel()
+	o.conversationRunFinalizeWorkerMu.Lock()
+	o.conversationRunFinalizeWorkerClosed = true
+	finalizerDone := o.conversationRunFinalizeWorkerDone
+	o.conversationRunFinalizeWorkerMu.Unlock()
 	// Stop must wait for an in-flight owner admission to reconcile its exact
 	// Task/Run pair before the Task owner is closed by runtime shutdown.
 	o.conversationRunStartMu.Lock()
@@ -68,6 +90,9 @@ func (o *IdleChatOrchestrator) Stop() {
 	o.wg.Wait()
 	o.waitGenerationWork()
 	o.finalizePendingGenerationRunsDuringStop()
+	if finalizerDone != nil {
+		<-finalizerDone
+	}
 	log.Println("[IdleChat] Stopped")
 }
 
@@ -90,7 +115,7 @@ func (o *IdleChatOrchestrator) finalizePendingGenerationRunsDuringStop() {
 // NotifyActivity はタスク到着を通知（雑談セッションを中断）
 
 func (o *IdleChatOrchestrator) NotifyActivity() {
-	o.Interrupt("activity")
+	o.interruptForActivity("activity")
 }
 
 // SetChatBusy はChat(mio)の活性状態を更新する。
@@ -100,8 +125,9 @@ func (o *IdleChatOrchestrator) SetChatBusy(busy bool) {
 	o.chatBusy = busy
 	o.mu.Unlock()
 	if busy {
-		o.Interrupt("chat_busy")
+		o.interruptForActivity("chat_busy")
 	}
+	o.NotifyNightPreparationPolicyChanged()
 }
 
 // SetWorkerBusy はWorker(shiro/coder)の活性状態を更新する。
@@ -111,7 +137,91 @@ func (o *IdleChatOrchestrator) SetWorkerBusy(busy bool) {
 	o.workerBusy = busy
 	o.mu.Unlock()
 	if busy {
-		o.Interrupt("worker_busy")
+		o.interruptForActivity("worker_busy")
+	}
+	o.NotifyNightPreparationPolicyChanged()
+}
+
+// interruptForActivity ends the active conversation with a RAM-only state
+// transition. Foreground request paths must not wait for timeline emission,
+// TTS callbacks, Task persistence, or finalization.
+func (o *IdleChatOrchestrator) interruptForActivity(reason string) {
+	if o == nil {
+		return
+	}
+	o.cancelTopicProduction(reason)
+	o.mu.Lock()
+	dailyEnrichmentJob := o.dailyEnrichmentJob
+	wasActive := o.manualMode || o.chatActive || o.runCancel != nil || o.conversationRunStarting
+	wasPending := o.pendingConversationRun != nil
+	if !wasActive && !wasPending {
+		o.clearIdleEventPublicationLocked()
+		o.mu.Unlock()
+		if dailyEnrichmentJob != nil {
+			dailyEnrichmentJob.cancelBatch()
+		}
+		return
+	}
+	if !wasActive && wasPending {
+		o.clearIdleEventPublicationLocked()
+		o.mu.Unlock()
+		if dailyEnrichmentJob != nil {
+			dailyEnrichmentJob.cancelBatch()
+		}
+		o.schedulePendingConversationRunFinalization()
+		return
+	}
+	cancel, shouldFinalize, finalizeErr := o.prepareConversationRunStopLocked(0, domaintask.StatusCancelled, "IdleChat conversation interrupted", reason)
+	onInterrupt := o.onInterrupt
+	interruptedRuntimeEpoch := o.runtimeEpoch
+	interruptedPlaybackGeneration := o.activeGeneration
+	if o.manualMode || o.chatActive {
+		log.Printf("[IdleChat] Interrupted: reason=%s generation=%d session=%s", strings.TrimSpace(reason), o.activeGeneration, o.activeSessionID)
+	}
+	o.manualMode = false
+	o.chatActive = false
+	o.sessionMode = ""
+	o.currentTopic = ""
+	o.sessionContext = ""
+	o.lastActivity = time.Now()
+	if o.activeSessionID != "" {
+		if o.interruptedSessions == nil {
+			o.interruptedSessions = make(map[string]struct{})
+		}
+		o.interruptedSessions[o.activeSessionID] = struct{}{}
+	}
+	o.activeGeneration++
+	o.clearIdleEventPublicationLocked()
+	o.watchdogStage = "interrupted"
+	o.watchdogDetail = strings.TrimSpace(reason)
+	o.watchdogFrom = ""
+	o.watchdogTo = ""
+	o.watchdogMessageID = ""
+	o.watchdogTurnIndex = 0
+	o.watchdogUpdatedAt = time.Now().UTC()
+	o.watchdogStageDeadlineAt = time.Time{}
+	o.activeSessionID = ""
+	if o.activeThread != nil {
+		o.activeThread.Close()
+		o.activeThread = nil
+	}
+	o.activeTraceID = ""
+	o.activeTraceSessionID = ""
+	cleanupPending := o.pendingConversationRun != nil || shouldFinalize || o.conversationRunStarting
+	o.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if dailyEnrichmentJob != nil {
+		dailyEnrichmentJob.cancelBatch()
+	}
+	if onInterrupt != nil && wasActive {
+		go onInterrupt(interruptedRuntimeEpoch, interruptedPlaybackGeneration)
+	}
+	if finalizeErr != nil {
+		log.Printf("[IdleChat] conversation run finalization preparation failed: %v", finalizeErr)
+	} else if cleanupPending {
+		o.schedulePendingConversationRunFinalization()
 	}
 }
 
@@ -119,6 +229,141 @@ func (o *IdleChatOrchestrator) SetExternalLLMBusyFunc(fn func() bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.externalLLMBusy = fn
+}
+
+// StopPlaybackForForeground applies the foreground playback policy using only
+// IdleChat RAM state. It deliberately avoids emitMu, event/TTS callbacks, and
+// Task owner completion; pending Task/Run cleanup is handed to the managed
+// finalization worker after the stop state is visible.
+func (o *IdleChatOrchestrator) StopPlaybackForForeground(ctx context.Context, request PlaybackStopRequest) (PlaybackStopReceipt, error) {
+	if o == nil {
+		return PlaybackStopReceipt{}, errors.New("idlechat is not configured")
+	}
+	if ctx == nil {
+		return PlaybackStopReceipt{}, errors.New("foreground stop context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return PlaybackStopReceipt{}, err
+	}
+	request.RuntimeEpoch = strings.TrimSpace(request.RuntimeEpoch)
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.RuntimeEpoch == "" || request.StateRevision == 0 || request.Reason == "" {
+		return PlaybackStopReceipt{}, errors.New("foreground stop epoch, state revision, and reason are required")
+	}
+	o.NotifyNightPreparationPolicyChanged()
+	if receipt, done, err := o.foregroundStopReplay(request); done || err != nil {
+		if done && err == nil && receipt.CleanupPending {
+			o.schedulePendingConversationRunFinalization()
+		}
+		return receipt, err
+	}
+
+	// The existing disabled mode blocks automatic playback. We do not close
+	// generation-work admission here because explicit prepared playback uses the
+	// same lease gate and must remain available after a later policy revision.
+	generationWorkQuiesced := o.generationWorkIsQuiesced()
+
+	o.mu.Lock()
+	if receipt, done, err := o.foregroundStopReplayLocked(request); done || err != nil {
+		o.mu.Unlock()
+		if done && err == nil && receipt.CleanupPending {
+			o.schedulePendingConversationRunFinalization()
+		}
+		return receipt, err
+	}
+	wasActive := o.chatActive || o.manualMode || o.runCancel != nil || o.conversationRunStarting
+	wasStarting := o.conversationRunStarting
+	stoppedPlaybackGeneration := o.activeGeneration
+	stoppedRuntimeEpoch := o.runtimeEpoch
+	oldSessionID := o.activeSessionID
+	cancel, shouldFinalize, finalizeErr := o.prepareConversationRunStopLocked(0, domaintask.StatusCancelled, "IdleChat playback stopped for foreground use", request.Reason)
+	onInterrupt := o.onInterrupt
+	dailyEnrichmentJob := o.dailyEnrichmentJob
+	if oldSessionID != "" {
+		if o.interruptedSessions == nil {
+			o.interruptedSessions = make(map[string]struct{})
+		}
+		o.interruptedSessions[oldSessionID] = struct{}{}
+	}
+	o.disabled = true
+	o.manualMode = false
+	o.chatActive = false
+	o.sessionMode = ""
+	o.currentTopic = ""
+	o.sessionContext = ""
+	o.lastActivity = time.Now()
+	o.activeGeneration++
+	o.clearIdleEventPublicationLocked()
+	o.activeSessionID = ""
+	if o.activeThread != nil {
+		o.activeThread.Close()
+		o.activeThread = nil
+	}
+	o.activeTraceID = ""
+	o.activeTraceSessionID = ""
+	o.watchdogStage = "foreground_stop"
+	o.watchdogDetail = request.Reason
+	o.watchdogFrom = ""
+	o.watchdogTo = ""
+	o.watchdogMessageID = ""
+	o.watchdogTurnIndex = 0
+	o.watchdogUpdatedAt = time.Now().UTC()
+	o.watchdogStageDeadlineAt = time.Time{}
+
+	cleanupPending := o.pendingConversationRun != nil || shouldFinalize || wasStarting
+	receipt := PlaybackStopReceipt{
+		RuntimeEpoch:         request.RuntimeEpoch,
+		AppliedStateRevision: request.StateRevision,
+		Generation:           o.activeGeneration,
+		PlaybackStopped:      wasActive,
+		ResumeBlocked:        true,
+		CleanupPending:       cleanupPending,
+		GenerationQuiesced:   !wasActive && generationWorkQuiesced,
+	}
+	o.foregroundStopEpoch = request.RuntimeEpoch
+	o.foregroundStopRevision = request.StateRevision
+	o.foregroundStopReceipt = receipt
+	o.mu.Unlock()
+	// Publish the stop snapshot before cancellation and asynchronous cleanup can
+	// enter owner persistence. The callback only projects RAM state and performs
+	// nonblocking control fanout.
+	o.notifyPlaybackControlSnapshotChanged()
+
+	if cancel != nil {
+		cancel()
+	}
+	o.cancelTopicProduction(request.Reason)
+	if dailyEnrichmentJob != nil {
+		dailyEnrichmentJob.cancelBatch()
+	}
+	if onInterrupt != nil && wasActive {
+		go onInterrupt(stoppedRuntimeEpoch, stoppedPlaybackGeneration)
+	}
+	if finalizeErr != nil {
+		log.Printf("[IdleChat] foreground stop finalization preparation failed: %v", finalizeErr)
+	} else if cleanupPending {
+		o.schedulePendingConversationRunFinalization()
+	}
+	return receipt, nil
+}
+
+func (o *IdleChatOrchestrator) foregroundStopReplay(request PlaybackStopRequest) (PlaybackStopReceipt, bool, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.foregroundStopReplayLocked(request)
+}
+
+func (o *IdleChatOrchestrator) foregroundStopReplayLocked(request PlaybackStopRequest) (PlaybackStopReceipt, bool, error) {
+	if o.foregroundStopEpoch != request.RuntimeEpoch {
+		return PlaybackStopReceipt{}, false, nil
+	}
+	if request.StateRevision < o.foregroundStopRevision {
+		return PlaybackStopReceipt{}, true, fmt.Errorf("foreground stop revision %d is older than applied revision %d", request.StateRevision, o.foregroundStopRevision)
+	}
+	if request.StateRevision == o.foregroundStopRevision && o.foregroundStopRevision != 0 {
+		return o.foregroundStopReceipt, true, nil
+	}
+	return PlaybackStopReceipt{}, false, nil
 }
 
 // StartManualMode starts idle chat mode immediately.
@@ -141,6 +386,8 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.mu.Lock()
 	cancel := o.runCancel
 	onInterrupt := o.onInterrupt
+	interruptedRuntimeEpoch := o.runtimeEpoch
+	interruptedPlaybackGeneration := o.activeGeneration
 	dailyEnrichmentJob := o.dailyEnrichmentJob
 	finalizeCancel, shouldFinalize, finalizeErr := o.prepareConversationRunStopLocked(0, domaintask.StatusCancelled, "IdleChat conversation interrupted", reason)
 	if cancel == nil {
@@ -162,6 +409,7 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 		o.interruptedSessions[o.activeSessionID] = struct{}{}
 	}
 	o.activeGeneration++
+	o.clearIdleEventPublicationLocked()
 	o.watchdogStage = "interrupted"
 	o.watchdogDetail = strings.TrimSpace(reason)
 	o.watchdogFrom = ""
@@ -183,7 +431,7 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 		cancel()
 	}
 	if onInterrupt != nil {
-		onInterrupt()
+		onInterrupt(interruptedRuntimeEpoch, interruptedPlaybackGeneration)
 	}
 	if dailyEnrichmentJob != nil {
 		dailyEnrichmentJob.cancelBatch()
@@ -222,6 +470,7 @@ func (o *IdleChatOrchestrator) beginIdleRunLocked() (uint64, error) {
 	}
 	o.cancelTopicProduction("conversation_start")
 	o.activeGeneration++
+	o.clearIdleEventPublicationLocked()
 	if o.activeThread != nil {
 		o.activeThread.Close()
 		o.activeThread = nil
@@ -386,6 +635,7 @@ func (o *IdleChatOrchestrator) openIdleThreadLocked(sessionID string) (*domconv.
 }
 
 func (o *IdleChatOrchestrator) bindIdleSessionLocked(sessionID string) error {
+	o.clearIdleEventPublicationLocked()
 	if strings.TrimSpace(sessionID) == "" {
 		if o.activeThread != nil {
 			o.activeThread.Close()

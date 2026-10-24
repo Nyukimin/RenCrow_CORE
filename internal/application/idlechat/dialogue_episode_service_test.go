@@ -1,7 +1,6 @@
 package idlechat
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +21,7 @@ func TestDialogueEpisodeRepairsOnlySuffixAndPreservesAcceptedPrefixID(t *testing
 		Topic: "防災設備を店頭に入れるとき誰が最後の判断を持つか", Category: TopicCategorySingle, Strategy: string(StrategySingleGenre),
 		InterestingnessAxis: "観察", Seed: TopicSeed{Category: TopicCategorySingle, Genre1: "防災"},
 	}
-	artifact, err := service.Prepare(context.Background(), "idle-dialogue-test", result, 2)
+	artifact, err := service.Prepare(nightGateAllowedContext(t), "idle-dialogue-test", result, 2)
 	if err != nil {
 		t.Fatalf("dialogue preparation failed: %v artifact=%+v", err, artifact)
 	}

@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
@@ -23,6 +25,47 @@ import (
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
 type MessageErrorHandler func(ctx context.Context, req SendRequest, err error)
 type SessionIDResolver func(ctx context.Context) (modulecore.SessionID, error)
+
+// ForegroundPresenceReference carries only the lookup fields for an already
+// claimed foreground lease. It is not an authentication or authorization
+// credential by itself.
+type ForegroundPresenceReference struct {
+	ProtocolVersion     int    `json:"protocol_version"`
+	RuntimeEpoch        string `json:"runtime_epoch"`
+	RegistrationReceipt string `json:"registration_receipt"`
+	ClaimSeq            uint64 `json:"claim_seq"`
+}
+
+// ForegroundPinRequest combines the body reference with the viewer client key.
+// The runtime hook derives trusted actor and client identity from the request.
+type ForegroundPinRequest struct {
+	ViewerClientID string
+	Presence       *ForegroundPresenceReference
+}
+
+// ForegroundPinLease is held by one accepted send until its processing ends.
+type ForegroundPinLease interface {
+	Release() error
+}
+
+// ForegroundPinHook validates trusted request provenance and atomically pins
+// the referenced foreground lease before send admission.
+type ForegroundPinHook func(*http.Request, ForegroundPinRequest) (ForegroundPinLease, error)
+
+// ForegroundPinError is a typed, client-safe rejection from the runtime pin
+// owner. It is returned synchronously before the send is accepted.
+type ForegroundPinError struct {
+	StatusCode int
+	ErrorCode  string
+	Message    string
+}
+
+func (e *ForegroundPinError) Error() string {
+	if e == nil {
+		return "foreground presence pin failed"
+	}
+	return e.Message
+}
 
 type AudioOutputIntent string
 
@@ -52,17 +95,20 @@ type SendRequest struct {
 	Message        string
 	To             modulechat.ViewerRecipient
 	Attachments    []domainattachment.Attachment
+	foregroundPin  ForegroundPinLease
 }
 
 type viewerSendRequest struct {
-	ViewerClientID string `json:"viewer_client_id,omitempty"`
-	AudioOutput    string `json:"audio_output,omitempty"`
-	Timings        bool   `json:"timings,omitempty"`
-	InputSource    string `json:"input_source,omitempty"`
-	UserID         string `json:"user_id,omitempty"`
-	DeviceName     string `json:"device_name,omitempty"`
-	Message        string `json:"message"`
-	To             string `json:"to,omitempty"`
+	ViewerClientID string                       `json:"viewer_client_id,omitempty"`
+	AudioOutput    string                       `json:"audio_output,omitempty"`
+	Timings        bool                         `json:"timings,omitempty"`
+	InputSource    string                       `json:"input_source,omitempty"`
+	UserID         string                       `json:"user_id,omitempty"`
+	DeviceName     string                       `json:"device_name,omitempty"`
+	Message        string                       `json:"message"`
+	To             string                       `json:"to,omitempty"`
+	PresenceRaw    json.RawMessage              `json:"presence,omitempty"`
+	Presence       *ForegroundPresenceReference `json:"-"`
 }
 
 // HandleSend creates an HTTP handler that receives messages from the viewer input.
@@ -96,6 +142,10 @@ func handleSendLegacyWithSpeechCancellation(handler MessageHandler, onError Mess
 }
 
 func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission, preSessionAdmission LegacyPreSessionAdmissionHook) http.HandlerFunc {
+	return handleSendLegacyWithForegroundPin(handler, onError, saver, resolveSessionID, cancellations, admission, preSessionAdmission, nil)
+}
+
+func handleSendLegacyWithForegroundPin(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission, preSessionAdmission LegacyPreSessionAdmissionHook, foregroundPinHook ForegroundPinHook) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		handlerReceivedAt := time.Now()
 		if r.Method != http.MethodPost {
@@ -104,12 +154,23 @@ func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, 
 			return
 		}
 
-		req, attachments, err := parseViewerSendRequest(r, saver)
+		req, attachments, foregroundPin, err := parseViewerSendRequestAndPin(r, saver, foregroundPinHook)
 		if err != nil {
+			var pinErr *ForegroundPinError
+			if errors.As(err, &pinErr) {
+				writeViewerForegroundPinError(w, err)
+				return
+			}
 			log.Printf("[Viewer] HandleSend: invalid request: %v", err)
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
+		foregroundPinTransferred := false
+		defer func() {
+			if !foregroundPinTransferred {
+				releaseViewerForegroundPin(foregroundPin)
+			}
+		}()
 		var timing *turntiming.Recorder
 		if req.Timings {
 			timing = turntiming.New(handlerReceivedAt)
@@ -248,6 +309,7 @@ func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, 
 			Provenance:     provenance,
 			To:             recipient,
 			Attachments:    attachments,
+			foregroundPin:  foregroundPin,
 		}
 
 		effectiveMessage := strings.TrimSpace(req.Message)
@@ -280,7 +342,9 @@ func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, 
 		// Process asynchronously — events flow back via SSE.
 		asyncReleasePreSessionAdmission := releasePreSessionAdmission
 		releasePreSessionAdmission = nil
+		foregroundPinTransferred = true
 		go func() {
+			defer releaseViewerForegroundPin(foregroundPin)
 			if asyncReleasePreSessionAdmission != nil {
 				defer asyncReleasePreSessionAdmission()
 			}
@@ -363,28 +427,46 @@ func defaultAttachmentMessage(attachments []domainattachment.Attachment) string 
 }
 
 func parseViewerSendRequest(r *http.Request, saver AttachmentSaver) (viewerSendRequest, []domainattachment.Attachment, error) {
+	req, attachments, _, err := parseViewerSendRequestAndPin(r, saver, nil)
+	return req, attachments, err
+}
+
+func parseViewerSendRequestAndPin(r *http.Request, saver AttachmentSaver, hook ForegroundPinHook) (viewerSendRequest, []domainattachment.Attachment, ForegroundPinLease, error) {
 	contentType := r.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		return parseViewerMultipartSendRequest(r, saver)
+		return parseViewerMultipartSendRequestAndPin(r, saver, hook)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 	if err != nil {
-		return viewerSendRequest{}, nil, fmt.Errorf("read body: %w", err)
+		return viewerSendRequest{}, nil, nil, fmt.Errorf("read body: %w", err)
 	}
 	var req viewerSendRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return viewerSendRequest{}, nil, fmt.Errorf("json decode: %w", err)
+		return viewerSendRequest{}, nil, nil, fmt.Errorf("json decode: %w", err)
 	}
-	return req, nil, nil
+	req.Presence, err = parseForegroundPresenceReference(req.PresenceRaw)
+	if err != nil {
+		return viewerSendRequest{}, nil, nil, fmt.Errorf("presence reference: %w", err)
+	}
+	pin, err := acquireViewerForegroundPin(r, hook, ForegroundPinRequest{ViewerClientID: req.ViewerClientID, Presence: req.Presence})
+	if err != nil {
+		return viewerSendRequest{}, nil, nil, err
+	}
+	return req, nil, pin, nil
 }
 
 func parseViewerMultipartSendRequest(r *http.Request, saver AttachmentSaver) (viewerSendRequest, []domainattachment.Attachment, error) {
+	req, attachments, _, err := parseViewerMultipartSendRequestAndPin(r, saver, nil)
+	return req, attachments, err
+}
+
+func parseViewerMultipartSendRequestAndPin(r *http.Request, saver AttachmentSaver, hook ForegroundPinHook) (viewerSendRequest, []domainattachment.Attachment, ForegroundPinLease, error) {
 	if saver == nil {
-		return viewerSendRequest{}, nil, fmt.Errorf("attachment saver is nil")
+		return viewerSendRequest{}, nil, nil, fmt.Errorf("attachment saver is nil")
 	}
 	if err := r.ParseMultipartForm(domainattachment.DefaultLimits.MaxTotalBytes + (1 << 20)); err != nil {
-		return viewerSendRequest{}, nil, fmt.Errorf("parse multipart: %w", err)
+		return viewerSendRequest{}, nil, nil, fmt.Errorf("parse multipart: %w", err)
 	}
 	req := viewerSendRequest{
 		ViewerClientID: r.FormValue("viewer_client_id"),
@@ -395,6 +477,19 @@ func parseViewerMultipartSendRequest(r *http.Request, saver AttachmentSaver) (vi
 		Message:        r.FormValue("message"),
 		To:             r.FormValue("to"),
 	}
+	if presenceValues := r.MultipartForm.Value["presence"]; len(presenceValues) > 1 {
+		return viewerSendRequest{}, nil, nil, fmt.Errorf("duplicate presence field")
+	} else if len(presenceValues) == 1 {
+		var err error
+		req.Presence, err = parseForegroundPresenceReference(json.RawMessage(presenceValues[0]))
+		if err != nil {
+			return viewerSendRequest{}, nil, nil, fmt.Errorf("presence reference: %w", err)
+		}
+	}
+	pin, err := acquireViewerForegroundPin(r, hook, ForegroundPinRequest{ViewerClientID: req.ViewerClientID, Presence: req.Presence})
+	if err != nil {
+		return viewerSendRequest{}, nil, nil, err
+	}
 	timingValue := strings.TrimSpace(r.FormValue("timings"))
 	switch timingValue {
 	case "":
@@ -402,18 +497,123 @@ func parseViewerMultipartSendRequest(r *http.Request, saver AttachmentSaver) (vi
 		req.Timings = true
 	case "false":
 	default:
-		return viewerSendRequest{}, nil, fmt.Errorf("invalid timings value")
+		releaseViewerForegroundPin(pin)
+		return viewerSendRequest{}, nil, nil, fmt.Errorf("invalid timings value")
 	}
 
 	files, err := incomingViewerFiles(r.MultipartForm)
 	if err != nil {
-		return viewerSendRequest{}, nil, err
+		releaseViewerForegroundPin(pin)
+		return viewerSendRequest{}, nil, nil, err
 	}
 	attachments, err := saver.SaveAll(r.Context(), files)
 	if err != nil {
-		return viewerSendRequest{}, nil, err
+		releaseViewerForegroundPin(pin)
+		return viewerSendRequest{}, nil, nil, err
 	}
-	return req, attachments, nil
+	return req, attachments, pin, nil
+}
+
+func parseForegroundPresenceReference(raw []byte) (*ForegroundPresenceReference, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var reference ForegroundPresenceReference
+	if err := decoder.Decode(&reference); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, errors.New("unexpected trailing JSON data")
+	}
+	if reference.ProtocolVersion != 2 ||
+		reference.RuntimeEpoch == "" || reference.RuntimeEpoch != strings.TrimSpace(reference.RuntimeEpoch) || !validOptionalV2Text(reference.RuntimeEpoch, 256) ||
+		reference.RegistrationReceipt == "" || reference.RegistrationReceipt != strings.TrimSpace(reference.RegistrationReceipt) || !validOptionalV2Text(reference.RegistrationReceipt, 256) ||
+		reference.ClaimSeq == 0 {
+		return nil, errors.New("protocol_version, runtime_epoch, registration_receipt, and positive claim_seq are required")
+	}
+	return &reference, nil
+}
+
+func acquireViewerForegroundPin(r *http.Request, hook ForegroundPinHook, request ForegroundPinRequest) (ForegroundPinLease, error) {
+	if hook == nil {
+		return nil, nil
+	}
+	lease, err := hook(r, request)
+	if err != nil {
+		if lease != nil {
+			releaseViewerForegroundPin(newOnceForegroundPinLease(lease))
+		}
+		return nil, err
+	}
+	if lease == nil {
+		return nil, &ForegroundPinError{StatusCode: http.StatusServiceUnavailable, ErrorCode: "foreground_not_ready", Message: "foreground presence could not be pinned"}
+	}
+	return newOnceForegroundPinLease(lease), nil
+}
+
+type onceForegroundPinLease struct {
+	lease ForegroundPinLease
+	once  sync.Once
+	err   error
+}
+
+func newOnceForegroundPinLease(lease ForegroundPinLease) *onceForegroundPinLease {
+	if lease == nil {
+		return nil
+	}
+	if once, ok := lease.(*onceForegroundPinLease); ok {
+		return once
+	}
+	return &onceForegroundPinLease{lease: lease}
+}
+
+func (p *onceForegroundPinLease) Release() error {
+	if p == nil || p.lease == nil {
+		return nil
+	}
+	p.once.Do(func() { p.err = p.lease.Release() })
+	return p.err
+}
+
+func releaseViewerForegroundPin(lease ForegroundPinLease) {
+	if lease == nil {
+		return
+	}
+	if err := lease.Release(); err != nil {
+		log.Printf("[Viewer] foreground presence pin release failed error_type=%T", err)
+	}
+}
+
+func writeViewerForegroundPinError(w http.ResponseWriter, err error) {
+	var pinErr *ForegroundPinError
+	if !errors.As(err, &pinErr) || pinErr == nil {
+		pinErr = &ForegroundPinError{StatusCode: http.StatusServiceUnavailable, ErrorCode: "foreground_not_ready", Message: "foreground presence is unavailable"}
+	}
+	status := pinErr.StatusCode
+	if status < 400 || status > 599 {
+		status = http.StatusServiceUnavailable
+	}
+	code := strings.TrimSpace(pinErr.ErrorCode)
+	if code == "" {
+		code = "foreground_not_ready"
+	}
+	message := strings.TrimSpace(pinErr.Message)
+	if message == "" {
+		message = "foreground presence is unavailable"
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(struct {
+		OK              bool   `json:"ok"`
+		ProtocolVersion int    `json:"protocol_version"`
+		ErrorCode       string `json:"error_code"`
+		Error           string `json:"error"`
+	}{OK: false, ProtocolVersion: ViewerProtocolVersionV2, ErrorCode: code, Error: message})
 }
 
 func incomingViewerFiles(form *multipart.Form) ([]appattachment.IncomingFile, error) {

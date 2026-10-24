@@ -267,14 +267,66 @@ func TestLoadConfigIdleChatEpisodePreparationDefaults(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	p := cfg.IdleChat.EpisodePreparation
-	if !p.EnabledValue() || p.Generator != "codex_exe" || p.ReadyTarget != 3 || p.NoReadyBehavior != "preparing" || p.MaxSuffixRegenerations != 3 {
+	if !p.EnabledValue() || p.Generator != "codex_exe" || p.ReadyTarget != 3 || p.NoReadyBehavior != "wait" || p.MaxSuffixRegenerations != 3 {
 		t.Fatalf("episode preparation defaults=%+v", p)
+	}
+	if p.Schedule.Timezone != "Asia/Tokyo" || p.Schedule.Start != "02:00" || p.Schedule.End != "06:00" || p.Schedule.CatchUpOutsideWindow == nil || *p.Schedule.CatchUpOutsideWindow {
+		t.Fatalf("night preparation schedule defaults=%+v", p.Schedule)
 	}
 	if p.CodexExe.Sandbox != "read-only" || !p.CodexExe.EphemeralValue() {
 		t.Fatalf("CodexExe safety defaults=%+v", p.CodexExe)
 	}
 	if cfg.IdleChat.TTSPrefetch.LookaheadUtterances != 3 || cfg.IdleChat.TTSPrefetch.TargetBufferSeconds != 30 {
 		t.Fatalf("TTS prefetch defaults=%+v", cfg.IdleChat.TTSPrefetch)
+	}
+}
+
+func TestLoadConfigRejectsInvalidIdleChatNightPreparationSchedule(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "unknown timezone",
+			yaml: "timezone: Mars/Olympus",
+			want: "schedule.timezone must be a valid IANA timezone",
+		},
+		{
+			name: "invalid time",
+			yaml: "timezone: Asia/Tokyo\n      start: 2:00",
+			want: "schedule.start must use HH:MM",
+		},
+		{
+			name: "empty window",
+			yaml: "timezone: Asia/Tokyo\n      start: '02:00'\n      end: '02:00'",
+			want: "schedule.start and end must differ",
+		},
+		{
+			name: "outside catch up enabled",
+			yaml: "timezone: Asia/Tokyo\n      catch_up_outside_window: true",
+			want: "catch_up_outside_window must be false",
+		},
+		{
+			name: "no ready fallback",
+			yaml: "timezone: Asia/Tokyo",
+			want: "no_ready_behavior must be wait",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			body := "server:\n  port: 8080\nidle_chat:\n  enabled: true\n  episode_preparation:\n    no_ready_behavior: preparing\n    schedule:\n      " + tt.yaml + "\n"
+			if tt.name != "no ready fallback" {
+				body = strings.Replace(body, "    no_ready_behavior: preparing\n", "", 1)
+			}
+			if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("LoadConfig error=%v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 

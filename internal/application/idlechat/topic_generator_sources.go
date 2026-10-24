@@ -34,6 +34,12 @@ func fetchDailySeeds(sourceConfig NewsSourceConfig) error {
 	return refreshDailySeeds(sourceConfig, false)
 }
 
+// RefreshDailySeeds refreshes the shared daily seed cache. scheduled forces a
+// refresh even when today's cache is already populated.
+func RefreshDailySeeds(sourceConfig NewsSourceConfig, scheduled bool) error {
+	return refreshDailySeeds(sourceConfig, scheduled)
+}
+
 // refreshDailySeeds は外部シードを取得する。scheduled=trueではJST 04:00の定期更新を優先し、
 // 同日cacheが存在しても再取得する。
 func refreshDailySeeds(sourceConfig NewsSourceConfig, scheduled bool) error {

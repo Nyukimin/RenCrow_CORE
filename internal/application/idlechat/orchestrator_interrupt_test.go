@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,62 @@ func activateIdleChatTestSession(o *IdleChatOrchestrator, sessionID string) uint
 	return generation
 }
 
+func TestIdleChatForegroundStopContractExists(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	controller, ok := any(o).(interface {
+		StopPlaybackForForeground(context.Context, PlaybackStopRequest) (PlaybackStopReceipt, error)
+	})
+	if !ok {
+		t.Fatal("IdleChatOrchestrator does not expose the foreground quick-stop contract")
+	}
+	if controller == nil {
+		t.Fatal("foreground quick-stop controller is nil")
+	}
+}
+
+func TestForegroundStopInvalidatesTimelineOwnerAndCancelsEventContext(t *testing.T) {
+	o := NewIdleChatOrchestrator(&capturingIdleProvider{response: "ok"}, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	emitted := 0
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
+		emitted++
+		done := make(chan struct{})
+		close(done)
+		return TTSLifecycle{Ready: done, Done: done}
+	})
+	sessionID := canonicalIdleChatTestSessionID("foreground-stop")
+	generation := activateIdleChatTestSession(o, sessionID)
+	o.mu.Lock()
+	traceID := o.activeTraceID
+	o.mu.Unlock()
+	eventContext, ok := o.EventContext(traceID, modulecore.SessionID(sessionID))
+	if !ok {
+		t.Fatal("active IdleChat event context was not available")
+	}
+
+	receipt, err := o.StopPlaybackForForeground(context.Background(), PlaybackStopRequest{
+		RuntimeEpoch: "runtime-a", StateRevision: 1, Reason: "foreground_games",
+	})
+	if err != nil {
+		t.Fatalf("StopPlaybackForForeground: %v", err)
+	}
+	if !receipt.PlaybackStopped || !receipt.ResumeBlocked || receipt.Generation <= generation {
+		t.Fatalf("foreground stop receipt=%+v, previous generation=%d", receipt, generation)
+	}
+	if eventContext.Err() == nil {
+		t.Fatal("foreground stop did not cancel the event's owner context")
+	}
+	if _, ok := o.EventContext(traceID, modulecore.SessionID(sessionID)); ok {
+		t.Fatal("invalidated trace/session still has an accepted event context")
+	}
+	o.emitTimelineEvent(TimelineEvent{
+		Type: "idlechat.message", From: "mio", To: "shiro", Content: "stale speech",
+		SessionID: sessionID, ownerEpoch: generation,
+	})
+	if emitted != 0 {
+		t.Fatal("stale timeline event was emitted after foreground stop")
+	}
+}
+
 func (p *blockingInterruptProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
 	p.stream <- req.OnToken != nil
 	close(p.started)
@@ -51,6 +108,7 @@ func TestIdleChatInterruptResetsStateAndCancelsRunContext(t *testing.T) {
 		stream:  make(chan bool, 1),
 	}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	nightGateAllowOrchestrator(t, o)
 
 	o.mu.Lock()
 	o.manualMode = true
@@ -139,6 +197,8 @@ func TestIdleChatInterruptDiscardsStaleTimelineEvent(t *testing.T) {
 
 func TestIdleChatSessionBindsTimelineAndPrefetchToOneCanonicalTrace(t *testing.T) {
 	o := NewIdleChatOrchestrator(&capturingIdleProvider{response: "ok"}, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	const runtimeEpoch = "runtime-idlechat-timeline-tts-owner"
+	o.SetRuntimeEpoch(runtimeEpoch)
 	var timeline []TimelineEvent
 	var prefetch []TTSPrefetchEvent
 	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
@@ -167,6 +227,12 @@ func TestIdleChatSessionBindsTimelineAndPrefetchToOneCanonicalTrace(t *testing.T
 	}
 	if timeline[1].TraceID != want || prefetch[0].TraceID != want {
 		t.Fatalf("session traces = topic:%q message:%q prefetch:%q, want one trace", timeline[0].TraceID, timeline[1].TraceID, prefetch[0].TraceID)
+	}
+	if timeline[0].RuntimeEpoch != runtimeEpoch || timeline[1].RuntimeEpoch != runtimeEpoch || prefetch[0].RuntimeEpoch != runtimeEpoch {
+		t.Fatalf("runtime epochs = topic:%q message:%q prefetch:%q, want %q", timeline[0].RuntimeEpoch, timeline[1].RuntimeEpoch, prefetch[0].RuntimeEpoch, runtimeEpoch)
+	}
+	if timeline[0].PlaybackGeneration != generation || timeline[1].PlaybackGeneration != generation || prefetch[0].PlaybackGeneration != generation {
+		t.Fatalf("playback generations = topic:%d message:%d prefetch:%d, want %d", timeline[0].PlaybackGeneration, timeline[1].PlaybackGeneration, prefetch[0].PlaybackGeneration, generation)
 	}
 	o.cancelIdleRunIfGeneration(generation)
 	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), MessageID: "late-msg", TurnIndex: 2, ownerEpoch: generation})
@@ -596,7 +662,7 @@ func TestIdleChatInterruptNotifiesRuntimeAfterOwnerTransition(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-runtime-cancel"))
 	notified := make(chan bool, 1)
-	o.SetInterruptHandler(func() {
+	o.SetInterruptHandler(func(_ string, _ uint64) {
 		notified <- !o.ownsIdleSession(canonicalIdleChatTestSessionID("idle-runtime-cancel"), generation)
 	})
 	o.Interrupt("user_input")
@@ -680,5 +746,112 @@ func TestIdleChatExternalLLMBusyPreventsAutomaticStart(t *testing.T) {
 	}
 	if snapshot := o.WatchdogSnapshot(time.Now()); !snapshot.ExternalLLMBusy {
 		t.Fatalf("watchdog external_llm_busy = false, want true: %+v", snapshot)
+	}
+}
+
+func TestNotifyActivityReturnsWithoutEmitLockOrInterruptCallbackWait(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 1, 10, 0.7, nil, "")
+	runCtx, runCancel := context.WithCancel(context.Background())
+	callbackStarted := make(chan struct{})
+	callbackRelease := make(chan struct{})
+	var callbackStartedOnce sync.Once
+	o.mu.Lock()
+	o.chatActive = true
+	o.manualMode = true
+	o.activeGeneration = 17
+	o.activeSessionID = string(modulecore.NewSessionID())
+	o.runCtx = runCtx
+	o.runCancel = runCancel
+	o.onInterrupt = func(_ string, _ uint64) {
+		callbackStartedOnce.Do(func() { close(callbackStarted) })
+		<-callbackRelease
+	}
+	o.mu.Unlock()
+	t.Cleanup(func() {
+		close(callbackRelease)
+		runCancel()
+	})
+
+	o.emitMu.Lock()
+	activityDone := make(chan struct{})
+	go func() {
+		o.NotifyActivity()
+		o.SetChatBusy(true)
+		close(activityDone)
+	}()
+	select {
+	case <-activityDone:
+		o.emitMu.Unlock()
+	case <-time.After(time.Second):
+		o.emitMu.Unlock()
+		t.Fatal("normal CHAT activity waited for emitMu or an interrupt callback")
+	}
+	select {
+	case <-callbackStarted:
+	case <-time.After(time.Second):
+		t.Fatal("quick interruption did not dispatch its callback asynchronously")
+	}
+	o.mu.Lock()
+	chatActive, manualMode, busy := o.chatActive, o.manualMode, o.chatBusy
+	generation := o.activeGeneration
+	o.mu.Unlock()
+	if chatActive || manualMode || !busy || generation <= 17 || runCtx.Err() == nil {
+		t.Fatalf("normal CHAT quick interruption state: active=%t manual=%t busy=%t generation=%d ctxErr=%v", chatActive, manualMode, busy, generation, runCtx.Err())
+	}
+}
+
+func TestForegroundStopDoesNotWaitForAcceptedEventProjectionCallback(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 1, 10, 0.7, nil, "")
+	runCtx, runCancel := context.WithCancel(context.Background())
+	traceID := modulecore.NewTraceID()
+	sessionID := string(modulecore.NewSessionID())
+	o.mu.Lock()
+	o.chatActive = true
+	o.manualMode = true
+	o.activeGeneration = 21
+	o.activeSessionID = sessionID
+	o.activeTraceID = traceID
+	o.activeTraceSessionID = sessionID
+	o.runCtx = runCtx
+	o.runCancel = runCancel
+	o.mu.Unlock()
+	if _, ok := o.EventContext(traceID, modulecore.SessionID(sessionID)); !ok {
+		t.Fatal("expected active event owner")
+	}
+	projectionEntered := make(chan struct{})
+	projectionRelease := make(chan struct{})
+	projectionDone := make(chan struct{})
+	go func() {
+		defer close(projectionDone)
+		accepted, err := o.PublishIfCurrentEvent(traceID, modulecore.SessionID(sessionID), func() error {
+			close(projectionEntered)
+			<-projectionRelease
+			return nil
+		})
+		if err != nil || !accepted {
+			t.Errorf("event acceptance = (%t, %v), want accepted", accepted, err)
+		}
+	}()
+	select {
+	case <-projectionEntered:
+	case <-time.After(time.Second):
+		t.Fatal("event projection callback did not enter")
+	}
+	stopDone := make(chan struct{})
+	go func() {
+		o.NotifyActivity()
+		close(stopDone)
+	}()
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		close(projectionRelease)
+		t.Fatal("foreground activity waited for an accepted event projection callback")
+	}
+	close(projectionRelease)
+	select {
+	case <-projectionDone:
+	case <-time.After(time.Second):
+		t.Fatal("event projection callback did not finish after release")
 	}
 }

@@ -495,6 +495,15 @@ func forecastSnapshotTime(value time.Time) *time.Time {
 // path はストックの永続化ファイルパス。
 // 有効在庫が0件の場合、または未完了チェックポイントがある場合に逐次bootstrapする。
 func (o *IdleChatOrchestrator) InitForecastTopicStock(path string) {
+	o.InitForecastTopicStockWithContext(nil, path)
+}
+
+// InitForecastTopicStockWithContext loads stock and bootstraps it only from
+// the configured night-preparation scheduler dispatch.
+func (o *IdleChatOrchestrator) InitForecastTopicStockWithContext(ctx context.Context, path string) {
+	if o == nil {
+		return
+	}
 	o.mu.Lock()
 	if o.topicStockBuf != nil {
 		o.mu.Unlock()
@@ -506,7 +515,7 @@ func (o *IdleChatOrchestrator) InitForecastTopicStock(path string) {
 	log.Printf("[Forecast] Topic stock initialized (total=%d capacity=%d)", stock.total(), len(forecastDomains)*forecastTopicStockSize)
 	_, recovering := o.nextForecastCheckpointDomain()
 	if stock.total() == 0 || recovering {
-		o.bootstrapForecastTopicStockAsync(stock)
+		o.bootstrapForecastTopicStockAsyncWithContext(ctx, stock)
 	}
 }
 
@@ -525,6 +534,17 @@ func (o *IdleChatOrchestrator) ForecastTopicStockSnapshot() ForecastTopicStockSn
 }
 
 func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsync(stock *forecastTopicStock) {
+	o.bootstrapForecastTopicStockAsyncWithContext(nil, stock)
+}
+
+func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsyncWithContext(ctx context.Context, stock *forecastTopicStock) {
+	if o == nil || stock == nil {
+		return
+	}
+	workCtx, scheduler, ok := o.nightPreparationWorkContext(ctx)
+	if !ok {
+		return
+	}
 	// Recover pending publications first. A nonempty restored stock does not
 	// become a request to bootstrap unrelated empty domains.
 	bootstrapMissing := stock.total() == 0
@@ -541,51 +561,81 @@ func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsync(stock *forecastT
 			}
 		}
 	}
-	o.startGenerationWork(func() {
-		for _, domain := range domains {
-			if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
-				log.Printf("[Forecast] Startup bootstrap deferred because generation resources are busy")
-				return
+	if err := runWithNightPreparationGate(ctx, func(context.Context) error {
+		if !o.startGenerationWork(func() {
+			for _, domain := range domains {
+				reserved := false
+				admissionErr := runWithNightPreparationGate(workCtx, func(context.Context) error {
+					if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProductionWithScheduler(scheduler) {
+						return nil
+					}
+					target := forecastTopicStockSize
+					if o.forecastTopicCheckpointExists(domain) {
+						target = forecastTopicStockSize + 1
+					}
+					reserved = stock.reserveDomain(domain.Name, target, "startup")
+					if !reserved {
+						o.endTopicProduction()
+					}
+					return nil
+				})
+				if admissionErr != nil || !reserved {
+					log.Printf("[Forecast] Startup bootstrap deferred because generation resources are busy")
+					return
+				}
+				o.fillForecastTopicStock(stock, domain, "startup")
 			}
-			target := 1
-			if o.forecastTopicCheckpointExists(domain) {
-				target = forecastTopicStockSize + 1
-			}
-			if !stock.reserveDomain(domain.Name, target, "startup") {
-				o.endTopicProduction()
-				continue
-			}
-			o.fillForecastTopicStock(stock, domain, "startup")
+		}) {
+			return errIdleChatGenerationWorkClosed
 		}
-	})
+		return nil
+	}); err != nil {
+		log.Printf("[Forecast] Startup bootstrap admission failed: %v", err)
+	}
 }
 
 // RefillForecastTopicStockIfIdle starts at most one missing topic generation.
 // It is safe to call from both the Idle monitor and Heartbeat; the stock enforces global single-flight.
 func (o *IdleChatOrchestrator) RefillForecastTopicStockIfIdle(trigger string) bool {
-	if o == nil || !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
+	return o.RefillForecastTopicStockIfIdleWithContext(nil, trigger)
+}
+
+func (o *IdleChatOrchestrator) RefillForecastTopicStockIfIdleWithContext(ctx context.Context, trigger string) bool {
+	if o == nil {
 		return false
 	}
-	o.mu.Lock()
-	stock := o.topicStockBuf
-	o.mu.Unlock()
-	if stock == nil {
-		o.endTopicProduction()
+	_, scheduler, admitted := o.nightPreparationWorkContext(ctx)
+	if !admitted {
 		return false
 	}
-	domain, ok := o.reserveForecastTopicProduction(stock, trigger)
-	if !ok {
-		o.endTopicProduction()
-		return false
-	}
-	if !o.startGenerationWork(func() {
-		o.fillForecastTopicStock(stock, domain, trigger)
-	}) {
-		stock.doneFilling(domain.Name, context.Canceled)
-		o.endTopicProduction()
-		return false
-	}
-	return true
+	started := false
+	err := runWithNightPreparationGate(ctx, func(context.Context) error {
+		if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProductionWithScheduler(scheduler) {
+			return nil
+		}
+		o.mu.Lock()
+		stock := o.topicStockBuf
+		o.mu.Unlock()
+		if stock == nil {
+			o.endTopicProduction()
+			return nil
+		}
+		domain, ok := o.reserveForecastTopicProduction(stock, trigger)
+		if !ok {
+			o.endTopicProduction()
+			return nil
+		}
+		if !o.startGenerationWork(func() {
+			o.fillForecastTopicStock(stock, domain, trigger)
+		}) {
+			stock.doneFilling(domain.Name, context.Canceled)
+			o.endTopicProduction()
+			return errIdleChatGenerationWorkClosed
+		}
+		started = true
+		return nil
+	})
+	return err == nil && started
 }
 
 func (o *IdleChatOrchestrator) reserveForecastTopicProduction(stock *forecastTopicStock, trigger string) (ForecastDomain, bool) {

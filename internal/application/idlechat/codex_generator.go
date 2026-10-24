@@ -47,7 +47,12 @@ func (p idleChatCodexLLMProvider) Generate(ctx context.Context, req llm.Generate
 		Caller:    "idlechat.codex_exe",
 		Purpose:   "topic_generation_or_judge",
 	})
-	text, err := p.generator.Generate(ctx, strings.TrimSpace(prompt.String()))
+	var text string
+	err := runWithNightPreparationGate(ctx, func(callCtx context.Context) error {
+		var err error
+		text, err = p.generator.Generate(callCtx, strings.TrimSpace(prompt.String()))
+		return err
+	})
 	if err != nil {
 		return llm.GenerateResponse{}, err
 	}

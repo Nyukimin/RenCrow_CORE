@@ -1729,8 +1729,8 @@
           </div>
         </div>
         <div class="idle-mode-board" aria-label="IdleChat mode controls">
-          <div class="idle-mode-title">開始モード</div>
-          <div class="idle-mode-note">下の固定バーのボタンで開始・停止します。ここでは状態と読み返しを確認します。</div>
+          <div class="idle-mode-title">Read-only observer</div>
+          <div class="idle-mode-note">Debug ViewerではIdleChatの開始・再生を行いません。状態と準備済み成果物を確認します。</div>
         </div>
       </aside>
 
@@ -1906,6 +1906,7 @@
           <input id="cameraInput" type="file" accept="image/*,video/*,audio/*" capture="environment" hidden>
         </div>
         <div class="input-status-row">
+          <span id="viewerPresenceState" class="stt-state conn-off">CORE: connecting</span>
           <span id="micState" class="stt-state">Mic: off</span>
           <span id="sttConnState" class="stt-state">STT: off</span>
           <span id="sttSessionState" class="stt-state session-id" title="Session: (unknown)">Session: (unknown)</span>
@@ -1924,9 +1925,6 @@
     </div>
     <div class="attachment-tray" id="attachmentTray" aria-live="polite"></div>
     <div class="idle-tools">
-      <button id="idlePlaybackPlay" class="ctl-btn idle-playback-primary" type="button" title="選択中のStockを再生する">再生</button>
-      <button id="idlePlaybackNext" class="ctl-btn" type="button" title="現在の再生を止めて次の話題へ進む">スキップ（次の話題）</button>
-      <button id="idlePlaybackPrevious" class="ctl-btn" type="button" title="一つ前に再生した話題へ戻る">前の話題</button>
       <span id="idleState" class="idle-off">IdleChat: off</span>
     </div>
   </div>

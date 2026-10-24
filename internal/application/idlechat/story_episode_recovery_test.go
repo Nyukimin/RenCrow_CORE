@@ -95,7 +95,7 @@ func TestStoryEpisodeGenerationFailureRetainsWaitingCheckpoint(t *testing.T) {
 	service.SetRunIssuer(owner)
 	service.maxAttempts = 1
 
-	if err := service.PrepareToTarget(context.Background()); err == nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("generation failure must be returned")
 	}
 	checkpointStore := service.generationCheckpointStore()
@@ -131,7 +131,7 @@ func TestStoryEpisodeSavedArtifactResumeDoesNotGenerateAgain(t *testing.T) {
 	service.SetRunIssuer(owner)
 	service.maxAttempts = 1
 
-	if err := service.PrepareToTarget(context.Background()); err != nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("resume saved artifact: %v", err)
 	}
 	if generator.calls != 0 {
@@ -171,7 +171,7 @@ func TestStoryEpisodeRecoveryRejectsTerminalRunWithoutArtifact(t *testing.T) {
 	service.SetRunIssuer(owner)
 	service.maxAttempts = 1
 
-	if err := service.PrepareToTarget(context.Background()); err == nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("terminal run without artifact must be rejected")
 	}
 	if generator.calls != 0 {
@@ -202,7 +202,7 @@ func TestStoryEpisodeRecoveryRejectsConflictingArtifact(t *testing.T) {
 	service.SetRunIssuer(owner)
 	service.maxAttempts = 1
 
-	if err := service.PrepareToTarget(context.Background()); err == nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("conflicting terminal artifact must be rejected")
 	}
 	if generator.calls != 0 {
@@ -222,7 +222,7 @@ func TestStoryEpisodeCompletionRetryDoesNotDuplicateAppend(t *testing.T) {
 	service.SetRunIssuer(owner)
 	service.maxAttempts = 1
 
-	if err := service.PrepareToTarget(context.Background()); err == nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err == nil {
 		t.Fatal("completion failure must be returned")
 	}
 	checkpointStore := service.generationCheckpointStore()
@@ -234,7 +234,7 @@ func TestStoryEpisodeCompletionRetryDoesNotDuplicateAppend(t *testing.T) {
 		t.Fatalf("pending artifact must stay unpublished: %+v", got)
 	}
 	owner.failComplete = false
-	if err := service.PrepareToTarget(context.Background()); err != nil {
+	if err := service.PrepareToTarget(nightGateAllowedContext(t)); err != nil {
 		t.Fatalf("completion retry: %v", err)
 	}
 	if generator.calls != 2 {
@@ -321,7 +321,7 @@ func splitStoryRecoveryLines(payload []byte) [][]byte {
 }
 
 func TestStoryEpisodeSuccessorCheckpointHidesPreviousSavedRevision(t *testing.T) {
-	ctx := context.Background()
+	ctx := nightGateAllowedContext(t)
 	owner := newTestIdleChatRunIssuer(t)
 	cp, checkpoints := storyRecoveryCheckpoint(t, owner, "review")
 	path := filepath.Join(t.TempDir(), "episodes.jsonl")

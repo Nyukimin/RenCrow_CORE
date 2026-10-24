@@ -6,7 +6,10 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-const DialogueEpisodeSchemaVersion = 1
+const (
+	DialogueEpisodeLegacySchemaVersion = 1
+	DialogueEpisodeSchemaVersion       = 2
+)
 
 type DialogueProductionStatus string
 
@@ -42,22 +45,25 @@ type DialogueEpisodeValidation struct {
 // DialogueEpisodeArtifact retains every generated revision, including invalid
 // ones, so suffix repair is independently auditable.
 type DialogueEpisodeArtifact struct {
-	SchemaVersion       int                       `json:"schema_version"`
-	EpisodeID           string                    `json:"episode_id"`
-	TaskID              modulecore.TaskID         `json:"task_id"`
-	RunID               modulecore.RunID          `json:"run_id"`
-	Revision            int                       `json:"revision"`
-	SessionID           string                    `json:"session_id"`
-	InitiatedBy         string                    `json:"initiated_by"`
-	TopicResult         TopicGenerationResult     `json:"topic_result"`
-	ArcPlan             DialogueArcPlan           `json:"arc_plan"`
-	Participants        []string                  `json:"participants"`
-	Turns               []DialogueEpisodeTurn     `json:"turns"`
-	ProductionStatus    DialogueProductionStatus  `json:"production_status"`
-	Validation          DialogueEpisodeValidation `json:"validation"`
-	FixedPrefixLength   int                       `json:"fixed_prefix_length,omitempty"`
-	RepairFromTurn      int                       `json:"repair_from_turn,omitempty"`
-	SuffixRegenerations int                       `json:"suffix_regenerations"`
-	CreatedAt           time.Time                 `json:"created_at"`
-	UpdatedAt           time.Time                 `json:"updated_at"`
+	SchemaVersion         int                       `json:"schema_version"`
+	EpisodeID             string                    `json:"episode_id"`
+	TaskID                modulecore.TaskID         `json:"task_id"`
+	RunID                 modulecore.RunID          `json:"run_id"`
+	Revision              int                       `json:"revision"`
+	SessionID             string                    `json:"session_id"`
+	InitiatedBy           string                    `json:"initiated_by"`
+	TopicResult           TopicGenerationResult     `json:"topic_result"`
+	ArcPlan               DialogueArcPlan           `json:"arc_plan"`
+	Participants          []string                  `json:"participants"`
+	Turns                 []DialogueEpisodeTurn     `json:"turns"`
+	PreparedTitle         string                    `json:"prepared_title,omitempty"`
+	PreparedSummary       string                    `json:"prepared_summary,omitempty"`
+	PreparedQualityReview string                    `json:"prepared_quality_review,omitempty"`
+	ProductionStatus      DialogueProductionStatus  `json:"production_status"`
+	Validation            DialogueEpisodeValidation `json:"validation"`
+	FixedPrefixLength     int                       `json:"fixed_prefix_length,omitempty"`
+	RepairFromTurn        int                       `json:"repair_from_turn,omitempty"`
+	SuffixRegenerations   int                       `json:"suffix_regenerations"`
+	CreatedAt             time.Time                 `json:"created_at"`
+	UpdatedAt             time.Time                 `json:"updated_at"`
 }

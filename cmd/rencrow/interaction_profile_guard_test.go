@@ -172,6 +172,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusForbidden,
 		},
 		{
+			name:    "cmd idlechat cannot manually start legacy IdleChat",
+			client:  "RenCrow_CMD",
+			profile: "cmd-idlechat",
+			method:  http.MethodPost,
+			path:    "/viewer/idlechat/start",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "portal chat cannot control topic stock playback",
 			client:  "RenCrow_PORTAL",
 			profile: "portal-chat",
@@ -225,6 +233,118 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			profile: "portal-games",
 			method:  http.MethodPost,
 			path:    "/viewer/games/observer-api/games/sessions/nh-1/summary",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "portal other can report only surface presence",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-other",
+			method:  http.MethodPost,
+			path:    "/viewer/surface-presence",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "portal other cannot read the presence endpoint",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-other",
+			method:  http.MethodGet,
+			path:    "/viewer/surface-presence",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "portal other cannot use viewer APIs",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-other",
+			method:  http.MethodGet,
+			path:    "/viewer/idlechat/status",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "portal other cannot send chat",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-other",
+			method:  http.MethodPost,
+			path:    "/viewer/send",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "portal other profile requires PORTAL client",
+			client:  "RenCrow_CMD",
+			profile: "portal-other",
+			method:  http.MethodPost,
+			path:    "/viewer/surface-presence",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "CORE viewer can report surface presence",
+			client:  "RenCrow_CORE",
+			profile: "core-viewer",
+			method:  http.MethodPost,
+			path:    "/viewer/surface-presence",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "CORE viewer can send with foreground pin reference",
+			client:  "RenCrow_CORE",
+			profile: "core-viewer",
+			method:  http.MethodPost,
+			path:    "/viewer/send",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "CORE viewer cannot use Debug APIs",
+			client:  "RenCrow_CORE",
+			profile: "core-viewer",
+			method:  http.MethodGet,
+			path:    "/viewer/idlechat/status",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "CORE viewer cannot use Ops APIs",
+			client:  "RenCrow_CORE",
+			profile: "core-viewer",
+			method:  http.MethodPost,
+			path:    "/viewer/repair/run",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "cmd diagnostics can claim foreground presence",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodPost,
+			path:    "/viewer/surface-presence",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd control can claim foreground presence",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/surface-presence",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "agent ops token profile cannot claim presence",
+			client:  "RenCrow_CMD",
+			profile: "agent-ops",
+			method:  http.MethodPost,
+			path:    "/viewer/surface-presence",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "cmd diagnostics cannot gain POST API rights from presence support",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodPost,
+			path:    "/viewer/capabilities",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "cmd control cannot use Chat API from presence support",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/send",
 			want:    http.StatusForbidden,
 		},
 		{
@@ -656,6 +776,74 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 
 			if rec.Code != tt.want {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestInteractionProfileGuardAllowsPresenceProfilesOnly(t *testing.T) {
+	handler := withInteractionProfileGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	tests := []struct {
+		name    string
+		client  string
+		profile string
+		want    int
+	}{
+		{name: "portal chat", client: "RenCrow_PORTAL", profile: "portal-chat", want: http.StatusNoContent},
+		{name: "portal idlechat", client: "RenCrow_PORTAL", profile: "portal-idlechat", want: http.StatusNoContent},
+		{name: "portal games", client: "RenCrow_PORTAL", profile: "portal-games", want: http.StatusNoContent},
+		{name: "portal other", client: "RenCrow_PORTAL", profile: "portal-other", want: http.StatusNoContent},
+		{name: "other profile cannot impersonate CMD", client: "RenCrow_CMD", profile: "portal-other", want: http.StatusForbidden},
+		{name: "CORE viewer", client: "RenCrow_CORE", profile: "core-viewer", want: http.StatusNoContent},
+		{name: "cmd chat", client: "RenCrow_CMD", profile: "cmd-chat", want: http.StatusNoContent},
+		{name: "cmd idlechat", client: "RenCrow_CMD", profile: "cmd-idlechat", want: http.StatusNoContent},
+		{name: "cmd diagnostics", client: "RenCrow_CMD", profile: "cmd-diagnostics", want: http.StatusNoContent},
+		{name: "cmd control can reach the surface policy", client: "RenCrow_CMD", profile: "cmd-control", want: http.StatusNoContent},
+		{name: "assistant cannot register presence", client: "RenCrow_ASSISTANT", profile: "assistant-core", want: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/viewer/surface-presence", nil)
+			req.Header.Set("X-RenCrow-Client", tt.client)
+			req.Header.Set(interactionProfileHeader, tt.profile)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status=%d want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestAssistantCoreViewerSendProfileIsExact(t *testing.T) {
+	handler := withInteractionProfileGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	tests := []struct {
+		name    string
+		client  string
+		profile string
+		path    string
+		want    int
+	}{
+		{name: "assistant core can send", client: "RenCrow_ASSISTANT", profile: "assistant-core", path: "/viewer/send", want: http.StatusNoContent},
+		{name: "assistant core cannot register presence", client: "RenCrow_ASSISTANT", profile: "assistant-core", path: "/viewer/surface-presence", want: http.StatusForbidden},
+		{name: "CMD cannot claim assistant core", client: "RenCrow_CMD", profile: "assistant-core", path: "/viewer/send", want: http.StatusForbidden},
+		{name: "assistant client requires an explicit profile", client: "RenCrow_ASSISTANT", path: "/viewer/send", want: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
+			req.Header.Set("X-RenCrow-Client", tt.client)
+			if tt.profile != "" {
+				req.Header.Set(interactionProfileHeader, tt.profile)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status=%d want %d", rec.Code, tt.want)
 			}
 		})
 	}

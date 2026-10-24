@@ -137,6 +137,7 @@ func TestReviewSessionEndRejectsFalseCutoffForCompletedSession(t *testing.T) {
 		"QUALITY: fail\nBORING_CAUSE: 打ち切り注記: 反復検知で打ち切り\nINTEREST_HOOK: 映写機の鍵\nMISSED_TURN: 反復検知で打ち切りの直前で鍵を開けられた\nPROMPT_FIX: INTEREST_HOOKを場面と選択に変換する。\nLENGTH_CONTROL: 2文以内。",
 	}}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
+	nightGateAllowOrchestrator(t, o)
 	transcript := []string{
 		"mio: 映写機の鍵が机に残ってるの、気になるよね。",
 		"shiro: その鍵は、誰が最後に上映室へ入ったかを示している。",
