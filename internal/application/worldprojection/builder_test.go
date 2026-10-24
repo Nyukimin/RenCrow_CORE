@@ -2,6 +2,7 @@ package worldprojection
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -242,5 +243,66 @@ func TestBuildLifePolicyValidatesFallbackSubset(t *testing.T) {
 	input.ExpiredFallbackActivityIDs = []string{"run"}
 	if _, err := BuildLifePolicy(input); err == nil {
 		t.Fatal("BuildLifePolicy() accepted a fallback outside allowed activities")
+	}
+}
+
+// Failure knowledge: docs/world-r08-r10-open-decisions.md D-07 (a stale or
+// expired WorkSet is unknown; nothing infers success, completion, or "no
+// assignment") and CORE's canonical architecture doc.
+//
+// Failure / Problem: BuildFullWorkSet reads the complete CORE Task/Run set to
+// build one full snapshot. A Task store that fails mid-read could be reported
+// as a full set once the error is swallowed, and a fresh full set with no items
+// legitimately means "nothing assigned right now", so the two become
+// indistinguishable to the caller.
+//
+// Cause: the source boundary had no fail-closed test, so an unavailable store
+// could become an empty WorkSet and reach WORLD as an assignment decision.
+//
+// Lesson / Invariant: a source failure must fail the call with no WorkSet
+// returned. Only a store that answered may produce a full set, including a
+// legitimately empty one.
+//
+// Enforcement: this test drives the source boundary with a failing store and
+// requires the wrapped error and a zero WorkSet for both the Task and the Run
+// read.
+//
+// Tests: TestBuildFullWorkSetFailsWhenSourceFails.
+
+// failingTaskRunSource is a Task/Run owner view that refuses to answer, standing
+// in for a stale or unavailable store.
+type failingTaskRunSource struct {
+	tasksErr error
+	runsErr  error
+}
+
+func (s failingTaskRunSource) ListTasks(context.Context, domaintask.Filter) ([]domaintask.Task, error) {
+	return nil, s.tasksErr
+}
+
+func (s failingTaskRunSource) ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error) {
+	return nil, s.runsErr
+}
+
+func TestBuildFullWorkSetFailsWhenSourceFails(t *testing.T) {
+	unavailable := errors.New("task store unavailable")
+
+	tests := []struct {
+		name   string
+		source failingTaskRunSource
+	}{
+		{name: "task list fails", source: failingTaskRunSource{tasksErr: unavailable}},
+		{name: "run list fails", source: failingTaskRunSource{runsErr: unavailable}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workSet, err := BuildFullWorkSet(context.Background(), test.source, validBuildInput())
+			if !errors.Is(err, unavailable) {
+				t.Fatalf("BuildFullWorkSet() error = %v, want the source failure", err)
+			}
+			if workSet.ActiveWork != nil {
+				t.Fatalf("a failed read returned active work %#v, want no WorkSet", workSet.ActiveWork)
+			}
+		})
 	}
 }
