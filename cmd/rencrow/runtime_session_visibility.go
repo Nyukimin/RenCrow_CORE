@@ -17,6 +17,11 @@ type canonicalPublicationBindingReader interface {
 	UsePublicationBinding(context.Context, domainsession.CanonicalSessionPublicationBinding, func() error) error
 }
 
+type canonicalReservedV2ErrorPublicationBindingReader interface {
+	CurrentReservedV2ErrorPublicationBinding(context.Context, string, string, conversation.ChannelAddress) (domainsession.CanonicalSessionPublicationBinding, error)
+	UseReservedV2ErrorPublicationBinding(context.Context, domainsession.CanonicalSessionPublicationBinding, func() error) error
+}
+
 // runtimeSessionVisibility resolves publication identity from the warmed
 // canonical Session projection. It intentionally keeps no SessionID keyed
 // owner cache: same-ID recreation must immediately invalidate old events.
@@ -109,6 +114,50 @@ func (v *runtimeSessionVisibility) ResolveEvent(ctx context.Context, event orche
 	return binding, binding.Audience() == conversation.SessionAudiencePrivate && binding.OwnerID() == authenticatedOwnerID, nil
 }
 
+// ResolvePrivateTerminalErrorEvent adds the reservation-specific authority
+// needed for a failed response-first turn before its Session has activated.
+// Normal events continue through ResolveEvent and ordinary publication APIs.
+func (v *runtimeSessionVisibility) ResolvePrivateTerminalErrorEvent(ctx context.Context, event orchestrator.OrchestratorEvent, authenticatedOwnerID string) (domainsession.CanonicalSessionPublicationBinding, bool, bool, error) {
+	if ctx == nil {
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, errors.New("canonical session visibility requires a context")
+	}
+	if v == nil || v.reader == nil {
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, errors.New("canonical session publication reader is unavailable")
+	}
+	if !isAuthenticatedPrivateMioTerminalError(event, authenticatedOwnerID) {
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, nil
+	}
+	address, err := conversation.NewChannelAddress("viewer", "cmd:"+authenticatedOwnerID)
+	if err != nil {
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, err
+	}
+
+	// Existing canonical owner-bound Sessions keep the ordinary visibility
+	// contract. Reserved Sessions fall through to the error-only authority.
+	binding, allowed, resolveErr := v.ResolveEvent(ctx, event, authenticatedOwnerID)
+	if resolveErr == nil && allowed {
+		return binding, true, false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, err
+	}
+	reader, ok := v.repository.(canonicalReservedV2ErrorPublicationBindingReader)
+	if !ok {
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, nil
+	}
+	binding, err = reader.CurrentReservedV2ErrorPublicationBinding(ctx, string(event.SessionID), authenticatedOwnerID, address)
+	if err != nil {
+		if ctx.Err() != nil {
+			return domainsession.CanonicalSessionPublicationBinding{}, false, false, ctx.Err()
+		}
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, nil
+	}
+	if !bindingMatchesTerminalError(binding, event, authenticatedOwnerID) {
+		return domainsession.CanonicalSessionPublicationBinding{}, false, false, nil
+	}
+	return binding, true, true, nil
+}
+
 // IsCurrent makes the final visibility decision under the repository's
 // short, read-locked binding claim after route policy has been checked. This
 // closes the race where a Session is deleted or rekeyed during that check.
@@ -132,4 +181,47 @@ func (v *runtimeSessionVisibility) IsCurrent(ctx context.Context, expected domai
 	// A failed claim means the session was deleted, rekeyed, or its canonical
 	// projection became unavailable while policy was being evaluated.
 	return false, nil
+}
+
+// IsCurrentPrivateTerminalError revalidates a reservation-bound error through
+// its narrowly scoped repository claim. Existing owner-bound Sessions use the
+// normal current-binding check.
+func (v *runtimeSessionVisibility) IsCurrentPrivateTerminalError(ctx context.Context, expected domainsession.CanonicalSessionPublicationBinding) (bool, error) {
+	current, err := v.IsCurrent(ctx, expected)
+	if err == nil && current {
+		return true, nil
+	}
+	if ctx == nil {
+		return false, errors.New("canonical session visibility requires a context")
+	}
+	if v == nil {
+		return false, errors.New("canonical session visibility is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	reader, ok := v.repository.(canonicalReservedV2ErrorPublicationBindingReader)
+	if !ok {
+		return false, nil
+	}
+	claimed := false
+	err = reader.UseReservedV2ErrorPublicationBinding(ctx, expected, func() error {
+		claimed = true
+		return nil
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, nil
+	}
+	return claimed, nil
+}
+
+func bindingMatchesTerminalError(binding domainsession.CanonicalSessionPublicationBinding, event orchestrator.OrchestratorEvent, ownerID string) bool {
+	return binding.Validate() == nil && binding.SessionID() == event.SessionID && binding.OwnerID() == ownerID &&
+		binding.Audience() == conversation.SessionAudiencePrivate &&
+		binding.ChannelAddress().ChannelType() == event.Channel &&
+		binding.ChannelAddress().ExternalConversationID() == event.ChannelAddress &&
+		binding.PublicationIncarnation() == event.PublicationIncarnation
 }

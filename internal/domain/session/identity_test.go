@@ -105,6 +105,76 @@ func TestCanonicalSessionPublicationIncarnationIsOpaqueStableAndRestored(t *test
 	}
 }
 
+func TestNewReservedV2ErrorPublicationBindingUsesExistingSessionIncarnation(t *testing.T) {
+	address, err := conversation.NewChannelAddress("viewer", "cmd:ren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC)
+	sess, err := NewCanonicalSession(modulecore.NewSessionID(), "2026-10-24", address, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnation := sess.PublicationIncarnation()
+
+	binding, err := NewReservedV2ErrorPublicationBinding(sess, "ren")
+	if err != nil {
+		t.Fatalf("NewReservedV2ErrorPublicationBinding: %v", err)
+	}
+	if err := binding.Validate(); err != nil {
+		t.Fatalf("reserved error publication binding is invalid: %v", err)
+	}
+	if binding.SessionID() != modulecore.SessionID(sess.ID()) || binding.OwnerID() != "ren" ||
+		binding.Audience() != conversation.SessionAudiencePrivate || binding.ChannelAddress() != address ||
+		binding.PublicationIncarnation() != incarnation {
+		t.Fatalf("binding=%+v, want the reservation owner/address and existing Session incarnation", binding)
+	}
+	if sess.OwnerID() != "" {
+		t.Fatalf("reserved Session OwnerID=%q, want no Session owner mutation", sess.OwnerID())
+	}
+}
+
+func TestNewReservedV2ErrorPublicationBindingRejectsInvalidReservationIdentity(t *testing.T) {
+	createdAt := time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC)
+	address, err := conversation.NewChannelAddress("viewer", "cmd:ren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongAddress, err := conversation.NewChannelAddress("line", "cmd:ren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, err := NewCanonicalSessionWithOwner(modulecore.NewSessionID(), "ren", "2026-10-24", address, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongRoute, err := NewCanonicalSession(modulecore.NewSessionID(), "2026-10-24", wrongAddress, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := NewCanonicalSession(modulecore.NewSessionID(), "2026-10-24", address, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		sess    *Session
+		ownerID string
+	}{
+		{name: "missing owner", sess: valid, ownerID: ""},
+		{name: "wrong address owner", sess: valid, ownerID: "other"},
+		{name: "non viewer route", sess: wrongRoute, ownerID: "ren"},
+		{name: "already owner bound", sess: owned, ownerID: "ren"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewReservedV2ErrorPublicationBinding(tc.sess, tc.ownerID); err == nil {
+				t.Fatal("NewReservedV2ErrorPublicationBinding error=nil, want invalid reservation rejection")
+			}
+		})
+	}
+}
+
 func TestSessionPublicationIncarnationRejectsMalformedValues(t *testing.T) {
 	for _, value := range []string{"", "not-opaque", "0123456789abcdef0123456789ABCDEf"} {
 		if err := ValidatePublicationIncarnation(value); err == nil {

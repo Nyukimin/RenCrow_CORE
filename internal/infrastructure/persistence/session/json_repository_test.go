@@ -822,6 +822,220 @@ func TestJSONSessionRepositoryWarmV2ReservationCheckUsesProjection(t *testing.T)
 	}
 }
 
+func TestJSONSessionRepositoryReservedV2ErrorPublicationBindingUsesWarmedReservation(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	address, err := conversation.NewChannelAddress("viewer", "cmd:ren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, created, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC))
+	if err != nil || !created || reserved == nil {
+		t.Fatalf("ReserveCanonicalV2=(%v,%t,%v), want a new reservation", reserved, created, err)
+	}
+	incarnation := reserved.PublicationIncarnation()
+	if reserved.OwnerID() != "" {
+		t.Fatalf("reserved Session OwnerID=%q, want owner to remain in CreationIntent", reserved.OwnerID())
+	}
+	blockedReads := 0
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("reserved publication binding must use the warmed RAM projection")
+	}
+
+	binding, err := repo.CurrentReservedV2ErrorPublicationBinding(context.Background(), reserved.ID(), "ren", address)
+	if err != nil {
+		t.Fatalf("CurrentReservedV2ErrorPublicationBinding: %v", err)
+	}
+	if binding.SessionID() != modulecore.SessionID(reserved.ID()) || binding.OwnerID() != "ren" ||
+		binding.Audience() != conversation.SessionAudiencePrivate || binding.ChannelAddress() != address ||
+		binding.PublicationIncarnation() != incarnation {
+		t.Fatalf("binding=%+v, want reserved identity and existing incarnation %q", binding, incarnation)
+	}
+	if _, err := repo.CurrentPublicationBinding(context.Background(), reserved.ID()); err == nil {
+		t.Fatal("CurrentPublicationBinding accepted a response-first reserved Session")
+	}
+	called := false
+	if err := repo.UsePublicationBinding(context.Background(), binding, func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("UsePublicationBinding=(%v, called=%t), want normal path to reject reservation", err, called)
+	}
+	if err := repo.UseReservedV2ErrorPublicationBinding(context.Background(), binding, func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("UseReservedV2ErrorPublicationBinding=(%v, called=%t), want bounded claim", err, called)
+	}
+	if blockedReads != 0 {
+		t.Fatalf("warmed reserved publication binding operations read %d Session files, want zero", blockedReads)
+	}
+}
+
+func TestJSONSessionRepositoryCurrentReservedV2ErrorPublicationBindingRequiresWarmedIndex(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := conversation.NewChannelAddress("viewer", "cmd:ren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, _, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ReserveCanonicalV2: %v", err)
+	}
+	if _, err := repo.CurrentReservedV2ErrorPublicationBinding(context.Background(), reserved.ID(), "ren", address); err == nil {
+		t.Fatal("CurrentReservedV2ErrorPublicationBinding accepted a cold canonical index")
+	}
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	if _, err := repo.CurrentReservedV2ErrorPublicationBinding(context.Background(), reserved.ID(), "ren", address); err != nil {
+		t.Fatalf("CurrentReservedV2ErrorPublicationBinding after warm: %v", err)
+	}
+}
+
+func TestJSONSessionRepositoryCurrentReservedV2ErrorPublicationBindingRejectsConflicts(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*JSONSessionRepository, *session.Session, conversation.ChannelAddress)
+		owner   string
+		address func(t *testing.T) conversation.ChannelAddress
+	}{
+		{name: "owner conflict", owner: "other"},
+		{name: "address conflict", owner: "ren", address: func(t *testing.T) conversation.ChannelAddress {
+			address, err := conversation.NewChannelAddress("viewer", "cmd:other")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return address
+		}},
+		{name: "missing creation intent", owner: "ren", mutate: func(repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			repo.bindingMu.Lock()
+			projection := repo.canonicalOwnerProjection[reserved.ID()]
+			projection.creationIntent = nil
+			repo.canonicalOwnerProjection[reserved.ID()] = projection
+			repo.bindingMu.Unlock()
+		}},
+		{name: "owner provenance conflict", owner: "ren", mutate: func(repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			repo.bindingMu.Lock()
+			projection := repo.canonicalOwnerProjection[reserved.ID()]
+			projection.creationIntent = &session.CreationIntent{Runtime: "v2", OwnerID: "other"}
+			repo.canonicalOwnerProjection[reserved.ID()] = projection
+			repo.bindingMu.Unlock()
+		}},
+		{name: "runtime conflict", owner: "ren", mutate: func(repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			repo.bindingMu.Lock()
+			projection := repo.canonicalOwnerProjection[reserved.ID()]
+			projection.creationIntent = &session.CreationIntent{Runtime: "v1", OwnerID: "ren"}
+			repo.canonicalOwnerProjection[reserved.ID()] = projection
+			repo.bindingMu.Unlock()
+		}},
+		{name: "missing identity index", owner: "ren", mutate: func(repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			repo.bindingMu.Lock()
+			delete(repo.canonicalIndexBySessionID, reserved.ID())
+			repo.bindingMu.Unlock()
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := NewJSONSessionRepository(t.TempDir())
+			if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+				t.Fatalf("WarmCanonicalIndex: %v", err)
+			}
+			address, err := conversation.NewChannelAddress("viewer", "cmd:ren")
+			if err != nil {
+				t.Fatal(err)
+			}
+			reserved, _, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC))
+			if err != nil {
+				t.Fatalf("ReserveCanonicalV2: %v", err)
+			}
+			if tc.mutate != nil {
+				tc.mutate(repo, reserved, address)
+			}
+			requestedAddress := address
+			if tc.address != nil {
+				requestedAddress = tc.address(t)
+			}
+			if _, err := repo.CurrentReservedV2ErrorPublicationBinding(context.Background(), reserved.ID(), tc.owner, requestedAddress); err == nil {
+				t.Fatal("CurrentReservedV2ErrorPublicationBinding error=nil, want fail-closed rejection")
+			}
+		})
+	}
+}
+
+func TestJSONSessionRepositoryUseReservedV2ErrorPublicationBindingRevalidatesCurrentTuple(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, *JSONSessionRepository, *session.Session, conversation.ChannelAddress)
+	}{
+		{name: "deleted reservation", mutate: func(t *testing.T, repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			if err := repo.Delete(context.Background(), reserved.ID()); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+		}},
+		{name: "recreated reservation", mutate: func(t *testing.T, repo *JSONSessionRepository, reserved *session.Session, address conversation.ChannelAddress) {
+			if err := repo.Delete(context.Background(), reserved.ID()); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			recreated, created, err := repo.ReserveCanonicalV2(context.Background(), reserved.LogicalDate(), address, "ren", reserved.CreatedAt().Add(time.Second))
+			if err != nil || !created || recreated.ID() == reserved.ID() || recreated.PublicationIncarnation() == reserved.PublicationIncarnation() {
+				t.Fatalf("recreate reservation=(%v,%t,%v), want new identity and incarnation", recreated, created, err)
+			}
+		}},
+		{name: "rekeyed reservation without intent", mutate: func(t *testing.T, repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			if err := repo.Delete(context.Background(), reserved.ID()); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			rekeyedAddress, err := conversation.NewChannelAddress("viewer", "cmd:other")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rekeyed, err := session.NewCanonicalSession(modulecore.SessionID(reserved.ID()), reserved.LogicalDate(), rekeyedAddress, reserved.CreatedAt())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.Save(context.Background(), rekeyed); err != nil {
+				t.Fatalf("Save rekeyed Session: %v", err)
+			}
+		}},
+		{name: "owner conflict", mutate: func(_ *testing.T, repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			repo.bindingMu.Lock()
+			projection := repo.canonicalOwnerProjection[reserved.ID()]
+			projection.creationIntent = &session.CreationIntent{Runtime: "v2", OwnerID: "other"}
+			repo.canonicalOwnerProjection[reserved.ID()] = projection
+			repo.bindingMu.Unlock()
+		}},
+		{name: "missing intent", mutate: func(_ *testing.T, repo *JSONSessionRepository, reserved *session.Session, _ conversation.ChannelAddress) {
+			repo.bindingMu.Lock()
+			projection := repo.canonicalOwnerProjection[reserved.ID()]
+			projection.creationIntent = nil
+			repo.canonicalOwnerProjection[reserved.ID()] = projection
+			repo.bindingMu.Unlock()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := NewJSONSessionRepository(t.TempDir())
+			if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+				t.Fatalf("WarmCanonicalIndex: %v", err)
+			}
+			address, err := conversation.NewChannelAddress("viewer", "cmd:ren")
+			if err != nil {
+				t.Fatal(err)
+			}
+			reserved, _, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC))
+			if err != nil {
+				t.Fatalf("ReserveCanonicalV2: %v", err)
+			}
+			binding, err := repo.CurrentReservedV2ErrorPublicationBinding(context.Background(), reserved.ID(), "ren", address)
+			if err != nil {
+				t.Fatalf("CurrentReservedV2ErrorPublicationBinding: %v", err)
+			}
+			tc.mutate(t, repo, reserved, address)
+			called := false
+			if err := repo.UseReservedV2ErrorPublicationBinding(context.Background(), binding, func() error { called = true; return nil }); err == nil || called {
+				t.Fatalf("UseReservedV2ErrorPublicationBinding=(%v, called=%t), want stale tuple rejection", err, called)
+			}
+		})
+	}
+}
+
 func TestJSONSessionRepositoryOwnerResolutionRejectsUnboundLegacySession(t *testing.T) {
 	repo := NewJSONSessionRepository(t.TempDir())
 	address, err := conversation.NewChannelAddress("line", "legacy-unbound")

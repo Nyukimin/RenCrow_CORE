@@ -101,6 +101,188 @@ func TestPreparedRecallRuntimeWarmRejectsUnboundedSnapshot(t *testing.T) {
 	}
 }
 
+func TestPreparedRecallRuntimeRetriesTransientInitialWarmOnWorker(t *testing.T) {
+	readStarted := make(chan int, 4)
+	source := &preparedRecallRuntimeFakeSource{
+		started: readStarted,
+		read: func(ctx context.Context, _ string, call int) ([]domainmemory.UserMemory, string, error) {
+			if call == 1 {
+				<-ctx.Done()
+				// L1 wraps SQL context failures with %v, so the underlying
+				// DeadlineExceeded is not available through errors.Is.
+				return nil, "", fmt.Errorf("failed to read prepared recall snapshot: %v", ctx.Err())
+			}
+			return []domainmemory.UserMemory{preparedRecallRuntimeMemory("recovered", "green tea")}, domainconversation.PreparedRecallCoverageFull, nil
+		},
+	}
+	runtime := newPreparedRecallRuntimeForTest(t, source)
+
+	warmCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	warmErr := runtime.Warm(warmCtx)
+	if warmErr == nil {
+		t.Fatal("Warm() error = nil, want initial source deadline")
+	}
+	if _, ok := runtime.CurrentCapability(); ok {
+		t.Fatal("CurrentCapability() published after the failed initial warm")
+	}
+
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		if source.callCount() >= 2 {
+			break
+		}
+		select {
+		case <-readStarted:
+		case <-timer.C:
+			t.Fatalf("source reads = %d, want an asynchronous worker retry after Warm returned", source.callCount())
+		}
+	}
+
+	capability := waitForPreparedRecallRuntimeCapability(t, runtime)
+	if capability.OwnerID() != preparedRecallRuntimeTestOwner {
+		t.Fatalf("recovered capability owner = %q, want %q", capability.OwnerID(), preparedRecallRuntimeTestOwner)
+	}
+}
+
+func TestPreparedRecallRuntimeInitialWarmDoesNotRetryPermanentFailures(t *testing.T) {
+	largeSnapshot := make([]domainmemory.UserMemory, domainconversation.PreparedRecallMaxRecordsPerSource+1)
+	tests := []struct {
+		name string
+		read preparedRecallRuntimeReadFunc
+	}{
+		{
+			name: "invalid owner",
+			read: func(context.Context, string, int) ([]domainmemory.UserMemory, string, error) {
+				return nil, "", domainmemory.ErrUserMemoryOwnerInvalid
+			},
+		},
+		{
+			name: "owner validation",
+			read: func(context.Context, string, int) ([]domainmemory.UserMemory, string, error) {
+				return []domainmemory.UserMemory{{
+					ID: "foreign", Namespace: "user:owner-b", UserID: "owner-b",
+				}}, domainconversation.PreparedRecallCoverageFull, nil
+			},
+		},
+		{
+			name: "capacity",
+			read: func(context.Context, string, int) ([]domainmemory.UserMemory, string, error) {
+				return largeSnapshot, domainconversation.PreparedRecallCoveragePartial, nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			readStarted := make(chan int, 4)
+			source := &preparedRecallRuntimeFakeSource{started: readStarted, read: tt.read}
+			runtime := newPreparedRecallRuntimeForTest(t, source)
+			if err := runtime.Warm(context.Background()); err == nil {
+				t.Fatal("Warm() error = nil, want permanent source validation failure")
+			}
+			select {
+			case got := <-readStarted:
+				if got != 1 {
+					t.Fatalf("initial source read = %d, want 1", got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("initial source read was not observed")
+			}
+
+			timer := time.NewTimer(preparedRecallInitialWarmRetryBackoff + 100*time.Millisecond)
+			defer timer.Stop()
+			select {
+			case got := <-readStarted:
+				t.Fatalf("source read %d retried a permanent failure", got)
+			case <-timer.C:
+				if got := source.callCount(); got != 1 {
+					t.Fatalf("source reads = %d, want one attempt for permanent failure", got)
+				}
+			}
+		})
+	}
+}
+
+func TestPreparedRecallRuntimeInitialWarmRetriesAreBounded(t *testing.T) {
+	readStarted := make(chan int, preparedRecallInitialWarmRetryAttempts+1)
+	source := &preparedRecallRuntimeFakeSource{
+		started: readStarted,
+		read: func(context.Context, string, int) ([]domainmemory.UserMemory, string, error) {
+			return nil, "", context.DeadlineExceeded
+		},
+	}
+	runtime := newPreparedRecallRuntimeForTest(t, source)
+	if err := runtime.Warm(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Warm() error = %v, want initial deadline", err)
+	}
+
+	startTimer := time.NewTimer(10 * time.Second)
+	defer startTimer.Stop()
+	for want := 1; want <= preparedRecallInitialWarmRetryAttempts+1; want++ {
+		select {
+		case got := <-readStarted:
+			if got != want {
+				t.Fatalf("source read start = %d, want ordered attempt %d", got, want)
+			}
+		case <-startTimer.C:
+			t.Fatalf("timed out waiting for bounded retry attempt %d", want)
+		}
+	}
+	timer := time.NewTimer(preparedRecallInitialWarmMaxBackoff + 100*time.Millisecond)
+	defer timer.Stop()
+	for {
+		if got := source.callCount(); got != preparedRecallInitialWarmRetryAttempts+1 {
+			t.Fatalf("source reads after retry exhaustion = %d, want %d", got, preparedRecallInitialWarmRetryAttempts+1)
+		}
+		select {
+		case <-readStarted:
+			t.Fatalf("source started an extra retry after the configured limit: reads=%d", source.callCount())
+		case <-timer.C:
+			if _, ok := runtime.CurrentCapability(); ok {
+				t.Fatal("CurrentCapability() available after all initial warm retries failed")
+			}
+			return
+		}
+	}
+}
+
+func TestPreparedRecallRuntimeCloseCancelsInitialWarmRetry(t *testing.T) {
+	readStarted := make(chan int, 4)
+	readFinished := make(chan int, 4)
+	source := &preparedRecallRuntimeFakeSource{
+		started:  readStarted,
+		finished: readFinished,
+		read: func(ctx context.Context, _ string, _ int) ([]domainmemory.UserMemory, string, error) {
+			<-ctx.Done()
+			return nil, "", fmt.Errorf("prepared recall read interrupted: %v", ctx.Err())
+		},
+	}
+	runtime := newPreparedRecallRuntimeForTest(t, source)
+	warmCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	if err := runtime.Warm(warmCtx); err == nil {
+		cancel()
+		t.Fatal("Warm() error = nil, want initial source deadline")
+	}
+	cancel()
+	waitForPreparedRecallRuntimeRead(t, readStarted, 2)
+
+	closed := make(chan error, 1)
+	go func() { closed <- runtime.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not cancel and join the initial warm retry")
+	}
+	waitForPreparedRecallRuntimeRead(t, readFinished, 2)
+	if got := source.callCount(); got != 2 {
+		t.Fatalf("source reads after Close() = %d, want no retry after cancellation", got)
+	}
+}
+
 func TestPreparedRecallRuntimeDuplicateOutOfOrderOpaqueNoticesCoalesce(t *testing.T) {
 	readStarted := make(chan int, 4)
 	readFinished := make(chan int, 4)

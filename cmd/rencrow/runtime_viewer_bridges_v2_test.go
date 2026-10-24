@@ -45,6 +45,27 @@ func (store *responseFirstFailOnceAcceptStore) AcceptTurn(ctx context.Context, i
 	return store.SQLiteStore.AcceptTurn(ctx, input)
 }
 
+type responseFirstFailProcessProjectionStore struct {
+	*eventstore.SQLiteStore
+	failNextProjection bool
+}
+
+func (store *responseFirstFailProcessProjectionStore) AcceptTurn(ctx context.Context, input eventstore.AcceptInput) (eventstore.AcceptedTurn, error) {
+	accepted, err := store.SQLiteStore.AcceptTurn(ctx, input)
+	if err == nil {
+		store.failNextProjection = true
+	}
+	return accepted, err
+}
+
+func (store *responseFirstFailProcessProjectionStore) ReadLegacySessionProjection(ctx context.Context, sessionID modulecore.SessionID, ownerID string, throughSeq modulecore.EventSeq) (eventstore.LegacyProjection, error) {
+	if store.failNextProjection {
+		store.failNextProjection = false
+		return eventstore.LegacyProjection{}, errors.New("injected accepted-turn preparation failure")
+	}
+	return store.SQLiteStore.ReadLegacySessionProjection(ctx, sessionID, ownerID, throughSeq)
+}
+
 func openViewerBridgeAdmissionStore(t *testing.T) *eventstore.SQLiteStore {
 	t.Helper()
 	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))
@@ -275,6 +296,105 @@ func (p *responseFirstTestProvider) GenerateConversation(_ context.Context, _ co
 }
 
 func (p *responseFirstTestProvider) Name() string { return "test-conversation" }
+
+func TestViewerV2TerminalErrorReachesAuthenticatedGlobalSSEWithoutTaskID(t *testing.T) {
+	const ownerID = "owner-a"
+	tokenPath := filepath.Join(t.TempDir(), "owner.token")
+	if err := os.WriteFile(tokenPath, []byte(privateEventsOwnerToken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{
+		Enabled: true, AuthTokenFile: tokenPath, UserID: ownerID,
+	}}
+	cfg.ConversationRuntime.Version = "v2"
+	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "v2-terminal-error.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	repository := sessionpersistence.NewJSONSessionRepository(t.TempDir())
+	if err := repository.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("warm canonical Session index: %v", err)
+	}
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := viewer.NewEventHub(16)
+	hub.SetSessionPublicReplayReader(archive)
+	relay := &idleAwareEventListener{archive: archive, hub: hub}
+	failingStore := &responseFirstFailProcessProjectionStore{SQLiteStore: store}
+	runtime, err := newResponseFirstConversationRuntime(
+		failingStore, agent.NewMioAgent(nil, nil, nil, nil, nil, nil), &responseFirstTestProvider{}, newResponseFirstTestPublisher(), ownerID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.reservations = repository
+	deps := &Dependencies{
+		responseFirst: runtime, eventRelay: relay, eventHub: hub,
+		canonicalEventStore: store, sessionRepository: repository,
+	}
+	handler := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repository).ViewerSendFromOrch(&viewerBridgeCountProcessor{})
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(
+		`{"protocol_version":2,"message":"private response-first input","client_submission_id":"terminal-error-submit","to":"mio"}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+privateEventsOwnerToken)
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	request.Header.Set("X-RenCrow-Interaction-Profile", "cmd-chat")
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Host = "127.0.0.1:18790"
+	attachViewerBridgeTestPresence(t, deps, request)
+	acceptedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(acceptedResponse, request)
+	if acceptedResponse.Code != http.StatusAccepted {
+		t.Fatalf("v2 send status=%d body=%s, want accepted turn", acceptedResponse.Code, acceptedResponse.Body.String())
+	}
+	var accepted struct {
+		SessionID string `json:"session_id"`
+		TurnID    string `json:"turn_id"`
+		TraceID   string `json:"trace_id"`
+	}
+	if err := json.NewDecoder(acceptedResponse.Body).Decode(&accepted); err != nil || accepted.SessionID == "" || accepted.TurnID == "" || accepted.TraceID == "" {
+		t.Fatalf("accepted v2 receipt=%+v err=%v", accepted, err)
+	}
+	var terminal modulecore.EventEnvelope
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		items, listErr := store.ListByComponent(context.Background(), "orchestrator", 100)
+		if listErr != nil {
+			t.Fatalf("read canonical terminal error: %v", listErr)
+		}
+		for _, item := range items {
+			if item.EventType == "viewer.error" && item.Payload["trace_id"] == accepted.TraceID {
+				terminal = item
+				break
+			}
+		}
+		if terminal.EventType != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if terminal.EventType == "" {
+		t.Fatal("timed out waiting for accepted v2 viewer.error")
+	}
+	if taskID, _ := terminal.Payload["task_id"].(string); taskID != "" {
+		t.Fatalf("pre-owner-issuance v2 viewer.error task_id=%q, want absent", taskID)
+	}
+	if terminal.Payload["session_id"] != accepted.SessionID || terminal.Payload["turn_id"] != accepted.TurnID || terminal.Payload["trace_id"] != accepted.TraceID {
+		t.Fatalf("v2 viewer.error identities do not match accepted receipt: payload=%#v accepted=%+v", terminal.Payload, accepted)
+	}
+	streamRequest := routeTestOwnerRequest("/viewer/events?to=mio", privateEventsOwnerToken)
+	streamContext, cancel := context.WithCancel(streamRequest.Context())
+	defer cancel()
+	streamResponse := &cancelRouteSSEWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+	viewerGlobalEventsHandler(cfg, deps).ServeHTTP(streamResponse, streamRequest.WithContext(streamContext))
+	if !strings.Contains(streamResponse.Body.String(), "injected accepted-turn preparation failure") {
+		t.Fatalf("authenticated owner SSE omitted bridge-published v2 terminal error: %s", streamResponse.Body.String())
+	}
+}
 
 type responseFirstCancelOnceProvider struct {
 	calls   atomic.Int32

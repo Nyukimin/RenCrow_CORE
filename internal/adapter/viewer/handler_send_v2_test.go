@@ -18,6 +18,8 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
@@ -42,6 +44,101 @@ func TestHandleSendExplicitV2FailsClosedWhenV2IsDisabled(t *testing.T) {
 	if legacyCalled {
 		t.Fatal("explicit v2 request fell through to the legacy RootTask handler")
 	}
+}
+
+func TestHandleSendLegacyCarriesResolvedPublicationBindingToAsyncError(t *testing.T) {
+	binding := viewerTestCanonicalPublicationBinding(t, "cmd:ren", "ren")
+	messageRequest := make(chan SendRequest, 1)
+	errorRequest := make(chan SendRequest, 1)
+	options := &V2SendOptions{
+		LegacyResolveSessionBinding: func(context.Context) (domainsession.CanonicalSessionPublicationBinding, error) {
+			return binding, nil
+		},
+	}
+	h := HandleSendWithProtocolV2(func(_ context.Context, request SendRequest) (string, error) {
+		messageRequest <- request
+		return "", errors.New("async failure")
+	}, func(_ context.Context, request SendRequest, _ error) {
+		errorRequest <- request
+	}, nil, nil, nil, options)
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want accepted legacy request", response.Code, response.Body.String())
+	}
+	select {
+	case got := <-messageRequest:
+		if got.SessionID != string(binding.SessionID()) || !got.PublicationBinding.SameIdentity(binding) {
+			t.Fatalf("message request binding=%#v session=%q, want captured binding %#v", got.PublicationBinding, got.SessionID, binding)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("legacy message handler did not run")
+	}
+	select {
+	case got := <-errorRequest:
+		if !got.PublicationBinding.SameIdentity(binding) {
+			t.Fatalf("async error binding=%#v, want exact accepted binding %#v", got.PublicationBinding, binding)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("legacy async error handler did not run")
+	}
+}
+
+func TestHandleSendV2CarriesResolvedPublicationBindingToAsyncError(t *testing.T) {
+	binding := viewerTestCanonicalPublicationBinding(t, "cmd:ren", "ren")
+	completed := make(chan V2AcceptedTurn, 1)
+	options := &V2SendOptions{
+		Enabled: true, ActorID: "viewer-user", Admission: testV2Admission(),
+		ResolveSessionBinding: func(context.Context) (domainsession.CanonicalSessionPublicationBinding, error) {
+			return binding, nil
+		},
+		Accept: func(_ context.Context, request V2SendRequest) (V2AcceptedTurn, error) {
+			return acceptedV2Turn(request, false), nil
+		},
+		Process: func(context.Context, V2AcceptedTurn) error { return errors.New("async failure") },
+		OnError: func(_ context.Context, accepted V2AcceptedTurn, _ error) { completed <- accepted },
+	}
+	h := HandleSendWithProtocolV2(nil, nil, nil, nil, nil, options)
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"protocol_version":2,"message":"hello","client_submission_id":"binding-error-submit","to":"mio"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s, want accepted v2 request", response.Code, response.Body.String())
+	}
+	select {
+	case accepted := <-completed:
+		if !accepted.PublicationBinding.SameIdentity(binding) {
+			t.Fatalf("v2 async error binding=%#v, want exact accepted binding %#v", accepted.PublicationBinding, binding)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("v2 async error callback did not run")
+	}
+}
+
+func viewerTestCanonicalPublicationBinding(t *testing.T, chatID, ownerID string) domainsession.CanonicalSessionPublicationBinding {
+	t.Helper()
+	address, err := domainconversation.NewChannelAddress("viewer", chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Now().UTC()
+	var session *domainsession.Session
+	if ownerID == "" {
+		session, err = domainsession.NewCanonicalSession(modulecore.NewSessionID(), createdAt.Format("2006-01-02"), address, createdAt)
+	} else {
+		session, err = domainsession.NewCanonicalSessionWithOwner(modulecore.NewSessionID(), ownerID, createdAt.Format("2006-01-02"), address, createdAt)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := domainsession.NewCanonicalSessionPublicationBinding(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return binding
 }
 
 func TestHandleSendV2AcceptsDurablyBeforeAckAndReturnsCanonicalReceipt(t *testing.T) {

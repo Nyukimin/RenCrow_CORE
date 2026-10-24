@@ -15,6 +15,7 @@ import (
 	moviecatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domaincharimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/charimage"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
@@ -152,10 +153,20 @@ func viewerGlobalEventsHandler(cfg *config.Config, dependencies *Dependencies) h
 				return false, nil
 			}
 			privateFinal := authenticated && isAuthenticatedPrivateMioFinal(event, requestOwnerID)
-			if viewer.IsResponseFirstViewerEvent(event) && !privateFinal {
+			privateTerminalError := authenticated && isAuthenticatedPrivateMioTerminalError(event, requestOwnerID)
+			privateResponseFirst := privateFinal || privateTerminalError
+			if viewer.IsResponseFirstViewerEvent(event) && !privateResponseFirst {
 				return false, nil
 			}
-			binding, allowed, err := visibility.ResolveEvent(ctx, event, requestOwnerID)
+			var binding domainsession.CanonicalSessionPublicationBinding
+			var allowed bool
+			var reservedErrorBinding bool
+			var err error
+			if privateTerminalError {
+				binding, allowed, reservedErrorBinding, err = visibility.ResolvePrivateTerminalErrorEvent(ctx, event, requestOwnerID)
+			} else {
+				binding, allowed, err = visibility.ResolveEvent(ctx, event, requestOwnerID)
+			}
 			if err != nil {
 				return false, fmt.Errorf("resolve canonical Viewer session visibility: %w", err)
 			}
@@ -176,15 +187,25 @@ func viewerGlobalEventsHandler(cfg *config.Config, dependencies *Dependencies) h
 			if found {
 				switch state.RuntimeVersion {
 				case "v2":
-					if !privateFinal {
+					if !privateResponseFirst {
 						return false, nil
 					}
 				case "v1", "legacy":
+					if privateTerminalError && event.TaskID == "" {
+						return false, nil
+					}
 				default:
 					return false, fmt.Errorf("unknown Viewer session runtime version %q", state.RuntimeVersion)
 				}
+			} else if privateTerminalError && event.TaskID == "" && !reservedErrorBinding {
+				return false, nil
 			}
-			current, err := visibility.IsCurrent(ctx, binding)
+			var current bool
+			if privateTerminalError {
+				current, err = visibility.IsCurrentPrivateTerminalError(ctx, binding)
+			} else {
+				current, err = visibility.IsCurrent(ctx, binding)
+			}
 			if err != nil {
 				return false, fmt.Errorf("confirm current canonical Viewer session visibility: %w", err)
 			}
@@ -211,6 +232,22 @@ func isAuthenticatedPrivateMioFinal(event orchestrator.OrchestratorEvent, ownerI
 		event.EventID.Validate() == nil && event.TraceID.Validate() == nil && event.TaskID.Validate() == nil &&
 		event.RunID.Validate() == nil && event.SessionID.Validate() == nil && event.TurnID.Validate() == nil &&
 		event.MessageID.Validate() == nil && event.Content != ""
+}
+
+// isAuthenticatedPrivateMioTerminalError admits only the terminal failure
+// envelope for the current authenticated CMD owner's Mio turn. Canonical
+// Session ownership, address, incarnation, and current-binding checks still
+// run through runtimeSessionVisibility below.
+func isAuthenticatedPrivateMioTerminalError(event orchestrator.OrchestratorEvent, ownerID string) bool {
+	taskIdentityValid := event.TaskID.Validate() == nil || event.TaskID == "" && event.RunID == ""
+	runIdentityValid := event.RunID == "" || event.RunID.Validate() == nil
+	return strings.TrimSpace(ownerID) != "" && strings.TrimSpace(ownerID) == ownerID &&
+		event.Type == "viewer.error" && event.From == "system" && event.To == "viewer" && event.Route == "CHAT" &&
+		event.Visibility == "private" && event.EventSeq > 0 && event.Channel == "viewer" &&
+		event.ChannelAddress == "cmd:"+ownerID &&
+		event.EventID.Validate() == nil && event.TraceID.Validate() == nil && taskIdentityValid && runIdentityValid && event.SessionID.Validate() == nil &&
+		event.TurnID.Validate() == nil && event.MessageID.Validate() == nil &&
+		domainsession.ValidatePublicationIncarnation(event.PublicationIncarnation) == nil && event.Content != ""
 }
 
 func viewerEventsCMDOwnerCredentials(cfg *config.Config) (string, []byte) {

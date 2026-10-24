@@ -185,6 +185,111 @@ func (r *JSONSessionRepository) CurrentPublicationBinding(ctx context.Context, i
 	return binding, nil
 }
 
+// CurrentReservedV2ErrorPublicationBinding resolves publication identity for
+// one reserved v2 terminal error from the warmed canonical projection.
+func (r *JSONSessionRepository) CurrentReservedV2ErrorPublicationBinding(ctx context.Context, sessionID, ownerID string, address conversation.ChannelAddress) (session.CanonicalSessionPublicationBinding, error) {
+	if ctx == nil {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 error publication lookup context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return session.CanonicalSessionPublicationBinding{}, err
+	}
+	if err := modulecore.SessionID(sessionID).Validate(); err != nil {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("invalid reserved v2 error publication session_id: %w", err)
+	}
+	if err := session.ValidateOwnerID(ownerID); err != nil {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("invalid reserved v2 error publication owner: %w", err)
+	}
+	if err := address.Validate(); err != nil {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("invalid reserved v2 error publication ChannelAddress: %w", err)
+	}
+
+	r.bindingMu.RLock()
+	defer r.bindingMu.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return session.CanonicalSessionPublicationBinding{}, err
+	}
+	return r.reservedV2ErrorPublicationBindingLocked(sessionID, ownerID, address)
+}
+
+// UseReservedV2ErrorPublicationBinding admits a bounded publication claim only
+// while the same reserved v2 identity remains current in RAM.
+func (r *JSONSessionRepository) UseReservedV2ErrorPublicationBinding(ctx context.Context, expected session.CanonicalSessionPublicationBinding, claim func() error) error {
+	if claim == nil {
+		return fmt.Errorf("reserved v2 error publication claim callback is required")
+	}
+	if ctx == nil {
+		return fmt.Errorf("reserved v2 error publication claim context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := expected.Validate(); err != nil {
+		return fmt.Errorf("invalid expected reserved v2 error publication binding: %w", err)
+	}
+	if err := session.ValidateOwnerID(expected.OwnerID()); err != nil {
+		return fmt.Errorf("invalid expected reserved v2 error publication owner: %w", err)
+	}
+	if err := expected.ChannelAddress().Validate(); err != nil {
+		return fmt.Errorf("invalid expected reserved v2 error publication ChannelAddress: %w", err)
+	}
+
+	r.bindingMu.RLock()
+	defer r.bindingMu.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	current, err := r.reservedV2ErrorPublicationBindingLocked(string(expected.SessionID()), expected.OwnerID(), expected.ChannelAddress())
+	if err != nil {
+		return err
+	}
+	if !current.SameIdentity(expected) {
+		return fmt.Errorf("reserved v2 error publication binding is stale")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return claim()
+}
+
+// reservedV2ErrorPublicationBindingLocked resolves the complete reservation
+// tuple from the warmed RAM projection. The caller must hold bindingMu.
+func (r *JSONSessionRepository) reservedV2ErrorPublicationBindingLocked(sessionID, ownerID string, address conversation.ChannelAddress) (session.CanonicalSessionPublicationBinding, error) {
+	if !r.canonicalIndexWarmed {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Session publication projection is not warmed")
+	}
+	projection, exists := r.canonicalOwnerProjection[sessionID]
+	if !exists || projection.value == nil || projection.value.ID() != sessionID {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 canonical Session publication projection is unavailable")
+	}
+	key, indexed := r.canonicalIndexBySessionID[sessionID]
+	expectedKey := canonicalSessionKeyFor(projection.value.LogicalDate(), projection.value.ChannelAddress())
+	ids := r.canonicalIndex[expectedKey]
+	if !indexed || key != expectedKey || len(ids) != 1 {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 canonical Session publication identity index is unavailable")
+	}
+	if _, present := ids[sessionID]; !present {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 canonical Session publication identity index is unavailable")
+	}
+	if projection.creationIntent == nil {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Session has no response-first v2 creation intent")
+	}
+	if err := session.ValidateOwnerID(projection.creationIntent.OwnerID); err != nil {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Session response-first v2 owner is invalid: %w", err)
+	}
+	if projection.creationIntent.Runtime != "v2" || projection.creationIntent.OwnerID != ownerID {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Session response-first v2 owner or runtime conflicts with the request")
+	}
+	if projection.value.ChannelAddress() != address {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 canonical Session ChannelAddress conflicts with the request")
+	}
+	binding, err := session.NewReservedV2ErrorPublicationBinding(projection.value, ownerID)
+	if err != nil {
+		return session.CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 canonical Session publication binding is invalid: %w", err)
+	}
+	return binding, nil
+}
+
 // UsePublicationBinding claims a short publication action only while the
 // expected owner, audience, route, and incarnation remain current in RAM. The
 // callback must be bounded and must not perform I/O or call this repository.

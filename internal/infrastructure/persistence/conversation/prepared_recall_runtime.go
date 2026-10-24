@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
@@ -17,6 +19,13 @@ var (
 	ErrPreparedRecallRuntimeUnavailable = errors.New("prepared recall runtime unavailable")
 	ErrPreparedRecallRuntimeClosed      = errors.New("prepared recall runtime closed")
 	ErrPreparedRecallRuntimeOwner       = errors.New("prepared recall runtime owner is invalid")
+)
+
+const (
+	preparedRecallInitialWarmRetryAttempts  = 5
+	preparedRecallInitialWarmAttemptTimeout = 5 * time.Second
+	preparedRecallInitialWarmRetryBackoff   = 250 * time.Millisecond
+	preparedRecallInitialWarmMaxBackoff     = 4 * time.Second
 )
 
 // PreparedRecallUserMemorySource is the narrow, explicit-owner L1 source used
@@ -74,6 +83,8 @@ type PreparedRecallRuntime struct {
 	warmMu            sync.Mutex
 	warmReady         chan struct{}
 	warmReadyOnce     sync.Once
+	initialWarmDone   bool
+	initialWarmRetry  bool
 	rebuildSignal     chan struct{}
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -119,7 +130,13 @@ func (r *PreparedRecallRuntime) Warm(ctx context.Context) error {
 	r.warmMu.Lock()
 	defer r.warmMu.Unlock()
 	defer r.warmReadyOnce.Do(func() { close(r.warmReady) })
+	r.mu.Lock()
+	initialWarm := !r.initialWarmDone
+	r.mu.Unlock()
 	if _, ok := r.CurrentCapability(); ok {
+		if initialWarm {
+			r.finishInitialWarm(false)
+		}
 		return nil
 	}
 
@@ -133,18 +150,48 @@ func (r *PreparedRecallRuntime) Warm(ctx context.Context) error {
 	for {
 		published, stale, err := r.rebuild(operationCtx)
 		if err != nil {
+			if initialWarm {
+				retry := retryablePreparedRecallInitialWarm(err, operationCtx.Err())
+				r.finishInitialWarm(retry)
+				if retry {
+					log.Printf("[PreparedRecallRuntime] initial warm retry scheduled cause=%s max_attempts=%d", preparedRecallWarmFailureKind(err, operationCtx.Err()), preparedRecallInitialWarmRetryAttempts)
+				}
+			}
 			return err
 		}
 		if published {
+			if initialWarm {
+				r.finishInitialWarm(false)
+			}
 			return nil
 		}
 		if !stale {
+			if initialWarm {
+				r.finishInitialWarm(false)
+			}
 			return ErrPreparedRecallRuntimeUnavailable
 		}
 		if err := operationCtx.Err(); err != nil {
-			return fmt.Errorf("warm prepared recall runtime: %w", err)
+			warmErr := fmt.Errorf("warm prepared recall runtime: %w", err)
+			if initialWarm {
+				retry := retryablePreparedRecallInitialWarm(warmErr, err)
+				r.finishInitialWarm(retry)
+				if retry {
+					log.Printf("[PreparedRecallRuntime] initial warm retry scheduled cause=%s max_attempts=%d", preparedRecallWarmFailureKind(warmErr, err), preparedRecallInitialWarmRetryAttempts)
+				}
+			}
+			return warmErr
 		}
 	}
+}
+
+func (r *PreparedRecallRuntime) finishInitialWarm(retry bool) {
+	r.mu.Lock()
+	if !r.initialWarmDone {
+		r.initialWarmDone = true
+		r.initialWarmRetry = retry
+	}
+	r.mu.Unlock()
 }
 
 // HandleUserMemoryMutation synchronously revokes this owner's current view,
@@ -234,6 +281,16 @@ func (r *PreparedRecallRuntime) runWorker() {
 		return
 	case <-r.warmReady:
 	}
+	if r.ctx.Err() != nil {
+		return
+	}
+	r.mu.Lock()
+	retryInitialWarm := r.initialWarmRetry && !r.closed
+	r.initialWarmRetry = false
+	r.mu.Unlock()
+	if retryInitialWarm {
+		r.retryInitialWarm()
+	}
 	for {
 		select {
 		case <-r.ctx.Done():
@@ -242,6 +299,103 @@ func (r *PreparedRecallRuntime) runWorker() {
 			_, _, _ = r.rebuild(r.ctx)
 		}
 	}
+}
+
+func (r *PreparedRecallRuntime) retryInitialWarm() {
+	delay := preparedRecallInitialWarmRetryBackoff
+	var lastErr error
+	var lastAttemptErr error
+	for attempt := 1; attempt <= preparedRecallInitialWarmRetryAttempts; attempt++ {
+		if !waitPreparedRecallRetry(r.ctx, delay) {
+			return
+		}
+		if _, ok := r.CurrentCapability(); ok {
+			log.Printf("[PreparedRecallRuntime] initial warm recovered before retry attempt=%d", attempt)
+			return
+		}
+		if r.ctx.Err() != nil {
+			return
+		}
+
+		attemptCtx, cancel := context.WithTimeout(r.ctx, preparedRecallInitialWarmAttemptTimeout)
+		published, stale, err := r.rebuild(attemptCtx)
+		attemptErr := attemptCtx.Err()
+		cancel()
+		if published {
+			log.Printf("[PreparedRecallRuntime] initial warm recovered attempt=%d", attempt)
+			return
+		}
+		if stale {
+			// The mutation handler already queued the coalesced current-generation
+			// rebuild. Let the regular worker loop consume that owner signal.
+			return
+		}
+		if err == nil {
+			err = ErrPreparedRecallRuntimeUnavailable
+		}
+		lastErr, lastAttemptErr = err, attemptErr
+		if r.ctx.Err() != nil {
+			return
+		}
+		if !retryablePreparedRecallInitialWarm(err, attemptErr) {
+			log.Printf("[PreparedRecallRuntime] initial warm retry stopped attempt=%d cause=%s", attempt, preparedRecallWarmFailureKind(err, attemptErr))
+			return
+		}
+		log.Printf("[PreparedRecallRuntime] initial warm retry failed attempt=%d/%d cause=%s", attempt, preparedRecallInitialWarmRetryAttempts, preparedRecallWarmFailureKind(err, attemptErr))
+		if attempt < preparedRecallInitialWarmRetryAttempts {
+			delay *= 2
+			if delay > preparedRecallInitialWarmMaxBackoff {
+				delay = preparedRecallInitialWarmMaxBackoff
+			}
+		}
+	}
+	log.Printf("[PreparedRecallRuntime] initial warm retries exhausted attempts=%d cause=%s", preparedRecallInitialWarmRetryAttempts, preparedRecallWarmFailureKind(lastErr, lastAttemptErr))
+}
+
+func waitPreparedRecallRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return ctx.Err() == nil
+	}
+}
+
+func retryablePreparedRecallInitialWarm(err, attemptErr error) bool {
+	if permanentPreparedRecallWarmFailure(err) {
+		return false
+	}
+	return attemptErr == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded)
+}
+
+func permanentPreparedRecallWarmFailure(err error) bool {
+	kind := preparedRecallWarmFailureKind(err, nil)
+	return kind == "capacity" || kind == "owner_or_validation"
+}
+
+func preparedRecallWarmFailureKind(err, attemptErr error) string {
+	if errors.Is(err, domainconversation.ErrPreparedRecallCapacity) {
+		return "capacity"
+	}
+	if errors.Is(err, ErrPreparedRecallRuntimeOwner) ||
+		errors.Is(err, ErrPreparedRecallRuntimeClosed) ||
+		errors.Is(err, ErrPreparedRecallProjectionDenied) ||
+		errors.Is(err, domainconversation.ErrPreparedRecallMissingScope) ||
+		errors.Is(err, domainmemory.ErrUserMemoryOwnerInvalid) ||
+		errors.Is(err, domainmemory.ErrUserMemoryOwnerNotFound) ||
+		errors.Is(err, domainmemory.ErrUserMemoryOwnerForbidden) ||
+		errors.Is(err, domainmemory.ErrUserMemoryOwnerConflict) {
+		return "owner_or_validation"
+	}
+	if attemptErr == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
+		return "deadline"
+	}
+	if errors.Is(err, domainmemory.ErrUserMemoryOwnerUnavailable) {
+		return "source_unavailable"
+	}
+	return "unavailable"
 }
 
 func (r *PreparedRecallRuntime) rebuild(ctx context.Context) (published bool, stale bool, err error) {

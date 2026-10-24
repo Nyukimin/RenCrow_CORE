@@ -19,6 +19,7 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -41,6 +42,10 @@ type canonicalViewerSessionReader interface {
 type canonicalViewerV2SessionRepository interface {
 	LoadCanonicalWithCreationIntent(context.Context, string, domainconversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error)
 	ReserveCanonicalV2(context.Context, string, domainconversation.ChannelAddress, string, time.Time) (*domainsession.Session, bool, error)
+}
+
+type canonicalViewerV2ErrorPublicationBindingReader interface {
+	CurrentReservedV2ErrorPublicationBinding(context.Context, string, string, domainconversation.ChannelAddress) (domainsession.CanonicalSessionPublicationBinding, error)
 }
 
 type viewerSessionRuntimeVersionReader interface {
@@ -222,53 +227,94 @@ func buildViewerBridgeHandlers(
 			}
 			return sessionID, nil
 		}
-		resolveV2SessionID := func(ctx context.Context) (modulecore.SessionID, error) {
-			canonicalRepo, ok := sessionRepo.(canonicalViewerV2SessionRepository)
-			if !ok || deps.responseFirst == nil {
-				return "", fmt.Errorf("canonical Viewer v2 reservation owner is unavailable")
+		resolveSessionBinding := func(ctx context.Context) (domainsession.CanonicalSessionPublicationBinding, error) {
+			sess, _, err := resolveSession(ctx)
+			if err != nil {
+				return domainsession.CanonicalSessionPublicationBinding{}, err
+			}
+			binding, err := domainsession.NewCanonicalSessionPublicationBinding(sess)
+			if err != nil {
+				return domainsession.CanonicalSessionPublicationBinding{}, err
 			}
 			address, _, authenticatedUserID, err := viewerSessionIdentity(ctx)
 			if err != nil {
-				return "", err
+				return domainsession.CanonicalSessionPublicationBinding{}, err
+			}
+			if binding.ChannelAddress() != address || binding.OwnerID() != authenticatedUserID {
+				return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer publication binding conflicts with ingress identity")
+			}
+			return binding, nil
+		}
+		resolveV2SessionBinding := func(ctx context.Context) (domainsession.CanonicalSessionPublicationBinding, error) {
+			canonicalRepo, ok := sessionRepo.(canonicalViewerV2SessionRepository)
+			if !ok || deps.responseFirst == nil {
+				return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer v2 reservation owner is unavailable")
+			}
+			address, _, authenticatedUserID, err := viewerSessionIdentity(ctx)
+			if err != nil {
+				return domainsession.CanonicalSessionPublicationBinding{}, err
 			}
 			if authenticatedUserID != "" && authenticatedUserID != deps.responseFirst.ownerID {
-				return "", fmt.Errorf("canonical Viewer v2 owner conflicts with authenticated CMD user")
+				return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer v2 owner conflicts with authenticated CMD user")
+			}
+			bindingFor := func(sess *domainsession.Session, reserved bool) (domainsession.CanonicalSessionPublicationBinding, error) {
+				if sess == nil {
+					return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer v2 Session is unavailable")
+				}
+				if authenticatedUserID != "" && reserved {
+					reader, ok := sessionRepo.(canonicalViewerV2ErrorPublicationBindingReader)
+					if !ok {
+						return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer v2 error publication authority is unavailable")
+					}
+					return reader.CurrentReservedV2ErrorPublicationBinding(ctx, sess.ID(), authenticatedUserID, address)
+				}
+				binding, err := domainsession.NewCanonicalSessionPublicationBinding(sess)
+				if err != nil {
+					return domainsession.CanonicalSessionPublicationBinding{}, err
+				}
+				if binding.ChannelAddress() != address || binding.OwnerID() != authenticatedUserID {
+					return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer v2 publication binding conflicts with ingress identity")
+				}
+				return binding, nil
 			}
 			now := time.Now().UTC()
 			logicalDate := now.Format("2006-01-02")
 			if existing, intent, found, lookupErr := canonicalRepo.LoadCanonicalWithCreationIntent(ctx, logicalDate, address); lookupErr != nil {
-				return "", lookupErr
+				return domainsession.CanonicalSessionPublicationBinding{}, lookupErr
 			} else if found && existing != nil {
 				sessionID := modulecore.SessionID(existing.ID())
 				if err := sessionID.Validate(); err != nil {
-					return "", err
+					return domainsession.CanonicalSessionPublicationBinding{}, err
 				}
 				if intent != nil {
 					if intent.Runtime != "v2" || intent.OwnerID != deps.responseFirst.ownerID {
-						return "", fmt.Errorf("canonical Viewer v2 reservation belongs to a different owner")
+						return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer v2 reservation belongs to a different owner")
 					}
-					return sessionID, nil
+					return bindingFor(existing, true)
 				}
 				if err := deps.responseFirst.ValidateExistingSession(ctx, sessionID); err == nil {
-					return sessionID, nil
+					return bindingFor(existing, false)
 				}
 			}
 			createdAt, err := time.Parse("2006-01-02", logicalDate)
 			if err != nil {
-				return "", err
+				return domainsession.CanonicalSessionPublicationBinding{}, err
 			}
 			sess, _, err := canonicalRepo.ReserveCanonicalV2(ctx, logicalDate, address, deps.responseFirst.ownerID, createdAt.UTC())
 			if err != nil {
-				return "", err
+				return domainsession.CanonicalSessionPublicationBinding{}, err
 			}
 			if sess == nil {
-				return "", fmt.Errorf("canonical Viewer v2 reservation returned no session")
+				return domainsession.CanonicalSessionPublicationBinding{}, fmt.Errorf("canonical Viewer v2 reservation returned no session")
 			}
-			sessionID := modulecore.SessionID(sess.ID())
-			if err := sessionID.Validate(); err != nil {
+			return bindingFor(sess, true)
+		}
+		resolveV2SessionID := func(ctx context.Context) (modulecore.SessionID, error) {
+			binding, err := resolveV2SessionBinding(ctx)
+			if err != nil {
 				return "", err
 			}
-			return sessionID, nil
+			return binding.SessionID(), nil
 		}
 		messageHandler := func(ctx context.Context, req viewer.SendRequest) (string, error) {
 			// AuthenticatedViewerOwnerID intentionally accepts only the HTTP User
@@ -340,23 +386,34 @@ func buildViewerBridgeHandlers(
 			return resp.Response, nil
 		}
 		errorHandler := func(ctx context.Context, req viewer.SendRequest, err error) {
-			if deps.eventRelay != nil {
-				_, chatID, _, identityErr := viewerSessionIdentity(ctx)
-				if identityErr != nil {
-					log.Printf("[Viewer] error event identity unavailable task=%s: %v", req.RootTaskID, identityErr)
-					return
-				}
-				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
-					"viewer.error", "system", "viewer", err.Error(),
-					"", req.RootTaskID, req.SessionID, "viewer", chatID,
-				)
-				if recorder := turntiming.FromContext(ctx); recorder != nil {
-					snapshot := recorder.Snapshot()
-					event.Timing = &snapshot
-				}
-				if publishErr := deps.eventRelay.OnEvent(event); publishErr != nil {
+			if deps.eventRelay == nil {
+				return
+			}
+			if req.To == modulechat.ViewerRecipientMio && req.PublicationBinding.Audience() == domainconversation.SessionAudiencePrivate {
+				if publishErr := publishRuntimeViewerTerminalError(ctx, deps.eventRelay, req.PublicationBinding,
+					modulecore.TraceID(req.TraceID), modulecore.TurnID(req.TurnID), modulecore.MessageID(req.MessageID),
+					req.RootTaskID, req.SessionID, req.To, req.Provenance, true, err); publishErr != nil {
 					log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
 				}
+				return
+			}
+
+			// Keep the established generic failure signal for public Mio turns and
+			// other recipients. The private CMD→Mio owner exception above carries
+			// its exact accepted publication binding and stronger envelope.
+			_, chatID, _, identityErr := viewerSessionIdentity(ctx)
+			if identityErr != nil {
+				log.Printf("[Viewer] error event identity unavailable task=%s: %v", req.RootTaskID, identityErr)
+				return
+			}
+			event := orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
+				"viewer.error", "system", "viewer", err.Error(), "", req.RootTaskID, req.SessionID, "viewer", chatID)
+			if recorder := turntiming.FromContext(ctx); recorder != nil {
+				snapshot := recorder.Snapshot()
+				event.Timing = &snapshot
+			}
+			if publishErr := deps.eventRelay.OnEvent(event); publishErr != nil {
+				log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
 			}
 		}
 		var v2Options *viewer.V2SendOptions
@@ -380,8 +437,9 @@ func buildViewerBridgeHandlers(
 			}
 		}
 		v2Options = &viewer.V2SendOptions{
-			Admission:                 sessionProtocolAdmission,
-			LegacyPreSessionAdmission: legacyPreSessionAdmission,
+			Admission:                   sessionProtocolAdmission,
+			LegacyResolveSessionBinding: resolveSessionBinding,
+			LegacyPreSessionAdmission:   legacyPreSessionAdmission,
 			ForegroundPin: func(r *http.Request, request viewer.ForegroundPinRequest) (viewer.ForegroundPinLease, error) {
 				return pinViewerForegroundPresence(deps, r, request)
 			},
@@ -390,12 +448,20 @@ func buildViewerBridgeHandlers(
 			v2Options.Enabled = true
 			v2Options.ActorID = responseFirstActorID
 			v2Options.ResolveSessionID = resolveV2SessionID
+			v2Options.ResolveSessionBinding = resolveV2SessionBinding
 			v2Options.Accept = deps.responseFirst.Accept
 			v2Options.Process = deps.responseFirst.Process
 			v2Options.Timing = timing
 			v2Options.Processing = processing
-			v2Options.OnError = func(_ context.Context, accepted viewer.V2AcceptedTurn, err error) {
+			v2Options.OnError = func(errorCtx context.Context, accepted viewer.V2AcceptedTurn, err error) {
 				log.Printf("[Viewer] response-first processing failed session_id=%s turn_id=%s error_type=%T", accepted.SessionID, accepted.TurnID, err)
+				if deps.eventRelay != nil {
+					if publishErr := publishRuntimeViewerTerminalError(errorCtx, deps.eventRelay, accepted.PublicationBinding,
+						accepted.TraceID, accepted.TurnID, accepted.InputMessageID, "", string(accepted.SessionID),
+						modulechat.ViewerRecipientMio, viewer.RequestProvenance{}, false, err); publishErr != nil {
+						log.Printf("[Viewer] response-first error event publication failed session_id=%s error_type=%T", accepted.SessionID, publishErr)
+					}
+				}
 			}
 		}
 		handler := viewer.HandleSendWithProtocolV2(messageHandler, errorHandler, attachmentStore, resolveSessionID, speechCancellationRegistry, v2Options)
@@ -513,6 +579,58 @@ func buildViewerBridgeHandlers(
 		EntryFromOrch:        entryFromOrch,
 		ChromeBridgeFromOrch: chromeBridgeFromOrch,
 	}
+}
+
+func publishRuntimeViewerTerminalError(
+	ctx context.Context,
+	relay *idleAwareEventListener,
+	binding domainsession.CanonicalSessionPublicationBinding,
+	traceID modulecore.TraceID,
+	turnID modulecore.TurnID,
+	messageID modulecore.MessageID,
+	rootTaskID, sessionID string,
+	recipient modulechat.ViewerRecipient,
+	provenance viewer.RequestProvenance,
+	requireCMDProvenance bool,
+	processingErr error,
+) error {
+	if relay == nil || processingErr == nil {
+		return nil
+	}
+	if recipient != modulechat.ViewerRecipientMio || binding.Validate() != nil ||
+		string(binding.SessionID()) != sessionID || traceID.Validate() != nil ||
+		turnID.Validate() != nil || messageID.Validate() != nil {
+		return errors.New("terminal Viewer error has no accepted canonical publication binding")
+	}
+	address := binding.ChannelAddress()
+	if address.ChannelType() != "viewer" {
+		return errors.New("terminal Viewer error has a non-Viewer canonical address")
+	}
+	if binding.Audience() == domainconversation.SessionAudiencePrivate {
+		ownerID, authenticated, authErr := viewer.AuthenticatedViewerOwnerID(ctx)
+		if authErr != nil || !authenticated || ownerID != binding.OwnerID() ||
+			address.ExternalConversationID() != "cmd:"+ownerID ||
+			requireCMDProvenance && (provenance.OperationSource != "RenCrow_CMD" || provenance.InteractionProfile != "cmd-chat") {
+			return errors.New("terminal Viewer error owner does not match authenticated CMD ingress")
+		}
+	} else if binding.Audience() != domainconversation.SessionAudiencePublic || binding.OwnerID() != "" ||
+		address.ExternalConversationID() != publicViewerChatID {
+		return errors.New("terminal Viewer error has an invalid public canonical address")
+	}
+
+	event := orchestrator.NewEventWithTraceID(traceID,
+		"viewer.error", "system", "viewer", processingErr.Error(), "CHAT", rootTaskID,
+		string(binding.SessionID()), address.ChannelType(), address.ExternalConversationID(),
+	)
+	event.Visibility = string(binding.Audience())
+	event.PublicationIncarnation = binding.PublicationIncarnation()
+	event.TurnID = turnID
+	event.MessageID = messageID
+	if recorder := turntiming.FromContext(ctx); recorder != nil {
+		snapshot := recorder.Snapshot()
+		event.Timing = &snapshot
+	}
+	return relay.OnEvent(event)
 }
 
 func pinViewerForegroundPresence(deps *Dependencies, r *http.Request, request viewer.ForegroundPinRequest) (viewer.ForegroundPinLease, error) {

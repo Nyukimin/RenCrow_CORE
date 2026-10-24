@@ -60,6 +60,40 @@ func NewCanonicalSessionPublicationBinding(sess *Session) (CanonicalSessionPubli
 	return binding, nil
 }
 
+// NewReservedV2ErrorPublicationBinding derives the private publication identity
+// used for a terminal error on an unmaterialized response-first v2 reservation.
+func NewReservedV2ErrorPublicationBinding(sess *Session, ownerID string) (CanonicalSessionPublicationBinding, error) {
+	if sess == nil {
+		return CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 Session is required")
+	}
+	if err := modulecore.SessionID(sess.ID()).Validate(); err != nil {
+		return CanonicalSessionPublicationBinding{}, fmt.Errorf("invalid reserved v2 SessionID: %w", err)
+	}
+	if err := ValidateOwnerID(ownerID); err != nil {
+		return CanonicalSessionPublicationBinding{}, fmt.Errorf("invalid reserved v2 owner: %w", err)
+	}
+	if sess.OwnerID() != "" {
+		return CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 Session must not have a Session owner binding")
+	}
+	address := sess.ChannelAddress()
+	if err := address.Validate(); err != nil {
+		return CanonicalSessionPublicationBinding{}, fmt.Errorf("invalid reserved v2 Session ChannelAddress: %w", err)
+	}
+	if address.ChannelType() != "viewer" || address.ExternalConversationID() != "cmd:"+ownerID {
+		return CanonicalSessionPublicationBinding{}, fmt.Errorf("reserved v2 Session address does not match its command owner")
+	}
+	binding := CanonicalSessionPublicationBinding{
+		sessionID:              modulecore.SessionID(sess.ID()),
+		ownerID:                ownerID,
+		channelAddress:         address,
+		publicationIncarnation: sess.PublicationIncarnation(),
+	}
+	if err := binding.Validate(); err != nil {
+		return CanonicalSessionPublicationBinding{}, err
+	}
+	return binding, nil
+}
+
 func (b CanonicalSessionPublicationBinding) Validate() error {
 	if err := b.sessionID.Validate(); err != nil {
 		return fmt.Errorf("invalid publication SessionID: %w", err)

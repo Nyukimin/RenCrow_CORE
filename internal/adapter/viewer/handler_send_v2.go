@@ -17,6 +17,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
@@ -215,6 +216,7 @@ type V2SendRequest struct {
 // IdempotentReplay tells this process not to schedule foreground work twice.
 type V2AcceptedTurn struct {
 	SessionID          modulecore.SessionID
+	PublicationBinding domainsession.CanonicalSessionPublicationBinding
 	TurnID             modulecore.TurnID
 	TraceID            modulecore.TraceID
 	InputMessageID     modulecore.MessageID
@@ -333,17 +335,19 @@ func (l *V2ProcessingLifecycle) Shutdown(ctx context.Context) error {
 // dependencies are supplied. LegacyPreSessionAdmission optionally adds a
 // legacy/v1 RAM admission step on the same route.
 type V2SendOptions struct {
-	Enabled                   bool
-	ActorID                   string
-	ResolveSessionID          SessionIDResolver
-	Admission                 *SessionProtocolAdmission
-	LegacyPreSessionAdmission LegacyPreSessionAdmissionHook
-	Accept                    V2TurnAcceptor
-	Process                   V2TurnProcessor
-	OnError                   V2ProcessingErrorHandler
-	Timing                    *turntiming.BatchRecorder
-	Processing                *V2ProcessingLifecycle
-	ForegroundPin             ForegroundPinHook
+	Enabled                     bool
+	ActorID                     string
+	ResolveSessionID            SessionIDResolver
+	ResolveSessionBinding       SessionPublicationBindingResolver
+	LegacyResolveSessionBinding SessionPublicationBindingResolver
+	Admission                   *SessionProtocolAdmission
+	LegacyPreSessionAdmission   LegacyPreSessionAdmissionHook
+	Accept                      V2TurnAcceptor
+	Process                     V2TurnProcessor
+	OnError                     V2ProcessingErrorHandler
+	Timing                      *turntiming.BatchRecorder
+	Processing                  *V2ProcessingLifecycle
+	ForegroundPin               ForegroundPinHook
 }
 
 // LegacyPreSessionAdmissionIdentity contains the canonical correlation IDs
@@ -430,12 +434,14 @@ func HandleSendWithProtocolV2(handler MessageHandler, onError MessageErrorHandle
 	var admission *SessionProtocolAdmission
 	var preSessionAdmission LegacyPreSessionAdmissionHook
 	var foregroundPinHook ForegroundPinHook
+	var legacyResolveSessionBinding SessionPublicationBindingResolver
 	if options != nil {
 		admission = options.Admission
 		preSessionAdmission = options.LegacyPreSessionAdmission
 		foregroundPinHook = options.ForegroundPin
+		legacyResolveSessionBinding = options.LegacyResolveSessionBinding
 	}
-	legacy := handleSendLegacyWithForegroundPin(handler, onError, saver, resolveSessionID, cancellations, admission, preSessionAdmission, foregroundPinHook)
+	legacy := handleSendLegacyWithForegroundPin(handler, onError, saver, resolveSessionID, legacyResolveSessionBinding, cancellations, admission, preSessionAdmission, foregroundPinHook)
 	return dispatchViewerSendProtocol(legacy, options)
 }
 
@@ -636,7 +642,9 @@ func parseProtocolVersionNumber(raw []byte) (int, error) {
 }
 
 func (options *V2SendOptions) available() bool {
-	return options != nil && options.Enabled && validTrustedActorID(options.ActorID) && options.ResolveSessionID != nil && options.Admission.available() && options.Accept != nil && options.Process != nil
+	return options != nil && options.Enabled && validTrustedActorID(options.ActorID) &&
+		(options.ResolveSessionID != nil || options.ResolveSessionBinding != nil) &&
+		options.Admission.available() && options.Accept != nil && options.Process != nil
 }
 
 func validTrustedActorID(actorID string) bool {
@@ -762,10 +770,22 @@ func handleViewerSendV2(w http.ResponseWriter, r *http.Request, body []byte, mul
 	if timingEnabled {
 		acceptCtx = turntiming.WithBatchTurnRecorder(acceptCtx, turn)
 	}
-	sessionID, err := options.ResolveSessionID(acceptCtx)
+	var sessionID modulecore.SessionID
+	var publicationBinding domainsession.CanonicalSessionPublicationBinding
+	if options.ResolveSessionBinding != nil {
+		publicationBinding, err = options.ResolveSessionBinding(acceptCtx)
+		if err == nil {
+			err = publicationBinding.Validate()
+		}
+		if err == nil {
+			sessionID = publicationBinding.SessionID()
+		}
+	} else {
+		sessionID, err = options.ResolveSessionID(acceptCtx)
+	}
 	if err != nil || sessionID.Validate() != nil {
 		if err == nil {
-			err = errors.New("canonical session id is invalid")
+			err = errors.New("canonical session identity is invalid")
 		}
 		markViewerV2TimingError(turn, timingEnabled, turntiming.PointV2Accept, err)
 		log.Printf("[Viewer] HandleSend v2: canonical session unavailable")
@@ -826,6 +846,9 @@ func handleViewerSendV2(w http.ResponseWriter, r *http.Request, body []byte, mul
 		log.Printf("[Viewer] HandleSend v2: durable acceptance returned invalid identity")
 		http.Error(w, "turn acceptance unavailable", http.StatusServiceUnavailable)
 		return
+	}
+	if options.ResolveSessionBinding != nil {
+		accepted.PublicationBinding = publicationBinding
 	}
 	if timingEnabled {
 		turn.Mark(turntiming.PointV2Accepted, turntiming.ComponentV2ViewerHandler, 1, 0)

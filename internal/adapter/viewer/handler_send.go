@@ -18,6 +18,7 @@ import (
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
@@ -28,6 +29,7 @@ import (
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
 type MessageErrorHandler func(ctx context.Context, req SendRequest, err error)
 type SessionIDResolver func(ctx context.Context) (modulecore.SessionID, error)
+type SessionPublicationBindingResolver func(ctx context.Context) (domainsession.CanonicalSessionPublicationBinding, error)
 
 const (
 	viewerCMDClient          = "RenCrow_CMD"
@@ -323,19 +325,20 @@ type AttachmentSaver interface {
 // SendRequest is the adapter-neutral payload passed from Viewer to orchestration.
 
 type SendRequest struct {
-	SessionID      string
-	MessageID      string
-	AgentMessageID string
-	TurnID         string
-	TraceID        string
-	RootTaskID     string
-	ViewerClientID string
-	AudioOutput    AudioOutputIntent
-	Provenance     RequestProvenance
-	Message        string
-	To             modulechat.ViewerRecipient
-	Attachments    []domainattachment.Attachment
-	foregroundPin  ForegroundPinLease
+	SessionID          string
+	PublicationBinding domainsession.CanonicalSessionPublicationBinding
+	MessageID          string
+	AgentMessageID     string
+	TurnID             string
+	TraceID            string
+	RootTaskID         string
+	ViewerClientID     string
+	AudioOutput        AudioOutputIntent
+	Provenance         RequestProvenance
+	Message            string
+	To                 modulechat.ViewerRecipient
+	Attachments        []domainattachment.Attachment
+	foregroundPin      ForegroundPinLease
 }
 
 type viewerSendRequest struct {
@@ -382,10 +385,10 @@ func handleSendLegacyWithSpeechCancellation(handler MessageHandler, onError Mess
 }
 
 func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission, preSessionAdmission LegacyPreSessionAdmissionHook) http.HandlerFunc {
-	return handleSendLegacyWithForegroundPin(handler, onError, saver, resolveSessionID, cancellations, admission, preSessionAdmission, nil)
+	return handleSendLegacyWithForegroundPin(handler, onError, saver, resolveSessionID, nil, cancellations, admission, preSessionAdmission, nil)
 }
 
-func handleSendLegacyWithForegroundPin(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission, preSessionAdmission LegacyPreSessionAdmissionHook, foregroundPinHook ForegroundPinHook) http.HandlerFunc {
+func handleSendLegacyWithForegroundPin(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, resolveSessionBinding SessionPublicationBindingResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission, preSessionAdmission LegacyPreSessionAdmissionHook, foregroundPinHook ForegroundPinHook) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		handlerReceivedAt := time.Now()
 		if r.Method != http.MethodPost {
@@ -496,7 +499,26 @@ func handleSendLegacyWithForegroundPin(handler MessageHandler, onError MessageEr
 			asyncBaseContext = domaintool.WithToolExecutionScope(asyncBaseContext, ownerScope)
 		}
 		sessionID := ""
-		if resolveSessionID != nil {
+		var publicationBinding domainsession.CanonicalSessionPublicationBinding
+		if resolveSessionBinding != nil {
+			if timing != nil {
+				timing.Mark(turntiming.PointHandlerSessionStarted)
+			}
+			resolved, err := resolveSessionBinding(resolverContext)
+			if err != nil || resolved.Validate() != nil {
+				if timing != nil {
+					timing.Mark(turntiming.PointHandlerSessionEnded)
+				}
+				log.Printf("[Viewer] HandleSend: canonical session publication binding unavailable")
+				http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if timing != nil {
+				timing.Mark(turntiming.PointHandlerSessionEnded)
+			}
+			publicationBinding = resolved
+			sessionID = string(resolved.SessionID())
+		} else if resolveSessionID != nil {
 			if timing != nil {
 				timing.Mark(turntiming.PointHandlerSessionStarted)
 			}
@@ -546,18 +568,19 @@ func handleSendLegacyWithForegroundPin(handler MessageHandler, onError MessageEr
 			}
 		}
 		sendReq := SendRequest{
-			SessionID:      sessionID,
-			MessageID:      messageID,
-			AgentMessageID: agentMessageID,
-			TurnID:         turnID,
-			TraceID:        traceID,
-			RootTaskID:     rootTaskID,
-			ViewerClientID: req.ViewerClientID,
-			AudioOutput:    audioOutput,
-			Provenance:     provenance,
-			To:             recipient,
-			Attachments:    attachments,
-			foregroundPin:  foregroundPin,
+			SessionID:          sessionID,
+			PublicationBinding: publicationBinding,
+			MessageID:          messageID,
+			AgentMessageID:     agentMessageID,
+			TurnID:             turnID,
+			TraceID:            traceID,
+			RootTaskID:         rootTaskID,
+			ViewerClientID:     req.ViewerClientID,
+			AudioOutput:        audioOutput,
+			Provenance:         provenance,
+			To:                 recipient,
+			Attachments:        attachments,
+			foregroundPin:      foregroundPin,
 		}
 
 		effectiveMessage := strings.TrimSpace(req.Message)

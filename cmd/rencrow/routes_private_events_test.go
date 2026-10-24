@@ -645,13 +645,17 @@ type liveRouteSSEWriter struct {
 
 type routeTestRuntimeVersionStore struct {
 	*eventstore.SQLiteStore
-	sessionID modulecore.SessionID
-	ownerID   string
-	version   string
-	found     bool
+	sessionID    modulecore.SessionID
+	ownerID      string
+	version      string
+	found        bool
+	beforeReturn func()
 }
 
 func (s *routeTestRuntimeVersionStore) ReadSessionState(_ context.Context, sessionID modulecore.SessionID, ownerID string) (eventstore.SessionState, bool, error) {
+	if s.beforeReturn != nil {
+		s.beforeReturn()
+	}
 	if !s.found || sessionID != s.sessionID || ownerID != s.ownerID {
 		return eventstore.SessionState{}, false, nil
 	}

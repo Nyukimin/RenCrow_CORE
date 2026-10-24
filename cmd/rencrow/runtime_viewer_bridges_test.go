@@ -36,6 +36,20 @@ func (viewerBridgeErrorProcessor) ProcessMessage(ctx context.Context, _ orchestr
 	return orchestrator.ProcessMessageResponse{}, errors.New("viewer processing failed")
 }
 
+type viewerBridgeErrorAfterSessionRebindProcessor struct {
+	repository  *sessionpersistence.JSONSessionRepository
+	replacement *domainsession.Session
+}
+
+func (p viewerBridgeErrorAfterSessionRebindProcessor) ProcessMessage(ctx context.Context, _ orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+	turntiming.Mark(ctx, turntiming.PointRouteDecided)
+	turntiming.Mark(ctx, turntiming.PointDispatchStarted)
+	if err := p.repository.Save(ctx, p.replacement); err != nil {
+		return orchestrator.ProcessMessageResponse{}, err
+	}
+	return orchestrator.ProcessMessageResponse{}, errors.New("viewer processing failed after canonical Session rebind")
+}
+
 type viewerBridgeSSERecorder struct {
 	header     http.Header
 	mu         sync.Mutex
@@ -1261,8 +1275,23 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	if err := repo.Save(context.Background(), ownerSession); err != nil {
 		t.Fatalf("seed owner-bound CMD Session: %v", err)
 	}
+	acceptedBinding, err := domainsession.NewCanonicalSessionPublicationBinding(ownerSession)
+	if err != nil {
+		t.Fatalf("capture accepted owner-bound CMD Session: %v", err)
+	}
+	replacement, err := domainsession.NewCanonicalSessionWithOwner(modulecore.SessionID(ownerSession.ID()), "ren", createdAt.Format("2006-01-02"), ownerAddress, createdAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("construct re-bound owner Session: %v", err)
+	}
+	replacementBinding, err := domainsession.NewCanonicalSessionPublicationBinding(replacement)
+	if err != nil {
+		t.Fatalf("capture replacement owner Session: %v", err)
+	}
+	if acceptedBinding.SameIdentity(replacementBinding) {
+		t.Fatal("test replacement must represent a different publication incarnation")
+	}
 	factories := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo)
-	handler := factories.ViewerSendFromOrch(viewerBridgeErrorProcessor{})
+	handler := factories.ViewerSendFromOrch(viewerBridgeErrorAfterSessionRebindProcessor{repository: repo, replacement: replacement})
 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio","timings":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1332,6 +1361,21 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	if !ok || channelAddress != "cmd:ren" {
 		t.Fatalf("viewer.error channel_address = %#v, want the authenticated user's CMD transport namespace", event.Payload["channel_address"])
 	}
+	if got := event.Payload["publication_incarnation"]; got != acceptedBinding.PublicationIncarnation() {
+		t.Fatalf("viewer.error publication_incarnation = %#v, want captured accepted incarnation %q", got, acceptedBinding.PublicationIncarnation())
+	}
+	if got := event.Payload["visibility"]; got != "private" {
+		t.Fatalf("viewer.error visibility = %#v, want private", got)
+	}
+	if got := event.Payload["channel"]; got != "viewer" {
+		t.Fatalf("viewer.error channel = %#v, want viewer", got)
+	}
+	if _, exists := event.Payload["actor_kind"]; exists {
+		t.Fatalf("viewer.error actor_kind = %#v, want no task execution identity before Run issuance", event.Payload["actor_kind"])
+	}
+	if _, exists := event.Payload["actor_id"]; exists {
+		t.Fatalf("viewer.error actor_id = %#v, want no task execution identity before Run issuance", event.Payload["actor_id"])
+	}
 	if event.TraceID != modulecore.TraceID(accepted.TraceID) {
 		t.Fatalf("canonical envelope trace_id = %q, want accepted trace_id %q", event.TraceID, accepted.TraceID)
 	}
@@ -1353,5 +1397,122 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	}
 	if _, ok := points[string(turntiming.PointResponsePublicationStarted)]; ok {
 		t.Fatalf("failed turn must not invent response_publication_started: %#v", points)
+	}
+}
+
+func TestLegacyCMDMioTerminalErrorReachesAuthenticatedGlobalSSE(t *testing.T) {
+	const token = "viewer-send-owner-token-0123456789"
+	tokenPath := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := openViewerBridgeAdmissionStore(t)
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	hub := viewer.NewEventHub(16)
+	hub.SetSessionPublicReplayReader(archive)
+	deps := &Dependencies{
+		eventRelay:          &idleAwareEventListener{archive: archive, hub: hub},
+		canonicalEventStore: store,
+		eventHub:            hub,
+	}
+	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: tokenPath, UserID: "ren"}}
+	repository := sessionpersistence.NewJSONSessionRepository(t.TempDir())
+	if err := repository.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("warm canonical Session index: %v", err)
+	}
+	address, err := domainconversation.NewChannelAddress("viewer", "cmd:ren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Now().UTC()
+	session, err := domainsession.NewCanonicalSessionWithOwner(modulecore.NewSessionID(), "ren", createdAt.Format("2006-01-02"), address, createdAt)
+	if err != nil {
+		t.Fatalf("construct current CMD Session: %v", err)
+	}
+	if err := repository.Save(context.Background(), session); err != nil {
+		t.Fatalf("save current CMD Session: %v", err)
+	}
+	acceptedBinding, err := domainsession.NewCanonicalSessionPublicationBinding(session)
+	if err != nil {
+		t.Fatalf("capture current CMD Session binding: %v", err)
+	}
+	deps.sessionRepository = repository
+	handler := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repository).ViewerSendFromOrch(viewerBridgeErrorProcessor{})
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"private recall","to":"mio"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	request.Header.Set("X-RenCrow-Interaction-Profile", "cmd-chat")
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Host = "127.0.0.1:18790"
+	attachViewerBridgeTestPresence(t, deps, request)
+	acceptedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(acceptedResponse, request)
+	if acceptedResponse.Code != http.StatusOK {
+		t.Fatalf("legacy send status=%d body=%s, want accepted response", acceptedResponse.Code, acceptedResponse.Body.String())
+	}
+	var accepted struct {
+		SessionID  string `json:"session_id"`
+		RootTaskID string `json:"root_task_id"`
+		TraceID    string `json:"trace_id"`
+	}
+	if err := json.NewDecoder(acceptedResponse.Body).Decode(&accepted); err != nil {
+		t.Fatalf("decode accepted legacy response: %v", err)
+	}
+	if accepted.SessionID != string(acceptedBinding.SessionID()) || accepted.RootTaskID == "" || accepted.TraceID == "" {
+		t.Fatalf("accepted response=%+v, want current Session and task/trace identities", accepted)
+	}
+	var terminal modulecore.EventEnvelope
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		items, listErr := store.ListByComponent(context.Background(), "orchestrator", 100)
+		if listErr != nil {
+			t.Fatalf("read canonical terminal error: %v", listErr)
+		}
+		for _, item := range items {
+			if item.EventType == "viewer.error" && item.Payload["trace_id"] == accepted.TraceID {
+				terminal = item
+				break
+			}
+		}
+		if terminal.EventType != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if terminal.EventType == "" {
+		t.Fatal("timed out waiting for bridge-published viewer.error")
+	}
+	if terminal.Payload["task_id"] != accepted.RootTaskID || terminal.Payload["trace_id"] != accepted.TraceID ||
+		terminal.Payload["session_id"] != accepted.SessionID || terminal.Payload["publication_incarnation"] != acceptedBinding.PublicationIncarnation() {
+		t.Fatalf("terminal event identity does not match the accepted current binding: payload=%#v accepted=%+v binding=%+v", terminal.Payload, accepted, acceptedBinding)
+	}
+
+	ownerStream := routeTestOwnerRequest("/viewer/events?to=mio", token)
+	ownerContext, ownerCancel := context.WithCancel(ownerStream.Context())
+	defer ownerCancel()
+	ownerResponse := &cancelRouteSSEWriter{ResponseRecorder: httptest.NewRecorder(), cancel: ownerCancel}
+	viewerGlobalEventsHandler(cfg, deps).ServeHTTP(ownerResponse, ownerStream.WithContext(ownerContext))
+	ownerBody := ownerResponse.Body.String()
+	if !strings.Contains(ownerBody, "viewer processing failed") || !strings.Contains(ownerBody, accepted.RootTaskID) || !strings.Contains(ownerBody, accepted.TraceID) {
+		t.Fatalf("authenticated CMD SSE omitted correlated current-binding error: %s", ownerBody)
+	}
+
+	otherToken := "viewer-send-other-owner-token-0123456789"
+	otherTokenPath := filepath.Join(t.TempDir(), "other-owner.token")
+	if err := os.WriteFile(otherTokenPath, []byte(otherToken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherCfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: otherTokenPath, UserID: "other"}}
+	otherStream := routeTestOwnerRequest("/viewer/events?to=mio", otherToken)
+	otherContext, otherCancel := context.WithTimeout(otherStream.Context(), 100*time.Millisecond)
+	defer otherCancel()
+	otherResponse := &cancelRouteSSEWriter{ResponseRecorder: httptest.NewRecorder(), cancel: otherCancel}
+	viewerGlobalEventsHandler(otherCfg, deps).ServeHTTP(otherResponse, otherStream.WithContext(otherContext))
+	if strings.Contains(otherResponse.Body.String(), "viewer processing failed") {
+		t.Fatalf("different authenticated owner received CMD terminal error: %s", otherResponse.Body.String())
 	}
 }
