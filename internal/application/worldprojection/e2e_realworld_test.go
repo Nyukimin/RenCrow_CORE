@@ -40,7 +40,9 @@ func TestRealWorldEpochUnchangedRequiresMatchingHead(t *testing.T) {
 		ActorID: "mio", ActorInstanceID: "core-instance-mio", ActorTransportID: "mio",
 	}
 	token := "core-e2e-token"
-	publisher, err := appprojection.NewHTTPPublisher(baseURL, token, 5*time.Second)
+	// epoch_unchanged is a reconcile write, so CORE needs the separate reconcile
+	// credential the harness grants; the projection credential alone fails closed.
+	publisher, err := appprojection.NewHTTPPublisherWithReconcile(baseURL, token, "core-e2e-reconcile-token", 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewHTTPPublisher() error = %v", err)
 	}
@@ -372,18 +374,20 @@ func startRealWorld(t *testing.T, bin string) (string, func()) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	token := "core-e2e-token"
+	reconcileToken := "core-e2e-reconcile-token"
 	sum := sha256.Sum256([]byte(token))
+	reconcileSum := sha256.Sum256([]byte(reconcileToken))
 	config := fmt.Sprintf(`{
   "listen": "127.0.0.1:%d",
   "store_path": %q,
   "scope": {"world_id": "rencrow-home", "timeline_id": "timeline-1", "timeline_epoch": "epoch-e2e"},
-  "tokens": [{"id": "core", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["projection", "projection_reconcile"]}],
+  "tokens": [{"id": "core", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["projection", "projection_reconcile"]}, {"id": "core-reconcile", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["projection_reconcile"]}],
   "core_projection_actors": [{"actor_id": "mio", "actor_instance_id": "core-instance-mio"}],
   "page": {"max_events": 500, "max_bytes": 2097152},
   "sse": {"heartbeat_seconds": 2, "poll_millis": 50},
   "allow_probe_action": true,
   "initial_state": {"actors": {"mio": {"room_id": "1f-living"}}, "resources": {"chair": 1}}
-}`, port, filepath.Join(dir, "world.db"), hex.EncodeToString(sum[:]))
+}`, port, filepath.Join(dir, "world.db"), hex.EncodeToString(sum[:]), hex.EncodeToString(reconcileSum[:]))
 	configPath := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
