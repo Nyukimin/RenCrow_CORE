@@ -96,6 +96,42 @@ func TestCommitConversationTurnUsesExactTaskIdentityAndFilteredPack(t *testing.T
 	}
 }
 
+func TestCommitConversationTurnPassesThroughSynchronousFallbackWithoutPreparation(t *testing.T) {
+	testTask := newAgentTurnInput(t, "hello", "viewer", "chat-1")
+	var got conversation.ConversationTurnRequest
+	engine := &syncOnlyConversationEngine{ConversationEngine: &mockConversationEngine{}}
+	engine.commitTurnFunc = func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+		engine.commitCalls++
+		got = request
+		if request.Preparation != nil {
+			t.Fatalf("sync-only engine got preparation: %+v", request.Preparation)
+		}
+		return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnCompleted}, nil
+	}
+	if err := commitConversationTurn(context.Background(), engine, testTask, "chat-1", "hello", "hi", conversation.SpeakerMio, nil); err != nil {
+		t.Fatalf("synchronous commit without preparation failed: %v", err)
+	}
+	if engine.commitCalls != 1 {
+		t.Fatalf("sync commits=%d, want 1", engine.commitCalls)
+	}
+	if got.TurnID != testTask.TurnID() || got.Preparation != nil {
+		t.Fatalf("fallback request=%+v, want exact turn ID and no preparation", got)
+	}
+}
+
+type syncOnlyConversationEngine struct {
+	conversation.ConversationEngine
+	commitTurnFunc func(context.Context, conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
+	commitCalls    int
+}
+
+func (e *syncOnlyConversationEngine) CommitConversationTurn(ctx context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+	if e.commitTurnFunc != nil {
+		return e.commitTurnFunc(ctx, request)
+	}
+	return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnCompleted}, nil
+}
+
 func TestCommitConversationTurnPropagatesRequiredFollowerFailure(t *testing.T) {
 	engine := &mockConversationEngine{
 		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {

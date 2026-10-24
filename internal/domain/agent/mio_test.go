@@ -481,15 +481,31 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 // === mockConversationEngine ===
 
 type mockConversationEngine struct {
-	beginTurnFunc  func(ctx context.Context, sessionID string, userMessage string) (*conversation.RecallPack, error)
-	endTurnFunc    func(ctx context.Context, sessionID string, userMessage string, response string) error
-	endTurnAsFunc  func(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error
-	commitTurnFunc func(ctx context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
-	commitRequests []conversation.ConversationTurnRequest
-	flushFunc      func(ctx context.Context, sessionID string) error
-	statusFunc     func(ctx context.Context, sessionID string) (*conversation.ConversationStatus, error)
-	resetFunc      func(ctx context.Context, sessionID string) error
-	persona        conversation.PersonaState
+	beginTurnFunc   func(ctx context.Context, sessionID string, userMessage string) (*conversation.RecallPack, error)
+	endTurnFunc     func(ctx context.Context, sessionID string, userMessage string, response string) error
+	endTurnAsFunc   func(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error
+	commitTurnFunc  func(ctx context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
+	prepareTurnFunc func(ctx context.Context, turnID, sessionID string) (*conversation.ConversationTurnPreparation, error)
+	releaseTurnFunc func(ctx context.Context, preparation *conversation.ConversationTurnPreparation) error
+	commitRequests  []conversation.ConversationTurnRequest
+	flushFunc       func(ctx context.Context, sessionID string) error
+	statusFunc      func(ctx context.Context, sessionID string) (*conversation.ConversationStatus, error)
+	resetFunc       func(ctx context.Context, sessionID string) error
+	persona         conversation.PersonaState
+}
+
+func (m *mockConversationEngine) PrepareConversationTurn(ctx context.Context, turnID, sessionID string) (*conversation.ConversationTurnPreparation, error) {
+	if m.prepareTurnFunc != nil {
+		return m.prepareTurnFunc(ctx, turnID, sessionID)
+	}
+	return &conversation.ConversationTurnPreparation{TurnID: modulecore.TurnID(turnID), SessionID: sessionID}, nil
+}
+
+func (m *mockConversationEngine) ReleaseConversationTurnPreparation(ctx context.Context, preparation *conversation.ConversationTurnPreparation) error {
+	if m.releaseTurnFunc != nil {
+		return m.releaseTurnFunc(ctx, preparation)
+	}
+	return nil
 }
 
 func (m *mockConversationEngine) BeginTurn(ctx context.Context, sessionID string, userMessage string) (*conversation.RecallPack, error) {

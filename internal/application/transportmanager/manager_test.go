@@ -248,6 +248,320 @@ func TestAdmittedBeginAndCompleteResponseDoNotWaitForOSLockAndSyncWriterFences(t
 	}
 }
 
+func TestAdmittedTransportWritesProceedWhileSynchronousWriteWaitsForOSLock(t *testing.T) {
+	ctx, actions, actionStore, _, attempt := transportTestActionWithStore(t)
+	queue := transportTestQueue(t, 16)
+	if err := actionStore.SetPersistenceQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	storeRoot := filepath.Join(t.TempDir(), "transport")
+	store, err := transportpersistence.NewJSONLStore(storeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPersistenceQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	manager := transportmanager.New(store, actions)
+	admission, err := persistencequeue.Admit(queue, 4, 1<<16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = admission.Release()
+		_ = queue.Shutdown(context.Background())
+	})
+	requestCtx := persistencequeue.WithAdmission(ctx, admission)
+
+	releaseLock, blockerDone := holdJSONLBatchLock(t, storeRoot)
+	type beginResult struct {
+		request domaintransport.Request
+		err     error
+	}
+	synchronousDone := make(chan beginResult, 1)
+	go func() {
+		request, callErr := manager.BeginRequest(ctx, "llm.chat")
+		synchronousDone <- beginResult{request: request, err: callErr}
+	}()
+	waitTransportQueueInFlight(t, queue)
+
+	// The non-admitted write is now waiting for its own FIFO ticket while the
+	// worker is blocked on the filesystem lock. RAM admission must stay usable.
+	foregroundDone := make(chan struct {
+		request  domaintransport.Request
+		response domaintransport.Response
+		err      error
+	}, 1)
+	go func() {
+		request, callErr := manager.BeginRequest(requestCtx, "llm.chat")
+		if callErr != nil {
+			foregroundDone <- struct {
+				request  domaintransport.Request
+				response domaintransport.Response
+				err      error
+			}{err: callErr}
+			return
+		}
+		response, callErr := manager.CompleteResponse(requestCtx, request.RequestID, "provider-response")
+		foregroundDone <- struct {
+			request  domaintransport.Request
+			response domaintransport.Response
+			err      error
+		}{request: request, response: response, err: callErr}
+	}()
+	var foreground struct {
+		request  domaintransport.Request
+		response domaintransport.Response
+		err      error
+	}
+	select {
+	case foreground = <-foregroundDone:
+	case <-time.After(time.Second):
+		t.Fatal("admitted transport write waited behind the synchronous filesystem write")
+	}
+	if foreground.err != nil {
+		t.Fatalf("admitted BeginRequest/CompleteResponse() error = %v", foreground.err)
+	}
+	if foreground.request.Sequence != 2 || foreground.response.RequestID != foreground.request.RequestID || foreground.response.AttemptID != attempt.AttemptID {
+		t.Fatalf("foreground transport lineage/sequence = request %#v response %#v", foreground.request, foreground.response)
+	}
+	requests, err := manager.ListRequests(requestCtx, domaintransport.RequestFilter{AttemptID: attempt.AttemptID})
+	if err != nil || len(requests) != 2 || requests[0].Sequence != 1 || requests[1].Sequence != 2 || requests[1].Status != domaintransport.RequestStatusResponded {
+		t.Fatalf("RAM read-your-writes requests=%#v err=%v", requests, err)
+	}
+	select {
+	case got := <-synchronousDone:
+		t.Fatalf("synchronous write returned before its FIFO ticket became durable: %#v", got)
+	default:
+	}
+
+	releaseLock()
+	if err := <-blockerDone; err != nil {
+		t.Fatal(err)
+	}
+	background := <-synchronousDone
+	if background.err != nil || background.request.Sequence != 1 {
+		t.Fatalf("synchronous write after filesystem unlock = %#v", background)
+	}
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("accepted transport writes did not drain: %v", err)
+	}
+	reopened, err := transportpersistence.NewJSONLStore(storeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := reopened.ListRequests(context.Background(), domaintransport.RequestFilter{AttemptID: attempt.AttemptID})
+	if err != nil || len(restored) != 2 || restored[0].Sequence != 1 || restored[0].Status != domaintransport.RequestStatusSent || restored[1].Sequence != 2 || restored[1].Status != domaintransport.RequestStatusResponded {
+		t.Fatalf("durable requests after FIFO drain=%#v err=%v", restored, err)
+	}
+	responses, err := reopened.ListResponses(context.Background(), domaintransport.ResponseFilter{AttemptID: attempt.AttemptID})
+	if err != nil || len(responses) != 1 || responses[0].ResponseID != foreground.response.ResponseID {
+		t.Fatalf("durable response after FIFO drain=%#v err=%v", responses, err)
+	}
+}
+
+func TestSynchronousTransportReadPreservesNewerRAMOverlay(t *testing.T) {
+	ctx, actions, actionStore, _, attempt := transportTestActionWithStore(t)
+	queue := transportTestQueue(t, 16)
+	if err := actionStore.SetPersistenceQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	storeRoot := filepath.Join(t.TempDir(), "transport")
+	store, err := transportpersistence.NewJSONLStore(storeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPersistenceQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	manager := transportmanager.New(store, actions)
+	admission, err := persistencequeue.Admit(queue, 4, 1<<16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = admission.Release()
+		_ = queue.Shutdown(context.Background())
+	})
+	requestCtx := persistencequeue.WithAdmission(ctx, admission)
+
+	releaseLock, blockerDone := holdJSONLBatchLock(t, storeRoot)
+	first, err := manager.BeginRequest(requestCtx, "llm.chat")
+	if err != nil || first.Sequence != 1 {
+		t.Fatalf("first admitted request=%#v err=%v", first, err)
+	}
+
+	gateStarted := make(chan struct{})
+	gateRelease := make(chan struct{})
+	var gateReleaseOnce sync.Once
+	releaseGate := func() { gateReleaseOnce.Do(func() { close(gateRelease) }) }
+	readCtx := &transportReadBarrierContext{
+		Context:        context.Background(),
+		ticketCaptured: make(chan struct{}),
+		afterWait:      make(chan struct{}),
+		resumeRead:     make(chan struct{}),
+	}
+	var resumeReadOnce sync.Once
+	resumeRead := func() { resumeReadOnce.Do(func() { close(readCtx.resumeRead) }) }
+	t.Cleanup(func() {
+		releaseLock()
+		releaseGate()
+		resumeRead()
+	})
+	if _, err := queue.Enqueue(persistencequeue.PersistenceCommand{
+		Owner:     persistencequeue.OwnerTransport,
+		Kind:      "transport.test_read_gate",
+		SizeBytes: 1,
+		Apply: func(context.Context) error {
+			close(gateStarted)
+			<-gateRelease
+			return nil
+		},
+	}, 1); err != nil {
+		t.Fatalf("enqueue test FIFO gate: %v", err)
+	}
+	type readResult struct {
+		requests []domaintransport.Request
+		err      error
+	}
+	readDone := make(chan readResult, 1)
+	go func() {
+		var requests []domaintransport.Request
+		readErr := store.ReadTransaction(readCtx, func(tx domaintransport.Store) error {
+			var err error
+			requests, err = tx.ListRequests(readCtx, domaintransport.RequestFilter{AttemptID: attempt.AttemptID})
+			return err
+		})
+		readDone <- readResult{requests: requests, err: readErr}
+	}()
+	select {
+	case <-readCtx.ticketCaptured:
+	case <-time.After(time.Second):
+		t.Fatal("synchronous read did not capture its transport ticket before waiting")
+	}
+
+	releaseLock()
+	if err := <-blockerDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-gateStarted:
+	case <-time.After(time.Second):
+		t.Fatal("transport FIFO did not reach the test gate after the captured ticket")
+	}
+	select {
+	case <-readCtx.afterWait:
+	case <-time.After(time.Second):
+		t.Fatal("synchronous read did not finish its captured FIFO barrier")
+	}
+
+	second, err := manager.BeginRequest(requestCtx, "llm.chat")
+	if err != nil || second.Sequence != 2 {
+		t.Fatalf("second admitted request=%#v err=%v", second, err)
+	}
+	resumeRead()
+	select {
+	case result := <-readDone:
+		if result.err != nil || len(result.requests) != 1 || result.requests[0].RequestID != first.RequestID {
+			t.Fatalf("synchronous read at captured ticket=%#v err=%v", result.requests, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("synchronous durable read did not finish after its ticket became durable")
+	}
+	requests, err := manager.ListRequests(requestCtx, domaintransport.RequestFilter{AttemptID: attempt.AttemptID})
+	if err != nil || len(requests) != 2 || requests[0].RequestID != first.RequestID || requests[1].RequestID != second.RequestID {
+		t.Fatalf("durable read overwrote a newer RAM overlay: requests=%#v err=%v", requests, err)
+	}
+	releaseGate()
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("accepted transport writes did not drain: %v", err)
+	}
+}
+
+func TestSynchronousTransportCancellationAndEmptyTransactionBarrier(t *testing.T) {
+	ctx, actions, actionStore, _, attempt := transportTestActionWithStore(t)
+	queue := transportTestQueue(t, 16)
+	if err := actionStore.SetPersistenceQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	storeRoot := filepath.Join(t.TempDir(), "transport")
+	store, err := transportpersistence.NewJSONLStore(storeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPersistenceQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	manager := transportmanager.New(store, actions)
+	t.Cleanup(func() { _ = queue.Shutdown(context.Background()) })
+
+	cancelledCtx, cancelBeforeEnqueue := context.WithCancel(ctx)
+	cancelBeforeEnqueue()
+	callbackCalled := false
+	if err := store.Transaction(cancelledCtx, func(domaintransport.Store) error {
+		callbackCalled = true
+		return nil
+	}); !errors.Is(err, context.Canceled) || callbackCalled {
+		t.Fatalf("cancel before enqueue error=%v callbackCalled=%v", err, callbackCalled)
+	}
+	if status := queue.Status(); status.Pending != 0 {
+		t.Fatalf("cancelled transaction enqueued work: status=%+v", status)
+	}
+
+	releaseLock, blockerDone := holdJSONLBatchLock(t, storeRoot)
+	requestCtx, cancelAfterEnqueue := context.WithCancel(ctx)
+	type beginResult struct {
+		request domaintransport.Request
+		err     error
+	}
+	backgroundDone := make(chan beginResult, 1)
+	go func() {
+		request, callErr := manager.BeginRequest(requestCtx, "llm.chat")
+		backgroundDone <- beginResult{request: request, err: callErr}
+	}()
+	waitTransportQueueInFlight(t, queue)
+	cancelAfterEnqueue()
+	background := <-backgroundDone
+	if !errors.Is(background.err, context.Canceled) {
+		t.Fatalf("accepted transport write cancellation result=%#v", background)
+	}
+
+	emptyCallbackCalled := make(chan struct{})
+	emptyDone := make(chan error, 1)
+	go func() {
+		emptyDone <- store.Transaction(context.Background(), func(domaintransport.Store) error {
+			close(emptyCallbackCalled)
+			return nil
+		})
+	}()
+	select {
+	case <-emptyCallbackCalled:
+	case <-time.After(time.Second):
+		t.Fatal("empty transaction callback did not run")
+	}
+	select {
+	case err := <-emptyDone:
+		t.Fatalf("empty transaction skipped the pending-ticket barrier: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	releaseLock()
+	if err := <-blockerDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-emptyDone; err != nil {
+		t.Fatalf("empty transaction after the accepted ticket drained: %v", err)
+	}
+	reopened, err := transportpersistence.NewJSONLStore(storeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests, err := reopened.ListRequests(context.Background(), domaintransport.RequestFilter{AttemptID: attempt.AttemptID})
+	if err != nil || len(requests) != 1 || requests[0].Sequence != 1 || requests[0].Status != domaintransport.RequestStatusSent {
+		t.Fatalf("accepted write did not continue after caller cancellation: requests=%#v err=%v", requests, err)
+	}
+}
+
 func TestAdmittedTransportSerializesConcurrentRAMOverlay(t *testing.T) {
 	ctx, _, _, attempt := transportTestAction(t)
 	queue := transportTestQueue(t, 32)
@@ -424,6 +738,36 @@ func TestTransportAdmissionRejectsMismatchReservationExhaustionAndHeadFailure(t 
 			t.Fatalf("read after head failure error=%v, request=%s", err, request.RequestID)
 		}
 	})
+}
+
+type transportReadBarrierContext struct {
+	context.Context
+	ticketCaptured chan struct{}
+	afterWait      chan struct{}
+	resumeRead     chan struct{}
+	errCalls       int
+	captureOnce    sync.Once
+	afterWaitOnce  sync.Once
+}
+
+// Done signals that the read has passed its ticket snapshot and entered Queue.Wait.
+// The third Err call is the store's cancellation check after Queue.Wait returns.
+// Holding that check places a new RAM write after the read barrier but before
+// the durable disk read, without coordinating through the timing of ctx.Err.
+func (c *transportReadBarrierContext) Done() <-chan struct{} {
+	c.captureOnce.Do(func() { close(c.ticketCaptured) })
+	return c.Context.Done()
+}
+
+func (c *transportReadBarrierContext) Err() error {
+	c.errCalls++
+	if c.errCalls == 3 {
+		c.afterWaitOnce.Do(func() {
+			close(c.afterWait)
+			<-c.resumeRead
+		})
+	}
+	return c.Context.Err()
 }
 
 func transportTestQueue(t *testing.T, capacity int) *persistencequeue.Queue[persistencequeue.PersistenceCommand] {

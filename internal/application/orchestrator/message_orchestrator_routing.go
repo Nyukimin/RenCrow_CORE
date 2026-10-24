@@ -40,10 +40,18 @@ func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalE
 
 func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID) (routing.Decision, error) {
 	result, err := c.DecideWithChatDraft(ctx, input, req, taskID, false)
+	c.releaseChatDraft(ctx, result.ChatDraft)
 	return result.Decision, err
 }
 
 func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID, allowCombined bool) (routeDecisionResult, error) {
+	var draftForRelease *domainagent.MioChatDraft
+	transferredDraft := false
+	defer func() {
+		if !transferredDraft {
+			c.releaseChatDraft(ctx, draftForRelease)
+		}
+	}()
 	if recipient, ok := directViewerRecipientForChat(req); ok {
 		return routeDecisionResult{Decision: directViewerRecipientDecision(recipient), Context: ctx}, nil
 	}
@@ -52,8 +60,10 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 	var err error
 	if combined, ok := c.mio.(interface {
 		DecideActionWithChatDraft(context.Context, domainconversation.TurnInput, bool) (routing.Decision, *domainagent.MioChatDraft, error)
+		ReleaseChatDraft(context.Context, *domainagent.MioChatDraft)
 	}); ok && allowCombined {
 		decision, chatDraft, err = combined.DecideActionWithChatDraft(ctx, input, true)
+		draftForRelease = chatDraft
 	} else {
 		decision, err = c.mio.DecideAction(ctx, input)
 	}
@@ -66,6 +76,7 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 		return routeDecisionResult{Decision: decision, Context: ctx}, nil
 	}
 	if chatDraft.Failed() {
+		transferredDraft = true
 		return routeDecisionResult{Decision: decision, ChatDraft: chatDraft, Context: ctx}, nil
 	}
 	decision, ctx, err = c.applyHeavyWorkerPolicy(ctx, decision, req, taskID)
@@ -75,7 +86,19 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 	if decision.Route != routing.RouteCHAT || decision.Route != classifiedRoute {
 		chatDraft = nil
 	}
+	transferredDraft = chatDraft != nil
 	return routeDecisionResult{Decision: decision, ChatDraft: chatDraft, Context: ctx}, nil
+}
+
+func (c *routeDecisionCoordinator) releaseChatDraft(ctx context.Context, draft *domainagent.MioChatDraft) {
+	if c == nil || draft == nil {
+		return
+	}
+	if releaser, ok := c.mio.(interface {
+		ReleaseChatDraft(context.Context, *domainagent.MioChatDraft)
+	}); ok {
+		releaser.ReleaseChatDraft(ctx, draft)
+	}
 }
 
 // directViewerRecipientForChat returns the explicit Viewer recipient (shiro,

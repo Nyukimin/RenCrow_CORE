@@ -87,6 +87,51 @@ type typedConversationTurnEngine interface {
 	CommitConversationTurn(context.Context, conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
 }
 
+type preparedConversationTurnEngine interface {
+	PrepareConversationTurn(context.Context, string, string) (*conversation.ConversationTurnPreparation, error)
+	ReleaseConversationTurnPreparation(context.Context, *conversation.ConversationTurnPreparation) error
+}
+
+func prepareConversationTurn(ctx context.Context, engine conversation.ConversationEngine, t conversation.TurnInput) (*conversation.ConversationTurnPreparation, error) {
+	if !supportsConversationTurnPreparation(engine) {
+		return nil, conversation.ErrConversationTurnUnavailable
+	}
+	preparer := engine.(preparedConversationTurnEngine)
+	return preparer.PrepareConversationTurn(ctx, string(t.TurnID()), t.SessionID())
+}
+
+type conversationTurnPreparationCapability interface {
+	SupportsConversationTurnPreparation() bool
+}
+
+func supportsConversationTurnPreparation(engine conversation.ConversationEngine) bool {
+	if _, ok := engine.(preparedConversationTurnEngine); !ok {
+		return false
+	}
+	if capability, ok := engine.(conversationTurnPreparationCapability); ok {
+		return capability.SupportsConversationTurnPreparation()
+	}
+	return true
+}
+
+func releaseConversationTurnPreparation(ctx context.Context, engine conversation.ConversationEngine, preparation *conversation.ConversationTurnPreparation) {
+	if preparation == nil {
+		return
+	}
+	releaser, ok := engine.(preparedConversationTurnEngine)
+	if !ok {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	} else {
+		ctx = context.WithoutCancel(ctx)
+	}
+	if err := releaser.ReleaseConversationTurnPreparation(ctx, preparation); err != nil {
+		log.Printf("[ConversationTurn] prepared head release failed: %v", err)
+	}
+}
+
 // commitConversationTurn is the only production Agent completion route. The
 // narrow capability check prevents an Agent from silently falling back to the
 // legacy EndTurn/EndTurnAs API, which cannot carry the exact filtered RecallPack
@@ -95,10 +140,14 @@ type typedConversationTurnEngine interface {
 // Accepted means the canonical manager admitted the immutable turn to the
 // shared persistence queue. Partial means the turn is committed in L1 with its
 // receipt while one or more followers stay in the durable outbox.
-func commitConversationTurn(ctx context.Context, engine conversation.ConversationEngine, t conversation.TurnInput, sessionID, userMessage, response string, speaker conversation.Speaker, pack *conversation.RecallPack) error {
+func commitConversationTurn(ctx context.Context, engine conversation.ConversationEngine, t conversation.TurnInput, sessionID, userMessage, response string, speaker conversation.Speaker, pack *conversation.RecallPack, preparation ...*conversation.ConversationTurnPreparation) error {
 	committer, ok := engine.(typedConversationTurnEngine)
 	if !ok {
 		return conversation.ErrConversationTurnUnavailable
+	}
+	var prepared *conversation.ConversationTurnPreparation
+	if len(preparation) > 0 {
+		prepared = preparation[0]
 	}
 	turntiming.Mark(ctx, turntiming.PointConversationCommitStarted)
 	result, err := committer.CommitConversationTurn(ctx, conversation.ConversationTurnRequest{
@@ -112,6 +161,7 @@ func commitConversationTurn(ctx context.Context, engine conversation.Conversatio
 		AgentMessage:     response,
 		AgentSpeaker:     speaker,
 		RecallTraceItems: pack.ToTraceItems(),
+		Preparation:      prepared,
 	})
 	turntiming.Mark(ctx, turntiming.PointConversationCommitEnded)
 	if err != nil {

@@ -454,6 +454,8 @@ func TestExplicitAdmissionFailsFastWhileSynchronousTaskWriterWaitsForJSONLLock(t
 		}
 		t.Fatalf("admitted read/write while synchronous JSONL writer is blocked: read=%v (returned=%v), write=%v (returned=%v); want ErrTaskAdmissionBusy immediately", readErr, readReturned, writeErr, writeReturned)
 	}
+	assertTaskAdmissionBusyCause(t, readErr, "sync_writer")
+	assertTaskAdmissionBusyCause(t, writeErr, "sync_writer")
 
 	releaseOSLock()
 	if err := <-lockDone; err != nil {
@@ -534,11 +536,13 @@ func TestExplicitAdmissionFailsFastWhenTaskLocksAreContended(t *testing.T) {
 
 	tests := []struct {
 		name      string
+		cause     string
 		lock      func() func()
 		operation func() error
 	}{
 		{
-			name: "Task store read lock",
+			name:  "Task store read lock",
+			cause: "transaction_lock",
 			lock: func() func() {
 				store.mu.Lock()
 				return store.mu.Unlock
@@ -548,7 +552,8 @@ func TestExplicitAdmissionFailsFastWhenTaskLocksAreContended(t *testing.T) {
 			},
 		},
 		{
-			name: "Task store write lock",
+			name:  "Task store write lock",
+			cause: "store_lock",
 			lock: func() func() {
 				store.mu.Lock()
 				return store.mu.Unlock
@@ -558,7 +563,8 @@ func TestExplicitAdmissionFailsFastWhenTaskLocksAreContended(t *testing.T) {
 			},
 		},
 		{
-			name: "persistence queue state lock",
+			name:  "persistence queue state lock",
+			cause: "state_lock",
 			lock: func() func() {
 				store.taskPersistence.mu.Lock()
 				return store.taskPersistence.mu.Unlock
@@ -568,7 +574,8 @@ func TestExplicitAdmissionFailsFastWhenTaskLocksAreContended(t *testing.T) {
 			},
 		},
 		{
-			name: "index writer lock",
+			name:  "index writer lock",
+			cause: "index_lock",
 			lock: func() func() {
 				store.idx.mu.Lock()
 				return store.idx.mu.Unlock
@@ -578,7 +585,8 @@ func TestExplicitAdmissionFailsFastWhenTaskLocksAreContended(t *testing.T) {
 			},
 		},
 		{
-			name: "index writer lock for transaction",
+			name:  "index writer lock for transaction",
+			cause: "index_lock",
 			lock: func() func() {
 				store.idx.mu.Lock()
 				return store.idx.mu.Unlock
@@ -602,7 +610,56 @@ func TestExplicitAdmissionFailsFastWhenTaskLocksAreContended(t *testing.T) {
 			if !errors.Is(err, ErrTaskAdmissionBusy) {
 				t.Fatalf("admitted operation with contended %s = %v, want ErrTaskAdmissionBusy", test.name, err)
 			}
+			assertTaskAdmissionBusyCause(t, err, test.cause)
 		})
+	}
+}
+
+func TestExplicitAdmissionReportsSynchronousAndConcurrentAdmissionCauseCodes(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		cause     string
+		configure func(*taskPersistenceQueueState)
+	}{
+		{
+			name:  "synchronous writer",
+			cause: "sync_writer",
+			configure: func(state *taskPersistenceQueueState) {
+				state.synchronousWriter = true
+			},
+		},
+		{
+			name:  "concurrent admitted transaction",
+			cause: "concurrent_admitted",
+			configure: func(state *taskPersistenceQueueState) {
+				state.admittedTxs = 1
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := newTaskPersistenceQueueState()
+			test.configure(state)
+			_, err := state.beginAdmitted(context.Background())
+			assertTaskAdmissionBusyCause(t, err, test.cause)
+		})
+	}
+}
+
+func assertTaskAdmissionBusyCause(t *testing.T, err error, want string) {
+	t.Helper()
+	if !errors.Is(err, ErrTaskAdmissionBusy) {
+		t.Fatalf("admission error = %v, want ErrTaskAdmissionBusy", err)
+	}
+	var busyErr interface{ CauseCode() string }
+	if !errors.As(err, &busyErr) {
+		t.Fatalf("admission error %T (%v) does not expose a typed busy cause", err, err)
+	}
+	if busyErr.CauseCode() != want {
+		t.Fatalf("admission cause code = %q, want %q (error: %v)", busyErr.CauseCode(), want, err)
+	}
+	wantMessage := ErrTaskAdmissionBusy.Error() + " (cause=" + want + ")"
+	if err.Error() != wantMessage {
+		t.Fatalf("admission error message = %q, want %q", err.Error(), wantMessage)
 	}
 }
 

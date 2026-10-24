@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -61,10 +63,142 @@ func (r *RealConversationManager) LoadActiveConversationThread(ctx context.Conte
 	return conversationThreadFromL1Projection(events, domconv.ThreadActive)
 }
 
+// PrepareConversationTurn reserves the session's current RAM head for one
+// typed turn. A cold L1 projection read happens after the reservation is
+// visible and without holding the global overlay mutex.
+func (r *RealConversationManager) PrepareConversationTurn(ctx context.Context, turnID modulecore.TurnID, sessionID, ownerID string) (*domconv.ConversationTurnPreparation, error) {
+	if r == nil || ctx == nil || r.l1Store == nil || turnID.Validate() != nil || modulecore.SessionID(sessionID).Validate() != nil || strings.TrimSpace(ownerID) == "" {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	store, ok := r.l1Store.(conversationTurnL1Store)
+	if !ok {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ownerID = strings.TrimSpace(ownerID)
+
+	r.turnOverlayMu.Lock()
+	if r.turnOverlays == nil {
+		r.turnOverlays = make(map[string]*conversationTurnOverlay)
+	}
+	overlay := r.turnOverlays[sessionID]
+	if overlay != nil {
+		if overlay.ownerID != ownerID || overlay.headFailure != nil || overlay.preparation != nil || overlay.preparingTurnID != "" || overlay.syncTurnID != "" {
+			r.turnOverlayMu.Unlock()
+			return nil, domconv.ErrConversationTurnConflict
+		}
+		if overlay.head != nil {
+			preparation := &domconv.ConversationTurnPreparation{
+				TurnID: turnID, SessionID: sessionID, OwnerID: ownerID,
+				Revision: overlay.revision, ActiveThread: cloneThreadForStore(overlay.head),
+			}
+			overlay.preparation = cloneConversationTurnPreparation(preparation)
+			r.turnOverlayMu.Unlock()
+			return preparation, nil
+		}
+		overlay.preparingTurnID = turnID
+	} else {
+		overlay = &conversationTurnOverlay{ownerID: ownerID, preparingTurnID: turnID}
+		r.turnOverlays[sessionID] = overlay
+	}
+	revision := overlay.revision
+	r.turnOverlayMu.Unlock()
+
+	events, err := store.LoadActiveConversationThreadProjection(ctx, sessionID)
+	var active *domconv.Thread
+	if err == nil {
+		active, err = conversationThreadFromL1Projection(events, domconv.ThreadActive)
+	} else if errors.Is(err, domconv.ErrThreadNotFound) {
+		err = nil
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		r.clearConversationTurnPreparationRead(sessionID, ownerID, turnID, revision)
+		return nil, err
+	}
+
+	r.turnOverlayMu.Lock()
+	current := r.turnOverlays[sessionID]
+	if current == nil || current.ownerID != ownerID || current.preparingTurnID != turnID || current.revision != revision || current.headFailure != nil {
+		r.turnOverlayMu.Unlock()
+		return nil, domconv.ErrConversationTurnConflict
+	}
+	current.preparingTurnID = ""
+	current.head = cloneThreadForStore(active)
+	preparation := &domconv.ConversationTurnPreparation{
+		TurnID: turnID, SessionID: sessionID, OwnerID: ownerID,
+		Revision: revision, ActiveThread: cloneThreadForStore(active),
+	}
+	current.preparation = cloneConversationTurnPreparation(preparation)
+	r.turnOverlayMu.Unlock()
+	return preparation, nil
+}
+
+func (r *RealConversationManager) clearConversationTurnPreparationRead(sessionID, ownerID string, turnID modulecore.TurnID, revision uint64) {
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	overlay := r.turnOverlays[sessionID]
+	if overlay == nil || overlay.ownerID != ownerID || overlay.preparingTurnID != turnID || overlay.revision != revision {
+		return
+	}
+	overlay.preparingTurnID = ""
+	if len(overlay.pending) == 0 && overlay.preparation == nil && overlay.syncTurnID == "" {
+		delete(r.turnOverlays, sessionID)
+	}
+}
+
+// ReleaseConversationTurnPreparation releases a lease abandoned before the
+// matching EndTurn was admitted. Releasing an already consumed lease is safe.
+func (r *RealConversationManager) ReleaseConversationTurnPreparation(_ context.Context, preparation *domconv.ConversationTurnPreparation) error {
+	if r == nil || preparation == nil {
+		return nil
+	}
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	overlay := r.turnOverlays[preparation.SessionID]
+	if overlay == nil || overlay.preparation == nil {
+		return nil
+	}
+	if !sameConversationTurnPreparation(overlay.preparation, preparation) {
+		return domconv.ErrConversationTurnConflict
+	}
+	overlay.preparation = nil
+	if len(overlay.pending) == 0 && overlay.preparingTurnID == "" && overlay.syncTurnID == "" {
+		delete(r.turnOverlays, preparation.SessionID)
+	}
+	return nil
+}
+
+// ValidateConversationTurnPreparation confirms that a caller still carries the
+// exact immutable head snapshot held by the canonical RAM overlay.
+func (r *RealConversationManager) ValidateConversationTurnPreparation(ctx context.Context, preparation *domconv.ConversationTurnPreparation) error {
+	if r == nil || ctx == nil || preparation == nil {
+		return domconv.ErrConversationTurnInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.turnOverlayMu.RLock()
+	defer r.turnOverlayMu.RUnlock()
+	overlay := r.turnOverlays[preparation.SessionID]
+	if overlay == nil || overlay.ownerID != preparation.OwnerID || overlay.revision != preparation.Revision ||
+		overlay.preparation == nil || overlay.preparingTurnID != "" || overlay.syncTurnID != "" ||
+		!sameConversationTurnPreparation(overlay.preparation, preparation) {
+		return domconv.ErrConversationTurnConflict
+	}
+	return nil
+}
+
 // CommitConversationTurn is the canonical manager boundary for an EndTurn.
-// L1 commits first and the active Redis projection is applied synchronously.
-// Closed-thread followers remain durable but ineligible until the exact public
-// final response has been appended to the canonical event store.
+// Admitted requests require a prepared RAM head, update that overlay, and enqueue
+// persistence without reading L1. Synchronous requests commit L1 before applying
+// the active Redis projection. Closed-thread followers remain durable but
+// ineligible until the exact public final response has been appended to the
+// canonical event store.
 func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
 	base := failedConversationTurnManagerResult(request, domconv.ConversationTurnErrorUnavailable)
 	if r == nil || r.l1Store == nil {
@@ -74,22 +208,85 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 	if !ok {
 		return base, domconv.ErrConversationTurnUnavailable
 	}
+	preparation := cloneConversationTurnPreparation(request.Preparation)
+	request.Preparation = nil
 	normalized, err := domconv.NormalizeConversationTurnRequest(request)
 	if err != nil {
 		base.ErrorCode = domconv.ConversationTurnErrorInvalid
 		return base, err
 	}
+	normalized.Preparation = preparation
 	if admission, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
-		return r.acceptConversationTurn(ctx, store, admission, normalized)
+		if preparation == nil && !r.hasPendingConversationTurn(normalized.SessionID, normalized.TurnID) {
+			base.ErrorCode = domconv.ConversationTurnErrorUnavailable
+			return base, domconv.ErrConversationTurnUnavailable
+		}
+		turntiming.Mark(ctx, turntiming.PointConversationRAMAcceptStarted)
+		result, acceptErr := r.acceptConversationTurn(ctx, store, admission, normalized)
+		turntiming.Mark(ctx, turntiming.PointConversationRAMAcceptEnded)
+		if acceptErr != nil && preparation != nil {
+			_ = r.ReleaseConversationTurnPreparation(context.Background(), preparation)
+		}
+		return result, acceptErr
 	}
+	return r.commitConversationTurnSynchronouslyWithReservation(ctx, store, normalized)
+}
+
+func (r *RealConversationManager) hasPendingConversationTurn(sessionID string, turnID modulecore.TurnID) bool {
 	r.turnOverlayMu.RLock()
-	_, hasOverlay := r.turnOverlays[normalized.SessionID]
-	r.turnOverlayMu.RUnlock()
-	if hasOverlay {
-		base.ErrorCode = domconv.ConversationTurnErrorConflict
-		return base, domconv.ErrConversationTurnConflict
+	defer r.turnOverlayMu.RUnlock()
+	overlay := r.turnOverlays[sessionID]
+	if overlay == nil {
+		return false
 	}
-	return r.commitConversationTurnSynchronously(ctx, store, normalized)
+	for _, pending := range overlay.pending {
+		if pending.request.TurnID == turnID {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *RealConversationManager) commitConversationTurnSynchronouslyWithReservation(ctx context.Context, store conversationTurnL1Store, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	base := failedConversationTurnManagerResult(request, domconv.ConversationTurnErrorUnavailable)
+	r.turnOverlayMu.Lock()
+	if r.turnOverlays == nil {
+		r.turnOverlays = make(map[string]*conversationTurnOverlay)
+	}
+	overlay := r.turnOverlays[request.SessionID]
+	if request.Preparation == nil {
+		if overlay != nil {
+			r.turnOverlayMu.Unlock()
+			base.ErrorCode = domconv.ConversationTurnErrorConflict
+			return base, domconv.ErrConversationTurnConflict
+		}
+		overlay = &conversationTurnOverlay{ownerID: request.OwnerID, syncTurnID: request.TurnID}
+		r.turnOverlays[request.SessionID] = overlay
+	} else {
+		if overlay == nil || overlay.ownerID != request.OwnerID || overlay.preparation == nil ||
+			!sameConversationTurnPreparation(overlay.preparation, request.Preparation) || overlay.revision != request.Preparation.Revision ||
+			len(overlay.pending) > 0 || overlay.headFailure != nil || overlay.syncTurnID != "" {
+			r.turnOverlayMu.Unlock()
+			base.ErrorCode = domconv.ConversationTurnErrorConflict
+			return base, domconv.ErrConversationTurnConflict
+		}
+		overlay.syncTurnID = request.TurnID
+	}
+	r.turnOverlayMu.Unlock()
+
+	result, err := r.commitConversationTurnSynchronously(ctx, store, request)
+	r.turnOverlayMu.Lock()
+	if current := r.turnOverlays[request.SessionID]; current == overlay && current.syncTurnID == request.TurnID {
+		current.syncTurnID = ""
+		if request.Preparation != nil && sameConversationTurnPreparation(current.preparation, request.Preparation) {
+			current.preparation = nil
+		}
+		if len(current.pending) == 0 && current.preparation == nil && current.preparingTurnID == "" {
+			delete(r.turnOverlays, request.SessionID)
+		}
+	}
+	r.turnOverlayMu.Unlock()
+	return result, err
 }
 
 func (r *RealConversationManager) commitConversationTurnSynchronously(ctx context.Context, store conversationTurnL1Store, normalized domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
@@ -178,6 +375,8 @@ func (r *RealConversationManager) acceptConversationTurn(
 		return base, domconv.ErrConversationTurnInvalid
 	}
 	request = cloneConversationTurnRequest(request)
+	preparation := cloneConversationTurnPreparation(request.Preparation)
+	request.Preparation = nil
 	request.ThreadPlan = nil
 	payloadSHA, err := domconv.ConversationTurnPayloadSHA256(request)
 	if err != nil {
@@ -214,21 +413,13 @@ func (r *RealConversationManager) acceptConversationTurn(
 		}
 	}
 
-	var active *domconv.Thread
-	if hadPrevious && previous.head != nil {
-		active = cloneThreadForStore(previous.head)
-	} else {
-		events, loadErr := store.LoadActiveConversationThreadProjection(ctx, request.SessionID)
-		if loadErr != nil && !errors.Is(loadErr, domconv.ErrThreadNotFound) {
-			return base, loadErr
-		}
-		if loadErr == nil {
-			active, loadErr = conversationThreadFromL1Projection(events, domconv.ThreadActive)
-			if loadErr != nil {
-				return base, loadErr
-			}
-		}
+	if !hadPrevious || previous.ownerID != request.OwnerID || previous.preparation == nil ||
+		!sameConversationTurnPreparation(previous.preparation, preparation) || previous.revision != preparation.Revision ||
+		previous.preparingTurnID != "" || previous.syncTurnID != "" || previous.headFailure != nil {
+		base.ErrorCode = domconv.ConversationTurnErrorConflict
+		return base, domconv.ErrConversationTurnConflict
 	}
+	active := cloneThreadForStore(previous.head)
 	var activeState *domconv.ConversationTurnActiveThreadState
 	if active != nil {
 		activeState = &domconv.ConversationTurnActiveThreadState{
@@ -263,6 +454,10 @@ func (r *RealConversationManager) acceptConversationTurn(
 		next = &conversationTurnOverlay{ownerID: request.OwnerID}
 	}
 	next.head = head
+	next.revision = previous.revision + 1
+	next.preparingTurnID = ""
+	next.preparation = nil
+	next.syncTurnID = ""
 	if closed != nil {
 		next.closed = closed
 		next.closedByTurnID = string(request.TurnID)
@@ -393,7 +588,22 @@ func cloneConversationTurnRequest(request domconv.ConversationTurnRequest) domco
 		plan := *request.ThreadPlan
 		request.ThreadPlan = &plan
 	}
+	request.Preparation = cloneConversationTurnPreparation(request.Preparation)
 	return request
+}
+
+func cloneConversationTurnPreparation(preparation *domconv.ConversationTurnPreparation) *domconv.ConversationTurnPreparation {
+	if preparation == nil {
+		return nil
+	}
+	copyPreparation := *preparation
+	copyPreparation.ActiveThread = cloneThreadForStore(preparation.ActiveThread)
+	return &copyPreparation
+}
+
+func sameConversationTurnPreparation(left, right *domconv.ConversationTurnPreparation) bool {
+	return left != nil && right != nil && left.TurnID == right.TurnID && left.SessionID == right.SessionID &&
+		left.OwnerID == right.OwnerID && left.Revision == right.Revision && reflect.DeepEqual(left.ActiveThread, right.ActiveThread)
 }
 
 func cloneConversationTurnResult(result domconv.ConversationTurnResult) domconv.ConversationTurnResult {
@@ -411,6 +621,7 @@ func cloneConversationTurnOverlay(overlay *conversationTurnOverlay) *conversatio
 	copyOverlay := *overlay
 	copyOverlay.head = cloneThreadForStore(overlay.head)
 	copyOverlay.closed = cloneThreadForStore(overlay.closed)
+	copyOverlay.preparation = cloneConversationTurnPreparation(overlay.preparation)
 	copyOverlay.pending = make([]acceptedConversationTurn, len(overlay.pending))
 	for index, pending := range overlay.pending {
 		copyOverlay.pending[index] = acceptedConversationTurn{
@@ -466,7 +677,7 @@ func (r *RealConversationManager) completeAcceptedConversationTurn(sessionID str
 			overlay.closed = nil
 			overlay.closedByTurnID = ""
 		}
-		if len(overlay.pending) == 0 {
+		if len(overlay.pending) == 0 && overlay.preparation == nil && overlay.preparingTurnID == "" && overlay.syncTurnID == "" {
 			delete(r.turnOverlays, sessionID)
 		}
 		return

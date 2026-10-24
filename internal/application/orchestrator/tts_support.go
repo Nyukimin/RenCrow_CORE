@@ -89,6 +89,7 @@ func pushTTSWithDisplay(ctx context.Context, bridge TTSBridge, sessionID, speech
 
 type ttsStreamForwarder struct {
 	bridge       TTSBridge
+	parentCtx    context.Context
 	sessionID    string
 	route        routing.Route
 	eventType    string
@@ -104,7 +105,7 @@ type ttsStreamForwarder struct {
 
 // newTTSStreamForwarder voices the stream of the given speaker (the Agent whose
 // model generates the tokens, equal to the turn's agent.response from).
-func newTTSStreamForwarder(bridge TTSBridge, sessionID string, route routing.Route, speaker, eventType, logPrefix string) *ttsStreamForwarder {
+func newTTSStreamForwarder(bridge TTSBridge, sessionID string, route routing.Route, speaker, eventType, logPrefix string, requestCtx context.Context) *ttsStreamForwarder {
 	if bridge == nil || strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
@@ -114,6 +115,7 @@ func newTTSStreamForwarder(bridge TTSBridge, sessionID string, route routing.Rou
 	}
 	f := &ttsStreamForwarder{
 		bridge:       bridge,
+		parentCtx:    requestCtx,
 		sessionID:    sessionID,
 		route:        route,
 		eventType:    eventType,
@@ -130,7 +132,7 @@ func newTTSStreamForwarder(bridge TTSBridge, sessionID string, route routing.Rou
 func (f *ttsStreamForwarder) run() {
 	defer f.wg.Done()
 	for text := range f.queue {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(f.parentCtx), 20*time.Second)
 		f.pushChunk(ctx, text)
 		cancel()
 	}

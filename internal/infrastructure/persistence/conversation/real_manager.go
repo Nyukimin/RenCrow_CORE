@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -45,12 +46,16 @@ type acceptedConversationTurn struct {
 }
 
 type conversationTurnOverlay struct {
-	ownerID        string
-	head           *domconv.Thread
-	closed         *domconv.Thread
-	closedByTurnID string
-	pending        []acceptedConversationTurn
-	headFailure    error
+	ownerID         string
+	head            *domconv.Thread
+	closed          *domconv.Thread
+	closedByTurnID  string
+	revision        uint64
+	preparingTurnID modulecore.TurnID
+	preparation     *domconv.ConversationTurnPreparation
+	syncTurnID      modulecore.TurnID
+	pending         []acceptedConversationTurn
+	headFailure     error
 }
 
 // turnProjectionLock serializes the required active Redis projection with

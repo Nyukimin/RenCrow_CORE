@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -34,6 +35,52 @@ type admittedTurnCommitGateStore struct {
 	release  chan struct{}
 	release1 sync.Once
 	fail     error
+}
+
+type blockingActiveProjectionStore struct {
+	*l1sqlite.L1SQLiteStore
+	started chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	loads   int
+}
+
+func (s *blockingActiveProjectionStore) LoadActiveConversationThreadProjection(ctx context.Context, sessionID string) ([]l1sqlite.L1MemoryEvent, error) {
+	s.mu.Lock()
+	s.loads++
+	s.mu.Unlock()
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	if s.release != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return s.L1SQLiteStore.LoadActiveConversationThreadProjection(ctx, sessionID)
+}
+
+func (s *blockingActiveProjectionStore) loadCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loads
+}
+
+type conversationTurnPreparationManager interface {
+	PrepareConversationTurn(context.Context, modulecore.TurnID, string, string) (*domconv.ConversationTurnPreparation, error)
+	ReleaseConversationTurnPreparation(context.Context, *domconv.ConversationTurnPreparation) error
+}
+
+func prepareManagerTurnForTest(t *testing.T, ctx context.Context, manager *RealConversationManager, request *domconv.ConversationTurnRequest) {
+	t.Helper()
+	preparation, err := manager.PrepareConversationTurn(ctx, request.TurnID, request.SessionID, request.OwnerID)
+	if err != nil {
+		t.Fatalf("PrepareConversationTurn(%s): %v", request.TurnID, err)
+	}
+	request.Preparation = preparation
 }
 
 func (s *admittedTurnCommitGateStore) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
@@ -78,6 +125,194 @@ func newConversationTurnAdmission(t *testing.T, commandCount int) (*persistenceq
 	return queue, admission, persistencequeue.WithAdmission(context.Background(), admission)
 }
 
+func TestRealConversationManagerPreparesColdHeadOutsideGlobalOverlayLockAndAcceptsWithoutSecondRead(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "prepared-head.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	sessionID := string(modulecore.NewSessionID())
+	seed := managerTurnTestRequest("prepared-head-seed", sessionID)
+	seedResult, err := l1.CommitConversationTurn(context.Background(), seed)
+	if err != nil {
+		t.Fatalf("seed active thread: %v", err)
+	}
+	store := &blockingActiveProjectionStore{L1SQLiteStore: l1, started: make(chan struct{}, 2), release: make(chan struct{})}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: store}
+	preparer, ok := interface{}(manager).(conversationTurnPreparationManager)
+	if !ok {
+		t.Fatal("RealConversationManager does not implement conversation turn preparation")
+	}
+
+	request := managerTurnTestRequest("prepared-head-accepted", sessionID)
+	request.Targets = manager.ConversationTurnTargets()
+	type preparationResult struct {
+		value *domconv.ConversationTurnPreparation
+		err   error
+	}
+	prepared := make(chan preparationResult, 1)
+	go func() {
+		value, err := preparer.PrepareConversationTurn(context.Background(), request.TurnID, request.SessionID, request.OwnerID)
+		prepared <- preparationResult{value: value, err: err}
+	}()
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("cold active-head read did not start")
+	}
+
+	lockAcquired := make(chan struct{})
+	go func() {
+		manager.turnOverlayMu.Lock()
+		manager.turnOverlayMu.Unlock()
+		close(lockAcquired)
+	}()
+	select {
+	case <-lockAcquired:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("cold L1 read held the global turn overlay lock")
+	}
+
+	other := managerTurnTestRequest("prepared-head-competing", sessionID)
+	if _, err := preparer.PrepareConversationTurn(context.Background(), other.TurnID, other.SessionID, other.OwnerID); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("competing preparation error=%v, want session conflict", err)
+	}
+	if _, err := manager.CommitConversationTurn(context.Background(), other); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("synchronous route competing with preparation error=%v, want session conflict", err)
+	}
+
+	close(store.release)
+	result := <-prepared
+	if result.err != nil || result.value == nil || result.value.ActiveThread == nil {
+		t.Fatalf("prepared=%+v err=%v, want cold active head", result.value, result.err)
+	}
+	if result.value.ActiveThread.ID != seedResult.ThreadID || result.value.Revision != 0 {
+		t.Fatalf("prepared head=%+v revision=%d, want seed thread %s at revision zero", result.value.ActiveThread, result.value.Revision, seedResult.ThreadID)
+	}
+
+	_, _, admittedCtx := newConversationTurnAdmission(t, 1)
+	recorder := turntiming.New(time.Now())
+	admittedCtx = turntiming.WithRecorder(admittedCtx, recorder)
+	request.Preparation = result.value
+	accepted, err := manager.CommitConversationTurn(admittedCtx, request)
+	if err != nil || accepted.Status != domconv.ConversationTurnAccepted || accepted.ThreadID != seedResult.ThreadID {
+		t.Fatalf("accepted=%+v err=%v, want accepted on prepared RAM head", accepted, err)
+	}
+	if loads := store.loadCount(); loads != 1 {
+		t.Fatalf("active projection loads=%d, want exactly the single pre-generation read", loads)
+	}
+	points := recorder.Snapshot().PointsMS
+	for _, point := range []turntiming.Point{turntiming.PointConversationRAMAcceptStarted, turntiming.PointConversationRAMAcceptEnded} {
+		if _, ok := points[string(point)]; !ok {
+			t.Errorf("missing timing point %q: %#v", point, points)
+		}
+	}
+}
+
+func TestRealConversationManagerPreparationReadFailureReleasesSessionReservation(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "prepared-read-failure.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	manager := &RealConversationManager{
+		redisStore: newMockRedisStore(),
+		l1Store:    &failingRecallProjectionStore{L1SQLiteStore: l1},
+	}
+	preparer, ok := interface{}(manager).(conversationTurnPreparationManager)
+	if !ok {
+		t.Fatal("RealConversationManager does not implement conversation turn preparation")
+	}
+	request := managerTurnTestRequest("prepared-read-failure", string(modulecore.NewSessionID()))
+	if _, err := preparer.PrepareConversationTurn(context.Background(), request.TurnID, request.SessionID, request.OwnerID); err == nil {
+		t.Fatal("PrepareConversationTurn() error=nil, want cold L1 read failure")
+	}
+	manager.turnOverlayMu.RLock()
+	_, reserved := manager.turnOverlays[request.SessionID]
+	manager.turnOverlayMu.RUnlock()
+	if reserved {
+		t.Fatal("failed cold read left a session reservation behind")
+	}
+}
+
+func TestRealConversationManagerAdmittedCommitWithoutPreparationDoesNotReadL1(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "missing-preparation.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	store := &blockingActiveProjectionStore{L1SQLiteStore: l1, started: make(chan struct{}, 1), release: make(chan struct{})}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: store}
+	_, _, admittedCtx := newConversationTurnAdmission(t, 1)
+	commitCtx, cancel := context.WithTimeout(admittedCtx, 100*time.Millisecond)
+	defer cancel()
+	request := managerTurnTestRequest("admitted-missing-preparation", string(modulecore.NewSessionID()))
+	request.Targets = manager.ConversationTurnTargets()
+
+	result, err := manager.CommitConversationTurn(commitCtx, request)
+	if !errors.Is(err, domconv.ErrConversationTurnUnavailable) || result.ErrorCode != domconv.ConversationTurnErrorUnavailable {
+		t.Fatalf("result=%+v err=%v, want immediate unavailable without a preparation lease", result, err)
+	}
+	if loads := store.loadCount(); loads != 0 {
+		t.Fatalf("active projection loads=%d, want no EndTurn L1 read", loads)
+	}
+}
+
+func TestRealConversationManagerWorkerCompletionKeepsPreparedRAMHead(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "prepared-worker-completion.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	gate := &admittedTurnCommitGateStore{L1SQLiteStore: l1, started: make(chan domconv.ConversationTurnRequest, 2), release: make(chan struct{})}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: gate}
+	_, admission, ctx := newConversationTurnAdmission(t, 2)
+	defer gate.unblock()
+
+	firstRequest := managerTurnTestRequest("prepared-worker-first", string(modulecore.NewSessionID()))
+	firstRequest.Targets = manager.ConversationTurnTargets()
+	prepareManagerTurnForTest(t, ctx, manager, &firstRequest)
+	first, err := manager.CommitConversationTurn(ctx, firstRequest)
+	if err != nil || first.Status != domconv.ConversationTurnAccepted {
+		t.Fatalf("first=%+v err=%v, want accepted", first, err)
+	}
+	select {
+	case <-gate.started:
+	case <-time.After(time.Second):
+		t.Fatal("persistence worker did not reach the blocked writer")
+	}
+
+	preparer := conversationTurnPreparationManager(manager)
+	secondRequest := managerTurnTestRequest("prepared-worker-second", firstRequest.SessionID)
+	secondRequest.Targets = manager.ConversationTurnTargets()
+	preparation, err := preparer.PrepareConversationTurn(ctx, secondRequest.TurnID, secondRequest.SessionID, secondRequest.OwnerID)
+	if err != nil || preparation == nil || preparation.ActiveThread == nil || len(preparation.ActiveThread.Turns) != 2 {
+		t.Fatalf("preparation=%+v err=%v, want first accepted RAM head", preparation, err)
+	}
+
+	gate.unblock()
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("first admission barrier: %v", err)
+	}
+	manager.turnOverlayMu.RLock()
+	overlay := manager.turnOverlays[firstRequest.SessionID]
+	kept := overlay != nil && overlay.preparation != nil && sameConversationTurnPreparation(overlay.preparation, preparation) &&
+		overlay.head != nil && len(overlay.head.Turns) == 2 && overlay.head.Turns[1].Msg == firstRequest.AgentMessage
+	manager.turnOverlayMu.RUnlock()
+	if !kept {
+		t.Fatal("worker completion removed or replaced the RAM head held by the preparation")
+	}
+
+	secondRequest.Preparation = preparation
+	second, err := manager.CommitConversationTurn(ctx, secondRequest)
+	if err != nil || second.Status != domconv.ConversationTurnAccepted || second.ThreadID != first.ThreadID {
+		t.Fatalf("second=%+v err=%v, want accepted against the prepared thread", second, err)
+	}
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("second admission barrier: %v", err)
+	}
+}
+
 func TestRealConversationManagerAdmittedTurnIsVisibleBeforeBlockedWriter(t *testing.T) {
 	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "admitted-blocked.db"))
 	if err != nil {
@@ -97,6 +332,7 @@ func TestRealConversationManagerAdmittedTurnIsVisibleBeforeBlockedWriter(t *test
 
 	firstRequest := managerTurnTestRequest("turn-admitted-first", "session-admitted-blocked")
 	firstRequest.Targets = manager.ConversationTurnTargets()
+	prepareManagerTurnForTest(t, ctx, manager, &firstRequest)
 	staleThread, err := domconv.NewThread(firstRequest.SessionID, "legacy", domconv.ThreadKindUserConversation, 1)
 	if err != nil {
 		t.Fatalf("NewThread stale Redis fixture: %v", err)
@@ -145,6 +381,7 @@ func TestRealConversationManagerAdmittedTurnIsVisibleBeforeBlockedWriter(t *test
 
 	secondRequest := managerTurnTestRequest("turn-admitted-second", firstRequest.SessionID)
 	secondRequest.Targets = manager.ConversationTurnTargets()
+	prepareManagerTurnForTest(t, ctx, manager, &secondRequest)
 	second, err := manager.CommitConversationTurn(ctx, secondRequest)
 	if err != nil || string(second.Status) != "accepted" {
 		t.Fatalf("second=%+v err=%v, want accepted", second, err)
@@ -192,6 +429,7 @@ func TestRealConversationManagerAdmittedTurnConflictAndIdempotentReplay(t *testi
 
 	request := managerTurnTestRequest("turn-admitted-replay", "session-admitted-replay")
 	request.Targets = manager.ConversationTurnTargets()
+	prepareManagerTurnForTest(t, ctx, manager, &request)
 	first, err := manager.CommitConversationTurn(ctx, request)
 	if err != nil || string(first.Status) != "accepted" {
 		t.Fatalf("first=%+v err=%v, want accepted", first, err)
@@ -202,11 +440,14 @@ func TestRealConversationManagerAdmittedTurnConflictAndIdempotentReplay(t *testi
 		t.Fatal("persistence worker did not reach the blocked writer")
 	}
 
-	replay, err := manager.CommitConversationTurn(ctx, request)
+	replayRequest := request
+	replayRequest.Preparation = nil
+	replay, err := manager.CommitConversationTurn(ctx, replayRequest)
 	if err != nil || string(replay.Status) != "accepted" || !replay.IdempotentReplay {
 		t.Fatalf("replay=%+v err=%v, want accepted idempotent replay", replay, err)
 	}
 	conflicting := request
+	conflicting.Preparation = nil
 	conflicting.AgentMessage = "different payload"
 	if _, err := manager.CommitConversationTurn(ctx, conflicting); !errors.Is(err, domconv.ErrConversationTurnConflict) {
 		t.Fatalf("conflicting accepted replay err=%v, want conflict", err)
@@ -214,8 +455,8 @@ func TestRealConversationManagerAdmittedTurnConflictAndIdempotentReplay(t *testi
 	differentOwner := managerTurnTestRequest("turn-admitted-other-owner", request.SessionID)
 	differentOwner.OwnerID = "owner-other"
 	differentOwner.Targets = manager.ConversationTurnTargets()
-	if _, err := manager.CommitConversationTurn(ctx, differentOwner); !errors.Is(err, domconv.ErrConversationTurnConflict) {
-		t.Fatalf("different owner err=%v, want conflict for an active session overlay", err)
+	if _, err := manager.CommitConversationTurn(ctx, differentOwner); !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
+		t.Fatalf("different owner without a preparation err=%v, want unavailable", err)
 	}
 	if status := queue.Status(); status.Pending != 1 {
 		t.Fatalf("pending commands=%d, want exactly one accepted turn", status.Pending)
@@ -241,6 +482,7 @@ func TestRealConversationManagerAdmittedWriterFailureRetainsReadOverlay(t *testi
 
 	request := managerTurnTestRequest("turn-admitted-failure", "session-admitted-failure")
 	request.Targets = manager.ConversationTurnTargets()
+	prepareManagerTurnForTest(t, ctx, manager, &request)
 	accepted, err := manager.CommitConversationTurn(ctx, request)
 	if err != nil || string(accepted.Status) != "accepted" {
 		t.Fatalf("accepted=%+v err=%v, want accepted", accepted, err)

@@ -20,6 +20,47 @@ var (
 	errTaskAdmissionIndexDirty    = errors.New("explicit Task persistence admission requires a clean in-memory Task index")
 )
 
+type taskAdmissionBusyCause string
+
+const (
+	taskAdmissionBusyStateLock       taskAdmissionBusyCause = "state_lock"
+	taskAdmissionBusySyncWriter      taskAdmissionBusyCause = "sync_writer"
+	taskAdmissionBusyConcurrentAdmit taskAdmissionBusyCause = "concurrent_admitted"
+	taskAdmissionBusyIndexLock       taskAdmissionBusyCause = "index_lock"
+	taskAdmissionBusyStoreLock       taskAdmissionBusyCause = "store_lock"
+	taskAdmissionBusyTransactionLock taskAdmissionBusyCause = "transaction_lock"
+)
+
+// TaskAdmissionBusyError identifies the non-sensitive checkpoint that made an
+// explicitly admitted Task operation fail fast. It unwraps to ErrTaskAdmissionBusy
+// so existing callers can continue to classify the error with errors.Is.
+type TaskAdmissionBusyError struct {
+	causeCode taskAdmissionBusyCause
+}
+
+func (e *TaskAdmissionBusyError) Error() string {
+	if e == nil {
+		return ErrTaskAdmissionBusy.Error()
+	}
+	return ErrTaskAdmissionBusy.Error() + " (cause=" + string(e.causeCode) + ")"
+}
+
+func (e *TaskAdmissionBusyError) Unwrap() error {
+	return ErrTaskAdmissionBusy
+}
+
+// CauseCode returns the stable, non-sensitive code for the busy checkpoint.
+func (e *TaskAdmissionBusyError) CauseCode() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.causeCode)
+}
+
+func taskAdmissionBusy(cause taskAdmissionBusyCause) error {
+	return &TaskAdmissionBusyError{causeCode: cause}
+}
+
 type taskAdmissionWrite struct {
 	payloads  map[string][]byte
 	admission *persistencequeue.Admission
@@ -58,11 +99,15 @@ func (s *taskPersistenceQueueState) beginAdmitted(ctx context.Context) (func(), 
 		return nil, err
 	}
 	if !s.mu.TryLock() {
-		return nil, ErrTaskAdmissionBusy
+		return nil, taskAdmissionBusy(taskAdmissionBusyStateLock)
 	}
-	if s.synchronousWriter || s.admittedTxs != 0 {
+	if s.synchronousWriter {
 		s.mu.Unlock()
-		return nil, ErrTaskAdmissionBusy
+		return nil, taskAdmissionBusy(taskAdmissionBusySyncWriter)
+	}
+	if s.admittedTxs != 0 {
+		s.mu.Unlock()
+		return nil, taskAdmissionBusy(taskAdmissionBusyConcurrentAdmit)
 	}
 	s.admittedTxs++
 	// Keep the state lock through the indexed snapshot and callback. This makes
@@ -200,7 +245,7 @@ func (s *taskPersistenceQueueState) lockAdmissionIndexView(ix *taskIndex) (map[s
 		return nil, nil, err
 	}
 	if !ix.mu.TryRLock() {
-		return nil, nil, ErrTaskAdmissionBusy
+		return nil, nil, taskAdmissionBusy(taskAdmissionBusyIndexLock)
 	}
 	if ix.dirty.Load() {
 		ix.mu.RUnlock()
@@ -399,7 +444,7 @@ func (s *JSONLStore) admittedTransactionWithScope(
 	}
 	defer releaseAdmission()
 	if !s.mu.TryRLock() {
-		return ErrTaskAdmissionBusy
+		return taskAdmissionBusy(taskAdmissionBusyStoreLock)
 	}
 	defer s.mu.RUnlock()
 	if s.closed {

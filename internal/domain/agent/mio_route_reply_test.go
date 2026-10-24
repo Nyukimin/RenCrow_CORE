@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestMioAgent_CanUseCombinedChatDraftIsBoundedToOrdinaryMioText(t *testing.T) {
@@ -20,6 +21,11 @@ func TestMioAgent_CanUseCombinedChatDraftIsBoundedToOrdinaryMioText(t *testing.T
 	base := newAgentTurnInput(t, "こんにちは。少し話そう", "viewer", "user")
 	if !mio.canUseCombinedChatDraft(context.Background(), base) {
 		t.Fatal("ordinary Mio text with typed conversation commit should be eligible")
+	}
+	unsupportedPreparation := &preparationCapabilityConversationEngine{mockConversationEngine: &mockConversationEngine{}, supported: false}
+	unsupportedMio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, nil, nil, unsupportedPreparation)
+	if unsupportedMio.canUseCombinedChatDraft(context.Background(), base) {
+		t.Fatal("engine whose manager cannot prepare a conversation head must stay on the existing route/chat flow")
 	}
 
 	tests := []struct {
@@ -70,11 +76,21 @@ func TestMioAgent_CanUseCombinedChatDraftIsBoundedToOrdinaryMioText(t *testing.T
 	}
 }
 
+type preparationCapabilityConversationEngine struct {
+	*mockConversationEngine
+	supported bool
+}
+
+func (e *preparationCapabilityConversationEngine) SupportsConversationTurnPreparation() bool {
+	return e.supported
+}
+
 type routeReplyClassifierStub struct {
 	classifyCalls int
 	combinedCalls int
 	decision      routing.Decision
 	combinedErr   error
+	onCombined    func()
 }
 
 func (c *routeReplyClassifierStub) Classify(context.Context, conversation.TurnInput) (routing.Decision, error) {
@@ -84,7 +100,94 @@ func (c *routeReplyClassifierStub) Classify(context.Context, conversation.TurnIn
 
 func (c *routeReplyClassifierStub) ClassifyWithChatReply(context.Context, llm.GenerateRequest) (RouteReplyClassification, error) {
 	c.combinedCalls++
+	if c.onCombined != nil {
+		c.onCombined()
+	}
 	return RouteReplyClassification{Decision: c.decision, Reply: "unused", ReplyValid: true}, c.combinedErr
+}
+
+func TestMioAgentPreparesConversationHeadBeforeCombinedGenerationAndPassesLeaseToCommit(t *testing.T) {
+	var order []string
+	engine := &mockConversationEngine{
+		prepareTurnFunc: func(_ context.Context, turnID, sessionID string) (*conversation.ConversationTurnPreparation, error) {
+			order = append(order, "prepare")
+			return &conversation.ConversationTurnPreparation{
+				TurnID: modulecore.TurnID(turnID), SessionID: sessionID, OwnerID: "owner", Revision: 7,
+			}, nil
+		},
+	}
+	classifier := &routeReplyClassifierStub{
+		decision:   routing.NewDecision(routing.RouteCHAT, 0.95, "chat"),
+		onCombined: func() { order = append(order, "generate") },
+	}
+	mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+	input := newAgentTurnInput(t, "ordinary chat", "viewer", "user").WithSessionID("session-one")
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
+
+	decision, draft, err := mio.DecideActionWithChatDraft(ctx, input, true)
+	if err != nil || decision.Route != routing.RouteCHAT || draft == nil || draft.preparation == nil {
+		t.Fatalf("decision=%+v draft=%#v err=%v, want prepared CHAT draft", decision, draft, err)
+	}
+	if len(order) != 2 || order[0] != "prepare" || order[1] != "generate" {
+		t.Fatalf("order=%v, want preparation before provider generation", order)
+	}
+	if _, err := mio.ChatWithDraft(ctx, input, draft); err != nil {
+		t.Fatalf("ChatWithDraft() error=%v", err)
+	}
+	if len(engine.commitRequests) != 1 || engine.commitRequests[0].Preparation == nil || engine.commitRequests[0].Preparation.Revision != 7 {
+		t.Fatalf("commit preparation=%+v requests=%d, want the prepared head lease", engine.commitRequests, len(engine.commitRequests))
+	}
+	points := recorder.Snapshot().PointsMS
+	for _, point := range []turntiming.Point{turntiming.PointConversationHeadPreparationStarted, turntiming.PointConversationHeadPreparationEnded} {
+		if _, ok := points[string(point)]; !ok {
+			t.Errorf("missing timing point %q: %#v", point, points)
+		}
+	}
+}
+
+func TestMioAgentDoesNotGenerateWhenConversationHeadPreparationFails(t *testing.T) {
+	classifier := &routeReplyClassifierStub{decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat")}
+	engine := &mockConversationEngine{prepareTurnFunc: func(context.Context, string, string) (*conversation.ConversationTurnPreparation, error) {
+		return nil, conversation.ErrConversationTurnUnavailable
+	}}
+	mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+	decision, draft, err := mio.DecideActionWithChatDraft(context.Background(), newAgentTurnInput(t, "ordinary chat", "viewer", "user"), true)
+	if err != nil || decision.Route != routing.RouteCHAT || draft == nil || !draft.Failed() {
+		t.Fatalf("decision=%+v draft=%#v err=%v, want failed closed CHAT draft", decision, draft, err)
+	}
+	if classifier.combinedCalls != 0 {
+		t.Fatalf("provider calls=%d, want zero after head preparation failure", classifier.combinedCalls)
+	}
+}
+
+func TestMioAgentReleasesPreparedHeadWhenCombinedRouteIsNotChatOrFails(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		decision    routing.Decision
+		combinedErr error
+	}{
+		{name: "non-chat route", decision: routing.NewDecision(routing.RoutePLAN, 0.95, "plan")},
+		{name: "generation failure", decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"), combinedErr: errors.New("provider unavailable")},
+		{name: "generation cancellation", decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"), combinedErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			releases := 0
+			engine := &mockConversationEngine{releaseTurnFunc: func(context.Context, *conversation.ConversationTurnPreparation) error {
+				releases++
+				return nil
+			}}
+			classifier := &routeReplyClassifierStub{decision: tc.decision, combinedErr: tc.combinedErr}
+			mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+			_, _, err := mio.DecideActionWithChatDraft(context.Background(), newAgentTurnInput(t, "ordinary chat", "viewer", "user"), true)
+			if err != nil {
+				t.Fatalf("DecideActionWithChatDraft() error=%v", err)
+			}
+			if releases != 1 {
+				t.Fatalf("release calls=%d, want exactly one", releases)
+			}
+		})
+	}
 }
 
 func TestMioAgent_DecideActionWithChatDraftKeepsDeterministicPrecedence(t *testing.T) {

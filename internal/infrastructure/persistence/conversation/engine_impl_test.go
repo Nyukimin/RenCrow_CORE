@@ -3,12 +3,14 @@ package conversation
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -21,17 +23,18 @@ import (
 // === Mocks ===
 
 type mockManager struct {
-	recallFunc           func(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error)
-	storeFunc            func(ctx context.Context, sessionID string, msg domconv.Message) error
-	getActiveThreadFunc  func(ctx context.Context, sessionID string) (*domconv.Thread, error)
-	flushThreadFunc      func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error)
-	createThreadFunc     func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error)
-	commitTurnFunc       func(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error)
-	commitRequests       []domconv.ConversationTurnRequest
-	targets              []domconv.ConversationTurnTarget
-	saveRecallTraceCalls int
-	userMemories         []domainmemory.UserMemory
-	userMemoryErr        error
+	recallFunc              func(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error)
+	storeFunc               func(ctx context.Context, sessionID string, msg domconv.Message) error
+	getActiveThreadFunc     func(ctx context.Context, sessionID string) (*domconv.Thread, error)
+	validatePreparationFunc func(ctx context.Context, preparation *domconv.ConversationTurnPreparation) error
+	flushThreadFunc         func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error)
+	createThreadFunc        func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error)
+	commitTurnFunc          func(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error)
+	commitRequests          []domconv.ConversationTurnRequest
+	targets                 []domconv.ConversationTurnTarget
+	saveRecallTraceCalls    int
+	userMemories            []domainmemory.UserMemory
+	userMemoryErr           error
 }
 
 func (m *mockManager) Recall(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error) {
@@ -87,6 +90,13 @@ func (m *mockManager) ConversationTurnTargets() []domconv.ConversationTurnTarget
 
 func (m *mockManager) LoadActiveConversationThread(ctx context.Context, sessionID string) (*domconv.Thread, error) {
 	return m.GetActiveThread(ctx, sessionID)
+}
+
+func (m *mockManager) ValidateConversationTurnPreparation(ctx context.Context, preparation *domconv.ConversationTurnPreparation) error {
+	if m.validatePreparationFunc != nil {
+		return m.validatePreparationFunc(ctx, preparation)
+	}
+	return nil
 }
 
 func (m *mockManager) FlushThread(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
@@ -162,6 +172,15 @@ type mockDetector struct {
 
 func (m *mockDetector) Detect(currentThread *domconv.Thread, newMessage, newDomain string) domconv.ThreadBoundaryResult {
 	return m.result
+}
+
+type recordingPreparedHeadDetector struct {
+	calls int
+}
+
+func (d *recordingPreparedHeadDetector) Detect(currentThread *domconv.Thread, newMessage, newDomain string) domconv.ThreadBoundaryResult {
+	d.calls++
+	return domconv.ThreadBoundaryResult{}
 }
 
 type mockExternalRecallManager struct {
@@ -821,6 +840,187 @@ func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T
 	}
 	if len(got.Targets) != 2 || got.Targets[0] != domconv.ConversationTurnTargetRedisProjection || got.Targets[1] != domconv.ConversationTurnTargetThreadFollowers {
 		t.Fatalf("manager targets=%#v", got.Targets)
+	}
+}
+
+func TestCommitConversationTurnUsesPreparedHeadWithoutReloadingL1(t *testing.T) {
+	sessionID := string(modulecore.NewSessionID())
+	active := &domconv.Thread{
+		ID: modulecore.NewThreadID(), ThreadSeq: 3, ThreadKind: modulecore.ThreadKindUserConversation,
+		SessionID: sessionID, Domain: "prepared-domain", Status: domconv.ThreadActive,
+	}
+	var got domconv.ConversationTurnRequest
+	mgr := &mockManager{
+		getActiveThreadFunc: func(context.Context, string) (*domconv.Thread, error) {
+			t.Fatal("prepared EndTurn reloaded the active thread from L1")
+			return nil, nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			got = request
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: domconv.ConversationTurnAccepted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
+		WithUserMemoryStore(mgr, "trusted-owner").
+		WithDetector(&mockDetector{result: domconv.ThreadBoundaryResult{ShouldCreateNew: true, Reason: domconv.BoundaryKeyword}})
+	request := engineTestConversationTurnRequest(sessionID, "new topic", "reply", domconv.SpeakerMio)
+	request.Preparation = &domconv.ConversationTurnPreparation{
+		TurnID: request.TurnID, SessionID: sessionID, OwnerID: "trusted-owner", Revision: 9, ActiveThread: active,
+	}
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
+	if _, err := engine.CommitConversationTurn(ctx, request); err != nil {
+		t.Fatalf("CommitConversationTurn() error=%v", err)
+	}
+	if got.Domain != "prepared-domain" || !got.Boundary || got.BoundaryReason != string(domconv.BoundaryKeyword) || got.Preparation == nil || got.Preparation.Revision != 9 {
+		t.Fatalf("committed request=%+v, want prepared domain/boundary and lease", got)
+	}
+	points := recorder.Snapshot().PointsMS
+	if _, ok := points[string(turntiming.PointConversationDetectorStarted)]; !ok {
+		t.Fatalf("missing detector start timing point: %#v", points)
+	}
+	if _, ok := points[string(turntiming.PointConversationDetectorEnded)]; !ok {
+		t.Fatalf("missing detector end timing point: %#v", points)
+	}
+}
+
+func TestRealConversationManagerAndEngineCommitPreparedFreshSessionFirstTurn(t *testing.T) {
+	for _, admitted := range []bool{false, true} {
+		name := "synchronous"
+		if admitted {
+			name = "admitted"
+		}
+		t.Run(name, func(t *testing.T) {
+			l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "fresh-prepared-turn.db"))
+			if err != nil {
+				t.Fatalf("NewL1SQLiteStore: %v", err)
+			}
+			defer l1.Close()
+			manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: l1}
+			engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, "fresh-owner")
+			sessionID := string(modulecore.NewSessionID())
+			request := engineTestConversationTurnRequest(sessionID, "first message", "first reply", domconv.SpeakerMio)
+			preparation, err := engine.PrepareConversationTurn(context.Background(), string(request.TurnID), sessionID)
+			if err != nil || preparation == nil || preparation.ActiveThread != nil {
+				t.Fatalf("PrepareConversationTurn() = %+v, %v; want successful empty-head lease", preparation, err)
+			}
+			request.Preparation = preparation
+
+			ctx := context.Background()
+			var admission *persistencequeue.Admission
+			var queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]
+			if admitted {
+				queue, err = persistencequeue.NewPersistenceQueue(4, 1<<20)
+				if err != nil {
+					t.Fatalf("NewPersistenceQueue: %v", err)
+				}
+				admission, err = persistencequeue.Admit(queue, 1, 1<<20)
+				if err != nil {
+					t.Fatalf("Admit: %v", err)
+				}
+				ctx = persistencequeue.WithAdmission(ctx, admission)
+				defer func() {
+					_ = admission.Release()
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					if err := queue.Shutdown(shutdownCtx); err != nil {
+						t.Errorf("queue shutdown: %v", err)
+					}
+				}()
+			}
+
+			result, err := engine.CommitConversationTurn(ctx, request)
+			if err != nil {
+				t.Fatalf("CommitConversationTurn() = %+v, %v; want first turn accepted", result, err)
+			}
+			if admitted {
+				if result.Status != domconv.ConversationTurnAccepted {
+					t.Fatalf("status=%s, want accepted", result.Status)
+				}
+				if err := admission.Barrier(context.Background()); err != nil {
+					t.Fatalf("admission barrier: %v", err)
+				}
+			} else if result.Status != domconv.ConversationTurnCompleted {
+				t.Fatalf("status=%s, want completed", result.Status)
+			}
+			if _, err := l1.GetConversationTurnReceipt(context.Background(), string(request.TurnID)); err != nil {
+				t.Fatalf("first turn receipt: %v", err)
+			}
+		})
+	}
+}
+
+func TestRealConversationEngineRejectsAdmittedMissingPreparationBeforeActiveHeadRead(t *testing.T) {
+	activeReads := 0
+	commits := 0
+	manager := &mockManager{
+		getActiveThreadFunc: func(context.Context, string) (*domconv.Thread, error) {
+			activeReads++
+			return newEngineTestThread("session", "general"), nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			commits++
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnAccepted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, "owner")
+	_, _, admittedCtx := newConversationTurnAdmission(t, 1)
+	request := engineTestConversationTurnRequest("session", "hello", "hi", domconv.SpeakerMio)
+	result, err := engine.CommitConversationTurn(admittedCtx, request)
+	if !errors.Is(err, domconv.ErrConversationTurnUnavailable) || result.ErrorCode != domconv.ConversationTurnErrorUnavailable {
+		t.Fatalf("result=%+v err=%v, want missing-preparation unavailable", result, err)
+	}
+	if activeReads != 0 || commits != 0 {
+		t.Fatalf("active reads=%d commits=%d, want neither head read nor manager commit", activeReads, commits)
+	}
+}
+
+func TestRealConversationEngineRejectsMutatedPreparedHeadBeforeDecisionOrCommit(t *testing.T) {
+	mutations := []struct {
+		name   string
+		mutate func(*domconv.Thread)
+	}{
+		{name: "domain", mutate: func(thread *domconv.Thread) { thread.Domain = "forged-domain" }},
+		{name: "turn body", mutate: func(thread *domconv.Thread) { thread.Turns[0].Msg = "forged turn" }},
+		{name: "thread identity", mutate: func(thread *domconv.Thread) { thread.ID = modulecore.NewThreadID() }},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "prepared-head-mutation.db"))
+			if err != nil {
+				t.Fatalf("NewL1SQLiteStore: %v", err)
+			}
+			defer l1.Close()
+			sessionID := string(modulecore.NewSessionID())
+			seed := engineTestConversationTurnRequest(sessionID, "canonical user", "canonical reply", domconv.SpeakerMio)
+			seed.OwnerID = "trusted-owner"
+			seed.Domain = "canonical-domain"
+			if _, err := l1.CommitConversationTurn(context.Background(), seed); err != nil {
+				t.Fatalf("seed active thread: %v", err)
+			}
+			manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: l1}
+			detector := &recordingPreparedHeadDetector{}
+			engine := NewRealConversationEngine(manager, domconv.PersonaState{}).
+				WithUserMemoryStore(nil, seed.OwnerID).
+				WithDetector(detector)
+			request := engineTestConversationTurnRequest(sessionID, "next user", "next reply", domconv.SpeakerMio)
+			preparation, err := engine.PrepareConversationTurn(context.Background(), string(request.TurnID), sessionID)
+			if err != nil || preparation == nil || preparation.ActiveThread == nil {
+				t.Fatalf("PrepareConversationTurn() = %+v, %v", preparation, err)
+			}
+			mutation.mutate(preparation.ActiveThread)
+			request.Preparation = preparation
+
+			if _, err := engine.CommitConversationTurn(context.Background(), request); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+				t.Fatalf("CommitConversationTurn() error=%v, want conflict for a modified snapshot", err)
+			}
+			if detector.calls != 0 {
+				t.Fatalf("boundary detector calls=%d, want zero before rejecting modified snapshot", detector.calls)
+			}
+			if _, err := l1.GetConversationTurnReceipt(context.Background(), string(request.TurnID)); err == nil {
+				t.Fatal("modified preparation produced a durable turn receipt")
+			}
+		})
 	}
 }
 

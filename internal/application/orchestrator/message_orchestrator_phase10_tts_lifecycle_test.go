@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func TestPhase10TTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
@@ -163,5 +165,93 @@ func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackWithoutPublicDelt
 	}
 	if _, ok := recorder.Snapshot().PointsMS[string(turntiming.PointFirstTextCallback)]; !ok {
 		t.Fatal("first non-empty text callback was not timed")
+	}
+}
+
+type ttsStreamContextKey struct{}
+
+type ttsStreamPushObservation struct {
+	value       any
+	err         error
+	deadline    time.Time
+	hasDeadline bool
+}
+
+type blockingContextTTSBridge struct {
+	started chan ttsStreamPushObservation
+	release chan struct{}
+}
+
+func (b *blockingContextTTSBridge) StartSession(context.Context, TTSSessionStart) error {
+	return nil
+}
+
+func (b *blockingContextTTSBridge) PushText(ctx context.Context, _ string, _ string, _ *moduletts.EmotionState) error {
+	deadline, hasDeadline := ctx.Deadline()
+	b.started <- ttsStreamPushObservation{
+		value:       ctx.Value(ttsStreamContextKey{}),
+		err:         ctx.Err(),
+		deadline:    deadline,
+		hasDeadline: hasDeadline,
+	}
+	<-b.release
+	return nil
+}
+
+func (b *blockingContextTTSBridge) EndSession(context.Context, string) error {
+	return nil
+}
+
+func TestPhase10TTSStreamPreservesAdmissionContextAfterRequestCancellationAndFinalizeJoins(t *testing.T) {
+	bridge := &blockingContextTTSBridge{
+		started: make(chan ttsStreamPushObservation, 4),
+		release: make(chan struct{}),
+	}
+	lifecycle := newMessageTTSLifecycle(bridge, nil, nil)
+	parentCtx, cancel := context.WithCancel(context.WithValue(context.Background(), ttsStreamContextKey{}, "ram-admission"))
+	_, bundle := lifecycle.WithStreamHooks(parentCtx, routing.RouteCHAT, "mio", "task-1", "session-1", "line", "U123", "tts-session-1")
+	cancel()
+	if bundle == nil {
+		t.Fatal("expected stream bundle")
+	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(bridge.release) }) }
+	defer release()
+
+	finalized := make(chan struct{})
+	go func() {
+		bundle.Finalize(context.Background(), "今日はいい天気ですね。少し歩いてから、温かいお茶を飲みましょう。")
+		close(finalized)
+	}()
+
+	var observation ttsStreamPushObservation
+	select {
+	case observation = <-bridge.started:
+	case <-time.After(time.Second):
+		t.Fatal("TTS PushText was not called after parent cancellation")
+	}
+	if observation.value != "ram-admission" {
+		t.Fatalf("TTS PushText context value = %#v, want preserved admission value", observation.value)
+	}
+	if observation.err != nil {
+		t.Fatalf("TTS PushText context should survive parent cancellation, got err %v", observation.err)
+	}
+	if !observation.hasDeadline {
+		t.Fatal("TTS PushText context must have a finite timeout")
+	}
+	if remaining := time.Until(observation.deadline); remaining <= 0 || remaining > 20*time.Second {
+		t.Fatalf("TTS PushText deadline remaining = %v, want (0, 20s]", remaining)
+	}
+	select {
+	case <-finalized:
+		t.Fatal("Finalize returned before TTS PushText completed")
+	default:
+	}
+
+	release()
+	select {
+	case <-finalized:
+	case <-time.After(time.Second):
+		t.Fatal("Finalize did not return after TTS PushText completed")
 	}
 }

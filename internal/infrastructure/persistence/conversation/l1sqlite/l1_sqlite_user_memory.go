@@ -430,9 +430,13 @@ func (s *L1SQLiteStore) ListUserMemories(ctx context.Context, userID string, sta
 	if limit <= 0 {
 		limit = 20
 	}
+	queryDB := s.readDB
+	if queryDB == nil {
+		queryDB = s.db
+	}
 	var rows *sql.Rows
 	if strings.TrimSpace(state) == "" {
-		rows, err = s.db.QueryContext(ctx, `
+		rows, err = queryDB.QueryContext(ctx, `
 SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
@@ -441,7 +445,7 @@ ORDER BY created_at DESC, rowid DESC
 LIMIT ?
 `, namespace, limit)
 	} else {
-		rows, err = s.db.QueryContext(ctx, `
+		rows, err = queryDB.QueryContext(ctx, `
 SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event

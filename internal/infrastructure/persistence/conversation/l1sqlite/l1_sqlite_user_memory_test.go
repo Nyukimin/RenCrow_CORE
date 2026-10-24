@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
@@ -63,6 +64,42 @@ func TestL1SQLiteStore_UserMemoryCRUD(t *testing.T) {
 	}
 	if len(memories) != 0 {
 		t.Fatalf("inactive memory should be filtered: %+v", memories)
+	}
+}
+
+func TestL1SQLiteStore_ListUserMemoriesDoesNotWaitForWriterConnection(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.CreateUserMemory(ctx, domainmemory.CreateUserMemoryInput{
+		UserID: "ren", Type: domainmemory.UserMemoryTypeProfile, Statement: "reader remains available",
+		State: MemoryStateCandidate, EvidenceEventIDs: []string{"chatgpt_export:test"},
+		Confidence: 0.9, Sensitivity: "normal", Scope: "global", Source: "chatgpt_import",
+	}); err != nil {
+		t.Fatalf("CreateUserMemory: %v", err)
+	}
+
+	writer, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer writer.Rollback()
+	if _, err := writer.ExecContext(ctx, `UPDATE l1_memory_event SET updated_at = updated_at`); err != nil {
+		t.Fatalf("hold writer transaction: %v", err)
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	items, err := store.ListUserMemories(readCtx, "ren", MemoryStateCandidate, false, 10)
+	if err != nil {
+		t.Fatalf("ListUserMemories while writer is busy: %v", err)
+	}
+	if len(items) != 1 || items[0].Statement != "reader remains available" {
+		t.Fatalf("unexpected items while writer is busy: %+v", items)
 	}
 }
 

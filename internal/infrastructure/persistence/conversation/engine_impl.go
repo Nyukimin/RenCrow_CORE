@@ -7,10 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -52,6 +54,15 @@ type conversationActiveThreadProvider interface {
 	LoadActiveConversationThread(context.Context, string) (*domconv.Thread, error)
 }
 
+type conversationTurnPreparer interface {
+	PrepareConversationTurn(context.Context, modulecore.TurnID, string, string) (*domconv.ConversationTurnPreparation, error)
+	ReleaseConversationTurnPreparation(context.Context, *domconv.ConversationTurnPreparation) error
+}
+
+type conversationTurnPreparationValidator interface {
+	ValidateConversationTurnPreparation(context.Context, *domconv.ConversationTurnPreparation) error
+}
+
 type conversationEngineUserMemoryStore interface {
 	ListUserMemories(ctx context.Context, userID string, state string, includeInactive bool, limit int) ([]domainmemory.UserMemory, error)
 }
@@ -77,6 +88,18 @@ func (e *RealConversationEngine) WithUserMemoryStore(store conversationEngineUse
 	e.userMemoryStore = store
 	e.userID = strings.TrimSpace(userID)
 	return e
+}
+
+// SupportsConversationTurnPreparation reports whether the wrapped manager can
+// acquire and validate the session-scoped RAM head lease required before
+// combined route-and-reply generation.
+func (e *RealConversationEngine) SupportsConversationTurnPreparation() bool {
+	if e == nil || e.manager == nil {
+		return false
+	}
+	_, canPrepare := e.manager.(conversationTurnPreparer)
+	_, canValidate := e.manager.(conversationTurnPreparationValidator)
+	return canPrepare && canValidate
 }
 
 // WithCategoryRecallRegistry wires deterministic category source selection into
@@ -526,8 +549,9 @@ var timeNowUTC = func() time.Time {
 	return time.Now().UTC()
 }
 
-// CommitConversationTurn is the typed atomic EndTurn route. Caller-supplied
-// ownership, targets, domain and boundary decisions are deliberately ignored.
+// CommitConversationTurn is the typed atomic EndTurn route. Admitted calls must
+// carry the prepared head; synchronous calls resolve the active L1 head here.
+// Caller-supplied ownership, targets, domain and boundary decisions are ignored.
 func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
 	base := failedConversationTurnManagerResult(request, domconv.ConversationTurnErrorUnavailable)
 	if e == nil || e.manager == nil || strings.TrimSpace(e.userID) == "" {
@@ -541,6 +565,15 @@ func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, req
 	if !ok {
 		return base, domconv.ErrConversationTurnUnavailable
 	}
+	// Admission means EndTurn must use the already prepared RAM head. Refuse
+	// missing preparation before the active-thread provider can perform a cold
+	// L1 read; synchronous callers without Admission retain the legacy path.
+	if request.Preparation == nil {
+		if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+			base.ErrorCode = domconv.ConversationTurnErrorUnavailable
+			return base, domconv.ErrConversationTurnUnavailable
+		}
+	}
 	activeProvider, ok := e.manager.(conversationActiveThreadProvider)
 	if !ok {
 		return base, domconv.ErrConversationTurnUnavailable
@@ -552,25 +585,53 @@ func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, req
 		return base, domconv.ErrConversationTurnInvalid
 	}
 
-	activeThread, err := activeProvider.LoadActiveConversationThread(ctx, request.SessionID)
+	preparation := cloneConversationTurnPreparation(request.Preparation)
+	var activeThread *domconv.Thread
+	var err error
+	if preparation != nil {
+		if preparation.TurnID != request.TurnID || preparation.SessionID != request.SessionID ||
+			preparation.OwnerID != strings.TrimSpace(e.userID) ||
+			(preparation.ActiveThread != nil && preparation.ActiveThread.SessionID != request.SessionID) {
+			base.ErrorCode = domconv.ConversationTurnErrorConflict
+			return base, domconv.ErrConversationTurnConflict
+		}
+		validator, ok := e.manager.(conversationTurnPreparationValidator)
+		if !ok {
+			return base, domconv.ErrConversationTurnUnavailable
+		}
+		if err := validator.ValidateConversationTurnPreparation(ctx, preparation); err != nil {
+			base.ErrorCode = domconv.ConversationTurnErrorCodeOf(err)
+			if base.ErrorCode == "" {
+				base.ErrorCode = domconv.ConversationTurnErrorConflict
+			}
+			return base, err
+		}
+		activeThread = preparation.ActiveThread
+	} else {
+		activeThread, err = activeProvider.LoadActiveConversationThread(ctx, request.SessionID)
+	}
 	domain := "general"
 	boundary := false
 	reason := ""
 	if err == nil {
 		if activeThread == nil {
-			return base, domconv.ErrConversationTurnUnavailable
-		}
-		domain = strings.TrimSpace(activeThread.Domain)
-		if domain == "" {
-			return base, domconv.ErrConversationTurnInvalid
-		}
-		if e.detector != nil {
-			decision := e.detector.Detect(activeThread, request.UserMessage, domain)
-			boundary = decision.ShouldCreateNew
-			if boundary {
-				reason = strings.TrimSpace(string(decision.Reason))
-				if reason == "" {
-					return base, domconv.ErrConversationTurnInvalid
+			// A missing active head is the normal first-turn case. The manager
+			// creates the canonical thread while committing the synchronous turn.
+		} else {
+			domain = strings.TrimSpace(activeThread.Domain)
+			if domain == "" {
+				return base, domconv.ErrConversationTurnInvalid
+			}
+			if e.detector != nil {
+				turntiming.Mark(ctx, turntiming.PointConversationDetectorStarted)
+				decision := e.detector.Detect(activeThread, request.UserMessage, domain)
+				turntiming.Mark(ctx, turntiming.PointConversationDetectorEnded)
+				boundary = decision.ShouldCreateNew
+				if boundary {
+					reason = strings.TrimSpace(string(decision.Reason))
+					if reason == "" {
+						return base, domconv.ErrConversationTurnInvalid
+					}
 				}
 			}
 		}
@@ -585,11 +646,38 @@ func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, req
 	canonical.Boundary = boundary
 	canonical.BoundaryReason = reason
 	canonical.Targets = append([]domconv.ConversationTurnTarget(nil), provider.ConversationTurnTargets()...)
+	canonical.Preparation = preparation
 	result, err := committer.CommitConversationTurn(ctx, canonical)
 	if err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+// PrepareConversationTurn acquires the manager's session-scoped RAM head lease
+// before chat generation. The turn ID is also the lease token carried by EndTurn.
+func (e *RealConversationEngine) PrepareConversationTurn(ctx context.Context, turnID, sessionID string) (*domconv.ConversationTurnPreparation, error) {
+	if e == nil || e.manager == nil || strings.TrimSpace(e.userID) == "" {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	preparer, ok := e.manager.(conversationTurnPreparer)
+	if !ok {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	return preparer.PrepareConversationTurn(ctx, modulecore.TurnID(turnID), sessionID, strings.TrimSpace(e.userID))
+}
+
+// ReleaseConversationTurnPreparation drops a lease when route selection or
+// generation does not reach the matching EndTurn.
+func (e *RealConversationEngine) ReleaseConversationTurnPreparation(ctx context.Context, preparation *domconv.ConversationTurnPreparation) error {
+	if e == nil || e.manager == nil {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	preparer, ok := e.manager.(conversationTurnPreparer)
+	if !ok {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	return preparer.ReleaseConversationTurnPreparation(ctx, preparation)
 }
 
 // GetPersona は現在のペルソナ設定を返す

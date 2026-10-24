@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
@@ -151,5 +152,44 @@ func TestPhase16DistributedTTSLifecycleStreamHooksPreservePreviousCallbackWithou
 	}
 	if _, ok := recorder.Snapshot().PointsMS[string(turntiming.PointFirstTextCallback)]; !ok {
 		t.Fatal("first text callback was not timed")
+	}
+}
+
+type distributedTTSContextKey struct{}
+
+type distributedContextTTSBridge struct {
+	pushed chan context.Context
+}
+
+func (b *distributedContextTTSBridge) StartSession(context.Context, TTSSessionStart) error {
+	return nil
+}
+
+func (b *distributedContextTTSBridge) PushText(ctx context.Context, _ string, _ string, _ *moduletts.EmotionState) error {
+	b.pushed <- ctx
+	return nil
+}
+
+func (b *distributedContextTTSBridge) EndSession(context.Context, string) error {
+	return nil
+}
+
+func TestPhase16DistributedTTSStreamPreservesRequestContext(t *testing.T) {
+	bridge := &distributedContextTTSBridge{pushed: make(chan context.Context, 4)}
+	lifecycle := newDistributedTTSLifecycle(bridge, nil, nil)
+	ctx := context.WithValue(context.Background(), distributedTTSContextKey{}, "admission")
+	_, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "mio", "task-1", "session-1", "line", "U123", "tts-session-1")
+	if bundle == nil {
+		t.Fatal("expected stream bundle")
+	}
+
+	bundle.Finalize(context.Background(), "今日はいい天気ですね。少し歩いてから、温かいお茶を飲みましょう。")
+	select {
+	case pushCtx := <-bridge.pushed:
+		if got := pushCtx.Value(distributedTTSContextKey{}); got != "admission" {
+			t.Fatalf("TTS PushText context value = %#v, want preserved admission value", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("TTS PushText was not called")
 	}
 }

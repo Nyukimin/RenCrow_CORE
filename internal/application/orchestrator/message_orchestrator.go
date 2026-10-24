@@ -874,6 +874,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if routeResult.Context != nil {
 		ctx = routeResult.Context
 	}
+	defer o.routeDecisions.releaseChatDraft(ctx, routeResult.ChatDraft)
 	decision := routeResult.Decision
 	if decision.Route != routing.RouteCHAT || routeResult.ChatDraft == nil {
 		effect := "non-CHAT route execution"

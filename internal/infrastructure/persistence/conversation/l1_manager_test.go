@@ -128,6 +128,45 @@ func TestL1ConversationManagerPersistsSharedAgentContextAcrossReopen(t *testing.
 	}
 }
 
+func TestL1RealConversationEngineSupportsSynchronousFirstAndRepeatTurns(t *testing.T) {
+	ctx := context.Background()
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1-sync-turn.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	engine := NewRealConversationEngine(NewL1ConversationManager(store), domconv.NewMioPersona("test")).WithUserMemoryStore(store, "owner")
+	sessionID := string(modulecore.NewSessionID())
+	capability, ok := interface{}(engine).(interface{ SupportsConversationTurnPreparation() bool })
+	if !ok || capability.SupportsConversationTurnPreparation() {
+		t.Fatal("L1-only manager must not advertise prepared-head combined generation")
+	}
+
+	var first domconv.ConversationTurnResult
+	for i, message := range []string{"first synchronous turn", "repeat synchronous turn"} {
+		request := domconv.ConversationTurnRequest{
+			TurnID:         modulecore.NewTurnID(),
+			TraceID:        modulecore.NewTraceID(),
+			RootTaskID:     modulecore.NewTaskID(),
+			UserMessageID:  modulecore.NewMessageID(),
+			AgentMessageID: modulecore.NewMessageID(),
+			SessionID:      sessionID,
+			UserMessage:    message,
+			AgentMessage:   "reply",
+			AgentSpeaker:   domconv.SpeakerMio,
+		}
+		result, err := engine.CommitConversationTurn(ctx, request)
+		if err != nil || result.Status != domconv.ConversationTurnCompleted {
+			t.Fatalf("turn %d result=%+v err=%v", i+1, result, err)
+		}
+		if i == 0 {
+			first = result
+		} else if result.ThreadID != first.ThreadID || result.ThreadSeq != first.ThreadSeq {
+			t.Fatalf("repeat turn thread=%s/%d, first=%s/%d", result.ThreadID, result.ThreadSeq, first.ThreadID, first.ThreadSeq)
+		}
+	}
+}
+
 func TestL1ConversationManagerPersistsAgentAttributedRecallTrace(t *testing.T) {
 	ctx := context.Background()
 	sessionID := conversationTestSessionID("viewer-user")

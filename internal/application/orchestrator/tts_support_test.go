@@ -81,7 +81,7 @@ func TestSplitTTSChunksKeepsClosingQuoteWithQuestion(t *testing.T) {
 
 func TestTTSStreamForwarderFinalizeSplitsUnemittedFinalText(t *testing.T) {
 	bridge := &recordingTTSBridge{}
-	forwarder := newTTSStreamForwarder(bridge, "s1", routing.RouteCHAT, "mio", "agent.response", "tts:")
+	forwarder := newTTSStreamForwarder(bridge, "s1", routing.RouteCHAT, "mio", "agent.response", "tts:", context.Background())
 
 	forwarder.Finalize(context.Background(), "今日はいい天気ですね。少し歩いてから、温かいお茶を飲みましょう。")
 

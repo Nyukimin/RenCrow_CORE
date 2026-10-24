@@ -98,7 +98,7 @@ func (l *distributedTTSLifecycle) WithStreamHooks(
 ) (context.Context, *streamBundle) {
 	prev := llm.StreamCallbackFromContext(ctx)
 	latency := latencyTraceFromContext(ctx)
-	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[DistributedOrch] TTS push degraded:")
+	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[DistributedOrch] TTS push degraded:", ctx)
 	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, speaker, "agent.response", "[DistributedOrch] VTuber push degraded:")
 	return llm.ContextWithStreamCallback(ctx, func(token string) {
 		if strings.TrimSpace(token) != "" {

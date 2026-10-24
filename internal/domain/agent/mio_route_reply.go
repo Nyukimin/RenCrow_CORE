@@ -27,6 +27,7 @@ type MioChatDraft struct {
 	messageHash [32]byte
 	generation  llm.GenerateResponse
 	recallPack  *conversation.RecallPack
+	preparation *conversation.ConversationTurnPreparation
 	latestOther string
 	speaker     conversation.Speaker
 }
@@ -36,6 +37,21 @@ type MioChatDraft struct {
 // error instead of promoting the fallback decision into another LLM flow.
 func (draft *MioChatDraft) Failed() bool {
 	return draft != nil && draft.failure != nil
+}
+
+// ReleaseChatDraft abandons the prepared conversation head when orchestration
+// cannot transfer the draft to CHAT execution. Releasing a consumed lease is
+// safe, so orchestration and ChatWithDraft can both own cleanup boundaries.
+func (m *MioAgent) ReleaseChatDraft(ctx context.Context, draft *MioChatDraft) {
+	if draft == nil || draft.preparation == nil {
+		return
+	}
+	preparation := draft.preparation
+	draft.preparation = nil
+	if m == nil {
+		return
+	}
+	releaseConversationTurnPreparation(ctx, m.conversationEngine, preparation)
 }
 
 // DecideActionWithChatDraft follows the same deterministic route precedence as
@@ -52,6 +68,7 @@ func (m *MioAgent) ChatWithDraft(ctx context.Context, t conversation.TurnInput, 
 	if draft == nil {
 		return "", fmt.Errorf("%w: draft is nil", errMioChatDraftUnavailable)
 	}
+	defer m.ReleaseChatDraft(ctx, draft)
 	if draft.turnID != string(t.TurnID()) || draft.sessionID != t.SessionID() ||
 		draft.messageID != string(t.UserMessageID()) || draft.messageHash != sha256.Sum256([]byte(t.MessageText())) {
 		return "", fmt.Errorf("%w: draft does not belong to this conversation turn", errMioChatDraftUnavailable)
@@ -77,7 +94,7 @@ func (m *MioAgent) ChatWithDraft(ctx context.Context, t conversation.TurnInput, 
 		reportGenerationMetrics(ctx, draft.generation)
 	}
 	if m.conversationEngine != nil {
-		if err := commitConversationTurn(ctx, m.conversationEngine, t, t.SessionID(), userMessage, response, draft.speaker, draft.recallPack); err != nil {
+		if err := commitConversationTurn(ctx, m.conversationEngine, t, t.SessionID(), userMessage, response, draft.speaker, draft.recallPack, draft.preparation); err != nil {
 			return response, err
 		}
 	}
@@ -96,6 +113,21 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	}
 	recallPack, messages := m.beginChatRecall(ctx, t, userMessage)
 	draft.recallPack = recallPack
+	turntiming.Mark(ctx, turntiming.PointConversationHeadPreparationStarted)
+	preparation, prepareErr := prepareConversationTurn(ctx, m.conversationEngine, t)
+	turntiming.Mark(ctx, turntiming.PointConversationHeadPreparationEnded)
+	if prepareErr != nil {
+		draft.failure = prepareErr
+		return routeDecisionFallback(evidence, routing.Decision{}, prepareErr), draft, nil
+	}
+	draft.preparation = preparation
+	keepPreparation := false
+	defer func() {
+		if !keepPreparation {
+			releaseConversationTurnPreparation(ctx, m.conversationEngine, draft.preparation)
+			draft.preparation = nil
+		}
+	}()
 	if exactReply, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
 		// Exact-token recall stays deterministic. The normal route classifier
 		// runs once, and the already prepared answer is adopted after activation.
@@ -106,11 +138,14 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 			classified.Evidence = append(evidence, classifierEvidence(classified)...)
 			draft.reply = exactReply
 			draft.ready = true
+			keepPreparation = classified.Route == routing.RouteCHAT
 			return classified, draft, nil
 		}
 		draft.reply = exactReply
 		draft.ready = true
-		return routeDecisionFallback(evidence, classified, err), draft, nil
+		decision := routeDecisionFallback(evidence, classified, err)
+		keepPreparation = decision.Route == routing.RouteCHAT
+		return decision, draft, nil
 	}
 
 	turntiming.Mark(ctx, turntiming.PointPromptPreparationStarted)
@@ -139,6 +174,7 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	if classification.Decision.Route == routing.RouteCHAT && !draft.ready {
 		draft.failure = errors.New("combined classifier returned an empty CHAT reply")
 	}
+	keepPreparation = classification.Decision.Route == routing.RouteCHAT && draft.ready && draft.failure == nil
 	return classification.Decision, draft, nil
 }
 
@@ -170,6 +206,9 @@ func (m *MioAgent) canUseCombinedChatDraft(ctx context.Context, t conversation.T
 		return false
 	}
 	if _, ok := m.conversationEngine.(typedConversationTurnEngine); !ok {
+		return false
+	}
+	if !supportsConversationTurnPreparation(m.conversationEngine) {
 		return false
 	}
 	if len(t.Attachments()) != 0 || t.ForcedRoute() != "" {

@@ -145,7 +145,7 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, fn func(domaintask.Sto
 	}
 	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
 		if !s.mu.TryRLock() {
-			return ErrTaskAdmissionBusy
+			return taskAdmissionBusy(taskAdmissionBusyTransactionLock)
 		}
 	} else {
 		s.mu.RLock()

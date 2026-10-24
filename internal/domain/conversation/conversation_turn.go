@@ -102,6 +102,18 @@ type ConversationTurnThreadPlanBinding struct {
 	Plan      ConversationTurnThreadPlan
 }
 
+// ConversationTurnPreparation is an in-memory, turn-scoped lease for the
+// active conversation head. TurnID is the lease token; the manager binds it to
+// the session, owner, and head revision. ActiveThread is an immutable snapshot
+// used by the engine's boundary decision and is never persisted as request data.
+type ConversationTurnPreparation struct {
+	TurnID       modulecore.TurnID `json:"-"`
+	SessionID    string            `json:"-"`
+	OwnerID      string            `json:"-"`
+	Revision     uint64            `json:"-"`
+	ActiveThread *Thread           `json:"-"`
+}
+
 // ConversationTurnRequest is the one canonical EndTurn input shape. Every
 // identity is assigned once by the CORE ingress boundary and remains distinct.
 type ConversationTurnRequest struct {
@@ -121,6 +133,7 @@ type ConversationTurnRequest struct {
 	BoundaryReason   string
 	Targets          []ConversationTurnTarget
 	ThreadPlan       *ConversationTurnThreadPlanBinding
+	Preparation      *ConversationTurnPreparation `json:"-"`
 }
 
 type ConversationTurnResult struct {

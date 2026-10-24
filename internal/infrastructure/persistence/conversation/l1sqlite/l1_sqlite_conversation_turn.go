@@ -180,6 +180,10 @@ type conversationThreadIdentity struct {
 	Kind modulecore.ThreadKind
 }
 
+type conversationThreadProjectionReader interface {
+	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
+}
+
 func (identity conversationThreadIdentity) validate(bound bool) error {
 	if bound {
 		return validateL1BoundThreadTuple(identity.ID, identity.Seq, identity.Kind)
@@ -1170,7 +1174,11 @@ func (s *L1SQLiteStore) LoadConversationThreadProjection(ctx context.Context, se
 	if sessionID == "" || !utf8.ValidString(sessionID) || threadID.Validate() != nil {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	return loadConversationThreadProjection(ctx, s.db, sessionID, threadID)
+}
+
+func loadConversationThreadProjection(ctx context.Context, query conversationThreadProjectionReader, sessionID string, threadID modulecore.ThreadID) ([]L1MemoryEvent, error) {
+	rows, err := query.QueryContext(ctx, `
 SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
@@ -1240,22 +1248,28 @@ LIMIT 1`, sessionID).Scan(&rawID, &rawSeq, &rawKind)
 }
 
 // LoadActiveConversationThreadProjection resolves the active thread ID from
-// conversation_active_thread before loading the projection. It never guesses
-// an active thread from the newest message row.
+// conversation_active_thread before loading the projection. Both reads share
+// one read-pool transaction so the writer connection is never queued behind
+// this cold-head read and active metadata cannot race its message snapshot.
 func (s *L1SQLiteStore) LoadActiveConversationThreadProjection(ctx context.Context, sessionID string) ([]L1MemoryEvent, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.readDB == nil {
 		return nil, domconv.ErrConversationTurnUnavailable
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" || !utf8.ValidString(sessionID) {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
+	tx, err := s.readDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	defer tx.Rollback()
 	var threadID modulecore.ThreadID
 	var threadSeq modulecore.ThreadSeq
 	var threadKind modulecore.ThreadKind
 	var messageCount int
 	var activeDomain string
-	if err := s.db.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 SELECT thread_id, thread_seq, thread_kind, message_count, domain
 FROM conversation_active_thread
 	WHERE session_id = ?`, sessionID).Scan(&threadID, &threadSeq, &threadKind, &messageCount, &activeDomain); err != nil {
@@ -1267,7 +1281,7 @@ FROM conversation_active_thread
 	if err := validateL1BoundThreadTuple(threadID, threadSeq, threadKind); err != nil {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	events, err := s.LoadConversationThreadProjection(ctx, sessionID, threadID)
+	events, err := loadConversationThreadProjection(ctx, tx, sessionID, threadID)
 	if err != nil {
 		return nil, err
 	}
@@ -1284,6 +1298,9 @@ FROM conversation_active_thread
 		if domain, ok := event.Meta["domain"].(string); !ok || domain != activeDomain {
 			return nil, domconv.ErrConversationTurnInvalid
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, domconv.ErrConversationTurnInternal
 	}
 	return events, nil
 }

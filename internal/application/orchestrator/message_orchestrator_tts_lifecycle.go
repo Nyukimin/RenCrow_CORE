@@ -140,7 +140,7 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 	var ttsStream *ttsStreamForwarder
 	var vtuberStream *vtuberStreamForwarder
 	if !speechPlanStreamModeFromContext(ctx) {
-		ttsStream = newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] TTS push degraded:")
+		ttsStream = newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] TTS push degraded:", ctx)
 		vtuberStream = newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] VTuber push degraded:")
 	}
 	streamCtx := llm.ContextWithStreamCallback(ctx, func(token string) {

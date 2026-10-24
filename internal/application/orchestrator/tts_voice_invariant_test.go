@@ -265,7 +265,7 @@ func TestUnresolvedSpeakerIsNotVoiced(t *testing.T) {
 	emit := func(string, string, string, string, string, string, string, string, string) {}
 	newMessageTTSLifecycle(bridge, nil, emit).Push(context.Background(), "tts-1", routing.RouteCHAT, "wild", "agent.response", "読み上げ対象です。")
 	newDistributedTTSLifecycle(bridge, nil, emit).Push(context.Background(), "tts-1", routing.RouteCHAT, "", "agent.response", "読み上げ対象です。")
-	if forwarder := newTTSStreamForwarder(bridge, "tts-1", routing.RouteCHAT, "male_01", "agent.response", "tts:"); forwarder != nil {
+	if forwarder := newTTSStreamForwarder(bridge, "tts-1", routing.RouteCHAT, "male_01", "agent.response", "tts:", context.Background()); forwarder != nil {
 		t.Fatal("stream forwarder was created for a legacy alias speaker")
 	}
 	if len(bridge.pushes) != 0 {

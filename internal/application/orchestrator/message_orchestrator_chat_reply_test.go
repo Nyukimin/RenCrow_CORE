@@ -49,11 +49,14 @@ func (m *failingChatReplyTaskLifecycleManager) Start(_ context.Context, _ module
 }
 
 type chatReplyConversationEngine struct {
-	manager          *recordingTaskLifecycleManager
-	commitCalls      int
-	commitStarted    bool
-	commitRunStarted bool
-	request          domainconversation.ConversationTurnRequest
+	manager           *recordingTaskLifecycleManager
+	commitCalls       int
+	commitStarted     bool
+	commitRunStarted  bool
+	request           domainconversation.ConversationTurnRequest
+	preparationActive bool
+	preparedSession   string
+	releaseCalls      int
 }
 
 func (e *chatReplyConversationEngine) BeginTurn(context.Context, string, string) (*domainconversation.RecallPack, error) {
@@ -70,6 +73,24 @@ func (e *chatReplyConversationEngine) GetStatus(context.Context, string) (*domai
 	return &domainconversation.ConversationStatus{}, nil
 }
 func (e *chatReplyConversationEngine) ResetSession(context.Context, string) error { return nil }
+func (e *chatReplyConversationEngine) PrepareConversationTurn(_ context.Context, turnID, sessionID string) (*domainconversation.ConversationTurnPreparation, error) {
+	if e.preparationActive {
+		return nil, domainconversation.ErrConversationTurnConflict
+	}
+	e.preparationActive = true
+	e.preparedSession = sessionID
+	return &domainconversation.ConversationTurnPreparation{
+		TurnID: modulecore.TurnID(turnID), SessionID: sessionID, OwnerID: "test-owner",
+	}, nil
+}
+func (e *chatReplyConversationEngine) ReleaseConversationTurnPreparation(_ context.Context, preparation *domainconversation.ConversationTurnPreparation) error {
+	if preparation == nil || !e.preparationActive || preparation.SessionID != e.preparedSession {
+		return nil
+	}
+	e.preparationActive = false
+	e.releaseCalls++
+	return nil
+}
 func (e *chatReplyConversationEngine) CommitConversationTurn(_ context.Context, req domainconversation.ConversationTurnRequest) (domainconversation.ConversationTurnResult, error) {
 	e.commitCalls++
 	e.request = req
@@ -298,7 +319,7 @@ func TestMessageRouteDispatcherFinalizesDraftStreamWhenMioCannotAdopt(t *testing
 			events = append(events, NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID))
 		},
 		func(ctx context.Context, route domainrouting.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
-			stream = newTTSStreamForwarder(bridge, ttsSessionID, route, speaker, "agent.response", "[test]")
+			stream = newTTSStreamForwarder(bridge, ttsSessionID, route, speaker, "agent.response", "[test]", context.Background())
 			return ctx, &streamBundle{tts: stream}
 		},
 		func(context.Context, string, domainrouting.Route, string, string, string) {},
@@ -361,7 +382,8 @@ func TestRouteDecisionCoordinatorDiscardsDraftWhenPolicyChangesRoute(t *testing.
 	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"candidate answer"}`}}
 	classifier := infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy")
 	taskManager := newRecordingTaskLifecycleManager()
-	mio := domainagent.NewMioAgent(provider, classifier, chatReplyRuleDictionary{}, nil, nil, &chatReplyConversationEngine{manager: taskManager}).
+	engine := &chatReplyConversationEngine{manager: taskManager}
+	mio := domainagent.NewMioAgent(provider, classifier, chatReplyRuleDictionary{}, nil, nil, engine).
 		WithSystemPrompt("canonical Mio persona")
 	req := defaultReq()
 	req.UserMessage = "この件を深掘りして"
@@ -383,6 +405,9 @@ func TestRouteDecisionCoordinatorDiscardsDraftWhenPolicyChangesRoute(t *testing.
 	}
 	if result.ChatDraft != nil {
 		t.Fatal("policy-changed route retained the candidate CHAT reply")
+	}
+	if engine.preparationActive || engine.releaseCalls != 1 {
+		t.Fatalf("policy-changed route lease active=%v releases=%d, want released exactly once", engine.preparationActive, engine.releaseCalls)
 	}
 	if len(provider.requests) != 1 {
 		t.Fatalf("provider Generate calls = %d, want one route-and-reply generation", len(provider.requests))
@@ -451,5 +476,59 @@ func TestMessageOrchestrator_DoesNotAdoptCombinedReplyWhenTaskActivationFails(t 
 		if event.Type == "agent.response" {
 			t.Fatalf("agent.response published after failed activation: %#v", event)
 		}
+	}
+	if engine.preparationActive || engine.releaseCalls != 1 {
+		t.Fatalf("activation failure lease active=%v releases=%d, want released exactly once", engine.preparationActive, engine.releaseCalls)
+	}
+	preparation, err := engine.PrepareConversationTurn(context.Background(), string(modulecore.NewTurnID()), engine.preparedSession)
+	if err != nil || preparation == nil {
+		t.Fatalf("same-session next PrepareConversationTurn() = %+v, %v; want successful lease", preparation, err)
+	}
+	if err := engine.ReleaseConversationTurnPreparation(context.Background(), preparation); err != nil {
+		t.Fatalf("release same-session next preparation: %v", err)
+	}
+}
+
+type cancelingChatReplyTaskLifecycleManager struct {
+	*recordingTaskLifecycleManager
+	cancel context.CancelFunc
+}
+
+func (m *cancelingChatReplyTaskLifecycleManager) Start(_ context.Context, _ modulecore.TaskID) (domaintask.Task, error) {
+	m.calls = append(m.calls, "Start")
+	if m.cancel != nil {
+		m.cancel()
+	}
+	return domaintask.Task{}, context.Canceled
+}
+
+func TestMessageOrchestratorReleasesCombinedDraftWhenActivationIsCanceled(t *testing.T) {
+	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"Mio combined answer"}`}}
+	taskManager := newRecordingTaskLifecycleManager()
+	engine := &chatReplyConversationEngine{manager: taskManager}
+	mio := domainagent.NewMioAgent(provider,
+		infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy"),
+		chatReplyRuleDictionary{}, nil, nil, engine,
+	).WithSystemPrompt("canonical Mio persona")
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	canceledManager := &cancelingChatReplyTaskLifecycleManager{recordingTaskLifecycleManager: taskManager}
+	orch.SetTaskLifecycleManager(canceledManager)
+	ctx, cancel := context.WithCancel(context.Background())
+	canceledManager.cancel = cancel
+	req := defaultReq()
+	req.AudioOutput = AudioOutputDisabled
+	_, err := orch.ProcessMessage(ctx, req)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ProcessMessage() error=%v, want cancellation during task activation", err)
+	}
+	if engine.preparationActive || engine.releaseCalls != 1 {
+		t.Fatalf("canceled activation lease active=%v releases=%d, want released exactly once", engine.preparationActive, engine.releaseCalls)
+	}
+	preparation, err := engine.PrepareConversationTurn(context.Background(), string(modulecore.NewTurnID()), engine.preparedSession)
+	if err != nil || preparation == nil {
+		t.Fatalf("same-session next PrepareConversationTurn() = %+v, %v; want successful lease", preparation, err)
+	}
+	if err := engine.ReleaseConversationTurnPreparation(context.Background(), preparation); err != nil {
+		t.Fatalf("release same-session next preparation: %v", err)
 	}
 }
