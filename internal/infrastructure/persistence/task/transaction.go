@@ -19,10 +19,11 @@ import (
 )
 
 var (
-	errTaskTransactionExpired            = errors.New("task transaction is no longer active")
-	errReadOnlyTransaction               = errors.New("task transaction is read-only")
-	ErrExpectedCriteriaRevisionImmutable = errors.New("expected criteria revision is immutable after the first Task save")
-	ErrNativeOPSResumeClaimImmutable     = errors.New("native OPS Resume claims are immutable and append-only")
+	errTaskTransactionExpired                   = errors.New("task transaction is no longer active")
+	errReadOnlyTransaction                      = errors.New("task transaction is read-only")
+	ErrExpectedCriteriaRevisionImmutable        = errors.New("expected criteria revision is immutable after the first Task save")
+	ErrNativeOPSResumeClaimImmutable            = errors.New("native OPS Resume claims are immutable and append-only")
+	ErrTaskOriginPublicationProvenanceImmutable = errors.New("Task origin publication provenance is immutable after the first Task save")
 )
 
 func taskBatchFilenames() []string {
@@ -565,13 +566,10 @@ func (s *transactionStore) appendTask(ctx context.Context, value domaintask.Task
 		}
 		foundSavedTask := false
 		for _, saved := range latest {
-			if saved.TaskID == value.TaskID && saved.ExpectedCriteriaRevision != value.ExpectedCriteriaRevision {
-				return ErrExpectedCriteriaRevisionImmutable
-			}
 			if saved.TaskID == value.TaskID {
 				foundSavedTask = true
-				if !domaintask.NativeOPSResumeClaimsExtend(saved.NativeResumeClaims, value.NativeResumeClaims) {
-					return ErrNativeOPSResumeClaimImmutable
+				if err := checkTaskPinTransition(pinOfTask(saved), value); err != nil {
+					return err
 				}
 			}
 		}

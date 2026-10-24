@@ -21,6 +21,14 @@ type stubEvidenceStore struct {
 
 var monitorTestSessionID = modulecore.NewSessionID()
 
+func newMonitorStoreWithPublicEvents(evidence EvidenceLister, archive EventLogReader) *MonitorStore {
+	store := NewMonitorStore(evidence, archive)
+	store.SetPublicEventVisibilityPredicate(func(context.Context, orchestrator.OrchestratorEvent) (bool, error) {
+		return true, nil
+	})
+	return store
+}
+
 func (s stubEvidenceStore) ListRecent(ctx context.Context, limit int) ([]domainexecution.ExecutionReport, error) {
 	if !s.ok {
 		return nil, nil
@@ -48,7 +56,7 @@ func (s stubEvidenceStore) SummaryUnique(ctx context.Context) (map[string]map[st
 }
 
 func TestMonitorStoreReducesAgentAndTaskActivityState(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
@@ -111,7 +119,7 @@ func TestMonitorStoreReducesAgentAndTaskActivityState(t *testing.T) {
 }
 
 func TestMonitorStoreIncludesCoder4InStatusAndAgents(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 
 	status := store.Status()
 	if len(status.Coders.Items) != 4 {
@@ -142,7 +150,7 @@ func TestMonitorStoreIncludesCoder4InStatusAndAgents(t *testing.T) {
 }
 
 func TestMonitorStoreTracksViewerRecipientAsTaskOwnerAndFinalSpeaker(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
@@ -199,7 +207,7 @@ func TestMonitorStoreTracksViewerRecipientAsTaskOwnerAndFinalSpeaker(t *testing.
 }
 
 func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientTask(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
@@ -270,7 +278,7 @@ func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientTask(t *testin
 }
 
 func TestHandleMonitorStatusIncludesCoder4(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/viewer/status", nil)
 	rr := httptest.NewRecorder()
@@ -293,7 +301,7 @@ func TestHandleMonitorStatusIncludesCoder4(t *testing.T) {
 }
 
 func TestMonitorStoreClearsRecoveredFailureOnFinalSuccess(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
@@ -354,7 +362,7 @@ func TestMonitorStoreClearsRecoveredFailureOnFinalSuccess(t *testing.T) {
 }
 
 func TestMonitorStoreEntryStageCompletedMarksTerminalOutcome(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
@@ -389,7 +397,7 @@ func TestMonitorStoreEntryStageCompletedMarksTerminalOutcome(t *testing.T) {
 }
 
 func TestMonitorStoreEntryStageFailedMarksTerminalOutcome(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
@@ -427,7 +435,7 @@ func TestMonitorStoreEntryStageFailedMarksTerminalOutcome(t *testing.T) {
 }
 
 func TestHandleMonitorLogsFiltersByTaskID(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskOne := modulecore.NewTaskID()
 	taskTwo := modulecore.NewTaskID()
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -478,7 +486,7 @@ func TestMonitorTaskActivityDetailIncludesEvidence(t *testing.T) {
 		CreatedAt:  time.Now(),
 		FinishedAt: time.Now(),
 	}
-	store := NewMonitorStore(stubEvidenceStore{item: ev, ok: true}, nil)
+	store := newMonitorStoreWithPublicEvents(stubEvidenceStore{item: ev, ok: true}, nil)
 	store.OnEvent(orchestrator.OrchestratorEvent{
 		Type:      "agent.response",
 		From:      "mio",
@@ -503,7 +511,7 @@ func TestMonitorTaskActivityDetailIncludesEvidence(t *testing.T) {
 }
 
 func TestHandleMonitorLogsRejectsUnsupportedFilter(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	rr := httptest.NewRecorder()
 	HandleMonitorLogs(store).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/viewer/logs?unsupported_filter=value", nil))
 	if rr.Code != http.StatusBadRequest {
@@ -512,7 +520,7 @@ func TestHandleMonitorLogsRejectsUnsupportedFilter(t *testing.T) {
 }
 
 func TestHandleMonitorLogsUsesEventSeqOrdering(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	for _, ev := range []orchestrator.OrchestratorEvent{
 		{Type: "agent.note", TaskID: modulecore.NewTaskID(), EventSeq: 1, Timestamp: "2026-01-01T00:00:01Z"},
 		{Type: "agent.note", TaskID: modulecore.NewTaskID(), EventSeq: 3, Timestamp: "2026-01-01T00:00:03Z"},
@@ -527,7 +535,7 @@ func TestHandleMonitorLogsUsesEventSeqOrdering(t *testing.T) {
 }
 
 func TestMonitorStoreSetAgentUnavailableShowsReasonInStatus(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 
 	store.SetAgentUnavailable("coder3", "ssh connect failed: connection reset by peer")
 
@@ -555,7 +563,7 @@ func TestMonitorStoreSetAgentUnavailableShowsReasonInStatus(t *testing.T) {
 }
 
 func TestHandleMonitorAgentDetailReturnsAgentHistory(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -598,7 +606,7 @@ func TestHandleMonitorAgentDetailReturnsAgentHistory(t *testing.T) {
 }
 
 func TestHandleMonitorLogsRejectsLegacyChatIDFilter(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	for _, query := range []string{"chat_id=viewer", "chat_id="} {
 		rr := httptest.NewRecorder()
 		HandleMonitorLogs(store).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/viewer/logs?"+query, nil))
@@ -609,7 +617,7 @@ func TestHandleMonitorLogsRejectsLegacyChatIDFilter(t *testing.T) {
 }
 
 func TestHandleMonitorLogsFiltersByChannelAddressAndPublishesCanonicalKey(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	matched := modulecore.NewTaskID()
 	other := modulecore.NewTaskID()
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -659,7 +667,7 @@ func TestHandleMonitorLogsFiltersByChannelAddressAndPublishesCanonicalKey(t *tes
 }
 
 func TestMonitorTaskActivitiesProjectCanonicalChannelAddress(t *testing.T) {
-	store := NewMonitorStore(nil, nil)
+	store := newMonitorStoreWithPublicEvents(nil, nil)
 	taskID := modulecore.NewTaskID()
 	store.OnEvent(orchestrator.OrchestratorEvent{
 		Type:           "agent.note",

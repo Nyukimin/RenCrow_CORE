@@ -80,7 +80,7 @@ func TestMessageOrchestratorPropagatesRootThenChildLLMObservation(t *testing.T) 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  rootTaskID.String(),
 		TraceID:     string(traceID),
-		SessionID:   "message-observation-session",
+		SessionID:   newMockCanonicalSessionID("line", "message-observation-chat"),
 		Channel:     "line",
 		ChatID:      "message-observation-chat",
 		UserMessage: "run operation",
@@ -142,7 +142,7 @@ func TestDistributedOrchestratorPropagatesRootThenChildLLMObservation(t *testing
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  rootTaskID.String(),
 		TraceID:     string(traceID),
-		SessionID:   "distributed-observation-session",
+		SessionID:   newMockCanonicalSessionID("line", "distributed-observation-chat"),
 		Channel:     "line",
 		ChatID:      "distributed-observation-chat",
 		UserMessage: "run operation",

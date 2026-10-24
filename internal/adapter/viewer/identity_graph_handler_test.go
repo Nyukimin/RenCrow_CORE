@@ -41,10 +41,14 @@ type identityGraphTaskReaderStub struct {
 	tasks  map[modulecore.TaskID]domaintask.Task
 	errors map[modulecore.TaskID]error
 	calls  []modulecore.TaskID
+	onGet  func(modulecore.TaskID)
 }
 
 func (s *identityGraphTaskReaderStub) GetTask(_ context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
 	s.calls = append(s.calls, taskID)
+	if s.onGet != nil {
+		s.onGet(taskID)
+	}
 	if err := s.errors[taskID]; err != nil {
 		return domaintask.Task{}, err
 	}
@@ -73,7 +77,7 @@ func TestIdentityGraphHandlerProjectsCanonicalTraceDeterministically(t *testing.
 	sourceEvents := []modulecore.EventEnvelope{child, root}
 	before := append([]modulecore.EventEnvelope(nil), sourceEvents...)
 	events := &identityGraphEventReaderStub{events: sourceEvents}
-	handler := HandleIdentityGraph(events, tasks)
+	handler := identityGraphTestHandler(events, tasks)
 
 	first := identityGraphPerformRequest(t, handler, traceID)
 	second := identityGraphPerformRequest(t, handler, traceID)
@@ -122,6 +126,213 @@ func TestIdentityGraphHandlerProjectsCanonicalTraceDeterministically(t *testing.
 	}
 }
 
+func TestIdentityGraphLegacyHandlerDoesNotExposeUnfilteredTraceMetadata(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	taskID := modulecore.NewTaskID()
+	sessionID := modulecore.NewSessionID()
+	event := identityGraphTestEvent(traceID, 1, "task.started", taskID, modulecore.NewMessageID(), "private payload", "agent", "mio")
+	identityGraphBindTestEvent(&event, sessionID, "0123456789abcdef0123456789abcdef")
+	tasks := &identityGraphTaskReaderStub{tasks: map[modulecore.TaskID]domaintask.Task{
+		taskID: func() domaintask.Task {
+			task := identityGraphTestTask(taskID, "", nil, "", domaintask.StatusRunning)
+			task.OriginSessionID = sessionID
+			return task
+		}(),
+	}}
+	events := &identityGraphEventReaderStub{events: []modulecore.EventEnvelope{event}}
+
+	recorder := identityGraphPerformRequest(t, HandleIdentityGraph(events, tasks), traceID)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("unfiltered identity graph status=%d body=%s, want %d", recorder.Code, recorder.Body, http.StatusNotFound)
+	}
+	if events.calls != 0 || len(tasks.calls) != 0 {
+		t.Fatalf("legacy handler queried stores without trusted visibility: event_calls=%d task_calls=%#v", events.calls, tasks.calls)
+	}
+}
+
+func TestIdentityGraphVisibilityHidesPrivateReferencedTasksAndSessions(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	publicSessionID := modulecore.NewSessionID()
+	privateSessionID := modulecore.NewSessionID()
+	childTaskID := modulecore.NewTaskID()
+	parentTaskID := modulecore.NewTaskID()
+	event := identityGraphTestEvent(traceID, 1, "task.started", childTaskID, modulecore.NewMessageID(), "private payload", "agent", "mio")
+	identityGraphBindTestEvent(&event, publicSessionID, "0123456789abcdef0123456789abcdef")
+	child := identityGraphTestTask(childTaskID, parentTaskID, nil, "", domaintask.StatusRunning)
+	child.OriginSessionID = publicSessionID
+	parent := identityGraphTestTask(parentTaskID, "", nil, "", domaintask.StatusSucceeded)
+	parent.OriginSessionID = privateSessionID
+	taskReader := &identityGraphTaskReaderStub{tasks: map[modulecore.TaskID]domaintask.Task{
+		childTaskID:  child,
+		parentTaskID: parent,
+	}}
+	eventReader := &identityGraphEventReaderStub{events: []modulecore.EventEnvelope{event}}
+	var checkedTasks []modulecore.TaskID
+	taskVisibility := PublicTaskVisibility(func(_ context.Context, task domaintask.Task) (bool, error) {
+		checkedTasks = append(checkedTasks, task.TaskID)
+		return task.OriginSessionID == publicSessionID, nil
+	})
+	sessionVisibility := PublicSessionVisibility(func(_ context.Context, event modulecore.EventEnvelope) (bool, error) {
+		return event.SessionID == publicSessionID, nil
+	})
+
+	recorder := identityGraphPerformRequest(t, HandleIdentityGraphWithPublicVisibility(eventReader, taskReader, taskVisibility, sessionVisibility), traceID)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("private related Task graph status=%d body=%s, want %d", recorder.Code, recorder.Body, http.StatusNotFound)
+	}
+	if strings.Contains(recorder.Body.String(), string(traceID)) || strings.Contains(recorder.Body.String(), string(childTaskID)) || strings.Contains(recorder.Body.String(), string(parentTaskID)) {
+		t.Fatalf("hidden graph response exposed identifiers: %s", recorder.Body)
+	}
+	if !reflect.DeepEqual(checkedTasks, []modulecore.TaskID{childTaskID, parentTaskID}) {
+		t.Fatalf("visibility checked Tasks=%#v, want root and related Task", checkedTasks)
+	}
+	if !reflect.DeepEqual(taskReader.calls, []modulecore.TaskID{childTaskID, parentTaskID}) {
+		t.Fatalf("Task lookups=%#v, want root and related Task", taskReader.calls)
+	}
+}
+
+func TestIdentityGraphLegacySessionEventWithoutPublicationProofFailsClosed(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	sessionID := modulecore.NewSessionID()
+	event := identityGraphTestEvent(traceID, 1, "conversation.completed", "", modulecore.NewMessageID(), "private payload", "agent", "mio")
+	event.SessionID = sessionID
+	// Canonical legacy envelopes have a SessionID but no immutable
+	// publication_incarnation in their orchestrator payload.
+	recorder := identityGraphPerformRequest(t, HandleIdentityGraphWithPublicVisibility(
+		&identityGraphEventReaderStub{events: []modulecore.EventEnvelope{event}},
+		&identityGraphTaskReaderStub{},
+		allowAllIdentityGraphTasks,
+		allowAllIdentityGraphSessions,
+	), traceID)
+	if recorder.Code != http.StatusNotFound || strings.Contains(recorder.Body.String(), string(traceID)) || strings.Contains(recorder.Body.String(), string(sessionID)) {
+		t.Fatalf("legacy IdentityGraph status=%d body=%s, want hidden without publication proof", recorder.Code, recorder.Body)
+	}
+}
+
+func TestIdentityGraphRejectsSameIDPublicSessionRecreation(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	sessionID := modulecore.NewSessionID()
+	taskID := modulecore.NewTaskID()
+	oldIncarnation := "0123456789abcdef0123456789abcdef"
+	newIncarnation := "abcdef0123456789abcdef0123456789"
+	event := identityGraphTestEvent(traceID, 1, "task.started", taskID, modulecore.NewMessageID(), "private payload", "agent", "mio")
+	identityGraphBindTestEvent(&event, sessionID, oldIncarnation)
+	task := identityGraphTestTask(taskID, "", nil, "", domaintask.StatusRunning)
+	taskReader := &identityGraphTaskReaderStub{tasks: map[modulecore.TaskID]domaintask.Task{taskID: task}}
+	sessionVisibility := PublicSessionVisibility(func(_ context.Context, candidate modulecore.EventEnvelope) (bool, error) {
+		incarnation, _ := candidate.Payload["publication_incarnation"].(string)
+		// The SessionID is public before and after recreation, but its immutable
+		// issuance value no longer matches the event's old publication.
+		return candidate.SessionID == sessionID && incarnation == newIncarnation, nil
+	})
+	recorder := identityGraphPerformRequest(t, HandleIdentityGraphWithPublicVisibility(
+		&identityGraphEventReaderStub{events: []modulecore.EventEnvelope{event}},
+		taskReader,
+		allowAllIdentityGraphTasks,
+		sessionVisibility,
+	), traceID)
+	if recorder.Code != http.StatusNotFound || strings.Contains(recorder.Body.String(), string(traceID)) {
+		t.Fatalf("same-ID public recreation status=%d body=%s, want hidden old graph", recorder.Code, recorder.Body)
+	}
+	if len(taskReader.calls) != 0 {
+		t.Fatalf("stale graph read Task owner before rejecting Session incarnation: %#v", taskReader.calls)
+	}
+}
+
+func TestIdentityGraphRechecksSessionAfterTaskReadBeforeResponse(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	sessionID := modulecore.NewSessionID()
+	taskID := modulecore.NewTaskID()
+	oldIncarnation := "0123456789abcdef0123456789abcdef"
+	newIncarnation := "abcdef0123456789abcdef0123456789"
+	event := identityGraphTestEvent(traceID, 1, "task.started", taskID, modulecore.NewMessageID(), "private payload", "agent", "mio")
+	identityGraphBindTestEvent(&event, sessionID, oldIncarnation)
+	currentIncarnation := oldIncarnation
+	visibilityChecks := 0
+	sessionVisibility := PublicSessionVisibility(func(_ context.Context, candidate modulecore.EventEnvelope) (bool, error) {
+		visibilityChecks++
+		incarnation, _ := candidate.Payload["publication_incarnation"].(string)
+		return candidate.SessionID == sessionID && incarnation == currentIncarnation, nil
+	})
+	taskIDValue := taskID
+	taskReader := &identityGraphTaskReaderStub{
+		tasks: map[modulecore.TaskID]domaintask.Task{taskID: identityGraphTestTask(taskID, "", nil, "", domaintask.StatusRunning)},
+		onGet: func(got modulecore.TaskID) {
+			if got == taskIDValue {
+				currentIncarnation = newIncarnation
+			}
+		},
+	}
+	recorder := identityGraphPerformRequest(t, HandleIdentityGraphWithPublicVisibility(
+		&identityGraphEventReaderStub{events: []modulecore.EventEnvelope{event}},
+		taskReader,
+		allowAllIdentityGraphTasks,
+		sessionVisibility,
+	), traceID)
+	if recorder.Code != http.StatusNotFound || strings.Contains(recorder.Body.String(), string(traceID)) || strings.Contains(recorder.Body.String(), string(taskID)) {
+		t.Fatalf("Session changed during Task read status=%d body=%s, want hidden response", recorder.Code, recorder.Body)
+	}
+	if visibilityChecks < 2 {
+		t.Fatalf("Session visibility checks=%d, want pre-read and response-admission checks", visibilityChecks)
+	}
+}
+
+func TestIdentityGraphVisibilityErrorsUnknownSessionsAndUngroundedTracesFailClosed(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	sessionID := modulecore.NewSessionID()
+	taskID := modulecore.NewTaskID()
+	publicTask := identityGraphTestTask(taskID, "", nil, "", domaintask.StatusRunning)
+	publicTask.OriginSessionID = sessionID
+	event := identityGraphTestEvent(traceID, 1, "task.started", taskID, modulecore.NewMessageID(), "private payload", "agent", "mio")
+	identityGraphBindTestEvent(&event, sessionID, "0123456789abcdef0123456789abcdef")
+	newHandler := func(eventReader *identityGraphEventReaderStub, taskReader *identityGraphTaskReaderStub, sessionCheck PublicSessionVisibility) http.HandlerFunc {
+		return HandleIdentityGraphWithPublicVisibility(
+			eventReader,
+			taskReader,
+			PublicTaskVisibility(func(_ context.Context, task domaintask.Task) (bool, error) {
+				return task.OriginSessionID == sessionID, nil
+			}),
+			sessionCheck,
+		)
+	}
+	taskReader := &identityGraphTaskReaderStub{tasks: map[modulecore.TaskID]domaintask.Task{taskID: publicTask}}
+	privateSessionReader := &identityGraphEventReaderStub{events: []modulecore.EventEnvelope{event}}
+	privateSessionEvent := event
+	identityGraphBindTestEvent(&privateSessionEvent, modulecore.NewSessionID(), "0123456789abcdef0123456789abcdef")
+	privateSessionReader.events[0] = privateSessionEvent
+	privateSessionRecorder := identityGraphPerformRequest(t, newHandler(privateSessionReader, taskReader, func(context.Context, modulecore.EventEnvelope) (bool, error) {
+		return false, nil
+	}), traceID)
+	if privateSessionRecorder.Code != http.StatusNotFound || strings.Contains(privateSessionRecorder.Body.String(), string(traceID)) {
+		t.Fatalf("session policy error status=%d body=%s", privateSessionRecorder.Code, privateSessionRecorder.Body)
+	}
+	if len(taskReader.calls) != 0 {
+		t.Fatalf("Task store queried before private Session was rejected: %#v", taskReader.calls)
+	}
+	visibilityErrorRecorder := identityGraphPerformRequest(t, newHandler(privateSessionReader, taskReader, func(context.Context, modulecore.EventEnvelope) (bool, error) {
+		return false, errors.New("Session owner lookup failed")
+	}), traceID)
+	if visibilityErrorRecorder.Code != http.StatusNotFound || strings.Contains(visibilityErrorRecorder.Body.String(), string(traceID)) {
+		t.Fatalf("session policy error status=%d body=%s", visibilityErrorRecorder.Code, visibilityErrorRecorder.Body)
+	}
+	if len(taskReader.calls) != 0 {
+		t.Fatalf("Task store queried despite Session policy error: %#v", taskReader.calls)
+	}
+
+	ungroundedTraceID := modulecore.NewTraceID()
+	ungroundedEvent := identityGraphTestEvent(ungroundedTraceID, 1, "trace.observed", "", modulecore.NewMessageID(), "private payload", "agent", "mio")
+	ungroundedRecorder := identityGraphPerformRequest(t, newHandler(&identityGraphEventReaderStub{events: []modulecore.EventEnvelope{ungroundedEvent}}, &identityGraphTaskReaderStub{}, allowAllIdentityGraphSessions), ungroundedTraceID)
+	if ungroundedRecorder.Code != http.StatusNotFound || strings.Contains(ungroundedRecorder.Body.String(), string(ungroundedTraceID)) {
+		t.Fatalf("ungrounded trace status=%d body=%s", ungroundedRecorder.Code, ungroundedRecorder.Body)
+	}
+
+	unknownTraceID := modulecore.NewTraceID()
+	unknownRecorder := identityGraphPerformRequest(t, newHandler(&identityGraphEventReaderStub{}, &identityGraphTaskReaderStub{}, allowAllIdentityGraphSessions), unknownTraceID)
+	if unknownRecorder.Code != http.StatusNotFound || strings.Contains(unknownRecorder.Body.String(), string(unknownTraceID)) {
+		t.Fatalf("unknown trace status=%d body=%s", unknownRecorder.Code, unknownRecorder.Body)
+	}
+}
+
 func TestIdentityGraphHandlerRejectsMalformedQueriesAndUnavailableOwners(t *testing.T) {
 	traceID := modulecore.NewTraceID()
 	events := &identityGraphEventReaderStub{events: []modulecore.EventEnvelope{identityGraphTestEvent(traceID, 1, "trace.started", "", "", "", "", "")}}
@@ -138,17 +349,18 @@ func TestIdentityGraphHandlerRejectsMalformedQueriesAndUnavailableOwners(t *test
 		{name: "missing trace", method: http.MethodGet, target: "/viewer/identity-graph", events: events, tasks: tasks, want: http.StatusBadRequest},
 		{name: "invalid trace", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=not-a-trace", events: events, tasks: tasks, want: http.StatusBadRequest},
 		{name: "unknown query", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=" + string(traceID) + "&debug=1", events: events, tasks: tasks, want: http.StatusBadRequest},
+		{name: "caller supplied identity", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=" + string(traceID) + "&session_id=" + string(modulecore.NewSessionID()), events: events, tasks: tasks, want: http.StatusBadRequest},
 		{name: "repeated trace", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=" + string(traceID) + "&trace_id=" + string(traceID), events: events, tasks: tasks, want: http.StatusBadRequest},
 		{name: "method", method: http.MethodPost, target: "/viewer/identity-graph?trace_id=" + string(traceID), events: events, tasks: tasks, want: http.StatusMethodNotAllowed},
 		{name: "event owner unavailable", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=" + string(traceID), events: nil, tasks: tasks, want: http.StatusServiceUnavailable},
 		{name: "task owner unavailable", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=" + string(traceID), events: events, tasks: nil, want: http.StatusServiceUnavailable},
-		{name: "unknown trace", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=" + string(traceID), events: &identityGraphEventReaderStub{}, tasks: tasks, want: http.StatusBadRequest},
+		{name: "unknown trace", method: http.MethodGet, target: "/viewer/identity-graph?trace_id=" + string(traceID), events: &identityGraphEventReaderStub{}, tasks: tasks, want: http.StatusNotFound},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(test.method, test.target, nil)
-			HandleIdentityGraph(test.events, test.tasks).ServeHTTP(recorder, request)
+			identityGraphTestHandler(test.events, test.tasks).ServeHTTP(recorder, request)
 			if recorder.Code != test.want {
 				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body, test.want)
 			}
@@ -201,7 +413,7 @@ func TestIdentityGraphHandlerRejectsClosedGraphAndTaskFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			reader := &identityGraphEventReaderStub{events: test.events, err: test.eventError}
 			taskReader := &identityGraphTaskReaderStub{tasks: test.tasks, errors: test.taskErrors}
-			recorder := identityGraphPerformRequest(t, HandleIdentityGraph(reader, taskReader), traceID)
+			recorder := identityGraphPerformRequest(t, identityGraphTestHandler(reader, taskReader), traceID)
 			if recorder.Code != test.want {
 				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body, test.want)
 			}
@@ -221,7 +433,7 @@ func TestIdentityGraphHandlerRejectsMoreThan256ReferencedTasks(t *testing.T) {
 		rootEvents = append(rootEvents, identityGraphTestEvent(traceID, modulecore.EventSeq(index+1), "task.observed", taskID, "", "", "", ""))
 		tasks[taskID] = identityGraphTestTask(taskID, "", nil, "", domaintask.StatusQueued)
 	}
-	recorder := identityGraphPerformRequest(t, HandleIdentityGraph(&identityGraphEventReaderStub{events: rootEvents}, &identityGraphTaskReaderStub{tasks: tasks}), traceID)
+	recorder := identityGraphPerformRequest(t, identityGraphTestHandler(&identityGraphEventReaderStub{events: rootEvents}, &identityGraphTaskReaderStub{tasks: tasks}), traceID)
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body, http.StatusConflict)
 	}
@@ -233,7 +445,7 @@ func TestIdentityGraphHandlerRejectsReturnedEventLimit(t *testing.T) {
 	for index := 0; index < identityGraphEventLimit+1; index++ {
 		events = append(events, identityGraphTestEvent(traceID, modulecore.EventSeq(index+1), "trace.observed", "", "", "", "", ""))
 	}
-	recorder := identityGraphPerformRequest(t, HandleIdentityGraph(&identityGraphEventReaderStub{events: events}, &identityGraphTaskReaderStub{}), traceID)
+	recorder := identityGraphPerformRequest(t, identityGraphTestHandler(&identityGraphEventReaderStub{events: events}, &identityGraphTaskReaderStub{}), traceID)
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body, http.StatusConflict)
 	}
@@ -281,7 +493,7 @@ func TestIdentityGraphHandlerReconstructsTheSameCanonicalStoresAfterRestart(t *t
 		t.Fatalf("AppendSequenced(second): %v", err)
 	}
 
-	firstResponse := identityGraphPerformRequest(t, HandleIdentityGraph(store, tasks), traceID)
+	firstResponse := identityGraphPerformRequest(t, identityGraphTestHandler(store, tasks), traceID)
 	if firstResponse.Code != http.StatusOK {
 		t.Fatalf("first graph status = %d body=%s", firstResponse.Code, firstResponse.Body)
 	}
@@ -294,7 +506,7 @@ func TestIdentityGraphHandlerReconstructsTheSameCanonicalStoresAfterRestart(t *t
 		t.Fatalf("NewSQLiteStore(reopened): %v", err)
 	}
 	defer func() { _ = reopened.Close() }()
-	secondResponse := identityGraphPerformRequest(t, HandleIdentityGraph(reopened, tasks), traceID)
+	secondResponse := identityGraphPerformRequest(t, identityGraphTestHandler(reopened, tasks), traceID)
 	if secondResponse.Code != http.StatusOK {
 		t.Fatalf("reopened graph status = %d body=%s", secondResponse.Code, secondResponse.Body)
 	}
@@ -314,6 +526,30 @@ func identityGraphPerformRequest(t *testing.T, handler http.Handler, traceID mod
 	request := httptest.NewRequest(http.MethodGet, "/viewer/identity-graph?trace_id="+string(traceID), nil)
 	handler.ServeHTTP(recorder, request)
 	return recorder
+}
+
+func identityGraphTestHandler(events IdentityGraphEventReader, tasks IdentityGraphTaskReader) http.HandlerFunc {
+	return HandleIdentityGraphWithPublicVisibility(events, tasks, allowAllIdentityGraphTasks, allowAllIdentityGraphSessions)
+}
+
+func allowAllIdentityGraphTasks(context.Context, domaintask.Task) (bool, error) {
+	return true, nil
+}
+
+func allowAllIdentityGraphSessions(context.Context, modulecore.EventEnvelope) (bool, error) {
+	return true, nil
+}
+
+func identityGraphBindTestEvent(event *modulecore.EventEnvelope, sessionID modulecore.SessionID, incarnation string) {
+	event.SessionID = sessionID
+	if event.Payload == nil {
+		event.Payload = make(map[string]any)
+	}
+	event.Payload["session_id"] = string(sessionID)
+	event.Payload["publication_incarnation"] = incarnation
+	event.Payload["channel"] = "viewer"
+	event.Payload["channel_address"] = "identity-graph-test"
+	event.Payload["visibility"] = "public"
 }
 
 func identityGraphTestEvent(traceID modulecore.TraceID, sequence modulecore.EventSeq, eventType string, taskID modulecore.TaskID, messageID modulecore.MessageID, secret string, actorKind, actorID string) modulecore.EventEnvelope {

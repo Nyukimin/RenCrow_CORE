@@ -154,11 +154,12 @@ const (
 	speechPlanTransportObservationSchema = 1
 	speechPlanTransportObservationTag    = "external"
 
-	speechPlanFallbackCancelled = "speech_cancelled"
-	speechPlanFallbackTimeout   = "speech_timeout"
-	speechPlanFallbackTransport = "speech_transport_failed"
-	speechPlanFallbackAudioSave = "speech_audio_save_failed"
-	speechPlanFallbackPlayback  = "speech_playback_failed"
+	speechPlanFallbackCancelled         = "speech_cancelled"
+	speechPlanFallbackTimeout           = "speech_timeout"
+	speechPlanFallbackTransport         = "speech_transport_failed"
+	speechPlanFallbackAudioSave         = "speech_audio_save_failed"
+	speechPlanFallbackAudioRegistration = "speech_audio_registration_failed"
+	speechPlanFallbackPlayback          = "speech_playback_failed"
 
 	speechPlanFailureStageRequestBuild       = "request_build"
 	speechPlanFailureStageReceiptBegin       = "receipt_begin"
@@ -166,6 +167,7 @@ const (
 	speechPlanFailureStageGatewayStatus      = "gateway_status"
 	speechPlanFailureStageResponseValidation = "response_validation"
 	speechPlanFailureStageResponseReceipt    = "response_receipt"
+	speechPlanFailureStageAudioRegistration  = "audio_resource_registration"
 )
 
 // PushSpeechPlan sends each selected utterance to the canonical Gateway route
@@ -323,9 +325,10 @@ func (b *RenCrowTTSBridge) PushSpeechPlan(ctx context.Context, ttsSessionID, con
 			return speechPlanProgressFailure(progress, utteranceIndex, err)
 		}
 		if b.cfg.OnSpeechChunkReady != nil {
-			b.cfg.OnSpeechChunkReady(SpeechPlanChunkReady{
+			if err := b.cfg.OnSpeechChunkReady(SpeechPlanChunkReady{
 				TTSSessionID:          ttsSessionID,
 				ConversationSessionID: conversationSessionID,
+				SessionBinding:        session.sessionBinding,
 				TurnID:                turnID,
 				SpeakerID:             speakerID,
 				PublicPlaybackRef:     session.publicPlaybackRef,
@@ -338,7 +341,13 @@ func (b *RenCrowTTSBridge) PushSpeechPlan(ctx context.Context, ttsSessionID, con
 				DisplayText:           speechText,
 				AudioPath:             audioPath,
 				AudioURL:              audioURL,
-			})
+			}); err != nil {
+				_ = os.Remove(savedPath)
+				failureStage := speechPlanFailureStageAudioRegistration
+				observations[utteranceIndex].FailureStage = &failureStage
+				setSpeechPlanFallbackReason(observations, utteranceIndex, speechPlanFallbackReasonPointer(speechPlanFallbackAudioRegistration))
+				return speechPlanProgressFailure(progress, utteranceIndex, err)
+			}
 		}
 		if playbackOutput == SpeechPlaybackOutputLocal {
 			localChunk := SpeechPlanAudioChunk{

@@ -14,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -189,7 +190,7 @@ func TestEventRelayPublishesBoundChatAndPrivateGapBeforeDurableCommit(t *testing
 		t.Fatalf("NewCanonicalEventLog: %v", err)
 	}
 	hub := viewer.NewEventHub(8)
-	monitor := viewer.NewMonitorStore(nil, archive)
+	monitor := newPublicRelayFixtureMonitor(archive)
 	marker := &relayAdmissionMarker{}
 	relay := &idleAwareEventListener{hub: hub, monitor: monitor, archive: archive, responseMarker: marker}
 	traceID, sessionID, turnID := modulecore.NewTraceID(), modulecore.NewSessionID(), modulecore.NewTurnID()
@@ -200,7 +201,7 @@ func TestEventRelayPublishesBoundChatAndPrivateGapBeforeDurableCommit(t *testing
 		t.Fatalf("BindChat: %v", err)
 	}
 
-	first := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "first response", "CHAT", "", string(sessionID), "viewer", "chat-1")
+	first := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "first response", "CHAT", "", string(sessionID), "viewer", "chat-1"))
 	first.TurnID = turnID
 	first.MessageID = modulecore.NewMessageID()
 	firstDone := make(chan error, 1)
@@ -234,7 +235,7 @@ func TestEventRelayPublishesBoundChatAndPrivateGapBeforeDurableCommit(t *testing
 	if err != nil {
 		t.Fatalf("AdmitSequenced(private SuperAgent event): %v", err)
 	}
-	second := orchestrator.NewEventWithTraceID(traceID, "routing.decision", "mio", "shiro", "second event", "CHAT", "", string(sessionID), "viewer", "chat-1")
+	second := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "routing.decision", "mio", "shiro", "second event", "CHAT", "", string(sessionID), "viewer", "chat-1"))
 	if err := relay.OnEvent(second); err != nil {
 		t.Fatalf("OnEvent(second CHAT): %v", err)
 	}
@@ -288,6 +289,242 @@ func TestEventRelayPublishesBoundChatAndPrivateGapBeforeDurableCommit(t *testing
 	visible = hub.History()
 	if len(visible) != 2 || visible[0].EventID != first.EventID || visible[1].EventID != second.EventID {
 		t.Fatalf("durable catch-up duplicated or changed live events: %+v", visible)
+	}
+}
+
+type guardedMioRelayTestQualification struct{}
+
+func (guardedMioRelayTestQualification) Use(claim func() error) error { return claim() }
+func (q guardedMioRelayTestQualification) Retain() domainconversation.PreparedChatTurnPublicationGuard {
+	return q
+}
+func (guardedMioRelayTestQualification) Release() {}
+
+type guardedRelayQualificationProbeState struct {
+	relay           *idleAwareEventListener
+	guardActive     atomic.Bool
+	releases        atomic.Int32
+	releasedInGuard atomic.Bool
+	releasedInRelay atomic.Bool
+}
+
+type guardedRelayQualificationProbe struct {
+	state      *guardedRelayQualificationProbeState
+	releaseOne sync.Once
+}
+
+func (q *guardedRelayQualificationProbe) Use(claim func() error) error { return claim() }
+
+func (q *guardedRelayQualificationProbe) Retain() domainconversation.PreparedChatTurnPublicationGuard {
+	return &guardedRelayQualificationProbe{state: q.state}
+}
+
+func (q *guardedRelayQualificationProbe) Release() {
+	if q == nil || q.state == nil {
+		return
+	}
+	q.releaseOne.Do(func() {
+		if q.state.guardActive.Load() {
+			q.state.releasedInGuard.Store(true)
+		}
+		if q.state.relay != nil {
+			if !q.state.relay.publicationMu.TryLock() {
+				q.state.releasedInRelay.Store(true)
+			} else {
+				q.state.relay.publicationMu.Unlock()
+			}
+		}
+		q.state.releases.Add(1)
+	})
+}
+
+func TestGuardedMioFinalWaitsForRelayOrderBeforeAdmission(t *testing.T) {
+	_, store, _, admittedContext := newRelayAdmissionFixture(t, 4)
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog: %v", err)
+	}
+	hub := viewer.NewEventHub(8)
+	relay := &idleAwareEventListener{hub: hub, archive: archive}
+	traceID, sessionID, turnID := modulecore.NewTraceID(), modulecore.NewSessionID(), modulecore.NewTurnID()
+	taskID, runID, messageID := modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewMessageID()
+	requestCtx, cancelRequest := context.WithCancel(admittedContext)
+	defer cancelRequest()
+	releaseChat, err := relay.BindChat(traceID, requestCtx)
+	if err != nil {
+		t.Fatalf("BindChat: %v", err)
+	}
+	defer releaseChat()
+
+	ev := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "answer", "CHAT", taskID.String(), string(sessionID), "viewer", "cmd:ren")
+	ev.Visibility = "private"
+	ev.PublicationIncarnation = "incarnation-v1"
+	ev.TurnID = turnID
+	ev.RunID = runID
+	ev.MessageID = messageID
+	ev.ActorKind = "agent"
+	ev.ActorID = "mio"
+	admissionStarted := make(chan struct{}, 1)
+	result := make(chan struct {
+		event orchestrator.OrchestratorEvent
+		err   error
+	}, 1)
+	relay.publicationMu.Lock()
+	go func() {
+		accepted, publishErr := relay.PublishGuardedCanonicalEvent(ev, "ren", func(publish func() error) error {
+			admissionStarted <- struct{}{}
+			return publish()
+		}, guardedMioRelayTestQualification{})
+		result <- struct {
+			event orchestrator.OrchestratorEvent
+			err   error
+		}{event: accepted, err: publishErr}
+	}()
+	select {
+	case <-admissionStarted:
+		relay.publicationMu.Unlock()
+		t.Fatal("final event admission began before the relay acquired FIFO order")
+	case <-time.After(30 * time.Millisecond):
+	}
+	relay.publicationMu.Unlock()
+	select {
+	case outcome := <-result:
+		if outcome.err != nil {
+			t.Fatalf("PublishGuardedCanonicalEvent: %v", outcome.err)
+		}
+		if outcome.event.EventSeq <= 0 || outcome.event.EventID != ev.EventID {
+			t.Fatalf("accepted final identity=%+v, want positive sequence and unchanged EventID %s", outcome.event, ev.EventID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("guarded final event did not finish after relay FIFO lock was released")
+	}
+	if len(hub.History()) != 1 {
+		t.Fatalf("canonical final history count=%d, want one", len(hub.History()))
+	}
+}
+
+func TestGuardedMioFinalPreservesCanonicalAcceptanceWhenLiveFanoutFails(t *testing.T) {
+	queue, store, _, admittedContext := newRelayAdmissionFixture(t, 4)
+	releaseQueue := blockRelayQueueHead(t, queue)
+	defer releaseQueue()
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog: %v", err)
+	}
+	hub := viewer.NewEventHub(8)
+	prior := orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "routing.decision", "mio", "user", "prior", "CHAT", "", "", "viewer", "chat-prior")
+	prior.EventSeq = 1_000_000
+	if published, err := hub.PublishAccepted(prior); err != nil || !published {
+		t.Fatalf("seed EventHub sequence conflict: published=%t err=%v", published, err)
+	}
+	relay := &idleAwareEventListener{hub: hub, archive: archive}
+	traceID, sessionID, turnID := modulecore.NewTraceID(), modulecore.NewSessionID(), modulecore.NewTurnID()
+	taskID, runID, messageID := modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewMessageID()
+	requestCtx, cancelRequest := context.WithCancel(admittedContext)
+	defer cancelRequest()
+	releaseChat, err := relay.BindChat(traceID, requestCtx)
+	if err != nil {
+		t.Fatalf("BindChat: %v", err)
+	}
+	defer releaseChat()
+
+	ev := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "answer", "CHAT", taskID.String(), string(sessionID), "viewer", "cmd:ren")
+	ev.Visibility = "private"
+	ev.PublicationIncarnation = "incarnation-v1"
+	ev.TurnID = turnID
+	ev.RunID = runID
+	ev.MessageID = messageID
+	ev.ActorKind = "agent"
+	ev.ActorID = "mio"
+	queueBefore := queue.Status().Pending
+	admissionCalls := 0
+	accepted, err := relay.PublishGuardedCanonicalEvent(ev, "ren", func(publish func() error) error {
+		admissionCalls++
+		return publish()
+	}, guardedMioRelayTestQualification{})
+	var liveErr *orchestrator.GuardedCanonicalLiveDeliveryError
+	if !errors.As(err, &liveErr) || !errors.Is(err, orchestrator.ErrGuardedCanonicalLiveDeliveryFailed) {
+		t.Fatalf("PublishGuardedCanonicalEvent error=%v, want typed post-admission live failure", err)
+	}
+	if admissionCalls != 1 || accepted.EventSeq <= 0 || accepted.EventID != ev.EventID ||
+		liveErr.AcceptedEvent.EventSeq != accepted.EventSeq || liveErr.AcceptedEvent.EventID != accepted.EventID {
+		t.Fatalf("canonical accepted event=%+v typed=%+v admissions=%d; want one C admission and exact accepted identity", accepted, liveErr.AcceptedEvent, admissionCalls)
+	}
+	if got := queue.Status().Pending; got <= queueBefore {
+		t.Fatalf("EventStore queue pending=%d before=%d, want one RAM admission retained despite live W failure", got, queueBefore)
+	}
+	for _, queued := range hub.History() {
+		if queued.EventID == ev.EventID {
+			t.Fatalf("final EventID=%s reached Hub despite live sequence conflict", ev.EventID)
+		}
+	}
+	if relay.livePublicationCursor != 0 {
+		t.Fatalf("relay live cursor=%d after failed W, want unchanged cursor", relay.livePublicationCursor)
+	}
+}
+
+func TestGuardedMioPublicationCleanupRunsAfterGuardAndRelayUnlock(t *testing.T) {
+	for _, failLive := range []bool{false, true} {
+		name := "success"
+		if failLive {
+			name = "hub-error-after-canonical-admission"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, store, _, admittedContext := newRelayAdmissionFixture(t, 4)
+			archive, err := viewer.NewCanonicalEventLog(store)
+			if err != nil {
+				t.Fatalf("NewCanonicalEventLog: %v", err)
+			}
+			hub := viewer.NewEventHub(8)
+			if failLive {
+				prior := orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "routing.decision", "mio", "user", "prior", "CHAT", "", "", "viewer", "chat-prior")
+				prior.EventSeq = 1_000_000
+				if published, err := hub.PublishAccepted(prior); err != nil || !published {
+					t.Fatalf("seed EventHub sequence conflict: published=%t err=%v", published, err)
+				}
+			}
+			relay := &idleAwareEventListener{hub: hub, archive: archive}
+			state := &guardedRelayQualificationProbeState{relay: relay}
+			qualification := &guardedRelayQualificationProbe{state: state}
+			traceID, sessionID, turnID := modulecore.NewTraceID(), modulecore.NewSessionID(), modulecore.NewTurnID()
+			taskID, runID, messageID := modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewMessageID()
+			requestCtx, cancelRequest := context.WithCancel(admittedContext)
+			defer cancelRequest()
+			releaseChat, err := relay.BindChat(traceID, requestCtx)
+			if err != nil {
+				t.Fatalf("BindChat: %v", err)
+			}
+			defer releaseChat()
+
+			ev := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "answer", "CHAT", taskID.String(), string(sessionID), "viewer", "cmd:ren")
+			ev.Visibility = "private"
+			ev.PublicationIncarnation = "incarnation-v1"
+			ev.TurnID = turnID
+			ev.RunID = runID
+			ev.MessageID = messageID
+			ev.ActorKind = "agent"
+			ev.ActorID = "mio"
+			accepted, publishErr := relay.PublishGuardedCanonicalEvent(ev, "ren", func(publish func() error) error {
+				state.guardActive.Store(true)
+				err := publish()
+				state.guardActive.Store(false)
+				return err
+			}, qualification)
+			if failLive {
+				var liveErr *orchestrator.GuardedCanonicalLiveDeliveryError
+				if !errors.As(publishErr, &liveErr) || accepted.EventSeq <= 0 || liveErr.AcceptedEvent.EventID != accepted.EventID {
+					t.Fatalf("post-admission result=%+v err=%v, want accepted C with typed W failure", accepted, publishErr)
+				}
+			} else if publishErr != nil || accepted.EventSeq <= 0 {
+				t.Fatalf("successful guarded publication result=%+v err=%v", accepted, publishErr)
+			}
+			if state.releasedInGuard.Load() || state.releasedInRelay.Load() {
+				t.Fatalf("qualification released under guard=%t relay lock=%t", state.releasedInGuard.Load(), state.releasedInRelay.Load())
+			}
+			if got := state.releases.Load(); got != 1 {
+				t.Fatalf("producer qualification release count=%d, want exactly one cleanup release", got)
+			}
+		})
 	}
 }
 
@@ -444,7 +681,7 @@ func TestEventRelayDurableReplayWaitsOutsidePublicationLockDuringChat(t *testing
 		t.Fatalf("durable replay entered EventStore %d times while CHAT lease was active", got)
 	}
 
-	event := orchestrator.NewEventWithTraceID(traceID, "message.received", "user", "mio", "admitted while replay waits", "CHAT", "", "", "viewer", "chat-1")
+	event := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "message.received", "user", "mio", "admitted while replay waits", "CHAT", "", "", "viewer", "chat-1"))
 	eventDone := make(chan error, 1)
 	started := time.Now()
 	go func() { eventDone <- relay.OnEvent(event) }()
@@ -498,7 +735,7 @@ func TestEventRelayUnboundChatUsesSynchronousPublication(t *testing.T) {
 		t.Fatalf("NewCanonicalEventLog: %v", err)
 	}
 	relay := &idleAwareEventListener{archive: archive, hub: viewer.NewEventHub(8)}
-	chat := orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "message.received", "user", "mio", "ordinary CHAT", "CHAT", "", "", "viewer", "chat-1")
+	chat := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "message.received", "user", "mio", "ordinary CHAT", "CHAT", "", "", "viewer", "chat-1"))
 	if err := relay.OnEvent(chat); err != nil {
 		t.Fatalf("unbound CHAT OnEvent: %v", err)
 	}
@@ -524,7 +761,7 @@ func TestEventRelayForeignChatWaitsForActiveLeaseThenUsesSynchronousPublication(
 	if err != nil {
 		t.Fatalf("BindChat: %v", err)
 	}
-	foreign := orchestrator.NewEventWithTraceID(foreignTraceID, "message.received", "user", "mio", "foreign CHAT", "CHAT", "", "", "viewer", "chat-1")
+	foreign := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(foreignTraceID, "message.received", "user", "mio", "foreign CHAT", "CHAT", "", "", "viewer", "chat-1"))
 	foreignDone := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {
@@ -538,7 +775,7 @@ func TestEventRelayForeignChatWaitsForActiveLeaseThenUsesSynchronousPublication(
 	case <-time.After(30 * time.Millisecond):
 	}
 
-	bound := orchestrator.NewEventWithTraceID(boundTraceID, "message.received", "user", "mio", "admitted CHAT", "CHAT", "", "", "viewer", "chat-1")
+	bound := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(boundTraceID, "message.received", "user", "mio", "admitted CHAT", "CHAT", "", "", "viewer", "chat-1"))
 	if err := relay.OnEvent(bound); err != nil {
 		t.Fatalf("bound CHAT OnEvent: %v", err)
 	}
@@ -587,10 +824,10 @@ func TestEventRelayIdleChatBindingWaitCancelsWithForegroundStop(t *testing.T) {
 	relay.mu.Lock()
 	relay.idleChat = gate
 	relay.mu.Unlock()
-	idleEvent := orchestrator.NewEventWithTraceID(
+	idleEvent := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(
 		modulecore.NewTraceID(), "idlechat.message", "mio", "shiro", "old idle line",
 		"IDLECHAT", "", string(modulecore.NewSessionID()), "idlechat", "idlechat",
-	)
+	))
 	eventDone := make(chan error, 1)
 	go func() { eventDone <- relay.OnEvent(idleEvent) }()
 	select {
@@ -681,7 +918,7 @@ func TestEventRelayDoesNotPublishIdleEventAfterStopWinsFinalAcceptance(t *testin
 	relay.mu.Lock()
 	relay.idleChat = gate
 	relay.mu.Unlock()
-	event := orchestrator.NewEventWithTraceID(traceID, "idlechat.message", "mio", "shiro", "stale idle line", "IDLECHAT", "", string(sessionID), "idlechat", "idlechat")
+	event := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "idlechat.message", "mio", "shiro", "stale idle line", "IDLECHAT", "", string(sessionID), "idlechat", "idlechat"))
 	eventDone := make(chan error, 1)
 	go func() { eventDone <- relay.OnEvent(event) }()
 	select {
@@ -732,7 +969,7 @@ func TestEventRelayFallbackTraceUsesSynchronousCHATAfterBarrierAndLeaseRelease(t
 	if err != nil {
 		t.Fatalf("BindChat: %v", err)
 	}
-	first := orchestrator.NewEventWithTraceID(traceID, "message.received", "user", "mio", "admitted before fallback", "CHAT", "", "", "viewer", "chat-1")
+	first := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "message.received", "user", "mio", "admitted before fallback", "CHAT", "", "", "viewer", "chat-1"))
 	if err := relay.OnEvent(first); err != nil {
 		t.Fatalf("bound CHAT OnEvent: %v", err)
 	}
@@ -744,7 +981,7 @@ func TestEventRelayFallbackTraceUsesSynchronousCHATAfterBarrierAndLeaseRelease(t
 	if err := relay.MarkChatSynchronous(traceID); err != nil {
 		t.Fatalf("MarkChatSynchronous after fallback barrier: %v", err)
 	}
-	final := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "synchronous fallback response", "CHAT", "", "", "viewer", "chat-1")
+	final := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "synchronous fallback response", "CHAT", "", "", "viewer", "chat-1"))
 	finalDone := make(chan error, 1)
 	go func() { finalDone <- relay.OnEvent(final) }()
 	select {
@@ -813,7 +1050,7 @@ func TestRuntimeLegacyFallbackPublishesFinalCHATSynchronously(t *testing.T) {
 		t.Fatalf("admitRuntimeLegacyViewerChat: %v", err)
 	}
 	defer release()
-	first := orchestrator.NewEventWithTraceID(identity.TraceID, "message.received", "user", "mio", "admitted before fallback", "CHAT", "", "", "viewer", "chat-1")
+	first := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(identity.TraceID, "message.received", "user", "mio", "admitted before fallback", "CHAT", "", "", "viewer", "chat-1"))
 	if err := relay.OnEvent(first); err != nil {
 		t.Fatalf("bound CHAT OnEvent: %v", err)
 	}
@@ -828,7 +1065,7 @@ func TestRuntimeLegacyFallbackPublishesFinalCHATSynchronously(t *testing.T) {
 	if _, ok := persistencequeue.AdmissionFromContext(fallbackCtx); ok {
 		t.Fatal("fallback context still carries RAM admission")
 	}
-	final := orchestrator.NewEventWithTraceID(identity.TraceID, "agent.response", "mio", "user", "final synchronous response", "CHAT", "", "", "viewer", "chat-1")
+	final := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(identity.TraceID, "agent.response", "mio", "user", "final synchronous response", "CHAT", "", "", "viewer", "chat-1"))
 	if err := relay.OnEvent(final); err != nil {
 		t.Fatalf("final CHAT event after fallback: %v", err)
 	}
@@ -859,7 +1096,7 @@ func TestEventRelayLostAdmittedTraceFailsClosed(t *testing.T) {
 	relay.mu.Lock()
 	relay.chatBinding = nil // Simulate an unexpected relay binding loss; trace scope remains admitted.
 	relay.mu.Unlock()
-	lost := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "must fail closed", "WEB", "", "", "viewer", "chat-1")
+	lost := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "must fail closed", "WEB", "", "", "viewer", "chat-1"))
 	if err := relay.OnEvent(lost); !errors.Is(err, errChatTraceIDNotBound) {
 		t.Fatalf("lost admitted CHAT OnEvent=%v, want fail-closed lost-scope error", err)
 	}
@@ -891,7 +1128,7 @@ func TestEventRelayAcceptedFatalHeadDoesNotPublishFollowingCHAT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BindChat: %v", err)
 	}
-	duplicate := orchestrator.NewEventWithTraceID(traceID, "message.received", "user", "mio", "accepted but duplicate id", "CHAT", "", "", "viewer", "chat-1")
+	duplicate := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "message.received", "user", "mio", "accepted but duplicate id", "CHAT", "", "", "viewer", "chat-1"))
 	duplicate.EventID = first.EventID
 	if err := relay.OnEvent(duplicate); err != nil {
 		t.Fatalf("OnEvent duplicate accepted head: %v", err)
@@ -900,7 +1137,7 @@ func TestEventRelayAcceptedFatalHeadDoesNotPublishFollowingCHAT(t *testing.T) {
 	if err := admission.Barrier(context.Background()); err == nil || !strings.Contains(err.Error(), "duplicate event_id") {
 		t.Fatalf("fatal accepted-head barrier=%v, want duplicate event ID failure", err)
 	}
-	following := orchestrator.NewEventWithTraceID(traceID, "routing.decision", "mio", "shiro", "must not publish", "CHAT", "", "", "viewer", "chat-1")
+	following := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "routing.decision", "mio", "shiro", "must not publish", "CHAT", "", "", "viewer", "chat-1"))
 	if err := relay.OnEvent(following); err == nil || !strings.Contains(err.Error(), "duplicate event_id") {
 		t.Fatalf("OnEvent after fatal accepted queue head=%v, want fatal duplicate error", err)
 	}

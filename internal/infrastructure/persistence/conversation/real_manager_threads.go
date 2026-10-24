@@ -128,6 +128,14 @@ func (r *RealConversationManager) FlushThread(ctx context.Context, threadID modu
 	if err != nil {
 		return nil, fmt.Errorf("failed to get thread from redis: %w", err)
 	}
+	reservation, err := r.beginConversationThreadFlush(ctx, thread)
+	if err != nil {
+		return nil, err
+	}
+	lifecycleSucceeded := false
+	if reservation != nil {
+		defer func() { r.finishConversationThreadLifecycle(thread.SessionID, reservation, lifecycleSucceeded) }()
+	}
 
 	residual, generationMode, failureCode := r.generateSummaryResidual(ctx, thread)
 
@@ -141,7 +149,12 @@ func (r *RealConversationManager) FlushThread(ctx context.Context, threadID modu
 		}
 	}
 
-	return r.archiveThreadSummary(ctx, thread, residual, generationMode, failureCode, embedding)
+	summary, err := r.archiveThreadSummary(ctx, thread, residual, generationMode, failureCode, embedding)
+	if err != nil {
+		return nil, err
+	}
+	lifecycleSucceeded = true
+	return summary, nil
 }
 
 func (r *RealConversationManager) archiveThreadSummary(ctx context.Context, thread *domconv.Thread, residual domconv.SummaryResidual, generationMode string, failureCode string, embedding []float32) (*domconv.ThreadSummary, error) {
@@ -223,6 +236,15 @@ func (r *RealConversationManager) IsNovelInformation(ctx context.Context, msg do
 
 // GetActiveThread は SessionID に紐づく ActiveThread を取得
 func (r *RealConversationManager) GetActiveThread(ctx context.Context, sessionID string) (*domconv.Thread, error) {
+	if scope, ownerScoped := ctx.Value(conversationTurnOwnerReadScopeKey{}).(conversationTurnOwnerReadScope); ownerScoped {
+		if scope.sessionID != sessionID || strings.TrimSpace(scope.ownerID) == "" {
+			return nil, domconv.ErrConversationTurnConflict
+		}
+		if scope.head == nil {
+			return nil, domconv.ErrThreadNotFound
+		}
+		return cloneThreadForStore(scope.head), nil
+	}
 	if r != nil {
 		if active, _ := r.conversationTurnOverlayForRead(ctx, sessionID); active != nil {
 			return active, nil
@@ -258,6 +280,28 @@ func (r *RealConversationManager) CreateThread(ctx context.Context, sessionID st
 }
 
 func (r *RealConversationManager) createThreadLocked(ctx context.Context, sessionID string, domain string) (*domconv.Thread, error) {
+	if modulecore.SessionID(sessionID).Validate() != nil {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	ownerID := ""
+	sess, sessionErr := r.redisStore.GetSession(ctx, sessionID)
+	if sessionErr != nil && sessionErr != domconv.ErrSessionNotFound {
+		return nil, fmt.Errorf("failed to get session: %w", sessionErr)
+	}
+	if sess != nil {
+		ownerID = sess.UserID
+	}
+	blocksColdActivation, err := r.conversationThreadLifecycleRequired(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	reservation, err := r.beginConversationThreadLifecycle(sessionID, ownerID, blocksColdActivation)
+	if err != nil {
+		return nil, err
+	}
+	lifecycleSucceeded := false
+	defer func() { r.finishConversationThreadLifecycle(sessionID, reservation, lifecycleSucceeded) }()
+
 	thread, sess, err := r.prepareThreadLocked(ctx, sessionID, domain)
 	if err != nil {
 		return nil, err
@@ -265,6 +309,7 @@ func (r *RealConversationManager) createThreadLocked(ctx context.Context, sessio
 	if err := r.persistPreparedThreadLocked(ctx, thread, sess); err != nil {
 		return nil, err
 	}
+	lifecycleSucceeded = true
 	return thread, nil
 }
 

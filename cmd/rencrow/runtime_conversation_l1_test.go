@@ -14,7 +14,6 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -28,15 +27,25 @@ func (c *countingConversationCloser) Close() error {
 func TestConversationRuntimeL1SelectsL1AsPrimaryCloser(t *testing.T) {
 	cfg := &config.Config{
 		Conversation: config.ConversationConfig{Enabled: false},
-		Storage:      config.StorageConfig{Databases: config.DatabasePathsConfig{ConversationL1: filepath.Join(t.TempDir(), "l1.db")}},
+		LocalAgentOps: config.LocalAgentOpsConfig{
+			Enabled: true,
+			UserID:  "owner-42",
+		},
+		Storage: config.StorageConfig{Databases: config.DatabasePathsConfig{ConversationL1: filepath.Join(t.TempDir(), "l1.db")}},
 	}
 	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.Closer == nil {
 		t.Fatal("L1 runtime primary closer is nil")
 	}
-	l1Closer, ok := runtime.Closer.(*l1sqlite.L1SQLiteStore)
-	if !ok || l1Closer != runtime.L1Store {
-		t.Fatalf("primary closer=%T %p, want runtime L1 store %p", runtime.Closer, l1Closer, runtime.L1Store)
+	preparedRecallCloser, ok := runtime.Closer.(*preparedRecallConversationCloser)
+	if !ok {
+		t.Fatalf("primary closer=%T, want prepared recall owner wrapper", runtime.Closer)
+	}
+	if runtime.PreparedRecallRuntime == nil || preparedRecallCloser.preparedRecall != runtime.PreparedRecallRuntime {
+		t.Fatalf("prepared recall closer owner=%T, runtime owner=%T", preparedRecallCloser.preparedRecall, runtime.PreparedRecallRuntime)
+	}
+	if runtime.L1Store == nil || preparedRecallCloser.underlying != runtime.L1Store {
+		t.Fatalf("underlying primary closer=%T %p, want runtime L1 store %p", preparedRecallCloser.underlying, preparedRecallCloser.underlying, runtime.L1Store)
 	}
 	if err := runtime.Closer.Close(); err != nil {
 		t.Fatalf("primary closer failed: %v", err)

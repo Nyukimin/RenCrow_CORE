@@ -37,7 +37,7 @@ func TestConfiguredMessageOrchestratorLifecycleUsesRootForMio(t *testing.T) {
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  string(rootID),
 		TraceID:     string(traceID),
-		SessionID:   "lifecycle-local-mio",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		To:          "MIO",
@@ -99,7 +99,7 @@ func TestConfiguredOrchestratorsUseSelectedViewerAgentAsRoot(t *testing.T) {
 				}
 
 				resp, err := process(context.Background(), ProcessMessageRequest{
-					RootTaskID: string(rootID), TraceID: string(traceID), SessionID: "direct-" + actor,
+					RootTaskID: string(rootID), TraceID: string(traceID), SessionID: newMockCanonicalSessionID("viewer", "viewer-user"),
 					Channel: "viewer", ChatID: "viewer-user", To: actor, UserMessage: "hello directly",
 				})
 				if err != nil {
@@ -200,7 +200,7 @@ func TestConfiguredOrchestratorsResumeSelectedAgentRunWithoutReassignmentOrResta
 
 				resp, err := process(context.Background(), ProcessMessageRequest{
 					RootTaskID: rootID.String(), CanonicalRunID: run.RunID, TraceID: string(traceID),
-					SessionID: "resume-direct-" + actor, Channel: "viewer", ChatID: "viewer-user",
+					SessionID: newMockCanonicalSessionID("viewer", "viewer-user"), Channel: "viewer", ChatID: "viewer-user",
 					To: actor, UserMessage: "continue this task",
 				})
 				if err != nil {
@@ -326,7 +326,7 @@ func TestDirectShiroRootKeepsOwnerForLaterActualKuroAndMioHandoffs(t *testing.T)
 	traceID := modulecore.NewTraceID()
 	turnID := modulecore.NewTurnID()
 	req := ProcessMessageRequest{
-		RootTaskID: string(rootID), TurnID: string(turnID), TraceID: string(traceID), SessionID: "direct-shiro-handoffs",
+		RootTaskID: string(rootID), TurnID: string(turnID), TraceID: string(traceID), SessionID: newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel: "viewer", ChatID: "viewer-user", To: taskLifecycleShiro, UserMessage: "hello directly",
 	}
 	manager := newRecordingTaskLifecycleManager()
@@ -415,7 +415,7 @@ func TestConfiguredMessageOrchestratorResumesExactExistingRun(t *testing.T) {
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:     rootID.String(),
 		CanonicalRunID: run.RunID,
-		SessionID:      "lifecycle-local-resume",
+		SessionID:      newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:        "viewer",
 		ChatID:         "viewer-user",
 		To:             "MIO",
@@ -462,7 +462,7 @@ func TestConfiguredMessageOrchestratorLifecycleUsesChildForShiroAndPreservesTurn
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  string(rootID),
 		TraceID:     string(traceID),
-		SessionID:   "lifecycle-local-shiro",
+		SessionID:   newMockCanonicalSessionID("line", "user-1"),
 		Channel:     "line",
 		ChatID:      "user-1",
 		UserMessage: "run operation",
@@ -515,7 +515,7 @@ func TestConfiguredMessageOrchestratorLifecycleFailsChildThenRoot(t *testing.T) 
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  string(rootID),
-		SessionID:   "lifecycle-local-failure",
+		SessionID:   newMockCanonicalSessionID("line", "user-1"),
 		Channel:     "line",
 		ChatID:      "user-1",
 		UserMessage: "fail operation",
@@ -562,7 +562,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversPreRoutingCommand(t *testin
 	orch.SetEventListener(listener)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		RootTaskID: string(rootID), SessionID: "lifecycle-command", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "/status",
+		RootTaskID: string(rootID), SessionID: newMockCanonicalSessionID("viewer", "ren"), Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "/status",
 	})
 	if err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -591,7 +591,7 @@ func TestConfiguredMessageOrchestratorLifecycleFailsHandledPreRoutingCommandAfte
 	orch.SetEventListener(listener)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		RootTaskID: string(rootID), SessionID: "lifecycle-command-failure", Channel: "viewer", ChatID: "ren", UserMessage: "/status",
+		RootTaskID: string(rootID), SessionID: newMockCanonicalSessionID("viewer", "ren"), Channel: "viewer", ChatID: "ren", UserMessage: "/status",
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("ProcessMessage error = %v, want %v", err, wantErr)
@@ -618,7 +618,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversDailyBriefCacheAndShiroColl
 			return usableLifecycleDailyBrief(now), nil
 		}))
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-daily-cache", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "今朝のニュースを教えて",
+			RootTaskID: string(rootID), SessionID: newMockCanonicalSessionID("viewer", "ren"), Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "今朝のニュースを教えて",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -642,7 +642,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversDailyBriefCacheAndShiroColl
 		listener := &lifecycleEventListener{}
 		orch.SetEventListener(listener)
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-daily-collector", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "今朝のニュースを教えて",
+			RootTaskID: string(rootID), SessionID: newMockCanonicalSessionID("viewer", "ren"), Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "今朝のニュースを教えて",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -672,7 +672,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversExplicitDCIAndDurableStore(
 		orch.SetTaskLifecycleManager(manager)
 		orch.SetDCISearcher(searcher)
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-dci", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "DCI を探して",
+			RootTaskID: string(rootID), SessionID: newMockCanonicalSessionID("viewer", "ren"), Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "DCI を探して",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -693,7 +693,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversExplicitDCIAndDurableStore(
 			Requirement: domainstore.StorageRequirement{RequirementID: "sr-lifecycle", RequestedOutcome: domainstore.OutcomeImplement},
 		}})
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-store", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "ゲームDBを実装して",
+			RootTaskID: string(rootID), SessionID: newMockCanonicalSessionID("viewer", "ren"), Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "ゲームDBを実装して",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -719,7 +719,7 @@ func TestConfiguredDistributedOrchestratorLifecycleUsesRootForMio(t *testing.T) 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  string(rootID),
 		TraceID:     string(traceID),
-		SessionID:   "lifecycle-distributed-mio",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		To:          "mio",
@@ -751,7 +751,7 @@ func TestConfiguredDistributedOrchestratorResumesExactExistingRun(t *testing.T) 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:     rootID.String(),
 		CanonicalRunID: run.RunID,
-		SessionID:      "lifecycle-distributed-resume",
+		SessionID:      newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:        "viewer",
 		ChatID:         "viewer-user",
 		To:             "MIO",
@@ -936,11 +936,7 @@ func (r *lifecycleSessionRepository) Load(_ context.Context, id string) (*sessio
 	if value, ok := r.sessions[id]; ok {
 		return value, nil
 	}
-	address, err := conversation.NewChannelAddress("test", "test")
-	if err != nil {
-		return nil, err
-	}
-	value, err := session.NewCanonicalSession(modulecore.NewSessionID(), "2026-09-05", address, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC))
+	value, err := newMockCanonicalSession(id)
 	if err != nil {
 		return nil, err
 	}

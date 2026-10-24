@@ -188,9 +188,10 @@ ON CONFLICT(id) DO UPDATE SET
 		event.MemoryState, event.Layer, event.Source, event.CreatedAt, event.UpdatedAt); err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to save l1 memory event: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
 		"memory_id": id, "speaker": string(msg.Speaker), "memory_state": memoryState, "layer": layer,
-	}, "conversation"); err != nil {
+	}, "conversation")
+	if err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to append l1 message event log: %w", err))
 	}
 	if msg.Speaker == domconv.SpeakerUser && memoryState == MemoryStateObserved && strings.HasPrefix(namespace, "conv:") {
@@ -198,7 +199,27 @@ ON CONFLICT(id) DO UPDATE SET
 			return rollbackL1Tx(tx, fmt.Errorf("failed to enqueue profile promotion job: %w", err))
 		}
 	}
-	return commitConversationL1Operation(ctx, tx, identity, nil)
+	var changedUser *domainmemory.UserMemory
+	if strings.HasPrefix(namespace, "user:") {
+		rows, findErr := scanL1EventRows(tx.QueryRowContext(ctx, `
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event WHERE id = ?`, id))
+		if findErr != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to reload user-scoped message: %w", findErr))
+		}
+		if len(rows) != 1 {
+			return rollbackL1Tx(tx, errors.New("saved user-scoped message row is missing"))
+		}
+		changedUser, _ = strictUserMemoryFromEvent(rows[0])
+	}
+	if err := commitConversationL1Operation(ctx, tx, identity, nil); err != nil {
+		return err
+	}
+	if changedUser != nil {
+		s.notifyUserMemoryMutation(changedUser.UserID, []string{changedUser.ID}, string(auditEventID(auditEntry)))
+	}
+	return nil
 }
 
 func (s *L1SQLiteStore) SaveSearchCacheForOperation(ctx context.Context, identity ConversationL1OperationIdentity, provider, rawQuery, resultsJSON string, sourceURLs []string, ttl time.Duration) (*L1SearchCacheEntry, error) {
@@ -441,7 +462,29 @@ FROM l1_memory_event WHERE id = ?`, id).Scan(&namespace, &sessionID, &threadIDRa
 			return rollbackL1Tx(tx, fmt.Errorf("failed to persist user memory updated_by_event_id: %w", err))
 		}
 	}
-	return commitConversationL1Operation(ctx, tx, identity, nil)
+	var changedUser *domainmemory.UserMemory
+	if strings.HasPrefix(namespace, "user:") {
+		rows, findErr := scanL1EventRows(tx.QueryRowContext(ctx, `
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event WHERE id = ?`, id))
+		if findErr != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to reload user-scoped memory state update: %w", findErr))
+		}
+		if len(rows) != 1 {
+			return rollbackL1Tx(tx, errors.New("updated user-scoped memory row is missing"))
+		}
+		if len(rows) == 1 {
+			changedUser, _ = strictUserMemoryFromEvent(rows[0])
+		}
+	}
+	if err := commitConversationL1Operation(ctx, tx, identity, nil); err != nil {
+		return err
+	}
+	if changedUser != nil {
+		s.notifyUserMemoryMutation(changedUser.UserID, []string{changedUser.ID}, string(auditEventID(entry)))
+	}
+	return nil
 }
 
 func (s *L1SQLiteStore) PromoteMemoryToNamespaceForOperation(ctx context.Context, identity ConversationL1OperationIdentity, id, targetNamespace, promotedBy string) (*L1MemoryEvent, error) {
@@ -518,10 +561,11 @@ INSERT INTO l1_memory_event (
 		promoted.MemoryState, promoted.Layer, promoted.Source, promoted.CreatedAt, promoted.UpdatedAt); err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to promote l1 memory: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.promoted", targetNamespace, source.SessionID, source.ThreadID, source.ThreadSeq, source.ThreadKind, map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.promoted", targetNamespace, source.SessionID, source.ThreadID, source.ThreadSeq, source.ThreadKind, map[string]interface{}{
 		"source_memory_id": source.ID, "promoted_memory_id": promoted.ID,
 		"promoted_by": promotedBy, "memory_state": promoted.MemoryState,
-	}, "promoter"); err != nil {
+	}, "promoter")
+	if err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to append l1 memory promoted event log: %w", err))
 	}
 	if s.archiveStore != nil {
@@ -531,6 +575,9 @@ INSERT INTO l1_memory_event (
 	}
 	if err := commitConversationL1Operation(ctx, tx, identity, promoted); err != nil {
 		return nil, err
+	}
+	if userMemory, strictErr := strictUserMemoryFromEvent(*promoted); strictErr == nil {
+		s.notifyUserMemoryMutation(userMemory.UserID, []string{userMemory.ID}, string(auditEventID(auditEntry)))
 	}
 	if s.archiveStore != nil {
 		if err := s.completeL1PromotionArchive(ctx, identity, *promoted); err != nil {

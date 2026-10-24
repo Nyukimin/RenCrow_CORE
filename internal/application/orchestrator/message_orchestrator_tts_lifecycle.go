@@ -94,6 +94,7 @@ func (l *messageTTSLifecycle) StartSessionForResponder(ctx context.Context, req 
 	}
 	startReq := TTSSessionStart{
 		SessionID:             plan.SessionID,
+		CanonicalSessionID:    req.SessionID,
 		PublicPlaybackRef:     plan.PublicPlaybackRef,
 		TraceID:               req.TraceID,
 		CharacterID:           plan.CharacterID,

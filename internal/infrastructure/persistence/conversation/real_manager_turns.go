@@ -5,10 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -18,6 +22,7 @@ import (
 )
 
 const (
+	conversationTurnOverlayRetentionLimit        = 256
 	conversationTurnFollowerLease                = time.Minute
 	conversationTurnRedisProjectionTimeout       = 5 * time.Second
 	conversationTurnFollowerWorkTimeout          = 45 * time.Second
@@ -25,6 +30,27 @@ const (
 	conversationTurnProjectionBookkeepingTimeout = 2 * time.Second
 	conversationTurnMinimumWorkBudget            = 100 * time.Millisecond
 )
+
+type conversationTurnOwnerReadScopeKey struct{}
+
+type conversationTurnOwnerReadScope struct {
+	sessionID string
+	ownerID   string
+	head      *domconv.Thread
+	closed    *domconv.Thread
+}
+
+// conversationTurnOwnerReadProvider exposes a manager-verified owner view.
+// Session-only storage reads do not receive this capability.
+type conversationTurnOwnerReadProvider interface {
+	recallForOwner(context.Context, string, string, string, int) ([]domconv.Message, error)
+	loadActiveConversationThreadForOwner(context.Context, string, string) (*domconv.Thread, error)
+}
+
+type conversationTurnOwnerReadVersion struct {
+	exists   bool
+	revision uint64
+}
 
 // ConversationTurnTargets reports the followers owned by the advanced
 // manager. Callers must not choose these targets; the engine obtains them from
@@ -63,6 +89,158 @@ func (r *RealConversationManager) LoadActiveConversationThread(ctx context.Conte
 	return conversationThreadFromL1Projection(events, domconv.ThreadActive)
 }
 
+// RecallForOwner permits the persisted session owner to read the accepted RAM
+// head while its writer is pending. The normal session-only Recall route
+// continues to expose only durable state unless it carries queue admission.
+func (r *RealConversationManager) recallForOwner(ctx context.Context, sessionID, ownerID, query string, topK int) ([]domconv.Message, error) {
+	if r == nil || ctx == nil || modulecore.SessionID(sessionID).Validate() != nil || strings.TrimSpace(ownerID) == "" {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	ownerID = strings.TrimSpace(ownerID)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ownerScope, version, err := r.conversationTurnReadScope(ctx, sessionID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	ownerCtx := context.WithValue(ctx, conversationTurnOwnerReadScopeKey{}, ownerScope)
+	messages, err := r.Recall(ownerCtx, sessionID, query, topK)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.validatePersistedConversationSessionOwner(ctx, sessionID, ownerID); err != nil {
+		return nil, err
+	}
+	if err := r.validateConversationTurnOwnerReadVersion(sessionID, ownerID, version); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// LoadActiveConversationThreadForOwner is the owner-scoped counterpart to the
+// legacy session-only view. It validates the persisted session owner before
+// returning a snapshot when no persistencequeue admission exists.
+func (r *RealConversationManager) loadActiveConversationThreadForOwner(ctx context.Context, sessionID, ownerID string) (*domconv.Thread, error) {
+	if r == nil || ctx == nil || modulecore.SessionID(sessionID).Validate() != nil || strings.TrimSpace(ownerID) == "" {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	ownerID = strings.TrimSpace(ownerID)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ownerScope, version, err := r.conversationTurnReadScope(ctx, sessionID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	thread := cloneThreadForStore(ownerScope.head)
+	if err := r.validatePersistedConversationSessionOwner(ctx, sessionID, ownerID); err != nil {
+		return nil, err
+	}
+	if err := r.validateConversationTurnOwnerReadVersion(sessionID, ownerID, version); err != nil {
+		return nil, err
+	}
+	if thread == nil {
+		return nil, domconv.ErrThreadNotFound
+	}
+	return thread, nil
+}
+
+func (r *RealConversationManager) conversationTurnReadScope(ctx context.Context, sessionID, ownerID string) (conversationTurnOwnerReadScope, conversationTurnOwnerReadVersion, error) {
+	if err := r.validatePersistedConversationSessionOwner(ctx, sessionID, ownerID); err != nil {
+		return conversationTurnOwnerReadScope{}, conversationTurnOwnerReadVersion{}, err
+	}
+
+	var version conversationTurnOwnerReadVersion
+	var head, closed *domconv.Thread
+	r.turnOverlayMu.RLock()
+	if overlay := r.turnOverlays[sessionID]; overlay != nil {
+		if overlay.ownerID != ownerID {
+			r.turnOverlayMu.RUnlock()
+			return conversationTurnOwnerReadScope{}, conversationTurnOwnerReadVersion{}, domconv.ErrConversationTurnConflict
+		}
+		if overlay.headFailure != nil {
+			err := overlay.headFailure
+			r.turnOverlayMu.RUnlock()
+			return conversationTurnOwnerReadScope{}, conversationTurnOwnerReadVersion{}, err
+		}
+		version = conversationTurnOwnerReadVersion{exists: true, revision: overlay.revision}
+		head = cloneThreadForStore(overlay.head)
+		closed = cloneThreadForStore(overlay.closed)
+	}
+	r.turnOverlayMu.RUnlock()
+
+	if head == nil {
+		store, ok := r.l1Store.(conversationTurnL1Store)
+		if !ok {
+			return conversationTurnOwnerReadScope{}, conversationTurnOwnerReadVersion{}, domconv.ErrConversationTurnUnavailable
+		}
+		var err error
+		head, err = r.loadConversationTurnHeadForOwner(ctx, store, sessionID, ownerID)
+		if err != nil {
+			return conversationTurnOwnerReadScope{}, conversationTurnOwnerReadVersion{}, err
+		}
+	}
+	if err := r.validatePersistedConversationSessionOwner(ctx, sessionID, ownerID); err != nil {
+		return conversationTurnOwnerReadScope{}, conversationTurnOwnerReadVersion{}, err
+	}
+	if err := r.validateConversationTurnOwnerReadVersion(sessionID, ownerID, version); err != nil {
+		return conversationTurnOwnerReadScope{}, conversationTurnOwnerReadVersion{}, err
+	}
+	return conversationTurnOwnerReadScope{sessionID: sessionID, ownerID: ownerID, head: head, closed: closed}, version, nil
+}
+
+func (r *RealConversationManager) validatePersistedConversationSessionOwner(ctx context.Context, sessionID, ownerID string) error {
+	if r == nil || ctx == nil || r.redisStore == nil {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	session, err := r.redisStore.GetSession(ctx, sessionID)
+	if errors.Is(err, domconv.ErrSessionNotFound) {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	if err != nil {
+		return fmt.Errorf("load persisted conversation session owner: %w", err)
+	}
+	if session == nil {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	persistedOwnerID := strings.TrimSpace(session.UserID)
+	if strings.TrimSpace(session.ID) != sessionID || persistedOwnerID == "" {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	if persistedOwnerID != ownerID {
+		return domconv.ErrConversationTurnConflict
+	}
+	return nil
+}
+
+func (r *RealConversationManager) conversationTurnOwnerReadVersion(sessionID, ownerID string) (conversationTurnOwnerReadVersion, error) {
+	r.turnOverlayMu.RLock()
+	defer r.turnOverlayMu.RUnlock()
+	overlay := r.turnOverlays[sessionID]
+	if overlay == nil {
+		return conversationTurnOwnerReadVersion{}, nil
+	}
+	if overlay.ownerID != ownerID {
+		return conversationTurnOwnerReadVersion{}, domconv.ErrConversationTurnConflict
+	}
+	if overlay.headFailure != nil {
+		return conversationTurnOwnerReadVersion{}, overlay.headFailure
+	}
+	return conversationTurnOwnerReadVersion{exists: true, revision: overlay.revision}, nil
+}
+
+func (r *RealConversationManager) validateConversationTurnOwnerReadVersion(sessionID, ownerID string, expected conversationTurnOwnerReadVersion) error {
+	actual, err := r.conversationTurnOwnerReadVersion(sessionID, ownerID)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return domconv.ErrConversationTurnConflict
+	}
+	return nil
+}
+
 // PrepareConversationTurn reserves the session's current RAM head for one
 // typed turn. A cold L1 projection read happens after the reservation is
 // visible and without holding the global overlay mutex.
@@ -85,7 +263,12 @@ func (r *RealConversationManager) PrepareConversationTurn(ctx context.Context, t
 	}
 	overlay := r.turnOverlays[sessionID]
 	if overlay != nil {
-		if overlay.ownerID != ownerID || overlay.headFailure != nil || overlay.preparation != nil || overlay.preparingTurnID != "" || overlay.syncTurnID != "" {
+		if overlay.headFailure != nil {
+			failure := overlay.headFailure
+			r.turnOverlayMu.Unlock()
+			return nil, failure
+		}
+		if overlay.ownerID != ownerID || overlay.preparation != nil || overlay.preparingTurnID != "" || overlay.syncTurnID != "" {
 			r.turnOverlayMu.Unlock()
 			return nil, domconv.ErrConversationTurnConflict
 		}
@@ -100,19 +283,17 @@ func (r *RealConversationManager) PrepareConversationTurn(ctx context.Context, t
 		}
 		overlay.preparingTurnID = turnID
 	} else {
+		if !r.makeConversationTurnOverlayRoomLocked() {
+			r.turnOverlayMu.Unlock()
+			return nil, domconv.ErrConversationTurnUnavailable
+		}
 		overlay = &conversationTurnOverlay{ownerID: ownerID, preparingTurnID: turnID}
 		r.turnOverlays[sessionID] = overlay
 	}
 	revision := overlay.revision
 	r.turnOverlayMu.Unlock()
 
-	events, err := store.LoadActiveConversationThreadProjection(ctx, sessionID)
-	var active *domconv.Thread
-	if err == nil {
-		active, err = conversationThreadFromL1Projection(events, domconv.ThreadActive)
-	} else if errors.Is(err, domconv.ErrThreadNotFound) {
-		err = nil
-	}
+	active, err := r.loadConversationTurnHeadForOwner(ctx, store, sessionID, ownerID)
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -134,8 +315,115 @@ func (r *RealConversationManager) PrepareConversationTurn(ctx context.Context, t
 		Revision: revision, ActiveThread: cloneThreadForStore(active),
 	}
 	current.preparation = cloneConversationTurnPreparation(preparation)
+	r.pruneConversationTurnOverlaysLocked(conversationTurnOverlayRetentionLimit)
 	r.turnOverlayMu.Unlock()
 	return preparation, nil
+}
+
+func (r *RealConversationManager) loadConversationTurnHead(ctx context.Context, store conversationTurnL1Store, sessionID string) (*domconv.Thread, error) {
+	events, err := store.LoadActiveConversationThreadProjection(ctx, sessionID)
+	if errors.Is(err, domconv.ErrThreadNotFound) {
+		if err := r.missingActiveConversationHeadError(ctx, store, sessionID); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return conversationThreadFromL1Projection(events, domconv.ThreadActive)
+}
+
+// loadConversationTurnHeadForOwner resolves an empty active projection from the
+// typed L1 snapshot. Reset heads intentionally have no message projection, so
+// their thread identity and domain must come from conversation_active_thread.
+// The snapshot is accepted only for an already-persisted, matching session
+// owner; first-session ownership is established by the authenticated ingress.
+func (r *RealConversationManager) loadConversationTurnHeadForOwner(ctx context.Context, store conversationTurnL1Store, sessionID, ownerID string) (*domconv.Thread, error) {
+	events, err := store.LoadActiveConversationThreadProjection(ctx, sessionID)
+	if errors.Is(err, domconv.ErrThreadNotFound) {
+		if err := r.missingActiveConversationHeadError(ctx, store, sessionID); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if err != nil && !errors.Is(err, domconv.ErrConversationTurnInvalid) {
+		return nil, err
+	}
+	if err == nil && len(events) != 0 {
+		return conversationThreadFromL1Projection(events, domconv.ThreadActive)
+	}
+	projectionInvalid := errors.Is(err, domconv.ErrConversationTurnInvalid)
+	if err := r.validatePersistedConversationSessionOwner(ctx, sessionID, ownerID); err != nil {
+		return nil, err
+	}
+	headStore, ok := r.l1Store.(conversationHeadL1Store)
+	if !ok {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	snapshot, err := headStore.LoadActiveConversationHead(ctx, sessionID, ownerID)
+	if err != nil {
+		if errors.Is(err, domconv.ErrThreadNotFound) {
+			return nil, domconv.ErrConversationTurnUnavailable
+		}
+		return nil, err
+	}
+	if err := r.validatePersistedConversationSessionOwner(ctx, sessionID, ownerID); err != nil {
+		return nil, err
+	}
+	if (projectionInvalid || len(events) == 0) && snapshot.MessageCount != 0 {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	return conversationThreadFromHeadSnapshot(snapshot, sessionID, ownerID)
+}
+
+func conversationThreadFromHeadSnapshot(snapshot domconv.ConversationHeadSnapshot, sessionID, ownerID string) (*domconv.Thread, error) {
+	if snapshot.SessionID != sessionID || snapshot.OwnerID != ownerID ||
+		modulecore.SessionID(snapshot.SessionID).Validate() != nil ||
+		snapshot.Thread.ID.Validate() != nil || snapshot.Thread.Seq.Validate() != nil || snapshot.Thread.Kind.Validate() != nil ||
+		snapshot.Domain == "" || !utf8.ValidString(snapshot.Domain) || strings.IndexByte(snapshot.Domain, 0) >= 0 ||
+		snapshot.MessageCount < 0 || snapshot.MessageCount > 12 || int64(len(snapshot.Messages)) != snapshot.MessageCount || snapshot.UpdatedAt.IsZero() {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	thread := &domconv.Thread{
+		ID: snapshot.Thread.ID, ThreadSeq: snapshot.Thread.Seq, ThreadKind: snapshot.Thread.Kind,
+		SessionID: snapshot.SessionID, Domain: snapshot.Domain, Turns: make([]domconv.Message, 0, len(snapshot.Messages)),
+		Targets: []string{}, Cooldown: map[string]int{}, StartTime: snapshot.UpdatedAt.UTC(), Status: domconv.ThreadActive,
+	}
+	for _, message := range snapshot.Messages {
+		if message.ID.Validate() != nil || message.CreatedAt.IsZero() || !utf8.ValidString(message.Message) || strings.IndexByte(message.Message, 0) >= 0 {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
+		if thread.Domain != stringMeta(message.Meta, "domain") {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
+		createdAt := message.CreatedAt.UTC()
+		thread.Turns = append(thread.Turns, domconv.Message{
+			Speaker: message.Speaker, Msg: message.Message, Timestamp: createdAt, Meta: cloneConversationTurnMeta(message.Meta),
+		})
+		if len(thread.Turns) == 1 || createdAt.Before(thread.StartTime) {
+			thread.StartTime = createdAt
+		}
+	}
+	return thread, nil
+}
+
+func (r *RealConversationManager) missingActiveConversationHeadError(ctx context.Context, store conversationTurnL1Store, sessionID string) error {
+	hasTurnReceipt, err := store.HasConversationTurnReceiptsForSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if hasTurnReceipt {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	_, _, _, hasThreadReference, err := r.l1Store.LatestConversationThreadReference(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if hasThreadReference {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	return nil
 }
 
 func (r *RealConversationManager) clearConversationTurnPreparationRead(sessionID, ownerID string, turnID modulecore.TurnID, revision uint64) {
@@ -167,8 +455,10 @@ func (r *RealConversationManager) ReleaseConversationTurnPreparation(_ context.C
 		return domconv.ErrConversationTurnConflict
 	}
 	overlay.preparation = nil
-	if len(overlay.pending) == 0 && overlay.preparingTurnID == "" && overlay.syncTurnID == "" {
+	if len(overlay.pending) == 0 && overlay.preparingTurnID == "" && overlay.syncTurnID == "" && overlay.head == nil {
 		delete(r.turnOverlays, preparation.SessionID)
+	} else {
+		r.pruneConversationTurnOverlaysLocked(conversationTurnOverlayRetentionLimit)
 	}
 	return nil
 }
@@ -191,6 +481,116 @@ func (r *RealConversationManager) ValidateConversationTurnPreparation(ctx contex
 		return domconv.ErrConversationTurnConflict
 	}
 	return nil
+}
+
+// retainConversationTurnPublicationEpoch captures a reset fence while the
+// exact prepared head is current. The ticket owns no head lease and can outlive
+// ordinary EndTurn consumption; its bounded reference is invalidated by the
+// next thread lifecycle operation for this session.
+func (r *RealConversationManager) retainConversationTurnPublicationEpoch(preparation *domconv.ConversationTurnPreparation) (conversationTurnPublicationEpochGuard, error) {
+	if r == nil || preparation == nil || modulecore.SessionID(preparation.SessionID).Validate() != nil || preparation.OwnerID == "" {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	overlay := r.turnOverlays[preparation.SessionID]
+	if overlay == nil || overlay.ownerID != preparation.OwnerID || overlay.revision != preparation.Revision ||
+		overlay.preparation == nil || overlay.preparingTurnID != "" || overlay.syncTurnID != "" ||
+		!sameConversationTurnPreparation(overlay.preparation, preparation) {
+		return nil, domconv.ErrConversationTurnConflict
+	}
+	if r.publicationEpochs == nil {
+		r.publicationEpochs = make(map[string]*conversationTurnPublicationEpoch)
+	}
+	epoch := r.publicationEpochs[preparation.SessionID]
+	if epoch == nil {
+		if len(r.publicationEpochs) >= conversationTurnOverlayRetentionLimit {
+			return nil, domconv.ErrConversationTurnUnavailable
+		}
+		epoch = &conversationTurnPublicationEpoch{generation: 1}
+		r.publicationEpochs[preparation.SessionID] = epoch
+	}
+	epoch.refs.Add(1)
+	return &conversationTurnPublicationEpochLease{
+		manager: r, sessionID: preparation.SessionID, ownerID: preparation.OwnerID,
+		epoch: epoch, generation: epoch.generation,
+	}, nil
+}
+
+type conversationTurnPublicationEpochLease struct {
+	manager    *RealConversationManager
+	sessionID  string
+	ownerID    string
+	epoch      *conversationTurnPublicationEpoch
+	generation uint64
+
+	mu       sync.Mutex
+	released bool
+}
+
+// Use holds the manager's short RAM read guard through claim. Reset/lifecycle
+// invalidation takes the matching write guard, so a claim that wins completes
+// before reset while a reset that wins drops the pending event.
+func (l *conversationTurnPublicationEpochLease) Use(claim func() error) error {
+	if l == nil || l.manager == nil || l.epoch == nil || claim == nil {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	l.mu.Lock()
+	released := l.released
+	l.mu.Unlock()
+	if released {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	r := l.manager
+	r.turnOverlayMu.RLock()
+	defer r.turnOverlayMu.RUnlock()
+	l.mu.Lock()
+	released = l.released
+	l.mu.Unlock()
+	if released || r.publicationEpochs[l.sessionID] != l.epoch || l.epoch.generation != l.generation {
+		return domconv.ErrConversationTurnConflict
+	}
+	return claim()
+}
+
+func (l *conversationTurnPublicationEpochLease) Retain() conversationTurnPublicationEpochGuard {
+	if l == nil || l.epoch == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released {
+		return nil
+	}
+	l.epoch.refs.Add(1)
+	return &conversationTurnPublicationEpochLease{
+		manager: l.manager, sessionID: l.sessionID, ownerID: l.ownerID,
+		epoch: l.epoch, generation: l.generation,
+	}
+}
+
+func (l *conversationTurnPublicationEpochLease) Release() {
+	if l == nil || l.manager == nil || l.epoch == nil {
+		return
+	}
+	l.mu.Lock()
+	if l.released {
+		l.mu.Unlock()
+		return
+	}
+	l.released = true
+	epoch := l.epoch
+	manager := l.manager
+	sessionID := l.sessionID
+	l.mu.Unlock()
+	if epoch.refs.Add(-1) != 0 {
+		return
+	}
+	manager.turnOverlayMu.Lock()
+	if manager.publicationEpochs[sessionID] == epoch && epoch.refs.Load() == 0 {
+		delete(manager.publicationEpochs, sessionID)
+	}
+	manager.turnOverlayMu.Unlock()
 }
 
 // CommitConversationTurn is the canonical manager boundary for an EndTurn.
@@ -255,13 +655,22 @@ func (r *RealConversationManager) commitConversationTurnSynchronouslyWithReserva
 	}
 	overlay := r.turnOverlays[request.SessionID]
 	if request.Preparation == nil {
-		if overlay != nil {
+		if overlay != nil && (overlay.ownerID != request.OwnerID || len(overlay.pending) > 0 ||
+			overlay.preparation != nil || overlay.preparingTurnID != "" || overlay.syncTurnID != "" || overlay.headFailure != nil) {
 			r.turnOverlayMu.Unlock()
 			base.ErrorCode = domconv.ConversationTurnErrorConflict
 			return base, domconv.ErrConversationTurnConflict
 		}
-		overlay = &conversationTurnOverlay{ownerID: request.OwnerID, syncTurnID: request.TurnID}
-		r.turnOverlays[request.SessionID] = overlay
+		if overlay == nil {
+			if !r.makeConversationTurnOverlayRoomLocked() {
+				r.turnOverlayMu.Unlock()
+				base.ErrorCode = domconv.ConversationTurnErrorUnavailable
+				return base, domconv.ErrConversationTurnUnavailable
+			}
+			overlay = &conversationTurnOverlay{ownerID: request.OwnerID}
+			r.turnOverlays[request.SessionID] = overlay
+		}
+		overlay.syncTurnID = request.TurnID
 	} else {
 		if overlay == nil || overlay.ownerID != request.OwnerID || overlay.preparation == nil ||
 			!sameConversationTurnPreparation(overlay.preparation, request.Preparation) || overlay.revision != request.Preparation.Revision ||
@@ -274,19 +683,108 @@ func (r *RealConversationManager) commitConversationTurnSynchronouslyWithReserva
 	}
 	r.turnOverlayMu.Unlock()
 
+	if request.Preparation == nil {
+		active, headErr := r.loadConversationTurnHead(ctx, store, request.SessionID)
+		if headErr == nil {
+			headErr = ctx.Err()
+		}
+		if headErr != nil {
+			r.turnOverlayMu.Lock()
+			if current := r.turnOverlays[request.SessionID]; current == overlay && current.syncTurnID == request.TurnID {
+				current.syncTurnID = ""
+				if current.head == nil && len(current.pending) == 0 && current.preparation == nil && current.preparingTurnID == "" {
+					delete(r.turnOverlays, request.SessionID)
+				}
+			}
+			r.turnOverlayMu.Unlock()
+			base.ErrorCode = conversationTurnFollowerErrorCode(headErr)
+			return base, headErr
+		}
+		r.turnOverlayMu.Lock()
+		current := r.turnOverlays[request.SessionID]
+		if current != overlay || current.syncTurnID != request.TurnID {
+			r.turnOverlayMu.Unlock()
+			base.ErrorCode = domconv.ConversationTurnErrorConflict
+			return base, domconv.ErrConversationTurnConflict
+		}
+		current.head = cloneThreadForStore(active)
+		r.turnOverlayMu.Unlock()
+	}
+	r.turnOverlayMu.RLock()
+	current := r.turnOverlays[request.SessionID]
+	if current != overlay || current.syncTurnID != request.TurnID {
+		r.turnOverlayMu.RUnlock()
+		base.ErrorCode = domconv.ConversationTurnErrorConflict
+		return base, domconv.ErrConversationTurnConflict
+	}
+	preCommitHead := cloneThreadForStore(current.head)
+	r.turnOverlayMu.RUnlock()
+
 	result, err := r.commitConversationTurnSynchronously(ctx, store, request)
+	durable := result.Status == domconv.ConversationTurnCompleted || result.Status == domconv.ConversationTurnPartial
+	var committedHead *domconv.Thread
+	if durable {
+		committedHead, _ = projectCommittedConversationTurn(preCommitHead, request, result)
+	}
 	r.turnOverlayMu.Lock()
 	if current := r.turnOverlays[request.SessionID]; current == overlay && current.syncTurnID == request.TurnID {
 		current.syncTurnID = ""
 		if request.Preparation != nil && sameConversationTurnPreparation(current.preparation, request.Preparation) {
 			current.preparation = nil
 		}
-		if len(current.pending) == 0 && current.preparation == nil && current.preparingTurnID == "" {
+		if durable && committedHead != nil {
+			current.head = cloneThreadForStore(committedHead)
+			current.revision++
+			current.closed = nil
+			current.closedByTurnID = ""
+		} else if durable {
+			// The durable write succeeded but projection failed. Drop the stale
+			// head so the next preparation cold-loads the committed L1 snapshot.
+			delete(r.turnOverlays, request.SessionID)
+		} else if len(current.pending) == 0 && current.preparation == nil && current.preparingTurnID == "" && current.head == nil {
 			delete(r.turnOverlays, request.SessionID)
 		}
+		r.pruneConversationTurnOverlaysLocked(conversationTurnOverlayRetentionLimit)
 	}
 	r.turnOverlayMu.Unlock()
 	return result, err
+}
+
+func projectCommittedConversationTurn(active *domconv.Thread, request domconv.ConversationTurnRequest, result domconv.ConversationTurnResult) (*domconv.Thread, error) {
+	if result.TurnID != request.TurnID || result.SessionID != request.SessionID || result.ThreadID.Validate() != nil ||
+		result.ThreadSeq.Validate() != nil || result.ThreadKind.Validate() != nil {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	if result.IdempotentReplay {
+		if active == nil {
+			return nil, domconv.ErrConversationTurnUnavailable
+		}
+		return cloneThreadForStore(active), nil
+	}
+
+	var activeState *domconv.ConversationTurnActiveThreadState
+	if active != nil {
+		activeState = &domconv.ConversationTurnActiveThreadState{
+			Thread:       domconv.ConversationTurnThreadIdentity{ID: active.ID, Seq: active.ThreadSeq, Kind: active.ThreadKind},
+			Domain:       active.Domain,
+			MessageCount: int64(len(active.Turns)),
+		}
+	}
+	plan, err := domconv.PlanConversationTurnThread(domconv.ConversationTurnThreadPlanInput{
+		Active: activeState, Boundary: request.Boundary, Domain: request.Domain, NewThreadID: result.ThreadID,
+	})
+	if err != nil || plan.Thread != (domconv.ConversationTurnThreadIdentity{ID: result.ThreadID, Seq: result.ThreadSeq, Kind: result.ThreadKind}) ||
+		plan.ClosedThread != (domconv.ConversationTurnThreadIdentity{ID: result.ClosedThreadID, Seq: result.ClosedThreadSeq, Kind: result.ClosedThreadKind}) {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	if request.ThreadPlan != nil && (request.ThreadPlan.SessionID != request.SessionID || request.ThreadPlan.OwnerID != request.OwnerID || request.ThreadPlan.Plan != plan) {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	thread, _, err := acceptedConversationThread(request, plan, active)
+	if err != nil {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	return thread, nil
 }
 
 func (r *RealConversationManager) commitConversationTurnSynchronously(ctx context.Context, store conversationTurnL1Store, normalized domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
@@ -632,9 +1130,201 @@ func cloneConversationTurnOverlay(overlay *conversationTurnOverlay) *conversatio
 	return &copyOverlay
 }
 
-func (r *RealConversationManager) conversationTurnOverlayForRead(ctx context.Context, sessionID string) (*domconv.Thread, *domconv.Thread) {
-	if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
+func (r *RealConversationManager) makeConversationTurnOverlayRoomLocked() bool {
+	r.pruneConversationTurnOverlaysLocked(conversationTurnOverlayRetentionLimit - 1)
+	return len(r.turnOverlays) < conversationTurnOverlayRetentionLimit
+}
+
+// pruneConversationTurnOverlaysLocked drops only quiescent heads. Those heads
+// were loaded from or committed to L1, so the next turn can cold-activate the
+// same context. In-flight leases, pending writes, failures, and lifecycle
+// barriers remain resident and can make a new session unavailable at capacity.
+func (r *RealConversationManager) pruneConversationTurnOverlaysLocked(targetSize int) {
+	if r == nil || len(r.turnOverlays) <= targetSize {
+		return
+	}
+	keys := make([]string, 0, len(r.turnOverlays))
+	for sessionID, overlay := range r.turnOverlays {
+		if conversationTurnOverlayQuiescent(overlay) {
+			keys = append(keys, sessionID)
+		}
+	}
+	sort.Strings(keys)
+	for _, sessionID := range keys {
+		if len(r.turnOverlays) <= targetSize {
+			return
+		}
+		delete(r.turnOverlays, sessionID)
+	}
+}
+
+func conversationTurnOverlayQuiescent(overlay *conversationTurnOverlay) bool {
+	return overlay != nil && overlay.headFailure == nil && overlay.preparation == nil &&
+		overlay.preparingTurnID == "" && overlay.syncTurnID == "" && len(overlay.pending) == 0 && overlay.closed == nil
+}
+
+type conversationThreadLifecycleReservation struct {
+	overlay              *conversationTurnOverlay
+	previous             *conversationTurnOverlay
+	turnID               modulecore.TurnID
+	blocksColdActivation bool
+}
+
+func (r *RealConversationManager) conversationThreadLifecycleRequired(ctx context.Context, sessionID string) (bool, error) {
+	r.turnOverlayMu.RLock()
+	var overlayHasHead bool
+	if overlay := r.turnOverlays[sessionID]; overlay != nil {
+		overlayHasHead = overlay.head != nil || overlay.headFailure != nil ||
+			(overlay.preparation != nil && overlay.preparation.ActiveThread != nil)
+	}
+	r.turnOverlayMu.RUnlock()
+	store, ok := r.l1Store.(conversationTurnL1Store)
+	if !ok {
+		return overlayHasHead, nil
+	}
+	hasReceipt, err := store.HasConversationTurnReceiptsForSession(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if hasReceipt {
+		return true, nil
+	}
+	_, _, _, hasThreadReference, err := r.l1Store.LatestConversationThreadReference(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	return overlayHasHead || hasThreadReference, nil
+}
+
+func (r *RealConversationManager) beginConversationThreadFlush(ctx context.Context, thread *domconv.Thread) (*conversationThreadLifecycleReservation, error) {
+	if r == nil || thread == nil || modulecore.SessionID(thread.SessionID).Validate() != nil || thread.ID.Validate() != nil {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	shouldReserve := false
+	blocksColdActivation := false
+	ownerID := ""
+	r.turnOverlayMu.RLock()
+	if overlay := r.turnOverlays[thread.SessionID]; overlay != nil {
+		ownerID = overlay.ownerID
+		blocksColdActivation = overlay.headFailure != nil
+		shouldReserve = blocksColdActivation ||
+			(overlay.head != nil && overlay.head.ID == thread.ID) ||
+			(overlay.preparation != nil && overlay.preparation.ActiveThread != nil && overlay.preparation.ActiveThread.ID == thread.ID)
+	}
+	r.turnOverlayMu.RUnlock()
+	if !shouldReserve {
+		if store, ok := r.l1Store.(conversationTurnL1Store); ok {
+			events, err := store.LoadActiveConversationThreadProjection(ctx, thread.SessionID)
+			if err != nil && !errors.Is(err, domconv.ErrThreadNotFound) {
+				return nil, err
+			}
+			if err == nil {
+				active, err := conversationThreadFromL1Projection(events, domconv.ThreadActive)
+				if err != nil {
+					return nil, err
+				}
+				shouldReserve = active.ID == thread.ID
+			}
+		}
+	}
+	if !shouldReserve {
 		return nil, nil
+	}
+	return r.beginConversationThreadLifecycle(thread.SessionID, ownerID, blocksColdActivation)
+}
+
+func (r *RealConversationManager) beginConversationThreadLifecycle(sessionID, ownerID string, blocksColdActivation bool) (*conversationThreadLifecycleReservation, error) {
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	if r.turnOverlays == nil {
+		r.turnOverlays = make(map[string]*conversationTurnOverlay)
+	}
+	overlay := r.turnOverlays[sessionID]
+	var previous *conversationTurnOverlay
+	if overlay != nil {
+		if len(overlay.pending) > 0 || overlay.syncTurnID != "" {
+			return nil, domconv.ErrConversationTurnConflict
+		}
+		ownerID = strings.TrimSpace(ownerID)
+		if ownerID != "" && overlay.ownerID != "" && overlay.ownerID != ownerID {
+			return nil, domconv.ErrConversationTurnConflict
+		}
+		previous = cloneConversationTurnOverlay(overlay)
+	} else {
+		if !r.makeConversationTurnOverlayRoomLocked() {
+			return nil, domconv.ErrConversationTurnUnavailable
+		}
+		overlay = &conversationTurnOverlay{ownerID: strings.TrimSpace(ownerID)}
+		r.turnOverlays[sessionID] = overlay
+	}
+	if epoch := r.publicationEpochs[sessionID]; epoch != nil {
+		epoch.generation++
+		if epoch.generation == 0 {
+			epoch.generation++
+		}
+	}
+	turnID := modulecore.NewTurnID()
+	overlay.syncTurnID = turnID
+	overlay.headFailure = domconv.ErrConversationTurnUnavailable
+	overlay.preparation = nil
+	overlay.preparingTurnID = ""
+	overlay.revision++
+	return &conversationThreadLifecycleReservation{
+		overlay: overlay, previous: previous, turnID: turnID, blocksColdActivation: blocksColdActivation,
+	}, nil
+}
+
+func (r *RealConversationManager) finishConversationThreadLifecycle(sessionID string, reservation *conversationThreadLifecycleReservation, success bool) {
+	if r == nil || reservation == nil {
+		return
+	}
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	current := r.turnOverlays[sessionID]
+	if current != reservation.overlay || current.syncTurnID != reservation.turnID {
+		return
+	}
+	if !success {
+		if reservation.previous == nil {
+			delete(r.turnOverlays, sessionID)
+			return
+		}
+		previous := reservation.previous
+		previous.preparation = nil
+		previous.preparingTurnID = ""
+		previous.syncTurnID = ""
+		previous.revision = current.revision
+		r.turnOverlays[sessionID] = previous
+		return
+	}
+	current.syncTurnID = ""
+	current.preparation = nil
+	current.preparingTurnID = ""
+	current.head = nil
+	current.closed = nil
+	current.closedByTurnID = ""
+	if reservation.blocksColdActivation {
+		// L1 currently has no reset marker. Keep the owner-scoped session blocked
+		// so a later preparation cannot silently reactivate the old durable head.
+		current.headFailure = domconv.ErrConversationTurnUnavailable
+	} else {
+		delete(r.turnOverlays, sessionID)
+		return
+	}
+	r.pruneConversationTurnOverlaysLocked(conversationTurnOverlayRetentionLimit)
+}
+
+func (r *RealConversationManager) conversationTurnOverlayForRead(ctx context.Context, sessionID string) (*domconv.Thread, *domconv.Thread) {
+	_, admitted := persistencequeue.AdmissionFromContext(ctx)
+	scope, ownerScoped := ctx.Value(conversationTurnOwnerReadScopeKey{}).(conversationTurnOwnerReadScope)
+	if !admitted && !ownerScoped {
+		return nil, nil
+	}
+	if ownerScoped {
+		if scope.sessionID != sessionID || strings.TrimSpace(scope.ownerID) == "" {
+			return nil, nil
+		}
+		return cloneThreadForStore(scope.head), cloneThreadForStore(scope.closed)
 	}
 	r.turnOverlayMu.RLock()
 	overlay := r.turnOverlays[sessionID]
@@ -677,7 +1367,10 @@ func (r *RealConversationManager) completeAcceptedConversationTurn(sessionID str
 			overlay.closed = nil
 			overlay.closedByTurnID = ""
 		}
-		if len(overlay.pending) == 0 && overlay.preparation == nil && overlay.preparingTurnID == "" && overlay.syncTurnID == "" {
+		// Keep head as the effective projection when this pending entry becomes
+		// durable. If later turns are pending, head already includes them; if not,
+		// it is now the committed head for the next preparation.
+		if len(overlay.pending) == 0 && overlay.preparation == nil && overlay.preparingTurnID == "" && overlay.syncTurnID == "" && overlay.head == nil {
 			delete(r.turnOverlays, sessionID)
 		}
 		return

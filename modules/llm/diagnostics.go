@@ -42,9 +42,34 @@ func BuildDiagnosticsSnapshot(ctx context.Context, providers map[string]Provider
 }
 
 type RoleStatus struct {
-	Role     string            `json:"role"`
-	Provider string            `json:"provider,omitempty"`
-	Health   core.HealthReport `json:"health"`
+	Role                string                                  `json:"role"`
+	Provider            string                                  `json:"provider,omitempty"`
+	Health              core.HealthReport                       `json:"health"`
+	GatewayRequestWrite *GatewayRequestWriteDiagnosticsSnapshot `json:"gateway_request_write,omitempty"`
+}
+
+// GatewayRequestWriteDiagnosticsSnapshot is a bounded in-memory projection of
+// opt-in HTTP request-write observations made by a Gateway provider.
+type GatewayRequestWriteDiagnosticsSnapshot struct {
+	Capacity int                         `json:"capacity"`
+	Dropped  uint64                      `json:"dropped"`
+	Requests []GatewayRequestWriteSample `json:"requests"`
+}
+
+// GatewayRequestWriteSample correlates a CORE HTTP client write with the
+// existing Gateway request ID. The duration uses Go's monotonic clock while
+// the timestamps are UTC wall-clock anchors for cross-host calibration.
+type GatewayRequestWriteSample struct {
+	RequestID           string `json:"request_id"`
+	DoStartedAtUTC      string `json:"do_started_at_utc"`
+	WroteRequestAtUTC   string `json:"wrote_request_at_utc,omitempty"`
+	DoToWriteDurationNS *int64 `json:"do_to_write_duration_ns,omitempty"`
+}
+
+// GatewayRequestWriteDiagnosticsProvider is an optional read-only capability
+// for providers that retain bounded request-write diagnostics in memory.
+type GatewayRequestWriteDiagnosticsProvider interface {
+	GatewayRequestWriteDiagnostics() *GatewayRequestWriteDiagnosticsSnapshot
 }
 
 func CollectRoleStatus(ctx context.Context, providers map[string]Provider, checkedAt time.Time) []RoleStatus {
@@ -69,6 +94,9 @@ func CollectRoleStatus(ctx context.Context, providers map[string]Provider, check
 		status.Health.Module = "llm:" + role
 		if status.Health.CheckedAt.IsZero() {
 			status.Health.CheckedAt = checkedAt
+		}
+		if diagnosticProvider, ok := provider.(GatewayRequestWriteDiagnosticsProvider); ok {
+			status.GatewayRequestWrite = diagnosticProvider.GatewayRequestWriteDiagnostics()
 		}
 		out = append(out, status)
 	}

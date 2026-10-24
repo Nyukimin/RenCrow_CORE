@@ -130,10 +130,54 @@ INSERT INTO l1_memory_event (
 	} else if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.notifyUserMemoryMutation(result.UserID, []string{result.ID}, string(auditEventID(auditEntry)))
 	return result, nil
 }
 
 const userMemoryCandidateIDPrefix = "user-memory-candidate/sha256:"
+
+// UserMemoryMutationNotice identifies the exact UserMemory rows changed by
+// one committed L1 owner operation. ChangeID is an opaque audit-event identity
+// supplied by L1; it is not an ordering token.
+type UserMemoryMutationNotice struct {
+	UserID    string
+	MemoryIDs []string
+	ChangeID  string
+}
+
+// UserMemoryMutationCallback invalidates an owner-managed in-memory
+// UserMemory projection. The store invokes it synchronously after commit and
+// before returning a successful mutation receipt. It may be invoked
+// concurrently for overlapping mutations, and ordering between those calls is
+// unspecified. Consumers must treat notices as idempotent invalidations and
+// must not order them by ChangeID. Each in-memory revoke must finish before
+// the callback returns; a callback must never publish or rebuild from a
+// notice. The commit-to-callback interval is not atomic with database
+// visibility, so a build started after a notice must reread current owner
+// state before publication. The callback must not do database/store or model
+// work.
+type UserMemoryMutationCallback func(UserMemoryMutationNotice)
+
+func (s *L1SQLiteStore) notifyUserMemoryMutation(userID string, memoryIDs []string, changeID string) {
+	if s == nil || s.userMemoryMutationCallback == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(changeID) == "" || len(memoryIDs) == 0 {
+		return
+	}
+	ids := append([]string(nil), memoryIDs...)
+	s.userMemoryMutationCallback(UserMemoryMutationNotice{
+		UserID:    userID,
+		MemoryIDs: ids,
+		ChangeID:  changeID,
+	})
+}
+
+func userMemoryPromptEligibleAtDeclaredScope(item domainmemory.UserMemory) bool {
+	scope := strings.ToLower(strings.TrimSpace(item.Scope))
+	if scope == "" || scope == "all_personas" || scope == "all" || scope == "global" {
+		return domainmemory.IsUserMemoryPromptInjectable(item, "")
+	}
+	persona := strings.TrimSuffix(scope, "_only")
+	return domainmemory.IsUserMemoryPromptInjectable(item, persona)
+}
 
 // CreateUserMemoryCandidateWithRequest persists one owner-proposed user
 // memory and its audit event as one SQLite transaction. The request ID is the
@@ -249,6 +293,7 @@ INSERT INTO l1_memory_event (
 	} else if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
+	s.notifyUserMemoryMutation(expected.UserID, []string{expected.ID}, string(auditEventID(auditEntry)))
 	return &expected, false, nil
 }
 
@@ -679,6 +724,7 @@ func (s *L1SQLiteStore) updateUserMemoryState(ctx context.Context, tx *sql.Tx, i
 	if err != nil {
 		return nil, err
 	}
+	s.notifyUserMemoryMutation(result.UserID, []string{result.ID}, string(auditEventID(entry)))
 	return result, nil
 }
 
@@ -734,6 +780,7 @@ func (s *L1SQLiteStore) forgetUserMemory(ctx context.Context, tx *sql.Tx, identi
 	if err != nil {
 		return nil, err
 	}
+	s.notifyUserMemoryMutation(result.UserID, []string{result.ID}, string(auditEventID(entry)))
 	return result, nil
 }
 
@@ -802,30 +849,8 @@ func (s *L1SQLiteStore) supersedeUserMemory(ctx context.Context, tx *sql.Tx, ide
 	if err != nil {
 		return nil, err
 	}
+	s.notifyUserMemoryMutation(result.UserID, []string{result.ID}, string(auditEventID(entry)))
 	return result, nil
-}
-
-func (s *L1SQLiteStore) updateMemoryMeta(ctx context.Context, id string, meta map[string]interface{}) error {
-	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal memory meta")
-	if err != nil {
-		return err
-	}
-	result, err := s.db.ExecContext(ctx, `
-UPDATE l1_memory_event
-SET meta_json = ?, updated_at = ?
-WHERE id = ?
-`, metaJSON, time.Now().UTC(), id)
-	if err != nil {
-		return fmt.Errorf("failed to update memory meta: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to inspect memory meta update: %w", err)
-	}
-	if affected == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
 }
 
 func l1EventToUserMemory(ev L1MemoryEvent) *domainmemory.UserMemory {

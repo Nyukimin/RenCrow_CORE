@@ -80,7 +80,7 @@ func TestNewLLMRoleProviders(t *testing.T) {
 	heavy := &fakeDomainLLMProvider{}
 	wild := &fakeDomainLLMProvider{}
 
-	got := NewLLMRoleProviders(chat, worker, heavy, wild)
+	got := NewLLMRoleProviders(chat, worker, heavy, wild, nil)
 	for _, role := range []string{"chat", "worker", "heavy", "wild"} {
 		if got[role] == nil {
 			t.Fatalf("role provider missing: %s in %+v", role, got)

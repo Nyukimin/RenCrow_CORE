@@ -2,6 +2,9 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"sync"
 
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -51,12 +54,83 @@ type MessagePart struct {
 // StreamCallback はストリーミング時にトークンごとに呼ばれるコールバック
 type StreamCallback func(token string)
 
+const LogicalOutcomeStreamV1 = "v1"
+
+type LogicalOutcomeEventKind string
+
+const (
+	LogicalOutcomeAnswerStart      LogicalOutcomeEventKind = "answer_start"
+	LogicalOutcomeAnswerDelta      LogicalOutcomeEventKind = "answer_delta"
+	LogicalOutcomeAnswerDone       LogicalOutcomeEventKind = "answer_done"
+	LogicalOutcomeRetrievalRequest LogicalOutcomeEventKind = "retrieval_request"
+	LogicalOutcomeHandoff          LogicalOutcomeEventKind = "handoff"
+)
+
+// LogicalOutcomeEvent is one normalized control or text event from the
+// opt-in RenCrow_LLM logical outcome stream. RetrievalRequests retains the
+// exact JSON array for CORE's domain/schema validation.
+type LogicalOutcomeEvent struct {
+	Kind              LogicalOutcomeEventKind
+	SchemaVersion     int
+	Route             string
+	PayloadKind       string
+	Text              string
+	FinishReason      string
+	RetrievalRequests json.RawMessage
+}
+
+// LogicalOutcomeEventCallback lets the caller validate each typed event before
+// its answer text is forwarded through StreamCallback. Returning an error
+// aborts the provider stream.
+type LogicalOutcomeEventCallback func(event LogicalOutcomeEvent) error
+
 type GenerationMetrics struct {
 	CompletionTokens int
 	TokensPerSecond  float64
 }
 
 type GenerationMetricsCallback func(metrics GenerationMetrics)
+
+var (
+	ErrGenerateRequestAdmissionUnavailable = errors.New("generation request admission is unavailable")
+	ErrGenerateRequestAdmissionConsumed    = errors.New("generation request admission was already consumed")
+)
+
+// GenerateRequestAdmission is a one-shot, process-local capability that a
+// provider consumes after it has built the exact outbound request and before
+// it dispatches that request. Its callback must perform a short in-memory
+// admission only; it must not hold a guard across network I/O.
+type GenerateRequestAdmission struct {
+	mu    sync.Mutex
+	used  bool
+	admit func() error
+}
+
+// NewGenerateRequestAdmission constructs a one-shot request admission
+// capability. A nil callback produces an unavailable capability.
+func NewGenerateRequestAdmission(admit func() error) *GenerateRequestAdmission {
+	return &GenerateRequestAdmission{admit: admit}
+}
+
+// Admit consumes this capability once. A failed admission also consumes it,
+// so callers cannot replay a request after a revocation check failed.
+func (a *GenerateRequestAdmission) Admit() error {
+	if a == nil {
+		return ErrGenerateRequestAdmissionUnavailable
+	}
+	a.mu.Lock()
+	if a.used {
+		a.mu.Unlock()
+		return ErrGenerateRequestAdmissionConsumed
+	}
+	a.used = true
+	admit := a.admit
+	a.mu.Unlock()
+	if admit == nil {
+		return ErrGenerateRequestAdmissionUnavailable
+	}
+	return admit()
+}
 
 // ResponseFormat declares the logical assistant output contract.
 // Provider and Model-specific enforcement stays behind the RenCrow_LLM boundary.
@@ -76,8 +150,15 @@ type GenerateRequest struct {
 	ResponseFormat  ResponseFormat
 	ReasoningEffort ReasoningEffort
 	ProviderOptions map[string]any
-	OnToken         StreamCallback // nil = 非ストリーミング
-	OnMetrics       GenerationMetricsCallback
+	// RequestAdmission is internal and one-shot. It is consumed by the provider
+	// immediately before outbound dispatch and never enters a provider payload.
+	RequestAdmission *GenerateRequestAdmission `json:"-"`
+	// LogicalOutcomeStream opts into a versioned structured SSE transport.
+	// Empty preserves the ordinary Chat Completions stream contract.
+	LogicalOutcomeStream  string
+	OnLogicalOutcomeEvent LogicalOutcomeEventCallback
+	OnToken               StreamCallback // nil = 非ストリーミング
+	OnMetrics             GenerationMetricsCallback
 }
 
 // GenerateResponse はLLM生成レスポンス

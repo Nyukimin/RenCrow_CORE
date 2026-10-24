@@ -123,12 +123,13 @@ func (t *lineTable) chain(head, tail *uint32, pos linePos) {
 
 // Task flag bits.
 const (
-	flagStarted   uint8 = 1 << iota // StartedAt is set
-	flagFinished                    // FinishedAt is set
-	flagReadOnly                    // read_only
-	flagRelations                   // relations holds parent/dependency/supersedes
-	flagPinned                      // expected_criteria_revision is set
-	flagClaims                      // native_resume_claims is not empty
+	flagStarted           uint8 = 1 << iota // StartedAt is set
+	flagFinished                            // FinishedAt is set
+	flagReadOnly                            // read_only
+	flagRelations                           // relations holds parent/dependency/supersedes
+	flagPinned                              // expected_criteria_revision is set
+	flagClaims                              // native_resume_claims is not empty
+	flagOriginPublication                   // origin publication provenance is set
 )
 
 // taskRec is the pointer-free summary of one Task plus the positions of all of
@@ -395,6 +396,7 @@ func summaryOfTask(value domaintask.Task) taskFacts {
 		updated: toStamp(value.UpdatedAt), readOnly: value.ReadOnly,
 		hasStarted: value.StartedAt != nil, hasFinished: value.FinishedAt != nil,
 		pinned: value.ExpectedCriteriaRevision != "", hasClaims: len(value.NativeResumeClaims) > 0,
+		hasOriginPublication: value.OriginPublication != nil,
 	}
 	if value.ParentTaskID != "" || value.SupersedesTaskID != "" || len(value.DependencyTaskIDs) > 0 {
 		facts.relations = &taskRelations{
@@ -409,12 +411,12 @@ func summaryOfTask(value domaintask.Task) taskFacts {
 // decoded. Interning into the index happens only at merge time, so building a
 // batch (including the dry run before commit) never changes the index.
 type taskFacts struct {
-	title, assignee, module            string
-	route, status, priority, interrupt string
-	updated                            stamp
-	hasStarted, hasFinished, readOnly  bool
-	pinned, hasClaims                  bool
-	relations                          *taskRelations
+	title, assignee, module                 string
+	route, status, priority, interrupt      string
+	updated                                 stamp
+	hasStarted, hasFinished, readOnly       bool
+	pinned, hasClaims, hasOriginPublication bool
+	relations                               *taskRelations
 }
 
 type runFacts struct {

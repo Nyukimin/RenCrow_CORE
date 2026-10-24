@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -45,6 +46,7 @@ func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconve
 }
 
 func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID, allowCombined bool) (routeDecisionResult, error) {
+	earlyStream := mioEarlyStreamLifecycleFromContext(ctx)
 	var draftForRelease *domainagent.MioChatDraft
 	transferredDraft := false
 	defer func() {
@@ -70,24 +72,72 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 	if err != nil {
 		return routeDecisionResult{}, fmt.Errorf("routing decision failed: %w", err)
 	}
+	if earlyState := earlyStream.snapshot(); earlyState.setupErr != nil {
+		return routeDecisionResult{}, fmt.Errorf("Mio early stream lifecycle failed: %w", earlyState.setupErr)
+	}
 	classifiedRoute := decision.Route
 	decision, pinnedViewerRecipient := pinSelectedViewerRecipientDecision(decision, req)
 	if pinnedViewerRecipient {
 		return routeDecisionResult{Decision: decision, Context: ctx}, nil
 	}
 	if chatDraft.Failed() {
-		transferredDraft = true
+		if earlyState := earlyStream.snapshot(); earlyState.policyApplied {
+			if earlyState.policyDecision.Route != routing.RouteCHAT {
+				return routeDecisionResult{}, errors.New("Mio combined CHAT outcome failed after early heavy-policy evaluation")
+			}
+			decision = applyCachedMioEarlyPolicyDecision(decision, earlyState.policyDecision)
+			if earlyState.policyContext != nil {
+				ctx = earlyState.policyContext
+			}
+			if decision.Route != routing.RouteCHAT {
+				chatDraft = nil
+			}
+		}
+		transferredDraft = chatDraft != nil
 		return routeDecisionResult{Decision: decision, ChatDraft: chatDraft, Context: ctx}, nil
 	}
-	decision, ctx, err = c.applyHeavyWorkerPolicy(ctx, decision, req, taskID)
-	if err != nil {
-		return routeDecisionResult{}, err
+	if earlyState := earlyStream.snapshot(); earlyState.policyApplied {
+		decision = applyCachedMioEarlyPolicyDecision(decision, earlyState.policyDecision)
+		if earlyState.policyContext != nil {
+			ctx = earlyState.policyContext
+		}
+	} else {
+		decision, ctx, err = c.applyHeavyWorkerPolicy(ctx, decision, req, taskID)
+		if err != nil {
+			return routeDecisionResult{}, err
+		}
+		if earlyStream != nil {
+			earlyStream.cachePolicy(decision, ctx)
+		}
 	}
 	if decision.Route != routing.RouteCHAT || decision.Route != classifiedRoute {
 		chatDraft = nil
 	}
 	transferredDraft = chatDraft != nil
 	return routeDecisionResult{Decision: decision, ChatDraft: chatDraft, Context: ctx}, nil
+}
+
+func applyCachedMioEarlyPolicyDecision(classified, policyDecision routing.Decision) routing.Decision {
+	if classified.Route != routing.RouteCHAT || policyDecision.Route != routing.RouteANALYZE {
+		return classified
+	}
+	classified.Route = routing.RouteANALYZE
+	if classified.Confidence < 0.95 {
+		classified.Confidence = 0.95
+	}
+	if !strings.Contains(classified.Reason, "heavy worker policy requested ANALYZE") {
+		if classified.Reason == "" {
+			classified.Reason = "heavy worker policy requested ANALYZE"
+		} else {
+			classified.Reason += "; heavy worker policy requested ANALYZE"
+		}
+	}
+	for _, evidence := range policyDecision.Evidence {
+		if evidence.Source == "heavy_worker_policy" {
+			classified.Evidence = append(classified.Evidence, evidence)
+		}
+	}
+	return classified
 }
 
 func (c *routeDecisionCoordinator) releaseChatDraft(ctx context.Context, draft *domainagent.MioChatDraft) {

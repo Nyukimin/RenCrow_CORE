@@ -677,6 +677,22 @@ Ingressの`turn_id`、`trace_id`、`session_id`はpublic final eventへ明示伝
 設定します。Agent readもauthenticated userと`DataScopeUser`、active、`confirmed | pinned`、non-sensitiveをserver側で
 検証し、source failureを空の200へ変換せずRecall traceへ記録します。
 
+#### 段階的想起の内部契約（実装仕様）
+
+既存のChat HTTP／SSE routeと認証・policyを維持する。`MioTurnOutcome` v2はCORE内部の論理契約であり、LLM制御JSON、source reference、物理DB情報を公開本文・音声へ流さない。初回combinedは`route`と`outcome`を一回のMio生成から得る。既に確定したrouteでは分類をやり直さず、固定routeと異なる値を`invalid_outcome`にする。`answer`、`retrieve`、初回の非CHAT `handoff`は排他的で、unknown field、空answer、混在branchを拒否する。
+
+`retrieve.requests`は1〜2件、`source_kind`はCORE登録済み意味カテゴリ、`query`は1〜512 rune、`information_needed`は1〜256 rune、`references`は最大8件とする。referencesなしのscope内検索は許す。LLMの要求からowner、認証scope、SQL、任意Tool、物理pathを採用しない。owner readはauthenticated user、purpose、scope、版、provenance、freshnessを検査し、`not_found`、`unavailable`、`blocked`を区別する。初期実装で検証可能な失効資格を返せないremote結果はpublicationへ採用しない。
+
+plain streamingはRenCrow_LLMの専用論理event `answer_start`、`answer_delta`、`answer_done`、`retrieval_request`、初回未固定routeの`handoff`を使う。`handoff`は`{"schema_version":2,"route":"<canonical route>"}`を終端eventとして返し、本文eventを伴わない。COREだけがroute固定状態と許可先を検証する。`answer_start`前の本文公開と、本文公開後の同一turn検索は許さない。一般の`response_format=json_object`＋`stream=true`は従来どおり無効である。SpeechPlanは最終answer一回のplanだけを公開する。取得・継続でも同じ`turn_id`、`trace_id`、`root_task_id`、User／Agent `message_id`を使い、EndTurnは一回。取得上限は2 round、2 req/round、同時2、8 result、64KiB、DB 2秒、Web 8秒、全体10秒。上限到達で追加検索・追加生成を隠れて実行しない。
+
+初回の`answer_start`をCOREが検証した後、本文deltaの公開前に後段の決定的route policyを一度だけ評価し、CHATのTask／Lead Run／公開先を確定する。深掘りpolicy等でANALYZEへ変更した場合はMioの暫定CHAT deltaを一切公開せず、後段で同じpolicyを再適用しない。Task／Run確定失敗や途中の失効は一時deltaを完成回答へ昇格させず、既に公開済みのprefixだけをpartialとして終端する。
+
+初回prompt前と各公開event前には、使用参照のowner資格を確認する。forget／scope変更の成功receipt後に旧内容の未公開delta、final、TTSを公開しない。source版・coverage・検索round・typed failureを同じtraceで観測する。これは既存のMemory CLI exact-ID lifecycle、Recall／Trace owner APIを置換する新しいpublic write APIではない。
+
+canonical finalの履歴公開はguard付きEventStore RAM受理時に成立し、後続のforgetで既公開履歴を遡及削除しない。SSE writerがまだ取得していないlive final／deltaは送信直前にowner source版とSession bindingを再照合し、失効後は配送しない。deltaは履歴・replayへ入れない。旧bindingの履歴をreset／owner変更後の新bindingへreplayしない。
+
+`/viewer/events`のowner-scoped live／replayは、event発行時の`publication_incarnation`と現在のcanonical Session recordの同値を要求する。削除・同一ID再作成・経路rekeyでincarnationが変わるため、旧eventを新bindingへ再送しない。incarnationのない旧eventは自動補完せず表示対象から除外し、旧Session recordはowner移行までunavailableとする。通常の会話`/new`はSessionのincarnationを変えず、未配送itemだけを会話ライフサイクル世代で失効させる。
+
 ### 認証済みAgent OPS
 
 `POST /v1/agent/ops`は通常Chatとは別のOperational APIです。`local_agent_ops.enabled=true`でのみ存在し、
@@ -1191,6 +1207,10 @@ renameを移行要件にしません。
 
 `POST /viewer/send`は`message`、`to`に加えて、clientを追跡できる場合は`viewer_client_id`、`input_source`（`text | stt | unknown`）、`user_id`、`device_name`、`audio_output`（`requested | disabled`）をJSONと`multipart/form-data`の両方で受けます。`audio_output=disabled`は送信開始時点のsnapshotであり、そのrequestではTTS sessionを作成せず、合成を要求せず、TTS完了を待ちません。`requested`は従来のTTS処理を要求し、省略時も後方互換のため従来のTTS処理を維持します。未知の空でない`audio_output`と未知の`input_source`は400で拒否します。`user_id`と`device_name`は観測用metadataであり、認証・認可には使用しません。PORTALに利用者認証がない現行構成では`user_id=viewer-user`、`device_name`はブラウザが公開するOS／platform名であり、端末hostnameではありません。
 
+段階的想起で個人記憶を使うCMDのMio宛送信は、JSON／multipartのどちらもloopback URLと`Authorization: Bearer <local_agent_ops.auth_token_fileの値>`を必須とする。同じCMDの`GET /viewer/events?from=now&to=mio`も、`X-RenCrow-Client: RenCrow_CMD`、`X-RenCrow-Interaction-Profile: cmd-chat`、同じBearerを提示する。COREは既存owner credentialを定時間比較し、`DataScopeUser`付きの認証済みUserをSession resolverへ渡す。`to=mio`の判定は送信前に行い、CMDが後段processorを推測して認証を省略しない。任意のremote `--url`へこのcredentialを転送せず、所有者を証明できないrequestではprivate準備済みRecallを実行しない。CMDはUserの入力経路であり、`cmd:<owner>`はSessionの経路識別子に限る。既存Session ID指定時もChannelAddressとownerの一致を確認し、違反は会話生成・検索の前に拒否する。匿名の公開event購読はowner未束縛のcanonical Sessionだけを表示し、owner束縛済み会話の本文・Task・Monitor・Chrome・AudioRouter投影を表示しない。この段落は段階的想起の切替契約であり、配備済み機能を示さない。
+
+Sessionに紐付くViewer event、Task、Monitor log、Chrome event、canonical Conversation音声event／resourceは、発行時の`publication_incarnation`とcanonical経路・公開区分を保持する。各閲覧API、SSE、音声resource取得は返却直前に現行Sessionとの一致を確認し、削除後の同一ID再作成へ旧artifactを移さない。証拠のない旧artifactは現在のSessionへ推測で帰属させず、公開結果から除外する。CMDの認証済みUser scopeはUser ownerであり、Taskの担当Agent `OwnerID`やMioの応答Actorとは別である。
+
 遅延調査が必要なrequestは、JSON booleanまたはmultipartの小文字`true`で`timings`を指定できます。省略または`false`では計測payloadを追加せず、multipartでそれ以外の値は400です。opt-inでもtiming eventが付くのは、`/viewer/send`の同期受付に成功して非同期turnが開始されたrequestに限ります。parse／recipient／session validation等の同期HTTP 4xx／5xxではeventは発行されず、CMD側ではローカルの`send_failed`計測のみとなります。opt-in時、成功では既存の利用者向け終端`agent.response`、失敗では既存の`viewer.error`へtimingを付けます。payloadは`{"schema_version":1,"points_ms":{...}}`で、各値は`/viewer/send` handler entryを0msとしたprocess-local monotonic elapsed millisecondsです。`handler_received`は常に0です。利用可能なtiming pointは次項に完全な一覧を示します。
 
 timing pointは`handler_received`、`request_parsed`、`handler_validation_ended`、`handler_session_started`、`handler_session_ended`、`accepted`、`async_start`、`process_started`、`process_session_started`、`process_session_ended`、`root_task_preparation_started`、`root_task_preparation_ended`、`root_task_created`、`initial_events_started`、`initial_events_ended`、`message_received_event_published`、`server_received_metric_published`、`session_turn_log_attempt_ended`、`persona_observation_started`、`persona_observation_ended`、`pre_route_checks_started`、`pre_route_checks_ended`、`turn_input_built`、`route_decision_started`、`route_decided`、`classification_started`、`classification_ended`、`task_activation_started`、`task_activation_ended`、`task_routing_event_published`、`task_execution_prepared`、`task_assignment_event_published`、`task_assignment_recorded`、`task_root_run_started`、`task_execution_run_started`、`task_identity_bound`、`lead_run_resolution_started`、`lead_run_resolution_ended`、`route_metric_published`、`skill_bootstrap_started`、`skill_bootstrap_ended`、`tts_session_setup_started`、`tts_session_setup_ended`、`lead_run_persistence_started`、`lead_run_persistence_ended`、`lead_agent_run_saved`、`lead_agent_start_event_appended`、`lead_context_pack_saved`、`lead_run_context_ready`、`dispatch_metric_published`、`dispatch_started`、`agent_start_publication_started`、`agent_start_publication_ended`、`agent_invocation_started`、`begin_turn_started`、`begin_turn_ended`、`user_memory_started`、`user_memory_ended`、`recall_started`、`recall_ended`、`recall_projection_started`、`recall_projection_ended`、`active_domain_started`、`active_domain_ended`、`category_started`、`category_ended`、`prompt_preparation_started`、`prompt_assembly_started`、`prompt_preparation_ended`、`generation_request_ready`、`generation_provider_started`、`generation_provider_ended`、`gateway_request_started`、`gateway_response_headers`、`first_text_callback`、`conversation_commit_started`、`conversation_commit_ended`、`response_publication_started`です。`request_parsed`はJSON／multipart parse成功後、`handler_validation_ended`はrecipient、audio_output、provenanceのvalidation終了後です。`handler_session_started`／`handler_session_ended`はhandlerのcanonical session resolver呼出しを、`process_session_started`／`process_session_ended`は`ProcessMessage`のsession解決を囲みます。`root_task_preparation_started`／`root_task_preparation_ended`はroot Taskの作成または既存Taskへのattachを囲み、`root_task_created`は新規root Task作成成功後だけ記録します。`initial_events_started`／`initial_events_ended`はmessage.receivedと初期latency metricの発行、user session turn記録を囲みます。`message_received_event_published`は`EmitMessageReceived`成功後、`server_received_metric_published`は既存metricの発行とpublication error check成功後、`session_turn_log_attempt_ended`は`writeUserSessionTurn`の呼出し終了後に記録します。logger未設定やsink書込失敗でも呼出し終了を示し、永続化成功を示すものではありません。`persona_observation_started`／`persona_observation_ended`はpersona runtime observationを囲みます。`pre_route_checks_started`／`pre_route_checks_ended`はcommand、slash command、Visionおよびdaily brief／DCI／durable store等の通常route前チェックを囲み、`turn_input_built`は`TurnInput`構築成功後です。
@@ -1284,7 +1304,9 @@ COREは受付時に`turn_id`、root `trace_id`、`root_task_id`、利用者発�
 
 `X-RenCrow-Client: RenCrow_CMD`で送られたterminal text chatは音声を消費しないため、COREはTTS sessionを開始しません。PORTAL／Debug Viewerなど音声再生能力を持つclientのTTS契約は維持します。client provenanceは観測と出力能力の選択に使う情報であり、認証・認可の代替にはしません。
 
-streaming生成では、COREはRenCrow_LLMの本文deltaを既存stream callback、初回本文到達計測、TTS／VTuberへ渡しますが、deltaをdurableな`agent.thinking`として公開しません。生成完了後は完成した本文を`agent.response`で一度公開し、`agent.start`は進行表示に使います。CMD→COREのMio combined CHAT routeに限り、`agent.response`の公開はRAM FIFO admission後でよく、durable persistence完了の証拠ではありません。その他のrouteでは既存のdurability gateを維持します。backendが最終SSE chunkに`usage.completion_tokens`と`timings.predicted_per_second`を返す場合、COREは同じ`task_id`の`metrics.latency` eventを`kind=llm`、`point=throughput`、`completion_tokens`、`tokens_per_second`付きで発行します。clientはこの値がある場合だけ実token throughputとして表示し、本文delta数をtoken数として扱いません。
+streaming生成では、COREはRenCrow_LLMの検証済み本文deltaを初回本文到達計測、TTS／VTuberへ渡します。Mio combined CHATでは、最終routeとpublication資格が確定した後の本文だけを、同じ`trace_id`／`task_id`／`session_id`を持つ一時的な`agent.response_delta`として認証済みSSEへ順次配信します。このeventは完成履歴やdurableな`agent.thinking`ではなく、途中で取消・失効・生成失敗になれば既に表示されたprefixはpartialとして残し、完成回答へ昇格させません。CMDは受信順にdeltaを表示し、最終`agent.response`と重複表示せず、最初の実本文書込みをfirst bodyとして計測します。公開済みdeltaと最終本文は同じ正規化済みprefixを共有し、speaker labelや制御JSONをdeltaに流しません。
+
+生成完了後は完成した本文を`agent.response`で一度確定し、`agent.start`は進行表示に使います。CMD→COREのMio combined CHAT routeに限り、`agent.response_delta`と`agent.response`の公開はRAM FIFO admission後でよく、durable persistence完了の証拠ではありません。その他のrouteでは既存のdurability gateを維持します。backendが最終SSE chunkに`usage.completion_tokens`と`timings.predicted_per_second`を返す場合、COREは同じ`task_id`の`metrics.latency` eventを`kind=llm`、`point=throughput`、`completion_tokens`、`tokens_per_second`付きで発行します。clientはこの値がある場合だけ実token throughputとして表示し、本文delta数をtoken数として扱いません。
 
 各生成区間の`agent.start`と完了した`agent.response`は、同じ応答Agentを示します。`agent.start.to`が`user`なら`from`、委譲先Agentなら`to`が生成Agentです。CHATのAgentは送信時のrecipient（mio／shiro／midori／kuro）、PLAN／RESEARCHはMio、WILDはMidori、ANALYZEはKuroです。`agent.response.from`はその本文を生成したAgentであり、固定のAgent名を発行してはいけません。ANALYZEなどでMioが委譲先の結果を利用者へ中継する後続の`agent.response`（`from=mio`、`to=user`）は別の発話です。
 
@@ -1296,6 +1318,12 @@ TTSの声も同じ応答Agentに従います。`POST /viewer/send`が`audio_outp
 
 TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`response_id`を持ちます。clientは全chunkの再生終了とsession完了の両方を確認してから、response単位で`POST /viewer/tts/playback-ack`を1回だけ送ります。
 `GET /viewer/tts/audio?url=...`が取得できるremote音声は、COREのTTS設定にあるbase URLと同一hostのものだけです。
+`GET /viewer/tts/audio`の`path`／`url`は音声の所在を指定するだけで、Sessionや所有者の証明になりません。通常Chatでは、COREは生成したresourceとcanonical Conversation Sessionの対応を音声chunk公開前に登録し、取得時にもSession ownerを正本で確認します。private Sessionの音声はloopback上の認証済みUser ownerが同じ場合だけ取得でき、`Cache-Control: private, no-store`を返します。公開Conversation Sessionの音声は匿名取得できます。
+
+IdleChatの公開再生はcanonical Conversation Sessionを持たないため、別種の明示的な公開TTS authorityとして扱います。IdleChat ownerが登録した内部TTS Session ID、公開再生Session ID、runtime epoch、playback generation、store generationをresourceへ束縛し、登録時と取得時に`PublicSessionStore`の現役routeとの完全一致を確認します。未登録route、timeout、retire、reset、世代失効は拒否します。`IsStale == false`や未登録時の`ResolveSession` fallback、TTS Session IDのprefixだけでは公開資格になりません。通常ChatのSession照合に失敗したresourceをIdleChat公開へfallbackせず、同一resourceを別authority／別Sessionへ再登録しません。
+公開音声GETの資格判定時点をrequest admissionとし、その後のtimeout／retire／resetは新規GETを拒否します。受理済みのHTTP応答は完走できます。取得開始後に公開資格を遡及して取消す契約にはしません。
+
+どちらも未登録、対応不一致、失効、ownerを確認できないresourceは公開しません。`path`と`url`の併記、異なる形式へのredirect、output directory外のpathも拒否します。queryの`session_id`やCMDの接続名を認可に使いません。speech-evalが生成した公開artifactは、その専用の公開root内に実ファイルを閉じ込めて扱い、private answerを公開しません。再起動でresource対応が失われた音声は、正本から対応を再確認できない限り取得不可です。
 
 通常ChatのSpeechPlan v1.0では、`/viewer/send`の受付responseが発話専用の
 `speech_cancel_token`を返します。ユーザー割り込み時の`POST /viewer/tts/cancel`は
@@ -1627,6 +1655,13 @@ capabilityで制限します。
 /viewer/memory/profile-promotions
 /viewer/web-gather/doctor
 ```
+
+公開Viewerの`GET /viewer/evidence/recent`は、各reportの`task_id`からCOREの正本Taskを取得し、
+公開可能なSessionに属するTaskのreportだけを返します。Taskが欠落、所有関係が不明、または
+非公開なら一覧から除外します。`GET /viewer/evidence/detail?task_id=...`は同じ判定に
+通らないreportを`404`とします。`GET /viewer/evidence/summary`の既存集計は全Taskを
+対象とするため、公開範囲に限定した正確な集計が利用可能になるまで`503`を返します。
+これらの公開判定にCMDのUser認証scopeを流用しません。
 
 `GET /viewer/channels`は設定済みchannelの一覧、`GET /viewer/channels/probe`は各channelの
 疎通結果、`GET /viewer/web-gather/doctor`はweb-gatherの依存構成の診断結果を返します。

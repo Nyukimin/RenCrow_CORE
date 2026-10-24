@@ -130,6 +130,100 @@ func TestGatewayProviderGenerateOwnsCanonicalTransportRequestAndResponse(t *test
 	}
 }
 
+func TestGatewayProviderRecordsRequestWriteOnlyWhenTurnTimingIsOptedIn(t *testing.T) {
+	receivedRequestIDs := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedRequestIDs <- r.Header.Get("X-RenCrow-Request-ID")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "mio", server.URL, time.Second).
+		WithGatewayRequestWriteRecorder(NewGatewayRequestWriteRecorder())
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithBodyGenerationContext(turntiming.WithRecorder(context.Background(), recorder))
+	if _, err := provider.Generate(ctx, llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "run"}}}); err != nil {
+		t.Fatal(err)
+	}
+	receivedRequestID := <-receivedRequestIDs
+
+	diagnostics := provider.GatewayRequestWriteDiagnostics()
+	if diagnostics == nil {
+		t.Fatal("opted-in request did not produce Gateway write diagnostics")
+	}
+	if diagnostics.Capacity != gatewayRequestWriteDiagnosticCapacity || diagnostics.Dropped != 0 || len(diagnostics.Requests) != 1 {
+		t.Fatalf("unexpected diagnostic sample snapshot: %+v", diagnostics)
+	}
+	sample := diagnostics.Requests[0]
+	if sample.RequestID == "" || sample.RequestID != receivedRequestID {
+		t.Fatalf("diagnostic request ID %q did not match Gateway header %q", sample.RequestID, receivedRequestID)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, sample.DoStartedAtUTC); err != nil {
+		t.Fatalf("invalid Do start timestamp %q: %v", sample.DoStartedAtUTC, err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, sample.WroteRequestAtUTC); err != nil {
+		t.Fatalf("invalid WroteRequest timestamp %q: %v", sample.WroteRequestAtUTC, err)
+	}
+	if sample.DoToWriteDurationNS == nil || *sample.DoToWriteDurationNS < 0 {
+		t.Fatalf("missing or negative monotonic Do-to-write duration: %v", sample.DoToWriteDurationNS)
+	}
+	if _, ok := turntiming.FromContext(ctx).Snapshot().PointsMS[string(turntiming.PointGatewayRequestStarted)]; !ok {
+		t.Fatal("existing turn timing request-start point was not preserved")
+	}
+
+	plainProvider := NewGatewayProviderWithOptions("", "mio", server.URL, time.Second)
+	if _, err := plainProvider.Generate(context.Background(), llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "run"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := plainProvider.GatewayRequestWriteDiagnostics(); got != nil {
+		t.Fatalf("non-opted-in request unexpectedly produced diagnostics: %+v", got)
+	}
+}
+
+func TestGatewayProviderWriteDiagnosticCapacityDropsWithoutOverwriting(t *testing.T) {
+	provider := NewGatewayProviderWithOptions("", "mio", "http://127.0.0.1", time.Second).
+		WithGatewayRequestWriteRecorder(NewGatewayRequestWriteRecorder())
+	for i := 0; i < gatewayRequestWriteDiagnosticCapacity+2; i++ {
+		startedAt := time.Now()
+		index := provider.beginGatewayRequestWriteDiagnostic(fmt.Sprintf("request-%02d", i), startedAt)
+		if index >= 0 {
+			provider.completeGatewayRequestWriteDiagnostic(index, time.Now(), time.Since(startedAt))
+		}
+	}
+
+	got := provider.GatewayRequestWriteDiagnostics()
+	if got == nil || got.Dropped != 2 || len(got.Requests) != gatewayRequestWriteDiagnosticCapacity {
+		t.Fatalf("unexpected bounded sample snapshot: %+v", got)
+	}
+	if got.Requests[0].RequestID != "request-00" || got.Requests[len(got.Requests)-1].RequestID != fmt.Sprintf("request-%02d", gatewayRequestWriteDiagnosticCapacity-1) {
+		t.Fatalf("fixed recorder did not preserve its first samples: first=%q last=%q", got.Requests[0].RequestID, got.Requests[len(got.Requests)-1].RequestID)
+	}
+}
+
+func TestGatewayProviderRetainsDoStartWhenRequestWriteDoesNotComplete(t *testing.T) {
+	provider := NewGatewayProviderWithOptions("", "mio", "http://127.0.0.1", time.Second).
+		WithGatewayRequestWriteRecorder(NewGatewayRequestWriteRecorder())
+	provider.client = &http.Client{Transport: llmRoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("write failed before trace completion")
+	})}
+	ctx := turntiming.WithBodyGenerationContext(turntiming.WithRecorder(context.Background(), turntiming.New(time.Now())))
+	if _, err := provider.Generate(ctx, llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "run"}}}); err == nil {
+		t.Fatal("request write failure was accepted")
+	}
+
+	diagnostics := provider.GatewayRequestWriteDiagnostics()
+	if diagnostics == nil || len(diagnostics.Requests) != 1 {
+		t.Fatalf("failed request Do start was not retained: %+v", diagnostics)
+	}
+	sample := diagnostics.Requests[0]
+	if sample.RequestID == "" || sample.DoStartedAtUTC == "" {
+		t.Fatalf("failed request is missing its correlation ID or Do-start timestamp: %+v", sample)
+	}
+	if sample.WroteRequestAtUTC != "" || sample.DoToWriteDurationNS != nil {
+		t.Fatalf("failed request claimed a completed write: %+v", sample)
+	}
+}
+
 func TestGatewayProviderTimingMarksHTTPBoundaryOnlyForBodyGeneration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(3 * time.Millisecond)
@@ -137,7 +231,8 @@ func TestGatewayProviderTimingMarksHTTPBoundaryOnlyForBodyGeneration(t *testing.
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
 	}))
 	defer server.Close()
-	provider := NewGatewayProviderWithOptions("", "mio", server.URL, time.Second)
+	provider := NewGatewayProviderWithOptions("", "mio", server.URL, time.Second).
+		WithGatewayRequestWriteRecorder(NewGatewayRequestWriteRecorder())
 	request := llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "hello"}}}
 	recorder := turntiming.New(time.Now().Add(-time.Second).Round(0))
 	ctx := turntiming.WithBodyGenerationContext(turntiming.WithRecorder(context.Background(), recorder))
@@ -164,12 +259,17 @@ func TestGatewayProviderTimingMarksHTTPBoundaryOnlyForBodyGeneration(t *testing.
 
 	untimedRecorder := turntiming.New(time.Now())
 	untimedCtx := turntiming.WithRecorder(context.Background(), untimedRecorder)
+	diagnosticsBeforeUntimed := provider.GatewayRequestWriteDiagnostics()
 	if _, err := provider.Generate(untimedCtx, request); err != nil {
 		t.Fatalf("routing-style Generate() error = %v", err)
 	}
 	untimed := untimedRecorder.Snapshot().PointsMS
 	if _, ok := untimed[string(turntiming.PointGatewayRequestStarted)]; ok {
 		t.Fatalf("non-body-generation request recorded gateway timing: %#v", untimed)
+	}
+	diagnosticsAfterUntimed := provider.GatewayRequestWriteDiagnostics()
+	if diagnosticsAfterUntimed == nil || diagnosticsBeforeUntimed == nil || len(diagnosticsAfterUntimed.Requests) != len(diagnosticsBeforeUntimed.Requests) {
+		t.Fatalf("non-body-generation request changed Gateway write diagnostics: before=%+v after=%+v", diagnosticsBeforeUntimed, diagnosticsAfterUntimed)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -381,11 +382,21 @@ func admitLegacyPreSession(requestContext context.Context, identity LegacyPreSes
 	if admission == nil {
 		return nil, releaseAdmission, errLegacyPreSessionAdmission
 	}
+	ownerScope, hasOwnerScope, scopeErr := validatedViewerOwnerScope(requestContext)
+	if scopeErr != nil {
+		releaseAdmission()
+		return nil, releaseAdmission, fmt.Errorf("validate Viewer owner scope for session resolution: %w", scopeErr)
+	}
 
 	// Keep the worker independent of request cancellation and copy only the
 	// explicit persistence capabilities supplied by the trusted runtime hook.
-	// Arbitrary request and hook context values stay on the synchronous ingress.
+	// The validated HTTP User scope is the one additional value needed by the
+	// pre-session resolver; arbitrary request and hook context values stay on
+	// the synchronous ingress.
 	detachedContext := persistencequeue.WithAdmission(context.Background(), admission)
+	if hasOwnerScope {
+		detachedContext = domaintool.WithToolExecutionScope(detachedContext, ownerScope)
+	}
 	if fallback, ok := persistencequeue.SynchronousFallbackFromContext(returnedContext); ok {
 		detachedContext = persistencequeue.WithSynchronousFallback(detachedContext, fallback)
 	}
@@ -646,6 +657,11 @@ type viewerV2Body struct {
 }
 
 func handleViewerSendV2(w http.ResponseWriter, r *http.Request, body []byte, multipartBody bool, options *V2SendOptions) {
+	ownerScope, hasOwnerScope, scopeErr := validatedViewerOwnerScope(r.Context())
+	if scopeErr != nil {
+		http.Error(w, "owner scope unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	processCtx := context.Background()
 	tracked := false
 	if options.Processing != nil {
@@ -656,6 +672,9 @@ func handleViewerSendV2(w http.ResponseWriter, r *http.Request, body []byte, mul
 			return
 		}
 		tracked = true
+	}
+	if hasOwnerScope {
+		processCtx = domaintool.WithToolExecutionScope(processCtx, ownerScope)
 	}
 	var turn turntiming.TurnRecorder
 	var timingEnabled bool

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,6 +40,1025 @@ func newRepositoryTurnInputForTest(t *testing.T, sess *session.Session, message 
 		t.Fatal(err)
 	}
 	return input.WithSessionID(sess.ID())
+}
+
+func ownerAdmittedSessionContext(t *testing.T) context.Context {
+	t.Helper()
+	queue := newSessionPersistenceQueue(t, 2, 2<<20)
+	admission, err := persistencequeue.Admit(queue, 1, 1<<20)
+	if err != nil {
+		t.Fatalf("Admit owner-bound session write: %v", err)
+	}
+	t.Cleanup(func() { _ = admission.Release() })
+	return persistencequeue.WithAdmission(context.Background(), admission)
+}
+
+type sessionBindingRepository interface {
+	BindingGeneration(context.Context, conversation.SessionBinding) (conversation.BindingGeneration, error)
+	UseBinding(context.Context, conversation.SessionBinding, func() error) error
+}
+
+func bindingForRepositoryTest(t *testing.T, sess *session.Session, audience conversation.SessionAudience, ownerID string, generation conversation.BindingGeneration) conversation.SessionBinding {
+	t.Helper()
+	binding, err := conversation.NewSessionBindingWithPublicationIncarnation(modulecore.SessionID(sess.ID()), sess.ChannelAddress(), audience, ownerID, generation, sess.PublicationIncarnation())
+	if err != nil {
+		t.Fatalf("NewSessionBinding: %v", err)
+	}
+	return binding
+}
+
+func requireSessionBindingRepository(t *testing.T, repo *JSONSessionRepository) sessionBindingRepository {
+	t.Helper()
+	guard, ok := any(repo).(sessionBindingRepository)
+	if !ok {
+		t.Fatal("JSONSessionRepository does not expose the session binding generation guard")
+	}
+	return guard
+}
+
+func runRepositoryOperationWhileWriteBlocked(t *testing.T, name string, operation func() error, unblock func(), saveDone <-chan error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- operation() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(time.Second):
+		unblock()
+		if err := <-saveDone; err != nil {
+			t.Fatalf("unblock Save after %s waited: %v", name, err)
+		}
+		t.Fatalf("%s waited for blocked Session file write", name)
+		return nil
+	}
+}
+
+func TestJSONSessionRepositoryBindingGenerationInvalidatesOnUpdateRekeyAndDelete(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("initial synchronous Save: %v", err)
+	}
+	guard := requireSessionBindingRepository(t, repo)
+	identity := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", conversation.BindingGenerationUnavailable)
+	initialGeneration, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil || initialGeneration == conversation.BindingGenerationUnavailable {
+		t.Fatalf("initial BindingGeneration=(%d,%v), want nonzero generation", initialGeneration, err)
+	}
+	initialBinding := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", initialGeneration)
+
+	sess.SetMemory("updated", true)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("update synchronous Save: %v", err)
+	}
+	updatedGeneration, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil || updatedGeneration == conversation.BindingGenerationUnavailable || updatedGeneration != initialGeneration {
+		t.Fatalf("updated BindingGeneration=(%d,%v), want the same nonzero generation after a same-identity Save", updatedGeneration, err)
+	}
+	called := false
+	if err := guard.UseBinding(context.Background(), initialBinding, func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("UseBinding after same-identity update=(%v, called=%t), want accepted callback", err, called)
+	}
+
+	rekeyedAddress, err := conversation.NewChannelAddress("line", "rekeyed-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rekeyed, err := session.NewCanonicalSession(modulecore.SessionID(sess.ID()), sess.LogicalDate(), rekeyedAddress, sess.CreatedAt())
+	if err != nil {
+		t.Fatalf("NewCanonicalSession for rekey: %v", err)
+	}
+	called = false
+	writeStarted, unblock := blockNextSessionWrite(t, repo)
+	rekeyDone := make(chan error, 1)
+	go func() { rekeyDone <- repo.Save(context.Background(), rekeyed) }()
+	select {
+	case <-writeStarted:
+	case <-time.After(time.Second):
+		unblock()
+		t.Fatal("rekey Save did not reach its blocked file write")
+	}
+	if err := runRepositoryOperationWhileWriteBlocked(t, "UseBinding after rekey invalidation", func() error {
+		return guard.UseBinding(context.Background(), initialBinding, func() error { called = true; return nil })
+	}, unblock, rekeyDone); err == nil || called {
+		t.Fatalf("UseBinding during rekey write=(%v, called=%t), want immediate stale rejection", err, called)
+	}
+	unblock()
+	if err := <-rekeyDone; err != nil {
+		t.Fatalf("rekey Session through Save: %v", err)
+	}
+	rekeyedIdentity := bindingForRepositoryTest(t, rekeyed, conversation.SessionAudiencePublic, "", conversation.BindingGenerationUnavailable)
+	rekeyedGeneration, err := guard.BindingGeneration(context.Background(), rekeyedIdentity)
+	if err != nil || rekeyedGeneration == conversation.BindingGenerationUnavailable || rekeyedGeneration == updatedGeneration {
+		t.Fatalf("rekeyed BindingGeneration=(%d,%v), want a new nonzero generation", rekeyedGeneration, err)
+	}
+	called = false
+	if err := guard.UseBinding(context.Background(), bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", updatedGeneration), func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("UseBinding with pre-rekey identity=(%v, called=%t), want stale rejection without callback", err, called)
+	}
+	if err := repo.Delete(context.Background(), sess.ID()); err != nil {
+		t.Fatalf("Delete Session: %v", err)
+	}
+	called = false
+	if err := guard.UseBinding(context.Background(), bindingForRepositoryTest(t, rekeyed, conversation.SessionAudiencePublic, "", rekeyedGeneration), func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("UseBinding after Delete=(%v, called=%t), want stale rejection without callback", err, called)
+	}
+}
+
+func TestJSONSessionRepositoryReadyOwnerReadsDoNotWaitForBlockedSessionWrite(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := conversation.NewChannelAddress("viewer", "blocked-owner-read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := session.NewCanonicalSessionWithOwner(modulecore.NewSessionID(), "ren", "2026-03-01", address, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewCanonicalSessionWithOwner: %v", err)
+	}
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	guard := requireSessionBindingRepository(t, repo)
+	identity := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePrivate, "ren", 0)
+	generation, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("BindingGeneration before Save: %v", err)
+	}
+	binding := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePrivate, "ren", generation)
+
+	sess.SetMemory("ordinary_update", true)
+	writeStarted, unblock := blockNextSessionWrite(t, repo)
+	saveDone := make(chan error, 1)
+	go func() { saveDone <- repo.Save(context.Background(), sess) }()
+	select {
+	case <-writeStarted:
+	case <-time.After(time.Second):
+		unblock()
+		t.Fatal("same-identity Save did not reach its blocked file write")
+	}
+
+	var currentGeneration conversation.BindingGeneration
+	if err := runRepositoryOperationWhileWriteBlocked(t, "BindingGeneration", func() error {
+		var generationErr error
+		currentGeneration, generationErr = guard.BindingGeneration(context.Background(), identity)
+		return generationErr
+	}, unblock, saveDone); err != nil {
+		t.Fatalf("BindingGeneration during blocked Save: %v", err)
+	}
+	if currentGeneration != generation {
+		t.Fatalf("generation during same-identity Save=%d, want stable generation %d", currentGeneration, generation)
+	}
+	callbackCalled := false
+	if err := runRepositoryOperationWhileWriteBlocked(t, "UseBinding", func() error {
+		return guard.UseBinding(context.Background(), binding, func() error { callbackCalled = true; return nil })
+	}, unblock, saveDone); err != nil || !callbackCalled {
+		t.Fatalf("UseBinding during blocked Save=(%v, called=%t), want immediate accepted callback", err, callbackCalled)
+	}
+	var explicitResolution session.CanonicalSessionOwnerResolution
+	if err := runRepositoryOperationWhileWriteBlocked(t, "LoadCanonicalForOwner", func() error {
+		var resolveErr error
+		explicitResolution, resolveErr = repo.LoadCanonicalForOwner(context.Background(), sess.ID(), "ren", address)
+		return resolveErr
+	}, unblock, saveDone); err != nil || explicitResolution.Status != session.CanonicalSessionOwnerMatched {
+		t.Fatalf("LoadCanonicalForOwner during blocked Save=(%+v,%v), want immediate matched result", explicitResolution, err)
+	}
+	var naturalResolution session.CanonicalSessionOwnerResolution
+	if err := runRepositoryOperationWhileWriteBlocked(t, "LoadOrCreateCanonicalForOwner", func() error {
+		var resolveErr error
+		naturalResolution, resolveErr = repo.LoadOrCreateCanonicalForOwner(context.Background(), sess.LogicalDate(), address, "ren", time.Now().UTC())
+		return resolveErr
+	}, unblock, saveDone); err != nil || naturalResolution.Status != session.CanonicalSessionOwnerMatched {
+		t.Fatalf("LoadOrCreateCanonicalForOwner during blocked Save=(%+v,%v), want immediate matched result", naturalResolution, err)
+	}
+	unblock()
+	if err := <-saveDone; err != nil {
+		t.Fatalf("same-identity Save: %v", err)
+	}
+}
+
+func TestJSONSessionRepositoryBindingGenerationIsWarmAndNoReadyTurnDiskRead(t *testing.T) {
+	dir := t.TempDir()
+	seed := NewJSONSessionRepository(dir)
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := seed.Save(context.Background(), sess); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+	seedGuard := requireSessionBindingRepository(t, seed)
+	identity := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", conversation.BindingGenerationUnavailable)
+	oldGeneration, err := seedGuard.BindingGeneration(context.Background(), identity)
+	if err != nil || oldGeneration == conversation.BindingGenerationUnavailable {
+		t.Fatalf("seed BindingGeneration=(%d,%v), want nonzero generation", oldGeneration, err)
+	}
+
+	restarted := NewJSONSessionRepository(dir)
+	if err := restarted.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex after restart: %v", err)
+	}
+	blockedReads := 0
+	restarted.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("ready binding path attempted a Session file read")
+	}
+	guard := requireSessionBindingRepository(t, restarted)
+	generation, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil || generation == conversation.BindingGenerationUnavailable || generation == oldGeneration {
+		t.Fatalf("warmed BindingGeneration=(%d,%v), want a fresh nonzero restart generation", generation, err)
+	}
+	binding := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", generation)
+	called := false
+	if err := guard.UseBinding(context.Background(), binding, func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("UseBinding after warm restart=(%v, called=%t), want admitted callback", err, called)
+	}
+	if blockedReads != 0 {
+		t.Fatalf("warmed binding operations read %d Session files, want zero", blockedReads)
+	}
+}
+
+func TestJSONSessionRepositoryBindingGenerationForAdmittedSave(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	queue, unblock := newBlockedPersistenceQueue(t, 5, 4<<20)
+	ctx, admission := admitSessionWrites(t, queue, 2, 2<<20)
+	t.Cleanup(func() { _ = admission.Release() })
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(ctx, sess); err != nil {
+		t.Fatalf("admitted Save: %v", err)
+	}
+	guard := requireSessionBindingRepository(t, repo)
+	identity := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", conversation.BindingGenerationUnavailable)
+	generation, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil || generation == conversation.BindingGenerationUnavailable {
+		t.Fatalf("admitted Save BindingGeneration=(%d,%v), want nonzero generation", generation, err)
+	}
+	called := false
+	if err := guard.UseBinding(context.Background(), bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", generation), func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("UseBinding for admitted Save=(%v, called=%t), want admitted callback", err, called)
+	}
+	sess.SetMemory("accepted_update", true)
+	if err := repo.Save(ctx, sess); err != nil {
+		t.Fatalf("same-identity admitted Save: %v", err)
+	}
+	updatedGeneration, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil || updatedGeneration != generation {
+		t.Fatalf("BindingGeneration after same-identity admitted Save=(%d,%v), want stable generation %d", updatedGeneration, err, generation)
+	}
+	called = false
+	if err := guard.UseBinding(context.Background(), bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", generation), func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("UseBinding after same-identity admitted Save=(%v, called=%t), want accepted callback", err, called)
+	}
+	if err := repo.Delete(context.Background(), sess.ID()); err != nil {
+		t.Fatalf("Delete admitted Session: %v", err)
+	}
+	called = false
+	if err := guard.UseBinding(context.Background(), bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", generation), func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("UseBinding after admitted Session delete=(%v, called=%t), want stale rejection", err, called)
+	}
+	unblock()
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("Barrier after invalidated admitted Save: %v", err)
+	}
+}
+
+func TestJSONSessionRepositoryUseBindingChecksExactAudienceOwnerAndAddress(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	publicSession := newCanonicalRepositoryTestSession(t)
+	privateAddress, err := conversation.NewChannelAddress("line", "private-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateSession, err := session.NewCanonicalSessionWithOwner(modulecore.NewSessionID(), "ren", "2026-03-01", privateAddress, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewCanonicalSessionWithOwner: %v", err)
+	}
+	for _, sess := range []*session.Session{publicSession, privateSession} {
+		if err := repo.Save(context.Background(), sess); err != nil {
+			t.Fatalf("Save Session %q: %v", sess.ID(), err)
+		}
+	}
+	guard := requireSessionBindingRepository(t, repo)
+	publicIdentity := bindingForRepositoryTest(t, publicSession, conversation.SessionAudiencePublic, "", 0)
+	publicGeneration, err := guard.BindingGeneration(context.Background(), publicIdentity)
+	if err != nil {
+		t.Fatalf("public BindingGeneration: %v", err)
+	}
+	privateIdentity := bindingForRepositoryTest(t, privateSession, conversation.SessionAudiencePrivate, "ren", 0)
+	privateGeneration, err := guard.BindingGeneration(context.Background(), privateIdentity)
+	if err != nil {
+		t.Fatalf("private BindingGeneration: %v", err)
+	}
+	privateCalled := false
+	if err := guard.UseBinding(context.Background(), bindingForRepositoryTest(t, privateSession, conversation.SessionAudiencePrivate, "ren", privateGeneration), func() error {
+		privateCalled = true
+		return nil
+	}); err != nil || !privateCalled {
+		t.Fatalf("UseBinding for authenticated User owner=(%v, called=%t), want admitted callback", err, privateCalled)
+	}
+
+	wrongAddress, err := conversation.NewChannelAddress("line", "other-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		binding conversation.SessionBinding
+	}{
+		{name: "generation unavailable", binding: publicIdentity},
+		{name: "public wrong address", binding: mustRepositoryTestBinding(t, modulecore.SessionID(publicSession.ID()), wrongAddress, conversation.SessionAudiencePublic, "", publicGeneration)},
+		{name: "private wrong address", binding: mustRepositoryTestBinding(t, modulecore.SessionID(privateSession.ID()), wrongAddress, conversation.SessionAudiencePrivate, "ren", privateGeneration)},
+		{name: "private wrong owner", binding: bindingForRepositoryTest(t, privateSession, conversation.SessionAudiencePrivate, "other-user", privateGeneration)},
+		{name: "private presented as public", binding: bindingForRepositoryTest(t, privateSession, conversation.SessionAudiencePublic, "", privateGeneration)},
+		{name: "public presented as private", binding: bindingForRepositoryTest(t, publicSession, conversation.SessionAudiencePrivate, "ren", publicGeneration)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			if err := guard.UseBinding(context.Background(), tc.binding, func() error { called = true; return nil }); err == nil || called {
+				t.Fatalf("UseBinding=(%v, called=%t), want exact-identity rejection", err, called)
+			}
+		})
+	}
+}
+
+func mustRepositoryTestBinding(t *testing.T, id modulecore.SessionID, address conversation.ChannelAddress, audience conversation.SessionAudience, ownerID string, generation conversation.BindingGeneration) conversation.SessionBinding {
+	t.Helper()
+	publicationIncarnation, err := session.NewPublicationIncarnation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := conversation.NewSessionBindingWithPublicationIncarnation(id, address, audience, ownerID, generation, publicationIncarnation)
+	if err != nil {
+		t.Fatalf("NewSessionBinding: %v", err)
+	}
+	return binding
+}
+
+func TestJSONSessionRepositoryUseBindingSerializesCallbackWithRevoke(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	guard := requireSessionBindingRepository(t, repo)
+	identity := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", 0)
+	generation, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("BindingGeneration: %v", err)
+	}
+	binding := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", generation)
+	start := make(chan struct{})
+	var callbackCalls int
+	useDone := make(chan error, 1)
+	deleteDone := make(chan error, 1)
+	go func() {
+		<-start
+		useDone <- guard.UseBinding(context.Background(), binding, func() error {
+			callbackCalls++
+			return nil
+		})
+	}()
+	go func() {
+		<-start
+		deleteDone <- repo.Delete(context.Background(), sess.ID())
+	}()
+	close(start)
+	useErr := <-useDone
+	deleteErr := <-deleteDone
+	if deleteErr != nil {
+		t.Fatalf("Delete racing UseBinding: %v", deleteErr)
+	}
+	if useErr == nil && callbackCalls != 1 {
+		t.Fatalf("successful UseBinding invoked callback %d times, want one", callbackCalls)
+	}
+	if useErr != nil && callbackCalls != 0 {
+		t.Fatalf("rejected UseBinding invoked callback %d times, want zero (error %v)", callbackCalls, useErr)
+	}
+	callbackCalls = 0
+	if err := guard.UseBinding(context.Background(), binding, func() error { callbackCalls++; return nil }); err == nil || callbackCalls != 0 {
+		t.Fatalf("UseBinding after revoke=(%v, calls=%d), want stale rejection", err, callbackCalls)
+	}
+}
+
+func TestJSONSessionRepositoryUseBindingPropagatesCanceledContext(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	guard := requireSessionBindingRepository(t, repo)
+	identity := bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", 0)
+	generation, err := guard.BindingGeneration(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("BindingGeneration: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	if err := guard.UseBinding(ctx, bindingForRepositoryTest(t, sess, conversation.SessionAudiencePublic, "", generation), func() error { called = true; return nil }); !errors.Is(err, context.Canceled) || called {
+		t.Fatalf("UseBinding with canceled context=(%v, called=%t), want context.Canceled without callback", err, called)
+	}
+}
+
+func TestJSONSessionRepositorySavePreservesCanonicalOwnerBinding(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("save initial Session: %v", err)
+	}
+
+	path := repo.getFilePath(sess.ID())
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read initial Session: %v", err)
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("decode initial Session: %v", err)
+	}
+	record["owner_id"] = json.RawMessage(`"ren"`)
+	data, err = json.Marshal(record)
+	if err != nil {
+		t.Fatalf("encode owner-bound Session: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write owner-bound Session: %v", err)
+	}
+
+	loaded, err := repo.Load(context.Background(), sess.ID())
+	if err != nil {
+		t.Fatalf("load owner-bound Session: %v", err)
+	}
+	if got := loaded.OwnerID(); got != "ren" {
+		t.Fatalf("loaded OwnerID() = %q, want ren", got)
+	}
+	loaded.AddTurnInput(newRepositoryTurnInputForTest(t, loaded, "preserve owner"))
+	if err := repo.Save(context.Background(), loaded); err != nil {
+		t.Fatalf("save updated owner-bound Session: %v", err)
+	}
+
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read updated Session: %v", err)
+	}
+	record = make(map[string]json.RawMessage)
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("decode updated Session: %v", err)
+	}
+	if got := string(record["owner_id"]); got != `"ren"` {
+		t.Fatalf("persisted owner_id = %s, want %s", got, `"ren"`)
+	}
+}
+
+func TestJSONSessionRepositoryLoadOrCreateCanonicalForOwnerUsesAdmittedRAMWrite(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	writeStarted, unblock := blockNextSessionWrite(t, repo)
+	defer unblock()
+	queue := newSessionPersistenceQueue(t, 4, 4<<20)
+	ctx, admission := admitSessionWrites(t, queue, 2, 2<<20)
+	t.Cleanup(func() { _ = admission.Release() })
+
+	address, err := conversation.NewChannelAddress("line", "owner-bound-admission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := repo.LoadOrCreateCanonicalForOwner(ctx, "2026-10-24", address, "ren", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("LoadOrCreateCanonicalForOwner: %v", err)
+	}
+	if resolved.Status != session.CanonicalSessionOwnerCreated || resolved.Session == nil || resolved.BoundOwnerID != "ren" {
+		t.Fatalf("resolution = (%+v), want created Session", resolved)
+	}
+	if resolved.Session.OwnerID() != "ren" {
+		t.Fatalf("new Session OwnerID() = %q, want ren", resolved.Session.OwnerID())
+	}
+	select {
+	case <-writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("persistence worker did not enter the blocked filesystem write")
+	}
+
+	loaded, err := repo.LoadCanonicalForOwner(ctx, resolved.Session.ID(), "ren", address)
+	if err != nil {
+		t.Fatalf("LoadCanonicalForOwner from RAM overlay: %v", err)
+	}
+	if loaded.Status != session.CanonicalSessionOwnerMatched || loaded.Session == nil || loaded.Session.OwnerID() != "ren" || loaded.BoundOwnerID != "ren" {
+		t.Fatalf("overlay resolution = (%+v), want matching owner-bound Session", loaded)
+	}
+	if _, err := os.Stat(repo.getFilePath(resolved.Session.ID())); !os.IsNotExist(err) {
+		t.Fatalf("owner binding was expected to remain in RAM while disk is blocked, stat err=%v", err)
+	}
+
+	unblock()
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("admitted owner-bound write barrier: %v", err)
+	}
+	data, err := os.ReadFile(repo.getFilePath(resolved.Session.ID()))
+	if err != nil {
+		t.Fatalf("read durable owner-bound Session: %v", err)
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("decode durable owner-bound Session: %v", err)
+	}
+	if got := string(record["owner_id"]); got != `"ren"` {
+		t.Fatalf("durable owner_id = %s, want %s", got, `"ren"`)
+	}
+
+	blockedReads := 0
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("session disk reads are blocked after admission")
+	}
+	byID, err := repo.LoadCanonicalForOwner(context.Background(), resolved.Session.ID(), "ren", address)
+	if err != nil || byID.Status != session.CanonicalSessionOwnerMatched || byID.Session == nil {
+		t.Fatalf("LoadCanonicalForOwner after admitted write became durable = (%+v,%v), want RAM match", byID, err)
+	}
+	byKey, err := repo.LoadOrCreateCanonicalForOwner(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil || byKey.Status != session.CanonicalSessionOwnerMatched || byKey.Session == nil || byKey.Session.ID() != resolved.Session.ID() {
+		t.Fatalf("LoadOrCreateCanonicalForOwner after admitted write became durable = (%+v,%v), want existing RAM match", byKey, err)
+	}
+	if blockedReads != 0 {
+		t.Fatalf("owner lookups attempted %d Session file reads after warm admission, want zero", blockedReads)
+	}
+}
+
+func TestJSONSessionRepositoryLoadOrCreateCanonicalForOwnerRejectsUnadmittedCreate(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	address := mustSessionAddress(t, "owner-requires-admission")
+
+	resolved, err := repo.LoadOrCreateCanonicalForOwner(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err == nil || resolved.Status == session.CanonicalSessionOwnerCreated || resolved.Session != nil {
+		t.Fatalf("unadmitted owner creation = (%+v,%v), want failure without created Session", resolved, err)
+	}
+	entries, err := os.ReadDir(repo.baseDir)
+	if err != nil {
+		t.Fatalf("read session directory after rejected owner creation: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unadmitted owner creation wrote %d files", len(entries))
+	}
+}
+
+func TestJSONSessionRepositoryLoadOrCreateCanonicalForOwnerSynchronouslyPersistsOwnerBinding(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	address := mustSessionAddress(t, "owner-sync-create")
+	createdAt := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+
+	created, err := repo.LoadOrCreateCanonicalForOwnerSynchronously(context.Background(), "2026-10-24", address, "ren", createdAt)
+	if err != nil || created.Status != session.CanonicalSessionOwnerCreated || created.Session == nil || created.BoundOwnerID != "ren" {
+		t.Fatalf("synchronous owner creation = (%+v,%v), want created owner-bound Session", created, err)
+	}
+	if created.Session.OwnerID() != "ren" {
+		t.Fatalf("created Session OwnerID() = %q, want ren", created.Session.OwnerID())
+	}
+	if _, err := os.Stat(repo.getFilePath(created.Session.ID())); err != nil {
+		t.Fatalf("synchronous owner creation did not persist before returning: %v", err)
+	}
+
+	restarted := NewJSONSessionRepository(dir)
+	matched, err := restarted.LoadOrCreateCanonicalForOwner(context.Background(), "2026-10-24", address, "ren", createdAt)
+	if err != nil || matched.Status != session.CanonicalSessionOwnerMatched || matched.Session == nil || matched.Session.ID() != created.Session.ID() {
+		t.Fatalf("owner lookup after repository restart = (%+v,%v), want persisted Session match", matched, err)
+	}
+	ownerConflict, err := restarted.LoadOrCreateCanonicalForOwnerSynchronously(context.Background(), "2026-10-24", address, "another-owner", createdAt)
+	if err != nil || ownerConflict.Status != session.CanonicalSessionOwnerConflict || ownerConflict.Session != nil || ownerConflict.BoundOwnerID != "" {
+		t.Fatalf("synchronous different-owner lookup = (%+v,%v), want conflict without Session", ownerConflict, err)
+	}
+	addressConflict, err := restarted.LoadCanonicalForOwner(context.Background(), created.Session.ID(), "ren", mustSessionAddress(t, "owner-sync-other-channel"))
+	if err != nil || addressConflict.Status != session.CanonicalSessionOwnerConflict || addressConflict.Session != nil || addressConflict.BoundOwnerID != "" {
+		t.Fatalf("synchronous different-channel lookup = (%+v,%v), want conflict without Session", addressConflict, err)
+	}
+}
+
+func TestJSONSessionRepositoryExplicitOwnerResolutionMatchesIDOwnerAndChannelAddress(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := conversation.NewChannelAddress("line", "owner-explicit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := repo.LoadOrCreateCanonicalForOwner(ownerAdmittedSessionContext(t), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil || created.Status != session.CanonicalSessionOwnerCreated {
+		t.Fatalf("create owner-bound Session = (%+v,%v)", created, err)
+	}
+
+	matched, err := repo.LoadCanonicalForOwner(context.Background(), created.Session.ID(), "ren", address)
+	if err != nil || matched.Status != session.CanonicalSessionOwnerMatched || matched.Session == nil || matched.BoundOwnerID != "ren" {
+		t.Fatalf("matching explicit owner resolution = (%+v,%v)", matched, err)
+	}
+	for name, request := range map[string]struct {
+		ownerID string
+		address conversation.ChannelAddress
+	}{
+		"different owner":   {ownerID: "another-owner", address: address},
+		"different channel": {ownerID: "ren", address: mustSessionAddress(t, "another-channel")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := repo.LoadCanonicalForOwner(context.Background(), created.Session.ID(), request.ownerID, request.address)
+			if err != nil {
+				t.Fatalf("LoadCanonicalForOwner: %v", err)
+			}
+			if result.Status != session.CanonicalSessionOwnerConflict || result.Session != nil || result.BoundOwnerID != "" {
+				t.Fatalf("resolution = (%+v), want conflict without Session", result)
+			}
+		})
+	}
+
+	missing, err := repo.LoadCanonicalForOwner(context.Background(), string(modulecore.NewSessionID()), "ren", address)
+	if err != nil || missing.Status != session.CanonicalSessionOwnerNotFound || missing.Session != nil || missing.BoundOwnerID != "" {
+		t.Fatalf("missing explicit owner resolution = (%+v,%v), want not_found", missing, err)
+	}
+}
+
+func TestJSONSessionRepositoryWarmOwnerLookupUsesProjectionAndReturnsIndependentClone(t *testing.T) {
+	dir := t.TempDir()
+	seed := NewJSONSessionRepository(dir)
+	address := mustSessionAddress(t, "warm-owner-projection")
+	createdAt := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+	created, err := session.NewCanonicalSessionWithOwner(modulecore.NewSessionID(), "ren", "2026-10-24", address, createdAt)
+	if err != nil {
+		t.Fatalf("NewCanonicalSessionWithOwner: %v", err)
+	}
+	created.SetMemory("prefs", map[string]interface{}{"mode": "safe"})
+	if err := seed.Save(context.Background(), created); err != nil {
+		t.Fatalf("seed owner-bound Session: %v", err)
+	}
+	repo := NewJSONSessionRepository(dir)
+	cold, err := repo.LoadOrCreateCanonicalForOwner(context.Background(), "2026-10-24", address, "ren", createdAt)
+	if err != nil || cold.Status != session.CanonicalSessionOwnerMatched || cold.Session == nil || cold.Session.ID() != created.ID() {
+		t.Fatalf("cold owner lookup after repository restart = (%+v,%v), want matching Session", cold, err)
+	}
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+
+	blockedReads := 0
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("session disk reads are blocked after warm")
+	}
+	first, err := repo.LoadOrCreateCanonicalForOwner(context.Background(), "2026-10-24", address, "ren", createdAt)
+	if err != nil || first.Status != session.CanonicalSessionOwnerMatched || first.Session == nil || first.Session.ID() != created.ID() {
+		t.Fatalf("warm owner lookup = (%+v,%v), want RAM match", first, err)
+	}
+	prefs, ok := first.Session.GetMemory("prefs")
+	if !ok {
+		t.Fatal("projected Session is missing persisted memory")
+	}
+	prefs.(map[string]interface{})["mode"] = "mutated caller clone"
+	first.Session.AddTurnInput(newRepositoryTurnInputForTest(t, first.Session, "caller mutation"))
+
+	second, err := repo.LoadCanonicalForOwner(context.Background(), created.ID(), "ren", address)
+	if err != nil || second.Status != session.CanonicalSessionOwnerMatched || second.Session == nil {
+		t.Fatalf("second warm owner lookup = (%+v,%v), want RAM match", second, err)
+	}
+	secondPrefs, ok := second.Session.GetMemory("prefs")
+	if !ok || secondPrefs.(map[string]interface{})["mode"] != "safe" || second.Session.HistoryCount() != 0 {
+		t.Fatalf("later lookup observed mutation to prior clone: memory=%v history=%d", secondPrefs, second.Session.HistoryCount())
+	}
+	if blockedReads != 0 {
+		t.Fatalf("warm owner lookups attempted %d Session file reads, want zero", blockedReads)
+	}
+	explicit, err := repo.Load(context.Background(), created.ID())
+	if err != nil || explicit == nil || explicit.ID() != created.ID() {
+		t.Fatalf("explicit warm Load = (%v,%v), want Session %q", explicit, err, created.ID())
+	}
+	if blockedReads != 0 {
+		t.Fatalf("explicit warm Load attempted %d Session file reads, want zero", blockedReads)
+	}
+
+	repo.readSessionFile = nil
+	rekeyed, err := session.NewCanonicalSessionWithOwner(modulecore.SessionID(created.ID()), "ren", "2026-10-25", address, createdAt)
+	if err != nil {
+		t.Fatalf("NewCanonicalSessionWithOwner for rekey: %v", err)
+	}
+	if err := repo.Save(context.Background(), rekeyed); err != nil {
+		t.Fatalf("Save rekeyed Session: %v", err)
+	}
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("session disk reads are blocked after warm rekey")
+	}
+	newKey, err := repo.LoadOrCreateCanonicalForOwner(context.Background(), "2026-10-25", address, "ren", createdAt)
+	if err != nil || newKey.Status != session.CanonicalSessionOwnerMatched || newKey.Session == nil || newKey.Session.ID() != created.ID() {
+		t.Fatalf("warm owner lookup after rekey = (%+v,%v), want matching Session", newKey, err)
+	}
+	if id, err := repo.findCanonicalSessionID(context.Background(), "2026-10-24", address); err != nil || id != "" {
+		t.Fatalf("old natural key after rekey = (%q,%v), want absent", id, err)
+	}
+	if blockedReads != 0 {
+		t.Fatalf("owner lookup after rekey attempted %d Session file reads, want zero", blockedReads)
+	}
+
+	repo.readSessionFile = nil
+	if err := repo.Delete(context.Background(), created.ID()); err != nil {
+		t.Fatalf("Delete rekeyed Session: %v", err)
+	}
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("session disk reads are blocked after warm delete")
+	}
+	deleted, err := repo.LoadCanonicalForOwner(context.Background(), created.ID(), "ren", address)
+	if err != nil || deleted.Status != session.CanonicalSessionOwnerNotFound || deleted.Session != nil {
+		t.Fatalf("warm owner lookup after Delete = (%+v,%v), want not_found", deleted, err)
+	}
+	if blockedReads != 0 {
+		t.Fatalf("owner lookup after Delete attempted %d Session file reads, want zero", blockedReads)
+	}
+}
+
+func TestJSONSessionRepositoryWarmV2ReservationCheckUsesProjection(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex: %v", err)
+	}
+	address := mustSessionAddress(t, "warm-v2-reservation")
+	reserved, created, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil || !created || reserved == nil {
+		t.Fatalf("ReserveCanonicalV2 = (%v,%t,%v), want new reservation", reserved, created, err)
+	}
+
+	blockedReads := 0
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("session disk reads are blocked after warm")
+	}
+	for ownerID, want := range map[string]bool{"ren": true, "other-owner": false} {
+		got, err := repo.IsCanonicalV2Reserved(context.Background(), reserved.ID(), ownerID)
+		if err != nil || got != want {
+			t.Fatalf("IsCanonicalV2Reserved(%q) = (%t,%v), want %t", ownerID, got, err, want)
+		}
+	}
+	if blockedReads != 0 {
+		t.Fatalf("warm reservation checks attempted %d Session file reads, want zero", blockedReads)
+	}
+
+	restarted := NewJSONSessionRepository(dir)
+	if err := restarted.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex after repository restart: %v", err)
+	}
+	restartReads := 0
+	restarted.readSessionFile = func(string) ([]byte, error) {
+		restartReads++
+		return nil, errors.New("session disk reads are blocked after restart warm")
+	}
+	got, err := restarted.IsCanonicalV2Reserved(context.Background(), reserved.ID(), "ren")
+	if err != nil || !got || restartReads != 0 {
+		t.Fatalf("IsCanonicalV2Reserved after restart warm = (%t,%v), reads=%d, want true without reads", got, err, restartReads)
+	}
+}
+
+func TestJSONSessionRepositoryOwnerResolutionRejectsUnboundLegacySession(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := conversation.NewChannelAddress("line", "legacy-unbound")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, created, err := repo.LoadOrCreateCanonical(context.Background(), "2026-10-24", address, time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil || !created {
+		t.Fatalf("create legacy Session = (%v,%t,%v)", legacy, created, err)
+	}
+
+	byID, err := repo.LoadCanonicalForOwner(context.Background(), legacy.ID(), "ren", address)
+	if err != nil || byID.Status != session.CanonicalSessionOwnerUnavailable || byID.Session != nil || byID.BoundOwnerID != "" {
+		t.Fatalf("explicit legacy owner resolution = (%+v,%v), want unavailable", byID, err)
+	}
+	byKey, err := repo.LoadOrCreateCanonicalForOwner(context.Background(), legacy.LogicalDate(), address, "ren", legacy.CreatedAt())
+	if err != nil || byKey.Status != session.CanonicalSessionOwnerUnavailable || byKey.Session != nil || byKey.BoundOwnerID != "" {
+		t.Fatalf("canonical legacy owner resolution = (%+v,%v), want unavailable", byKey, err)
+	}
+	if err := repo.Save(context.Background(), legacy); err != nil {
+		t.Fatalf("legacy Save should remain available to non-owner flows: %v", err)
+	}
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex with legacy Session: %v", err)
+	}
+	blockedReads := 0
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedReads++
+		return nil, errors.New("session disk reads are blocked after warm")
+	}
+	byID, err = repo.LoadCanonicalForOwner(context.Background(), legacy.ID(), "ren", address)
+	if err != nil || byID.Status != session.CanonicalSessionOwnerUnavailable || byID.Session != nil {
+		t.Fatalf("warm explicit legacy owner resolution = (%+v,%v), want unavailable", byID, err)
+	}
+	byKey, err = repo.LoadOrCreateCanonicalForOwner(context.Background(), legacy.LogicalDate(), address, "ren", legacy.CreatedAt())
+	if err != nil || byKey.Status != session.CanonicalSessionOwnerUnavailable || byKey.Session != nil {
+		t.Fatalf("warm natural-key legacy owner resolution = (%+v,%v), want unavailable", byKey, err)
+	}
+	if blockedReads != 0 {
+		t.Fatalf("warm legacy owner lookups attempted %d Session file reads, want zero", blockedReads)
+	}
+}
+
+func TestJSONSessionRepositorySaveRejectsOwnerOverwriteDropAndChannelChange(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := conversation.NewChannelAddress("line", "immutable-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := repo.LoadOrCreateCanonicalForOwner(ownerAdmittedSessionContext(t), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil || created.Session == nil {
+		t.Fatalf("create owner-bound Session = (%+v,%v)", created, err)
+	}
+
+	unbound, err := session.NewCanonicalSession(modulecore.SessionID(created.Session.ID()), created.Session.LogicalDate(), address, created.Session.CreatedAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), unbound); err == nil {
+		t.Fatal("Save accepted a Session that dropped its owner binding")
+	}
+
+	otherOwner, err := session.NewCanonicalSessionWithOwner(modulecore.SessionID(created.Session.ID()), "another-owner", created.Session.LogicalDate(), address, created.Session.CreatedAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), otherOwner); err == nil {
+		t.Fatal("Save accepted an owner overwrite")
+	}
+
+	otherAddress := mustSessionAddress(t, "changed-address")
+	changedAddress, err := session.NewCanonicalSessionWithOwner(modulecore.SessionID(created.Session.ID()), "ren", created.Session.LogicalDate(), otherAddress, created.Session.CreatedAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), changedAddress); err == nil {
+		t.Fatal("Save accepted an owner-bound ChannelAddress change")
+	}
+
+	stillBound, err := repo.Load(context.Background(), created.Session.ID())
+	if err != nil || stillBound.OwnerID() != "ren" || stillBound.ChannelAddress() != address {
+		t.Fatalf("stored owner binding changed after rejected saves: Session=%+v err=%v", stillBound, err)
+	}
+}
+
+func TestJSONSessionRepositoryOwnerResolverUsesV2CreationIntentWithoutDuplicatingOwner(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := conversation.NewChannelAddress("line", "v2-owner-intent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, created, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-24", address, "ren", time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC))
+	if err != nil || !created {
+		t.Fatalf("ReserveCanonicalV2 = (%v,%t,%v)", reserved, created, err)
+	}
+	resolved, err := repo.LoadCanonicalForOwner(context.Background(), reserved.ID(), "ren", address)
+	if err != nil || resolved.Status != session.CanonicalSessionOwnerMatched || resolved.Session == nil || resolved.BoundOwnerID != "ren" {
+		t.Fatalf("owner resolution of v2 Session = (%+v,%v)", resolved, err)
+	}
+	if resolved.Session.OwnerID() != "" {
+		t.Fatalf("v2 Session duplicated creation intent owner in Session.OwnerID(): %q", resolved.Session.OwnerID())
+	}
+	data, err := os.ReadFile(repo.getFilePath(reserved.ID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := record["owner_id"]; exists {
+		t.Fatal("response-first v2 Session duplicated owner_id outside creation_intent")
+	}
+}
+
+func mustSessionAddress(t *testing.T, externalID string) conversation.ChannelAddress {
+	t.Helper()
+	address, err := conversation.NewChannelAddress("line", externalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return address
+}
+
+func TestJSONSessionRepositoryRejectsMalformedOwnerMetadata(t *testing.T) {
+	for name, owner := range map[string]json.RawMessage{
+		"non-string": json.RawMessage(`23`),
+		"empty":      json.RawMessage(`""`),
+		"whitespace": json.RawMessage(`" ren "`),
+		"null":       json.RawMessage(`null`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := NewJSONSessionRepository(t.TempDir())
+			sess := newCanonicalRepositoryTestSession(t)
+			if err := repo.Save(context.Background(), sess); err != nil {
+				t.Fatalf("save initial Session: %v", err)
+			}
+			path := repo.getFilePath(sess.ID())
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read initial Session: %v", err)
+			}
+			var record map[string]json.RawMessage
+			if err := json.Unmarshal(data, &record); err != nil {
+				t.Fatalf("decode initial Session: %v", err)
+			}
+			record["owner_id"] = owner
+			data, err = json.Marshal(record)
+			if err != nil {
+				t.Fatalf("encode malformed Session: %v", err)
+			}
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatalf("write malformed Session: %v", err)
+			}
+			if _, err := repo.Load(context.Background(), sess.ID()); err == nil {
+				t.Fatal("Load accepted malformed owner metadata")
+			}
+		})
+	}
+}
+
+func TestJSONSessionRepositoryRejectsDuplicatedOwnerProvenance(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("save initial Session: %v", err)
+	}
+	path := repo.getFilePath(sess.ID())
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read initial Session: %v", err)
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("decode initial Session: %v", err)
+	}
+	record["owner_id"] = json.RawMessage(`"ren"`)
+	record["creation_intent"] = json.RawMessage(`{"runtime":"v2","owner_id":"ren"}`)
+	data, err = json.Marshal(record)
+	if err != nil {
+		t.Fatalf("encode conflicting Session: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write conflicting Session: %v", err)
+	}
+	if _, err := repo.Load(context.Background(), sess.ID()); err == nil {
+		t.Fatal("Load accepted duplicated owner provenance")
+	}
+}
+
+func TestJSONSessionRepositoryRejectsSensitiveSessionKeyAliasesAndDuplicates(t *testing.T) {
+	creationIntent, err := json.Marshal(map[string]string{"runtime": "v2", "owner_id": "ren"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, extraFields := range map[string]string{
+		"owner alias":                `"Owner_ID":"ren"`,
+		"creation intent alias":      `"Creation_Intent":` + string(creationIntent),
+		"owner alias duplicates":     `"Owner_ID":"ren","OWNER_ID":"ren"`,
+		"intent alias duplicates":    `"Creation_Intent":` + string(creationIntent) + `,"CREATION_INTENT":` + string(creationIntent),
+		"owner exact duplicates":     `"owner_id":"ren","owner_id":"ren"`,
+		"intent exact duplicates":    `"creation_intent":` + string(creationIntent) + `,"creation_intent":` + string(creationIntent),
+		"canonical and owner alias":  `"owner_id":"ren","Owner_ID":"ren"`,
+		"canonical and intent alias": `"creation_intent":` + string(creationIntent) + `,"Creation_Intent":` + string(creationIntent),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := NewJSONSessionRepository(t.TempDir())
+			sess := newCanonicalRepositoryTestSession(t)
+			if err := repo.Save(context.Background(), sess); err != nil {
+				t.Fatalf("save initial Session: %v", err)
+			}
+			path := repo.getFilePath(sess.ID())
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read initial Session: %v", err)
+			}
+			data = appendRawSessionFields(data, extraFields)
+			var validJSON any
+			if err := json.Unmarshal(data, &validJSON); err != nil {
+				t.Fatalf("test record is not valid JSON: %v", err)
+			}
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatalf("write Session with noncanonical keys: %v", err)
+			}
+			if _, err := repo.Load(context.Background(), sess.ID()); err == nil {
+				t.Fatal("Load accepted case-insensitive or duplicate sensitive keys")
+			}
+			if err := repo.Save(context.Background(), sess); err == nil {
+				t.Fatal("Save overwrote a record with case-insensitive or duplicate sensitive keys")
+			}
+		})
+	}
+}
+
+func appendRawSessionFields(data []byte, fields string) []byte {
+	trimmed := strings.TrimSpace(string(data))
+	return []byte(strings.TrimSuffix(trimmed, "}") + "," + fields + "}")
 }
 
 func newBlockedPersistenceQueue(t *testing.T, capacity int, byteCapacity int64) (*persistencequeue.Queue[persistencequeue.PersistenceCommand], func()) {
@@ -993,6 +2013,11 @@ func TestJSONSessionRepositoryWarmCanonicalIndexScansOnceAndServesLookupsFromRAM
 	if directoryReads != 1 || identityFileReads != 1 {
 		t.Fatalf("warm reads=(directory %d, files %d), want (1,1)", directoryReads, identityFileReads)
 	}
+	blockedSessionReads := 0
+	repo.readSessionFile = func(string) ([]byte, error) {
+		blockedSessionReads++
+		return nil, errors.New("session disk reads are blocked after warm")
+	}
 
 	gotID, err := repo.findCanonicalSessionID(context.Background(), want.LogicalDate(), want.ChannelAddress())
 	if err != nil || gotID != want.ID() {
@@ -1001,6 +2026,13 @@ func TestJSONSessionRepositoryWarmCanonicalIndexScansOnceAndServesLookupsFromRAM
 	loaded, found, err := repo.LoadCanonical(context.Background(), want.LogicalDate(), want.ChannelAddress())
 	if err != nil || !found || loaded == nil || loaded.ID() != want.ID() {
 		t.Fatalf("LoadCanonical after warm=(%v,%t,%v), want session %q", loaded, found, err, want.ID())
+	}
+	explicit, err := repo.Load(context.Background(), want.ID())
+	if err != nil || explicit == nil || explicit.ID() != want.ID() {
+		t.Fatalf("Load after warm=(%v,%v), want session %q", explicit, err, want.ID())
+	}
+	if blockedSessionReads != 0 {
+		t.Fatalf("warmed canonical loads attempted %d Session file reads, want zero", blockedSessionReads)
 	}
 	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
 		t.Fatalf("idempotent WarmCanonicalIndex: %v", err)
@@ -1150,6 +2182,9 @@ func TestJSONSessionRepositoryWarmCanonicalIndexAllowsDuplicateAndRejectsCorrupt
 		}
 		if _, _, err := lookupID(first.LogicalDate(), first.ChannelAddress()); err == nil || err.Error() != "multiple canonical sessions match lookup attributes" {
 			t.Fatalf("duplicate canonical lookup error = %v, want the existing duplicate-key error", err)
+		}
+		if _, err := repo.LoadOrCreateCanonicalForOwner(context.Background(), first.LogicalDate(), first.ChannelAddress(), "ren", first.CreatedAt()); err == nil || err.Error() != "multiple canonical sessions match lookup attributes" {
+			t.Fatalf("duplicate owner-bound canonical lookup error = %v, want the existing duplicate-key error", err)
 		}
 		for _, duplicate := range []*session.Session{rekeySyncOriginal, deleteOriginal} {
 			if _, _, err := lookupID(duplicate.LogicalDate(), duplicate.ChannelAddress()); err == nil || err.Error() != "multiple canonical sessions match lookup attributes" {
@@ -1591,6 +2626,139 @@ func TestJSONSessionRepository_Delete(t *testing.T) {
 	if exists {
 		t.Error("Session should not exist after deletion")
 	}
+}
+
+func TestJSONSessionRepositoryPublicationIncarnationSurvivesAndChangesWithBinding(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+	created := readStoredPublicationIncarnation(t, repo, sess.ID())
+	if created == "" {
+		t.Fatal("new canonical Session record has no publication_incarnation")
+	}
+
+	sess.SetMemory("ordinary_save", true)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("ordinary Save: %v", err)
+	}
+	if got := readStoredPublicationIncarnation(t, repo, sess.ID()); got != created {
+		t.Fatalf("ordinary Save publication_incarnation=%q, want stable value %q", got, created)
+	}
+
+	restarted := NewJSONSessionRepository(dir)
+	if err := restarted.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex after restart: %v", err)
+	}
+	reloaded, err := restarted.Load(context.Background(), sess.ID())
+	if err != nil {
+		t.Fatalf("Load after restart: %v", err)
+	}
+	if got := reflectedSessionPublicationIncarnation(reloaded); got != created {
+		t.Fatalf("reloaded publication incarnation=%q, want %q", got, created)
+	}
+
+	rekeyedAddress, err := conversation.NewChannelAddress("viewer", "rekeyed-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rekeyed, err := session.NewCanonicalSession(modulecore.SessionID(sess.ID()), "2026-03-02", rekeyedAddress, sess.CreatedAt())
+	if err != nil {
+		t.Fatalf("NewCanonicalSession for same-ID rekey: %v", err)
+	}
+	if err := restarted.Save(context.Background(), rekeyed); err != nil {
+		t.Fatalf("Save same-ID rekey: %v", err)
+	}
+	rekeyedIncarnation := readStoredPublicationIncarnation(t, restarted, sess.ID())
+	if rekeyedIncarnation == "" || rekeyedIncarnation == created {
+		t.Fatalf("same-ID rekey publication_incarnation=%q, want a fresh value distinct from %q", rekeyedIncarnation, created)
+	}
+
+	stale := rekeyed
+	if err := restarted.Delete(context.Background(), sess.ID()); err != nil {
+		t.Fatalf("Delete before recreation: %v", err)
+	}
+	if err := restarted.Save(context.Background(), stale); err != nil {
+		t.Fatalf("Save stale Session as same-ID recreation: %v", err)
+	}
+	recreatedIncarnation := readStoredPublicationIncarnation(t, restarted, sess.ID())
+	if recreatedIncarnation == "" || recreatedIncarnation == rekeyedIncarnation {
+		t.Fatalf("same-ID recreation publication_incarnation=%q, want a fresh value distinct from %q", recreatedIncarnation, rekeyedIncarnation)
+	}
+}
+
+func TestJSONSessionRepositoryWarmCanonicalIndexPersistsLegacyIncarnationMigration(t *testing.T) {
+	dir := t.TempDir()
+	seed := NewJSONSessionRepository(dir)
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := seed.Save(context.Background(), sess); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+	path := seed.getFilePath(sess.ID())
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "publication_incarnation")
+	legacy, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := NewJSONSessionRepository(dir)
+	if err := restarted.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("WarmCanonicalIndex should migrate a legacy canonical record before publishing its projection: %v", err)
+	}
+	migrated := readStoredPublicationIncarnation(t, restarted, sess.ID())
+	if migrated == "" {
+		t.Fatal("WarmCanonicalIndex did not persist a publication_incarnation for the legacy Session")
+	}
+	loaded, err := restarted.Load(context.Background(), sess.ID())
+	if err != nil {
+		t.Fatalf("Load migrated Session: %v", err)
+	}
+	if got := reflectedSessionPublicationIncarnation(loaded); got != migrated {
+		t.Fatalf("migrated Session incarnation=%q, persisted value=%q", got, migrated)
+	}
+}
+
+func reflectedSessionPublicationIncarnation(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	field := reflect.ValueOf(sess).Elem().FieldByName("publicationIncarnation")
+	if !field.IsValid() || field.Kind() != reflect.String {
+		return ""
+	}
+	return field.String()
+}
+
+func readStoredPublicationIncarnation(t *testing.T, repo *JSONSessionRepository, id string) string {
+	t.Helper()
+	data, err := os.ReadFile(repo.getFilePath(id))
+	if err != nil {
+		t.Fatalf("read Session record: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("decode Session record: %v", err)
+	}
+	var incarnation string
+	if raw, found := fields["publication_incarnation"]; found {
+		if err := json.Unmarshal(raw, &incarnation); err != nil {
+			t.Fatalf("decode publication_incarnation: %v", err)
+		}
+	}
+	return incarnation
 }
 
 func TestJSONSessionRepository_FileStructure(t *testing.T) {

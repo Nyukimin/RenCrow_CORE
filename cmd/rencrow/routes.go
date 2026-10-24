@@ -129,36 +129,113 @@ func viewerGlobalEventsHandler(cfg *config.Config, dependencies *Dependencies) h
 			http.Error(w, "Viewer event stream is unavailable", http.StatusServiceUnavailable)
 		})
 	}
-	ownerID := conversationRuntimeUserID(cfg)
+	defaultVersionOwnerID := conversationRuntimeUserID(cfg)
+	visibility := runtimeSessionVisibilityFor(dependencies)
 	reader, readerOK := dependencies.canonicalEventStore.(viewerSessionRuntimeVersionReader)
-	return func(w http.ResponseWriter, r *http.Request) {
-		dependencies.eventHub.HandleSSEWithFilter(w, r, func(ctx context.Context, event orchestrator.OrchestratorEvent) (bool, error) {
-			if viewer.IsResponseFirstViewerEvent(event) {
-				return false, nil
+	cmdOwnerID, cmdOwnerToken := viewerEventsCMDOwnerCredentials(cfg)
+	stream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		requestOwnerID, authenticated, scopeErr := viewer.AuthenticatedViewerOwnerID(r.Context())
+		if scopeErr != nil {
+			http.Error(w, "owner scope unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		filter := func(ctx context.Context, event orchestrator.OrchestratorEvent) (bool, error) {
+			sessionID := string(event.SessionID)
+			if sessionID == "" {
+				return !authenticated && event.Type == "viewer.active_control", nil
 			}
 			if event.SessionID.Validate() != nil {
-				return true, nil
+				return false, nil
 			}
-			if !readerOK || ownerID == "" {
+			privateFinal := authenticated && isAuthenticatedPrivateMioFinal(event, requestOwnerID)
+			if viewer.IsResponseFirstViewerEvent(event) && !privateFinal {
+				return false, nil
+			}
+			binding, allowed, err := visibility.ResolveEvent(ctx, event, requestOwnerID)
+			if err != nil {
+				return false, fmt.Errorf("resolve canonical Viewer session visibility: %w", err)
+			}
+			if !allowed {
+				return false, nil
+			}
+			versionOwnerID := requestOwnerID
+			if versionOwnerID == "" {
+				versionOwnerID = defaultVersionOwnerID
+			}
+			if !readerOK || versionOwnerID == "" {
 				return false, fmt.Errorf("owner-checked Viewer session version reader is unavailable")
 			}
-			state, found, err := reader.ReadSessionState(ctx, event.SessionID, ownerID)
+			state, found, err := reader.ReadSessionState(ctx, event.SessionID, versionOwnerID)
 			if err != nil {
 				return false, fmt.Errorf("resolve owner-checked Viewer session version: %w", err)
 			}
-			if !found {
-				return true, nil
+			if found {
+				switch state.RuntimeVersion {
+				case "v2":
+					if !privateFinal {
+						return false, nil
+					}
+				case "v1", "legacy":
+				default:
+					return false, fmt.Errorf("unknown Viewer session runtime version %q", state.RuntimeVersion)
+				}
 			}
-			switch state.RuntimeVersion {
-			case "v2":
-				return false, nil
-			case "v1", "legacy":
-				return true, nil
-			default:
-				return false, fmt.Errorf("unknown Viewer session runtime version %q", state.RuntimeVersion)
+			current, err := visibility.IsCurrent(ctx, binding)
+			if err != nil {
+				return false, fmt.Errorf("confirm current canonical Viewer session visibility: %w", err)
 			}
-		})
+			return current, nil
+		}
+		if authenticated && cmdOwnerID != "" && requestOwnerID == cmdOwnerID {
+			dependencies.eventHub.HandleSSEWithFilterAndPrivateMioDeltas(w, r, filter, requestOwnerID)
+			return
+		}
+		dependencies.eventHub.HandleSSEWithFilter(w, r, filter)
+	})
+	return viewer.WithCMDMioOwnerAuthentication(stream, cmdOwnerID, cmdOwnerToken)
+}
+
+// isAuthenticatedPrivateMioFinal narrows the response-first exception to a
+// canonical, sequenced private final for the exact already-authenticated CMD
+// owner. Session incarnation, owner/audience, address, and current-binding
+// checks still run through runtimeSessionVisibility below.
+func isAuthenticatedPrivateMioFinal(event orchestrator.OrchestratorEvent, ownerID string) bool {
+	return strings.TrimSpace(ownerID) != "" && strings.TrimSpace(ownerID) == ownerID &&
+		event.Type == "agent.response" && event.From == "mio" && event.To == "user" && event.Route == "CHAT" &&
+		event.Visibility == "private" && event.EventSeq > 0 && event.Channel == "viewer" &&
+		event.ChannelAddress == "cmd:"+ownerID && event.ActorKind == "agent" && event.ActorID == "mio" &&
+		event.EventID.Validate() == nil && event.TraceID.Validate() == nil && event.TaskID.Validate() == nil &&
+		event.RunID.Validate() == nil && event.SessionID.Validate() == nil && event.TurnID.Validate() == nil &&
+		event.MessageID.Validate() == nil && event.Content != ""
+}
+
+func viewerEventsCMDOwnerCredentials(cfg *config.Config) (string, []byte) {
+	if cfg == nil || !cfg.LocalAgentOps.Enabled {
+		return "", nil
 	}
+	ownerID := strings.TrimSpace(cfg.LocalAgentOps.UserID)
+	if ownerID == "" || !agentOpsUserIDPattern.MatchString(ownerID) {
+		return "", nil
+	}
+	token, err := readAgentOpsToken(cfg.LocalAgentOps.AuthTokenFile)
+	if err != nil {
+		return ownerID, nil
+	}
+	return ownerID, token
+}
+
+func runtimeSessionVisibilityFor(dependencies *Dependencies) *runtimeSessionVisibility {
+	if dependencies == nil {
+		return newRuntimeSessionVisibility(nil)
+	}
+	if dependencies.sessionVisibility != nil {
+		return dependencies.sessionVisibility
+	}
+	return newRuntimeSessionVisibility(dependencies.sessionRepository)
 }
 
 func viewerDataCapabilityProvider(dependencies *Dependencies) viewer.DataCapabilityCatalogProvider {
@@ -236,15 +313,22 @@ func registerSTTAndAudioRoutes(mux *http.ServeMux, cfg *config.Config, sttRuntim
 	sttRoutes.AutoTest = viewer.HandleSTTAutoTest(modulestt.DefaultViewerAutoTestScriptPath, modulestt.DefaultViewerLatestWAVPath, modulestt.DefaultViewerAutoTestOutputPath)
 	sttRoutes.AdminRestart = viewer.HandleSTTRestart(viewer.STTAdminOptions{BaseURL: sttRuntime.DebugOptions.STTBaseURL})
 	dependencies.moduleSTTViewerInput = newSTTViewerInputObserver(sttRuntime)
+	sessionVisibility := runtimeSessionVisibilityFor(dependencies)
 	voicefeature.RegisterRoutes(mux, voicefeature.Dependencies{
 		Routes: voicefeature.Routes{
-			VoiceChat:         voiceChatRuntime.WSHandler,
-			AudioRouterEvents: viewer.HandleAudioRouterSSE(dependencies.eventHub),
-			ActiveControl:     handleViewerActiveClaim(dependencies.eventHub.OnEvent),
+			VoiceChat: voiceChatRuntime.WSHandler,
+			AudioRouterEvents: viewer.HandleAudioRouterSSEWithFilter(dependencies.eventHub, func(ctx context.Context, event orchestrator.OrchestratorEvent) (bool, error) {
+				binding, allowed, err := sessionVisibility.ResolveEvent(ctx, event, "")
+				if err != nil || !allowed {
+					return false, err
+				}
+				return sessionVisibility.IsCurrent(ctx, binding)
+			}),
+			ActiveControl: handleViewerActiveClaim(dependencies.eventHub.OnEvent),
 		},
 		STT: sttfeature.Dependencies{Routes: sttRoutes},
 		TTS: ttsfeature.Dependencies{Routes: ttsfeature.Routes{
-			Audio:       handleTTSAudio(cfg.TTS.OutputDir, cfg.TTS.GatewayURL()),
+			Audio:       handleTTSAudio(cfg.TTS.OutputDir, cfg.TTS.GatewayURL(), dependencies.ttsAudioAccessOwner),
 			PlaybackAck: handleTTSPlaybackAck(dependencies.playbackRecorder),
 		}},
 	})

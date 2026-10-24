@@ -14,7 +14,6 @@ import (
 	glossaryservice "github.com/Nyukimin/RenCrow_CORE/internal/glossary/application/service"
 	glossaryrepository "github.com/Nyukimin/RenCrow_CORE/internal/glossary/domain/repository"
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/feed"
-	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/interface/mio_adapter"
 )
 
 type glossaryRuntime struct {
@@ -57,11 +56,17 @@ func buildGlossaryRuntime(cfg *config.Config, selectedOwner ...runtimeGlossaryRe
 	}
 	syncGlossary := func() {
 		count, err := glossaryModule.SyncFeeds(context.Background(), cfg.Glossary.FeedURLs)
+		if refreshErr := glossaryModule.MioAdapter.RefreshRecentPromptSnapshot(context.Background()); refreshErr != nil {
+			log.Printf("WARN: glossary recent prompt snapshot refresh failed: %v", refreshErr)
+		}
 		if err != nil {
 			log.Printf("WARN: glossary sync failed: %v", err)
 			return
 		}
 		log.Printf("Glossary sync complete: %d items", count)
+	}
+	if err := glossaryModule.MioAdapter.RefreshRecentPromptSnapshot(context.Background()); err != nil {
+		log.Printf("WARN: glossary recent prompt snapshot warm failed: %v", err)
 	}
 	syncGlossary()
 	if cfg.Glossary.RefreshIntervalHr > 0 {
@@ -86,11 +91,10 @@ func buildRemoteGlossaryRuntime(cfg *config.Config, owner runtimeGlossaryRemoteO
 		return runtime
 	}
 	service := glossaryservice.NewGlossaryService(owner)
-	mioAdapter := mio_adapter.NewMioGlossaryAdapter(service)
 	runtime.CandidateStore = owner
 	runtime.IndexedLookup = owner
-	runtime.RecentContext = mioAdapter.GetRecentContext
-	runtime.RecentTopics = mioAdapter.GetRecentTopics
+	runtime.RecentContext = func(context.Context, int) (string, error) { return "", nil }
+	runtime.RecentTopics = func(context.Context, int) ([]string, error) { return []string{}, nil }
 	runtime.RecentHandler = viewer.HandleGlossaryRecent(service)
 	syncGlossary := func() {
 		count, err := syncRuntimeGlossaryFeeds(context.Background(), cfg.Glossary.FeedURLs, service)

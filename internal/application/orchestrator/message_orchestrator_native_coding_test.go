@@ -113,7 +113,7 @@ func ncOrchestrator(t *testing.T, route routing.Route, shiro ShiroAgent) *Messag
 }
 
 func ncRequest(message string) ProcessMessageRequest {
-	return ProcessMessageRequest{SessionID: "20261008-line-U1", Channel: "line", ChatID: "U1", UserMessage: message}
+	return ProcessMessageRequest{SessionID: newMockCanonicalSessionID("line", "U1"), Channel: "line", ChatID: "U1", UserMessage: message}
 }
 
 func completedNativeResult(text string) agent.NativeCodingResult {

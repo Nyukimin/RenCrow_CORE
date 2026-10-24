@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
@@ -26,16 +27,17 @@ type RenCrowTTSBridgeConfig struct {
 	RequestTimeout     time.Duration
 	DownloadAudio      bool
 	Sink               AudioSink
-	OnChunkReady       func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string)
-	OnSpeechChunkReady func(chunk SpeechPlanChunkReady)
-	OnSessionCompleted func(sessionID, traceID, characterID string)
+	OnChunkReady       func(sessionID, canonicalSessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string, binding conversation.SessionBinding) error
+	OnSpeechChunkReady func(chunk SpeechPlanChunkReady) error
+	OnSessionCompleted func(sessionID, traceID, characterID string, binding conversation.SessionBinding)
 }
 
 // SpeechPlanChunkReady carries turn-scoped metadata for one completed
-// utterance. The legacy OnChunkReady callback remains unchanged.
+// utterance.
 type SpeechPlanChunkReady struct {
 	TTSSessionID          string
 	ConversationSessionID string
+	SessionBinding        conversation.SessionBinding
 	TurnID                string
 	SpeakerID             string
 	PublicPlaybackRef     string
@@ -57,6 +59,7 @@ const (
 
 type renCrowTTSSession struct {
 	characterID       string
+	sessionBinding    conversation.SessionBinding
 	publicPlaybackRef string
 	traceID           modulecore.TraceID
 	voiceID           string
@@ -110,7 +113,18 @@ func NewRenCrowTTSBridge(cfg RenCrowTTSBridgeConfig) *RenCrowTTSBridge {
 	}
 }
 
-func (b *RenCrowTTSBridge) StartSession(_ context.Context, req orchestrator.TTSSessionStart) error {
+func (b *RenCrowTTSBridge) StartSession(ctx context.Context, req orchestrator.TTSSessionStart) error {
+	canonicalSessionID := strings.TrimSpace(req.CanonicalSessionID)
+	var binding conversation.SessionBinding
+	if canonicalSessionID != "" {
+		var found bool
+		binding, found = conversation.SessionBindingFromContext(ctx)
+		if !found || binding.ValidateForPublication() != nil ||
+			binding.BindingGeneration() == conversation.BindingGenerationUnavailable ||
+			string(binding.SessionID()) != canonicalSessionID {
+			return fmt.Errorf("canonical TTS session requires its exact published SessionBinding")
+		}
+	}
 	start, err := moduletts.BuildRenCrowSessionStart(moduletts.RenCrowSessionStartInput{
 		SessionID:         req.SessionID,
 		CharacterID:       req.CharacterID,
@@ -124,6 +138,7 @@ func (b *RenCrowTTSBridge) StartSession(_ context.Context, req orchestrator.TTSS
 	b.mu.Lock()
 	b.sessions[start.SessionID] = &renCrowTTSSession{
 		characterID:       start.CharacterID,
+		sessionBinding:    binding,
 		publicPlaybackRef: start.PublicPlaybackRef,
 		traceID:           canonicalRenCrowTTSTraceID(req.TraceID),
 		voiceID:           start.VoiceID,
@@ -227,7 +242,15 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 			PauseAfter: chunkPauseForText(request.speechText),
 		}
 		if b.cfg.OnChunkReady != nil {
-			b.cfg.OnChunkReady(sessionID, publicPlaybackRef, string(session.traceID), ch.ChunkIndex, characterID, request.speechText, strings.TrimSpace(request.item.DisplayText), result.audioPath, ch.AudioURL)
+			canonicalSessionID := ""
+			if session.sessionBinding.ValidateForPublication() == nil {
+				canonicalSessionID = string(session.sessionBinding.SessionID())
+			}
+			if err := b.cfg.OnChunkReady(sessionID, canonicalSessionID, publicPlaybackRef, string(session.traceID), ch.ChunkIndex, characterID, request.speechText, strings.TrimSpace(request.item.DisplayText), result.audioPath, ch.AudioURL, session.sessionBinding); err != nil {
+				cancel()
+				workers.Wait()
+				return err
+			}
 		}
 		if b.cfg.Sink != nil {
 			if err := b.cfg.Sink.SubmitChunk(ctx, sessionID, ch); err != nil {
@@ -289,10 +312,12 @@ func (b *RenCrowTTSBridge) EndSession(ctx context.Context, sessionID string) err
 		return nil
 	}
 	var characterID string
+	var binding conversation.SessionBinding
 	traceID := modulecore.NewTraceID()
 	b.mu.Lock()
 	if session, ok := b.sessions[sessionID]; ok && session != nil {
 		characterID = strings.TrimSpace(session.characterID)
+		binding = session.sessionBinding
 		if session.traceID.Validate() == nil {
 			traceID = session.traceID
 		}
@@ -305,7 +330,7 @@ func (b *RenCrowTTSBridge) EndSession(ctx context.Context, sessionID string) err
 		}
 	}
 	if b.cfg.OnSessionCompleted != nil {
-		b.cfg.OnSessionCompleted(sessionID, string(traceID), characterID)
+		b.cfg.OnSessionCompleted(sessionID, string(traceID), characterID, binding)
 	}
 	return nil
 }

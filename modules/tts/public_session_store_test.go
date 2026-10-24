@@ -112,3 +112,107 @@ func TestPublicSessionStoreCancelPlaybackGenerationPreservesNewerRoutes(t *testi
 		t.Fatal("late old route should remain stale")
 	}
 }
+
+func TestPublicSessionStoreProvidesExactCurrentRouteProof(t *testing.T) {
+	store := NewPublicSessionStore()
+	const (
+		internalID = "tts-internal"
+		publicID   = "idle-session"
+		epoch      = "runtime-epoch-7"
+	)
+	if !store.Register(PublicSessionRouteRegistration{
+		InternalSessionID: internalID, PublicSessionID: publicID,
+		RuntimeEpoch: epoch, PlaybackGeneration: 12,
+	}) {
+		t.Fatal("current route registration failed")
+	}
+	proof, ok := store.CurrentRouteProof(internalID)
+	if !ok {
+		t.Fatal("current route proof was unavailable")
+	}
+	if proof.InternalSessionID != internalID || proof.PublicSessionID != publicID ||
+		proof.RuntimeEpoch != epoch || proof.PlaybackGeneration != 12 ||
+		proof.StoreGeneration != 0 || !proof.Current {
+		t.Fatalf("unexpected route proof: %+v", proof)
+	}
+	if !store.ValidateCurrentRouteProof(proof) {
+		t.Fatal("exact current route proof was rejected")
+	}
+
+	for name, mutate := range map[string]func(*PublicSessionRouteProof){
+		"internal session":    func(p *PublicSessionRouteProof) { p.InternalSessionID = "other-internal" },
+		"public session":      func(p *PublicSessionRouteProof) { p.PublicSessionID = "other-public" },
+		"runtime epoch":       func(p *PublicSessionRouteProof) { p.RuntimeEpoch = "other-epoch" },
+		"playback generation": func(p *PublicSessionRouteProof) { p.PlaybackGeneration++ },
+		"store generation":    func(p *PublicSessionRouteProof) { p.StoreGeneration++ },
+		"current flag":        func(p *PublicSessionRouteProof) { p.Current = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := proof
+			mutate(&candidate)
+			if store.ValidateCurrentRouteProof(candidate) {
+				t.Fatalf("mutated proof was accepted: %+v", candidate)
+			}
+		})
+	}
+}
+
+func TestPublicSessionStoreRouteProofExpiresOnTimeoutResetRetireOrRemoval(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		invalidate func(*PublicSessionStore)
+	}{
+		{name: "timeout", invalidate: func(s *PublicSessionStore) { s.MarkTimedOut("idle-session", "", -1, true) }},
+		{name: "reset", invalidate: func(s *PublicSessionStore) { s.ResetForIdleChat() }},
+		{name: "full reset", invalidate: func(s *PublicSessionStore) { s.ResetAll() }},
+		{name: "retire", invalidate: func(s *PublicSessionStore) { s.Retire("tts-internal") }},
+		{name: "clear", invalidate: func(s *PublicSessionStore) { s.Clear("tts-internal") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewPublicSessionStore()
+			if !store.Register(PublicSessionRouteRegistration{
+				InternalSessionID: "tts-internal", PublicSessionID: "idle-session",
+				RuntimeEpoch: "runtime-epoch", PlaybackGeneration: 2,
+			}) {
+				t.Fatal("route registration failed")
+			}
+			proof, ok := store.CurrentRouteProof("tts-internal")
+			if !ok {
+				t.Fatal("route proof was unavailable")
+			}
+			tc.invalidate(store)
+			if store.ValidateCurrentRouteProof(proof) {
+				t.Fatal("invalidated route proof was accepted")
+			}
+			if _, ok := store.CurrentRouteProof("tts-internal"); ok {
+				t.Fatal("proof was returned for a noncurrent route")
+			}
+		})
+	}
+	store := NewPublicSessionStore()
+	if _, ok := store.CurrentRouteProof("never-registered"); ok {
+		t.Fatal("proof was returned for an unregistered route")
+	}
+	for name, reg := range map[string]PublicSessionRouteRegistration{
+		"non-idle public session": {
+			InternalSessionID: "tts-internal", PublicSessionID: "chat-session",
+			RuntimeEpoch: "runtime-epoch", PlaybackGeneration: 2,
+		},
+		"missing runtime epoch": {
+			InternalSessionID: "tts-internal", PublicSessionID: "idle-session", PlaybackGeneration: 2,
+		},
+		"missing playback generation": {
+			InternalSessionID: "tts-internal", PublicSessionID: "idle-session", RuntimeEpoch: "runtime-epoch",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := NewPublicSessionStore()
+			if !candidate.Register(reg) {
+				t.Fatal("test route registration failed")
+			}
+			if _, ok := candidate.CurrentRouteProof("tts-internal"); ok {
+				t.Fatal("incomplete or non-IdleChat route produced a public proof")
+			}
+		})
+	}
+}

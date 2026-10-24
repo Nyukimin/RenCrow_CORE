@@ -7,17 +7,47 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
-	replayPageLimit = 1000
-	replayTimeout   = 30 * time.Second
+	replayPageLimit                   = 1000
+	replayTimeout                     = 30 * time.Second
+	privateMioDeltaClientCapacity     = 64
+	privateMioDeltaMaxClientsPerOwner = 8
+	privateMioDeltaMaxContentBytes    = 16 * 1024
+	guardedOwnerScopedFrameMarker     = "_rencrow_guarded_owner_publication"
 )
+
+// PreparedPrivateMioDelta is encoded outside authority guards so guarded
+// publication only performs bounded nonblocking RAM fanout.
+type PreparedPrivateMioDelta struct {
+	ownerID string
+	eventID modulecore.EventID
+	data    []byte
+}
+
+// guardedOwnerScopedLiveFrame is flattened into the event JSON queued only on
+// the authenticated owner's shared SSE lane. Its marker survives removal of
+// the Hub's qualification map entry while a buffered frame is still draining.
+// The SSE handler decodes the event and re-encodes it, so this internal marker
+// is never sent on the wire.
+type guardedOwnerScopedLiveFrame struct {
+	orchestrator.OrchestratorEvent
+	Guarded bool `json:"_rencrow_guarded_owner_publication"`
+}
+
+// PublicationCleanup releases qualification handles after a guarded RAM
+// publication has left its authority boundary. The returned function is
+// idempotent and must be called after turn/session guards and relay ordering
+// locks are released.
+type PublicationCleanup func()
 
 // EventStream is the shared subscription and replay contract used by Viewer
 // and Chrome bridge consumers.
@@ -30,21 +60,24 @@ type EventStream interface {
 // EventHub broadcasts already-persisted orchestrator events to connected SSE
 // clients. Canonical publication is owned by the runtime event relay.
 type EventHub struct {
-	mu                  sync.RWMutex
-	clients             map[chan []byte]struct{}
-	controlClients      map[chan []byte]chan IdleChatControlSnapshot
-	controlSnapshot     IdleChatControlSnapshot
-	hasControlSnapshot  bool
-	controlSnapshotRead IdleChatControlSnapshotProvider
-	history             []orchestrator.OrchestratorEvent
-	acceptedTail        []orchestrator.OrchestratorEvent
-	acceptedGap         *EventReplayGap
-	maxHist             int
-	replayReader        EventReplayReader
-	sessionReplayReader SessionPublicEventReplayReader
-	clientCountListener func(int)
-	lastLiveEventSeq    modulecore.EventSeq
-	lastLiveEventID     modulecore.EventID
+	mu                     sync.RWMutex
+	clients                map[chan []byte]struct{}
+	privateMioDeltaClients map[string]map[chan []byte]struct{}
+	privateMioDeltaOwners  map[chan []byte]string
+	privateMioLiveClaims   map[chan []byte]map[modulecore.EventID]domainconversation.PreparedChatTurnPublicationGuard
+	controlClients         map[chan []byte]chan IdleChatControlSnapshot
+	controlSnapshot        IdleChatControlSnapshot
+	hasControlSnapshot     bool
+	controlSnapshotRead    IdleChatControlSnapshotProvider
+	history                []orchestrator.OrchestratorEvent
+	acceptedTail           []orchestrator.OrchestratorEvent
+	acceptedGap            *EventReplayGap
+	maxHist                int
+	replayReader           EventReplayReader
+	sessionReplayReader    SessionPublicEventReplayReader
+	clientCountListener    func(int)
+	lastLiveEventSeq       modulecore.EventSeq
+	lastLiveEventID        modulecore.EventID
 }
 
 // EventReplaySnapshot is captured atomically with subscription. Events holds
@@ -102,14 +135,336 @@ var errEventHubLiveSequenceNotIncreasing = errors.New("live EventSeq is not incr
 // NewEventHub creates a new EventHub with the given history capacity.
 func NewEventHub(maxHistory int) *EventHub {
 	return &EventHub{
-		clients:        make(map[chan []byte]struct{}),
-		controlClients: make(map[chan []byte]chan IdleChatControlSnapshot),
-		maxHist:        maxHistory,
+		clients:                make(map[chan []byte]struct{}),
+		privateMioDeltaClients: make(map[string]map[chan []byte]struct{}),
+		privateMioDeltaOwners:  make(map[chan []byte]string),
+		privateMioLiveClaims:   make(map[chan []byte]map[modulecore.EventID]domainconversation.PreparedChatTurnPublicationGuard),
+		controlClients:         make(map[chan []byte]chan IdleChatControlSnapshot),
+		maxHist:                maxHistory,
 	}
+}
+
+// SubscribePrivateMioDeltas registers a live-only lane for one authenticated
+// private Session owner. It has no history and is never part of canonical
+// replay. A nil return means the owner identity was invalid.
+func (h *EventHub) SubscribePrivateMioDeltas(ownerID string) chan []byte {
+	if h == nil || strings.TrimSpace(ownerID) == "" || strings.TrimSpace(ownerID) != ownerID {
+		return nil
+	}
+	ch := make(chan []byte, privateMioDeltaClientCapacity)
+	h.mu.Lock()
+	if !h.registerPrivateMioDeltaSubscriberLocked(ownerID, ch) {
+		h.mu.Unlock()
+		return nil
+	}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *EventHub) registerPrivateMioDeltaSubscriberLocked(ownerID string, ch chan []byte) bool {
+	if h.privateMioDeltaClients == nil {
+		h.privateMioDeltaClients = make(map[string]map[chan []byte]struct{})
+	}
+	if h.privateMioDeltaOwners == nil {
+		h.privateMioDeltaOwners = make(map[chan []byte]string)
+	}
+	if h.privateMioDeltaClients[ownerID] == nil {
+		h.privateMioDeltaClients[ownerID] = make(map[chan []byte]struct{})
+	}
+	if len(h.privateMioDeltaClients[ownerID]) >= privateMioDeltaMaxClientsPerOwner {
+		return false
+	}
+	h.privateMioDeltaClients[ownerID][ch] = struct{}{}
+	h.privateMioDeltaOwners[ch] = ownerID
+	return true
+}
+
+// UnsubscribePrivateMioDeltas removes and closes one owner-specific live lane.
+func (h *EventHub) UnsubscribePrivateMioDeltas(ownerID string, ch chan []byte) {
+	if h == nil || ch == nil {
+		return
+	}
+	h.mu.Lock()
+	if h.privateMioDeltaOwners[ch] != ownerID {
+		h.mu.Unlock()
+		return
+	}
+	claims := h.removeSubscriberLocked(ch)
+	h.mu.Unlock()
+	releasePublicationClaims(claims)
+}
+
+// PreparePrivateMioDelta validates and encodes one live-only delta outside
+// Session and prepared-turn authority guards.
+func (h *EventHub) PreparePrivateMioDelta(ownerID string, event orchestrator.OrchestratorEvent) (PreparedPrivateMioDelta, error) {
+	if h == nil {
+		return PreparedPrivateMioDelta{}, errors.New("event hub is required")
+	}
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(ownerID) != ownerID {
+		return PreparedPrivateMioDelta{}, errors.New("authenticated private Session owner is required")
+	}
+	if event.Type != "agent.response_delta" || event.From != "mio" || event.To != "user" || event.Route != "CHAT" ||
+		event.EventSeq != 0 || event.Channel != "viewer" || event.ChannelAddress != "cmd:"+ownerID ||
+		event.ActorKind != "agent" || event.ActorID != "mio" || len(event.Content) > privateMioDeltaMaxContentBytes ||
+		event.EventID.Validate() != nil || event.TraceID.Validate() != nil || event.TaskID.Validate() != nil ||
+		event.RunID.Validate() != nil || event.SessionID.Validate() != nil || event.TurnID.Validate() != nil || event.MessageID.Validate() != nil || event.Content == "" {
+		return PreparedPrivateMioDelta{}, errors.New("private Mio answer delta identity is invalid")
+	}
+	data, err := marshalGuardedOwnerScopedLiveFrame(event)
+	if err != nil {
+		return PreparedPrivateMioDelta{}, fmt.Errorf("marshal private Mio answer delta: %w", err)
+	}
+	return PreparedPrivateMioDelta{ownerID: ownerID, eventID: event.EventID, data: data}, nil
+}
+
+// PublishPreparedPrivateMioDelta performs the final RAM-only, nonblocking
+// fanout into the owner's shared canonical/live FIFO. The qualification is
+// retained per subscriber and checked at the writer claim point. This method
+// consumes qualification on success, failure, and zero-subscriber paths.
+func (h *EventHub) PublishPreparedPrivateMioDelta(ownerID string, prepared PreparedPrivateMioDelta, qualification domainconversation.PreparedChatTurnPublicationGuard) error {
+	if qualification != nil {
+		defer qualification.Release()
+	}
+	if h == nil {
+		return errors.New("event hub is required")
+	}
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(ownerID) != ownerID || prepared.ownerID != ownerID || prepared.eventID.Validate() != nil || len(prepared.data) == 0 || len(prepared.data) > 128*1024 || qualification == nil {
+		return errors.New("prepared private Mio delta owner is invalid")
+	}
+	var claims []domainconversation.PreparedChatTurnPublicationGuard
+	h.mu.Lock()
+	for ch := range h.privateMioDeltaClients[ownerID] {
+		claim := qualification.Retain()
+		if claim == nil {
+			continue
+		}
+		select {
+		case ch <- prepared.data:
+			if !h.addPrivateMioLiveClaimLocked(ch, prepared.eventID, claim) {
+				claims = append(claims, claim)
+				claims = append(claims, h.removeSubscriberLocked(ch)...)
+			}
+		default:
+			claims = append(claims, claim)
+			claims = append(claims, h.removeSubscriberLocked(ch)...)
+		}
+	}
+	if len(h.privateMioDeltaClients[ownerID]) == 0 {
+		delete(h.privateMioDeltaClients, ownerID)
+	}
+	h.mu.Unlock()
+	releasePublicationClaims(claims)
+	return nil
+}
+
+// PublishAcceptedWithClaim admits a canonical private Mio response into the
+// same EventSeq/history path as other accepted events, but queues its live
+// frame only for the authenticated owner's private SSE subscribers. Each
+// pending frame carries a retained writer-claim qualification. The caller must
+// invoke the returned cleanup after leaving all authority and relay-order locks.
+func (h *EventHub) PublishAcceptedWithClaim(ev orchestrator.OrchestratorEvent, ownerID string, qualification domainconversation.PreparedChatTurnPublicationGuard) (bool, PublicationCleanup, error) {
+	cleanup := deferredPublicationCleanup(qualification, nil)
+	if h == nil {
+		return false, cleanup, errors.New("event hub is required")
+	}
+	if qualification == nil || !isPrivateMioFinalForOwner(ev, ownerID) {
+		return false, cleanup, errors.New("private Mio final publication qualification or envelope is invalid")
+	}
+	data, err := marshalGuardedOwnerScopedLiveFrame(ev)
+	if err != nil {
+		return false, cleanup, fmt.Errorf("marshal accepted private Mio final event: %w", err)
+	}
+	var claims []domainconversation.PreparedChatTurnPublicationGuard
+	h.mu.Lock()
+	if ev.EventSeq < h.lastLiveEventSeq {
+		last := h.lastLiveEventSeq
+		h.mu.Unlock()
+		return false, cleanup, fmt.Errorf("%w: got %d after %d", errEventHubLiveSequenceNotIncreasing, ev.EventSeq, last)
+	}
+	if ev.EventSeq == h.lastLiveEventSeq {
+		lastID := h.lastLiveEventID
+		h.mu.Unlock()
+		if ev.EventID == lastID {
+			return false, cleanup, nil
+		}
+		return false, cleanup, fmt.Errorf("%w: EventSeq %d already belongs to event %s", errEventHubLiveSequenceNotIncreasing, ev.EventSeq, lastID)
+	}
+	h.lastLiveEventSeq = ev.EventSeq
+	h.lastLiveEventID = ev.EventID
+	h.retainAcceptedLocked(ev)
+	h.appendHistoryLocked(ev)
+	for ch := range h.privateMioDeltaClients[ownerID] {
+		claim := qualification.Retain()
+		if claim == nil {
+			continue
+		}
+		select {
+		case ch <- data:
+			if !h.addPrivateMioLiveClaimLocked(ch, ev.EventID, claim) {
+				claims = append(claims, claim)
+				claims = append(claims, h.removeSubscriberLocked(ch)...)
+			}
+		default:
+			claims = append(claims, claim)
+			claims = append(claims, h.removeSubscriberLocked(ch)...)
+		}
+	}
+	clientCount := len(h.clients)
+	h.mu.Unlock()
+	cleanup = deferredPublicationCleanup(qualification, claims)
+	var finish sync.Once
+	return true, func() {
+		finish.Do(func() {
+			cleanup()
+			h.logPublishedEvent(ev, len(claims) > 0, clientCount)
+		})
+	}, nil
+}
+
+func (h *EventHub) addPrivateMioLiveClaimLocked(ch chan []byte, eventID modulecore.EventID, claim domainconversation.PreparedChatTurnPublicationGuard) bool {
+	if h.privateMioLiveClaims == nil {
+		h.privateMioLiveClaims = make(map[chan []byte]map[modulecore.EventID]domainconversation.PreparedChatTurnPublicationGuard)
+	}
+	if h.privateMioLiveClaims[ch] == nil {
+		h.privateMioLiveClaims[ch] = make(map[modulecore.EventID]domainconversation.PreparedChatTurnPublicationGuard)
+	}
+	if _, exists := h.privateMioLiveClaims[ch][eventID]; exists {
+		return false
+	}
+	h.privateMioLiveClaims[ch][eventID] = claim
+	return true
+}
+
+func releasePublicationClaims(claims []domainconversation.PreparedChatTurnPublicationGuard) {
+	for _, claim := range claims {
+		if claim != nil {
+			claim.Release()
+		}
+	}
+}
+
+func marshalGuardedOwnerScopedLiveFrame(event orchestrator.OrchestratorEvent) ([]byte, error) {
+	return json.Marshal(guardedOwnerScopedLiveFrame{OrchestratorEvent: event, Guarded: true})
+}
+
+func isGuardedOwnerScopedLiveFrame(data []byte) bool {
+	var marker struct {
+		Guarded bool `json:"_rencrow_guarded_owner_publication"`
+	}
+	return json.Unmarshal(data, &marker) == nil && marker.Guarded
+}
+
+func deferredPublicationCleanup(producer domainconversation.PreparedChatTurnPublicationGuard, claims []domainconversation.PreparedChatTurnPublicationGuard) PublicationCleanup {
+	owned := make([]domainconversation.PreparedChatTurnPublicationGuard, 0, len(claims)+1)
+	if producer != nil {
+		owned = append(owned, producer)
+	}
+	owned = append(owned, claims...)
+	var once sync.Once
+	return func() {
+		once.Do(func() { releasePublicationClaims(owned) })
+	}
+}
+
+// ClaimOwnerScopedLiveEvent validates one queued owner-scoped Mio frame at
+// the last point before socket write. The authority guard is released before
+// this method returns, so callers must perform socket I/O only afterward.
+func (h *EventHub) ClaimOwnerScopedLiveEvent(ownerID string, ch chan []byte, data []byte) bool {
+	claimed, _ := h.ClaimOwnerScopedLiveEventStatus(ownerID, ch, data)
+	return claimed
+}
+
+// ClaimOwnerScopedLiveEventStatus validates one owner-scoped canonical final
+// or transient delta at the writer boundary. ticketFound distinguishes an
+// unguarded canonical event (which still passed the route's owner/incarnation
+// filter) from a guarded event whose retained qualification was revoked.
+func (h *EventHub) ClaimOwnerScopedLiveEventStatus(ownerID string, ch chan []byte, data []byte) (claimed, ticketFound bool) {
+	if h == nil || ch == nil || strings.TrimSpace(ownerID) == "" || strings.TrimSpace(ownerID) != ownerID {
+		return false, false
+	}
+	guardedFrame := isGuardedOwnerScopedLiveFrame(data)
+	var event orchestrator.OrchestratorEvent
+	if err := json.Unmarshal(data, &event); err != nil || !isOwnerScopedMioLiveEventForOwner(event, ownerID) {
+		h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
+		return false, guardedFrame
+	}
+	h.mu.Lock()
+	if h.privateMioDeltaOwners[ch] != ownerID {
+		h.mu.Unlock()
+		return false, guardedFrame
+	}
+	var claim domainconversation.PreparedChatTurnPublicationGuard
+	claim = h.privateMioLiveClaims[ch][event.EventID]
+	ticketFound = guardedFrame || claim != nil
+	delete(h.privateMioLiveClaims[ch], event.EventID)
+	if len(h.privateMioLiveClaims[ch]) == 0 {
+		delete(h.privateMioLiveClaims, ch)
+	}
+	h.mu.Unlock()
+	if claim == nil {
+		return false, ticketFound
+	}
+	claimed = false
+	err := claim.Use(func() error {
+		claimed = true
+		return nil
+	})
+	claim.Release()
+	return err == nil && claimed, true
+}
+
+// DiscardOwnerScopedLiveEvent releases a pending ticket for a frame that the
+// SSE policy or cursor suppresses before the writer claim point.
+func (h *EventHub) DiscardOwnerScopedLiveEvent(ownerID string, ch chan []byte, data []byte) {
+	if h == nil || ch == nil {
+		return
+	}
+	var event struct {
+		EventID modulecore.EventID `json:"event_id"`
+	}
+	if json.Unmarshal(data, &event) != nil || event.EventID.Validate() != nil {
+		return
+	}
+	h.mu.Lock()
+	if h.privateMioDeltaOwners[ch] != ownerID {
+		h.mu.Unlock()
+		return
+	}
+	claim := h.privateMioLiveClaims[ch][event.EventID]
+	delete(h.privateMioLiveClaims[ch], event.EventID)
+	if len(h.privateMioLiveClaims[ch]) == 0 {
+		delete(h.privateMioLiveClaims, ch)
+	}
+	h.mu.Unlock()
+	if claim != nil {
+		claim.Release()
+	}
+}
+
+func isOwnerScopedMioLiveEventForOwner(event orchestrator.OrchestratorEvent, ownerID string) bool {
+	if isPrivateMioDeltaForOwner(event, ownerID) {
+		return true
+	}
+	return isPrivateMioFinalForOwner(event, ownerID)
+}
+
+func isPrivateMioFinalForOwner(event orchestrator.OrchestratorEvent, ownerID string) bool {
+	return strings.TrimSpace(ownerID) != "" && strings.TrimSpace(ownerID) == ownerID &&
+		event.Type == "agent.response" && event.From == "mio" && event.To == "user" && event.Route == "CHAT" &&
+		event.EventSeq > 0 && event.Channel == "viewer" && event.ChannelAddress == "cmd:"+ownerID &&
+		event.ActorKind == "agent" && event.ActorID == "mio" && event.Visibility == "private" &&
+		strings.TrimSpace(event.PublicationIncarnation) != "" && strings.TrimSpace(event.PublicationIncarnation) == event.PublicationIncarnation &&
+		event.EventID.Validate() == nil &&
+		event.TraceID.Validate() == nil && event.TaskID.Validate() == nil && event.RunID.Validate() == nil &&
+		event.SessionID.Validate() == nil && event.TurnID.Validate() == nil && event.MessageID.Validate() == nil && event.Content != ""
 }
 
 // OnEvent projects an event to the Viewer history and SSE clients.
 func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
+	if ev.Type == "agent.response_delta" {
+		log.Printf("[EventHub] OnEvent: transient Mio answer delta requires owner-scoped publication")
+		return
+	}
 	if ev.EventSeq > 0 {
 		if _, err := h.PublishLive(ev); err != nil {
 			log.Printf("[EventHub] OnEvent: live sequence rejected: %v", err)
@@ -123,9 +478,10 @@ func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
 	}
 
 	h.mu.Lock()
-	clientDropped := h.appendEventLocked(ev, data)
+	clientDropped, droppedClaims := h.appendEventLocked(ev, data)
 	clientCount := len(h.clients)
 	h.mu.Unlock()
+	releasePublicationClaims(droppedClaims)
 	h.logPublishedEvent(ev, clientDropped, clientCount)
 }
 
@@ -212,6 +568,9 @@ func (h *EventHub) publishLive(ev orchestrator.OrchestratorEvent, accepted bool)
 	if h == nil {
 		return false, errors.New("event hub is required")
 	}
+	if ev.Type == "agent.response_delta" {
+		return false, errors.New("transient Mio answer delta cannot enter canonical live history")
+	}
 	if ev.EventSeq <= 0 {
 		return false, errors.New("live event must have a positive EventSeq")
 	}
@@ -239,9 +598,10 @@ func (h *EventHub) publishLive(ev orchestrator.OrchestratorEvent, accepted bool)
 	if accepted {
 		h.retainAcceptedLocked(ev)
 	}
-	clientDropped := h.appendEventLocked(ev, data)
+	clientDropped, droppedClaims := h.appendEventLocked(ev, data)
 	clientCount := len(h.clients)
 	h.mu.Unlock()
+	releasePublicationClaims(droppedClaims)
 	h.logPublishedEvent(ev, clientDropped, clientCount)
 	return true, nil
 }
@@ -295,28 +655,60 @@ func (h *EventHub) MarkDurable(ev orchestrator.OrchestratorEvent) error {
 	return nil
 }
 
-func (h *EventHub) appendEventLocked(ev orchestrator.OrchestratorEvent, data []byte) bool {
+func (h *EventHub) appendEventLocked(ev orchestrator.OrchestratorEvent, data []byte) (bool, []domainconversation.PreparedChatTurnPublicationGuard) {
+	h.appendHistoryLocked(ev)
+	clientDropped := false
+	var droppedClaims []domainconversation.PreparedChatTurnPublicationGuard
+	for ch := range h.clients {
+		select {
+		case ch <- data:
+		default:
+			droppedClaims = append(droppedClaims, h.removeSubscriberLocked(ch)...)
+			clientDropped = true
+		}
+	}
+	return clientDropped, droppedClaims
+}
+
+func (h *EventHub) appendHistoryLocked(ev orchestrator.OrchestratorEvent) {
 	h.history = append(h.history, ev)
 	if h.maxHist <= 0 {
 		h.history = nil
 	} else if len(h.history) > h.maxHist {
 		h.history = h.history[len(h.history)-h.maxHist:]
 	}
-	clientDropped := false
-	for ch := range h.clients {
-		select {
-		case ch <- data:
-		default:
-			delete(h.clients, ch)
-			close(ch)
-			if controlCh := h.controlClients[ch]; controlCh != nil {
-				delete(h.controlClients, ch)
-				close(controlCh)
-			}
-			clientDropped = true
-		}
+}
+
+// removeSubscriberLocked atomically detaches and closes a channel from every
+// lane and returns its pending publication references for release after the
+// caller drops h.mu.
+func (h *EventHub) removeSubscriberLocked(ch chan []byte) []domainconversation.PreparedChatTurnPublicationGuard {
+	_, inClients := h.clients[ch]
+	delete(h.clients, ch)
+	if controlCh := h.controlClients[ch]; controlCh != nil {
+		delete(h.controlClients, ch)
+		close(controlCh)
 	}
-	return clientDropped
+	if ownerID := h.privateMioDeltaOwners[ch]; ownerID != "" {
+		delete(h.privateMioDeltaOwners, ch)
+		if ownerClients := h.privateMioDeltaClients[ownerID]; ownerClients != nil {
+			delete(ownerClients, ch)
+			if len(ownerClients) == 0 {
+				delete(h.privateMioDeltaClients, ownerID)
+			}
+		}
+		inClients = true
+	}
+	claims := h.privateMioLiveClaims[ch]
+	delete(h.privateMioLiveClaims, ch)
+	if inClients {
+		close(ch)
+	}
+	result := make([]domainconversation.PreparedChatTurnPublicationGuard, 0, len(claims))
+	for _, claim := range claims {
+		result = append(result, claim)
+	}
+	return result
 }
 
 func (h *EventHub) logPublishedEvent(ev orchestrator.OrchestratorEvent, clientDropped bool, clientCount int) {
@@ -392,6 +784,21 @@ func (h *EventHub) SubscribeForReplay() (chan []byte, EventReplaySnapshot) {
 // The optional provider runs before taking the hub lock. Its sample only
 // replaces the cached snapshot when its existing revision/generation is newer.
 func (h *EventHub) SubscribeForReplayWithControl() (chan []byte, chan IdleChatControlSnapshot, EventReplaySnapshot, *IdleChatControlSnapshot) {
+	return h.subscribeForReplayWithControl("")
+}
+
+// SubscribeForReplayWithControlAndPrivateMioDeltas atomically registers one
+// channel in the canonical owner stream and the owner's transient Mio lane.
+// Both event classes therefore share one FIFO and one bounded subscriber.
+// A nil event channel means the owner subscription could not be admitted.
+func (h *EventHub) SubscribeForReplayWithControlAndPrivateMioDeltas(ownerID string) (chan []byte, chan IdleChatControlSnapshot, EventReplaySnapshot, *IdleChatControlSnapshot) {
+	if h == nil || strings.TrimSpace(ownerID) == "" || strings.TrimSpace(ownerID) != ownerID {
+		return nil, nil, EventReplaySnapshot{}, nil
+	}
+	return h.subscribeForReplayWithControl(ownerID)
+}
+
+func (h *EventHub) subscribeForReplayWithControl(ownerID string) (chan []byte, chan IdleChatControlSnapshot, EventReplaySnapshot, *IdleChatControlSnapshot) {
 	h.mu.RLock()
 	provider := h.controlSnapshotRead
 	h.mu.RUnlock()
@@ -409,8 +816,18 @@ func (h *EventHub) SubscribeForReplayWithControl() (chan []byte, chan IdleChatCo
 			h.publishIdleChatControlSnapshotLocked(refreshed)
 		}
 	}
+	if ownerID != "" && len(h.privateMioDeltaClients[ownerID]) >= privateMioDeltaMaxClientsPerOwner {
+		h.mu.Unlock()
+		return nil, nil, EventReplaySnapshot{}, nil
+	}
 	h.clients[ch] = struct{}{}
 	h.controlClients[ch] = controlCh
+	if ownerID != "" && !h.registerPrivateMioDeltaSubscriberLocked(ownerID, ch) {
+		delete(h.clients, ch)
+		delete(h.controlClients, ch)
+		h.mu.Unlock()
+		return nil, nil, EventReplaySnapshot{}, nil
+	}
 	clientCount := len(h.clients)
 	snapshot := h.replaySnapshotLocked()
 	var controlSnapshot *IdleChatControlSnapshot
@@ -451,18 +868,14 @@ func (h *EventHub) replaySnapshotLocked() EventReplaySnapshot {
 // Unsubscribe removes a client and closes its channel.
 func (h *EventHub) Unsubscribe(ch chan []byte) {
 	h.mu.Lock()
-	if _, ok := h.clients[ch]; !ok {
+	if _, inClients := h.clients[ch]; !inClients && h.privateMioDeltaOwners[ch] == "" {
 		h.mu.Unlock()
 		return
 	}
-	delete(h.clients, ch)
-	if controlCh := h.controlClients[ch]; controlCh != nil {
-		delete(h.controlClients, ch)
-		close(controlCh)
-	}
+	claims := h.removeSubscriberLocked(ch)
 	clientCount := len(h.clients)
-	close(ch)
 	h.mu.Unlock()
+	releasePublicationClaims(claims)
 	log.Printf("[EventHub] Unsubscribe: client disconnected (remaining clients=%d)", clientCount)
 	h.notifyClientCountChanged(clientCount)
 }
@@ -769,7 +1182,7 @@ func replayContextError(ctx context.Context) error {
 // sent from durable or in-memory replay history.
 func IsTransientReplayEvent(ev orchestrator.OrchestratorEvent) bool {
 	switch ev.Type {
-	case "tts.audio_chunk", "tts.session_completed", "idlechat.message", "idlechat.summary":
+	case "agent.response_delta", "tts.audio_chunk", "tts.session_completed", "idlechat.message", "idlechat.summary":
 		return true
 	case "investment.refresh", "investment.market", "investment.macro", "investment.features", "investment.events", "investment.snapshot":
 		return true

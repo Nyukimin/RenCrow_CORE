@@ -79,7 +79,7 @@ func TestDistributedOrchestratorUsesCanonicalIdentityForTTSLifecycle(t *testing.
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID: rootTaskID.String(), TraceID: string(traceID),
-		SessionID: "distributed-tts-identity", Channel: "viewer", ChatID: "viewer-user",
+		SessionID: newMockCanonicalSessionID("viewer", "viewer-user"), Channel: "viewer", ChatID: "viewer-user",
 		UserMessage: "speak with canonical identity",
 	})
 	if err != nil {
@@ -126,7 +126,7 @@ func TestDistributedOrchestratorRejectsPreboundForeignIdentityBeforeTTSStart(t *
 
 	_, err = orch.ProcessMessage(foreignCtx, ProcessMessageRequest{
 		RootTaskID: modulecore.NewTaskID().String(), TraceID: string(modulecore.NewTraceID()),
-		SessionID: "distributed-foreign-identity", Channel: "viewer", ChatID: "viewer-user",
+		SessionID: newMockCanonicalSessionID("viewer", "viewer-user"), Channel: "viewer", ChatID: "viewer-user",
 		UserMessage: "reject foreign identity",
 	})
 	if err == nil || !strings.Contains(err.Error(), "execution identity is already bound") {

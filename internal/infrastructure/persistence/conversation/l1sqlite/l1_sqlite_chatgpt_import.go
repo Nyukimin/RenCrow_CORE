@@ -219,22 +219,43 @@ ORDER BY created_at ASC, id ASC
 		return result, err
 	}
 	now := time.Now().UTC()
+	changedIDs := make([]string, 0, len(matched))
 	for _, id := range matched {
 		updated, err := tx.ExecContext(ctx, `UPDATE l1_memory_event SET memory_state = ?, updated_at = ? WHERE id = ? AND memory_state = ?`, MemoryStateConfirmed, now, id, MemoryStateCandidate)
 		if err != nil {
 			return result, rollbackL1Tx(tx, err)
 		}
-		affected, _ := updated.RowsAffected()
+		affected, err := updated.RowsAffected()
+		if err != nil {
+			return result, rollbackL1Tx(tx, err)
+		}
 		result.Confirmed += int(affected)
+		if affected == 1 {
+			rows, findErr := scanL1EventRows(tx.QueryRowContext(ctx, `
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event WHERE id = ?`, id))
+			if findErr != nil {
+				return result, rollbackL1Tx(tx, fmt.Errorf("failed to reload confirmed ChatGPT memory %q: %w", id, findErr))
+			}
+			if len(rows) != 1 {
+				return result, rollbackL1Tx(tx, fmt.Errorf("confirmed ChatGPT memory %q disappeared", id))
+			}
+			if item, strictErr := strictUserMemoryFromEvent(rows[0]); strictErr == nil && item.UserID == "ren" {
+				changedIDs = append(changedIDs, item.ID)
+			}
+		}
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.chatgpt_l3_candidates_confirmed", "user:ren", "", "", 0, "", map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.chatgpt_l3_candidates_confirmed", "user:ren", "", "", 0, "", map[string]interface{}{
 		"export_id": exportID, "reason": reason, "confirmed": result.Confirmed,
-	}, "chatgpt_export_importer"); err != nil {
+	}, "chatgpt_export_importer")
+	if err != nil {
 		return result, rollbackL1Tx(tx, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return result, rollbackL1Tx(tx, err)
 	}
+	s.notifyUserMemoryMutation("ren", changedIDs, string(auditEventID(auditEntry)))
 	return result, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -35,8 +36,10 @@ const (
 type SessionGroupOwner interface {
 	domainsession.SessionRepository
 	LoadCanonical(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, bool, error)
+	LoadCanonicalForOwner(context.Context, string, string, conversation.ChannelAddress) (domainsession.CanonicalSessionOwnerResolution, error)
 	LoadCanonicalWithCreationIntent(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error)
 	LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, bool, error)
+	LoadOrCreateCanonicalForOwner(context.Context, string, conversation.ChannelAddress, string, time.Time) (domainsession.CanonicalSessionOwnerResolution, error)
 	ReserveCanonicalV2(context.Context, string, conversation.ChannelAddress, string, time.Time) (*domainsession.Session, bool, error)
 	IsCanonicalV2Reserved(context.Context, string, string) (bool, error)
 }
@@ -78,6 +81,7 @@ type sessionTurnDTO struct {
 // values remain bounded JSON values because the domain API is map[string]any.
 type sessionRecordDTO struct {
 	ID             string                     `json:"id"`
+	OwnerID        string                     `json:"owner_id,omitempty"`
 	LogicalDate    string                     `json:"logical_date"`
 	ChannelAddress *sessionAddressDTO         `json:"channel_address"`
 	History        []sessionTurnDTO           `json:"history"`
@@ -112,6 +116,19 @@ type sessionCanonicalReservePayload struct {
 	CreatedAt      time.Time          `json:"created_at"`
 }
 
+type sessionCanonicalOwnerReadPayload struct {
+	ID             string             `json:"id"`
+	OwnerID        string             `json:"owner_id"`
+	ChannelAddress *sessionAddressDTO `json:"channel_address"`
+}
+
+type sessionCanonicalOwnerLookupPayload struct {
+	LogicalDate    string             `json:"logical_date"`
+	ChannelAddress *sessionAddressDTO `json:"channel_address"`
+	OwnerID        string             `json:"owner_id"`
+	CreatedAt      time.Time          `json:"created_at"`
+}
+
 type sessionReservationIDPayload struct {
 	ID      string `json:"id"`
 	OwnerID string `json:"owner_id"`
@@ -135,6 +152,12 @@ type sessionExistsResult struct {
 
 type sessionReservationResult struct {
 	Reserved bool `json:"reserved"`
+}
+
+type sessionCanonicalOwnerResolutionResult struct {
+	Status       domainsession.CanonicalSessionOwnerStatus `json:"status"`
+	BoundOwnerID string                                    `json:"bound_owner_id,omitempty"`
+	Session      *sessionRecordDTO                         `json:"session,omitempty"`
 }
 
 // sessionLoadResultDecoder validates and reconstructs a typed domain result
@@ -242,6 +265,75 @@ type sessionCanonicalReservationResultDecoder struct {
 	creationIntent         *domainsession.CreationIntent
 	expectedLogicalDate    string
 	expectedChannelAddress *conversation.ChannelAddress
+}
+
+type sessionCanonicalOwnerResolutionDecoder struct {
+	resolution             domainsession.CanonicalSessionOwnerResolution
+	expectedOwnerID        string
+	expectedSessionID      string
+	expectedLogicalDate    string
+	expectedChannelAddress *conversation.ChannelAddress
+	allowCreated           bool
+}
+
+func (result *sessionCanonicalOwnerResolutionDecoder) UnmarshalJSON(raw []byte) error {
+	var wire sessionCanonicalOwnerResolutionResult
+	if err := decodeSessionMessage(raw, &wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return errors.New("canonical session owner result is not JSON")
+	}
+	if _, ok := fields["status"]; !ok {
+		return errors.New("canonical session owner result is missing status")
+	}
+	status := wire.Status
+	switch status {
+	case domainsession.CanonicalSessionOwnerMatched, domainsession.CanonicalSessionOwnerCreated:
+		if status == domainsession.CanonicalSessionOwnerCreated && !result.allowCreated {
+			return errors.New("canonical session owner read claims creation")
+		}
+		if _, ok := fields["session"]; !ok || wire.Session == nil {
+			return errors.New("canonical session owner result is missing its session")
+		}
+		if _, ok := fields["bound_owner_id"]; !ok {
+			return errors.New("canonical session owner result is missing its bound owner")
+		}
+		if domainsession.ValidateOwnerID(wire.BoundOwnerID) != nil || wire.BoundOwnerID != result.expectedOwnerID {
+			return errors.New("canonical session owner result has a mismatched owner")
+		}
+		value, err := wire.Session.toDomain()
+		if err != nil || value.OwnerID() != result.expectedOwnerID || value.OwnerID() != wire.BoundOwnerID {
+			return errors.New("canonical session owner result has an invalid owner-bound session")
+		}
+		if result.expectedSessionID != "" && value.ID() != result.expectedSessionID {
+			return errors.New("canonical session owner result identity does not match the request")
+		}
+		if result.expectedLogicalDate != "" && value.LogicalDate() != result.expectedLogicalDate {
+			return errors.New("canonical session owner result date does not match the request")
+		}
+		if result.expectedChannelAddress != nil && value.ChannelAddress() != *result.expectedChannelAddress {
+			return errors.New("canonical session owner result address does not match the request")
+		}
+		result.resolution = domainsession.CanonicalSessionOwnerResolution{
+			Session: value, BoundOwnerID: wire.BoundOwnerID, Status: status,
+		}
+	case domainsession.CanonicalSessionOwnerUnavailable, domainsession.CanonicalSessionOwnerConflict, domainsession.CanonicalSessionOwnerNotFound:
+		if _, ok := fields["session"]; ok || wire.Session != nil {
+			return errors.New("unresolved canonical session owner result contains a session")
+		}
+		if _, ok := fields["bound_owner_id"]; ok || wire.BoundOwnerID != "" {
+			return errors.New("unresolved canonical session owner result contains an owner")
+		}
+		if status == domainsession.CanonicalSessionOwnerNotFound && result.expectedSessionID == "" {
+			return errors.New("canonical natural-key owner lookup cannot be not_found")
+		}
+		result.resolution = domainsession.CanonicalSessionOwnerResolution{Status: status}
+	default:
+		return errors.New("canonical session owner result has an unknown status")
+	}
+	return nil
 }
 
 func (result *sessionCanonicalReservationResultDecoder) UnmarshalJSON(raw []byte) error {
@@ -390,6 +482,27 @@ func RegisterSessionGroup(h *Handler, store SessionGroupOwner) error {
 	}); err != nil {
 		return fmt.Errorf("register canonical session read: %w", err)
 	}
+	if err := h.Register(GroupSession, "load_canonical_for_owner", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload sessionCanonicalOwnerReadPayload
+		if err := decodeSessionMessage(raw, &payload); err != nil || validateSessionID(payload.ID) != nil || domainsession.ValidateOwnerID(payload.OwnerID) != nil {
+			return nil, NewError(ErrorCodeSchemaRejected, "canonical session owner read payload rejected")
+		}
+		address, err := payload.ChannelAddress.toDomain()
+		if err != nil {
+			return nil, NewError(ErrorCodeSchemaRejected, "canonical session owner read payload rejected")
+		}
+		resolution, err := store.LoadCanonicalForOwner(ctx, payload.ID, payload.OwnerID, address)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner canonical owner read failed")
+		}
+		result, err := sessionOwnerResolutionFromDomain(resolution, payload.OwnerID, payload.ID, "", address, false)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned an invalid canonical owner resolution")
+		}
+		return result, nil
+	}); err != nil {
+		return fmt.Errorf("register canonical session owner read: %w", err)
+	}
 	if err := h.Register(GroupSession, "load_canonical_reservation", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
 		var payload sessionCanonicalReadPayload
 		if err := decodeSessionMessage(raw, &payload); err != nil {
@@ -484,7 +597,66 @@ func RegisterSessionGroup(h *Handler, store SessionGroupOwner) error {
 	}); err != nil {
 		return fmt.Errorf("register canonical session lookup: %w", err)
 	}
+	if err := h.Register(GroupSession, "load_or_create_canonical_for_owner", true, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload sessionCanonicalOwnerLookupPayload
+		if err := decodeSessionMessage(raw, &payload); err != nil {
+			return nil, sessionPayloadRejected("canonical session owner lookup payload rejected")
+		}
+		address, err := payload.ChannelAddress.toDomain()
+		if err != nil || domainsession.ValidateLogicalDate(payload.LogicalDate) != nil || domainsession.ValidateOwnerID(payload.OwnerID) != nil || payload.CreatedAt.IsZero() {
+			return nil, sessionPayloadRejected("canonical session owner lookup payload rejected")
+		}
+		resolution, err := store.LoadOrCreateCanonicalForOwner(ctx, payload.LogicalDate, address, payload.OwnerID, payload.CreatedAt)
+		if err != nil {
+			return nil, uncertainSessionOwnerError("canonical owner lookup")
+		}
+		result, err := sessionOwnerResolutionFromDomain(resolution, payload.OwnerID, "", payload.LogicalDate, address, true)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned an invalid canonical owner resolution")
+		}
+		return result, nil
+	}); err != nil {
+		return fmt.Errorf("register canonical session owner lookup: %w", err)
+	}
 	return nil
+}
+
+func sessionOwnerResolutionFromDomain(resolution domainsession.CanonicalSessionOwnerResolution, requestedOwnerID, expectedSessionID, expectedLogicalDate string, expectedAddress conversation.ChannelAddress, allowCreated bool) (sessionCanonicalOwnerResolutionResult, error) {
+	result := sessionCanonicalOwnerResolutionResult{Status: resolution.Status}
+	switch resolution.Status {
+	case domainsession.CanonicalSessionOwnerMatched:
+	case domainsession.CanonicalSessionOwnerCreated:
+		if !allowCreated {
+			return sessionCanonicalOwnerResolutionResult{}, errors.New("read-only canonical owner lookup returned created")
+		}
+	case domainsession.CanonicalSessionOwnerUnavailable, domainsession.CanonicalSessionOwnerConflict:
+	case domainsession.CanonicalSessionOwnerNotFound:
+		if expectedSessionID == "" {
+			return sessionCanonicalOwnerResolutionResult{}, errors.New("natural-key canonical owner lookup returned not_found")
+		}
+	default:
+		return sessionCanonicalOwnerResolutionResult{}, errors.New("canonical owner lookup returned an unknown status")
+	}
+	if resolution.Status != domainsession.CanonicalSessionOwnerMatched && resolution.Status != domainsession.CanonicalSessionOwnerCreated {
+		if resolution.Session != nil || resolution.BoundOwnerID != "" {
+			return sessionCanonicalOwnerResolutionResult{}, errors.New("unresolved canonical owner result contains owner-bound data")
+		}
+		return result, nil
+	}
+	value := resolution.Session
+	if value == nil || domainsession.ValidateOwnerID(resolution.BoundOwnerID) != nil || resolution.BoundOwnerID != requestedOwnerID || value.OwnerID() != requestedOwnerID || value.ChannelAddress() != expectedAddress {
+		return sessionCanonicalOwnerResolutionResult{}, errors.New("canonical owner result identity or provenance does not match the request")
+	}
+	if expectedSessionID != "" && value.ID() != expectedSessionID || expectedLogicalDate != "" && value.LogicalDate() != expectedLogicalDate {
+		return sessionCanonicalOwnerResolutionResult{}, errors.New("canonical owner result does not match the requested identity")
+	}
+	dto, err := sessionRecordFromDomain(value)
+	if err != nil {
+		return sessionCanonicalOwnerResolutionResult{}, err
+	}
+	result.BoundOwnerID = resolution.BoundOwnerID
+	result.Session = dto
+	return result, nil
 }
 
 // SessionRepositoryClient implements the existing session repository and
@@ -504,8 +676,10 @@ var (
 	_ domainsession.SessionRepository = (*SessionRepositoryClient)(nil)
 	_ interface {
 		LoadCanonical(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, bool, error)
+		LoadCanonicalForOwner(context.Context, string, string, conversation.ChannelAddress) (domainsession.CanonicalSessionOwnerResolution, error)
 		LoadCanonicalWithCreationIntent(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error)
 		LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, bool, error)
+		LoadOrCreateCanonicalForOwner(context.Context, string, conversation.ChannelAddress, string, time.Time) (domainsession.CanonicalSessionOwnerResolution, error)
 		ReserveCanonicalV2(context.Context, string, conversation.ChannelAddress, string, time.Time) (*domainsession.Session, bool, error)
 		IsCanonicalV2Reserved(context.Context, string, string) (bool, error)
 	} = (*SessionRepositoryClient)(nil)
@@ -574,6 +748,23 @@ func (s *SessionRepositoryClient) LoadCanonical(ctx context.Context, logicalDate
 	return result.session, result.found, nil
 }
 
+// LoadCanonicalForOwner resolves an opaque SessionID only when the canonical
+// owner and ChannelAddress recorded by the owner match the request.
+func (s *SessionRepositoryClient) LoadCanonicalForOwner(ctx context.Context, id, ownerID string, address conversation.ChannelAddress) (domainsession.CanonicalSessionOwnerResolution, error) {
+	if validateSessionID(id) != nil || domainsession.ValidateOwnerID(ownerID) != nil || address.Validate() != nil {
+		return domainsession.CanonicalSessionOwnerResolution{}, NewError(ErrorCodeSchemaRejected, "canonical session owner read rejected")
+	}
+	addressDTO := sessionAddressFromDomain(address)
+	request := sessionCanonicalOwnerReadPayload{ID: id, OwnerID: ownerID, ChannelAddress: &addressDTO}
+	result := sessionCanonicalOwnerResolutionDecoder{
+		expectedOwnerID: ownerID, expectedSessionID: id, expectedChannelAddress: &address,
+	}
+	if err := s.call(ctx, "load_canonical_for_owner", request, &result); err != nil {
+		return domainsession.CanonicalSessionOwnerResolution{}, err
+	}
+	return result.resolution, nil
+}
+
 // LoadCanonicalWithCreationIntent reads the natural-key session and immutable
 // reservation metadata from the owner without creating session state.
 func (s *SessionRepositoryClient) LoadCanonicalWithCreationIntent(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error) {
@@ -609,6 +800,24 @@ func (s *SessionRepositoryClient) LoadOrCreateCanonical(ctx context.Context, log
 		return nil, false, err
 	}
 	return result.session, result.created, nil
+}
+
+// LoadOrCreateCanonicalForOwner resolves a canonical natural key using an
+// explicit authenticated owner binding. Mutating retries retain the same
+// operation ID through Client.Call until the recorded result is confirmed.
+func (s *SessionRepositoryClient) LoadOrCreateCanonicalForOwner(ctx context.Context, logicalDate string, address conversation.ChannelAddress, ownerID string, createdAt time.Time) (domainsession.CanonicalSessionOwnerResolution, error) {
+	if domainsession.ValidateLogicalDate(logicalDate) != nil || address.Validate() != nil || domainsession.ValidateOwnerID(ownerID) != nil || createdAt.IsZero() {
+		return domainsession.CanonicalSessionOwnerResolution{}, NewError(ErrorCodeSchemaRejected, "canonical session owner lookup rejected")
+	}
+	addressDTO := sessionAddressFromDomain(address)
+	request := sessionCanonicalOwnerLookupPayload{LogicalDate: logicalDate, ChannelAddress: &addressDTO, OwnerID: ownerID, CreatedAt: createdAt}
+	result := sessionCanonicalOwnerResolutionDecoder{
+		expectedOwnerID: ownerID, expectedLogicalDate: logicalDate, expectedChannelAddress: &address, allowCreated: true,
+	}
+	if err := s.call(ctx, "load_or_create_canonical_for_owner", request, &result); err != nil {
+		return domainsession.CanonicalSessionOwnerResolution{}, err
+	}
+	return result.resolution, nil
 }
 
 // ReserveCanonicalV2 records a JSON-owner creation intent before EventStore
@@ -696,6 +905,9 @@ func decodeSessionMessage(raw json.RawMessage, value any) error {
 	if len(raw) == 0 || len(raw) > maxSessionPayloadBytes || !json.Valid(raw) {
 		return errors.New("session payload size or JSON rejected")
 	}
+	if err := rejectSessionJSONFieldAliases(raw, reflect.TypeOf(value)); err != nil {
+		return errors.New("session payload contains duplicate or aliased fields")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
@@ -706,6 +918,120 @@ func decodeSessionMessage(raw json.RawMessage, value any) error {
 		return errors.New("session payload trailing data rejected")
 	}
 	return nil
+}
+
+// rejectSessionJSONFieldAliases mirrors encoding/json's case-insensitive
+// matching for known struct fields while requiring the exact canonical JSON
+// names and rejecting duplicate keys. It follows typed struct fields but does
+// not inspect map values such as Session memory, whose keys are user data.
+func rejectSessionJSONFieldAliases(raw []byte, target reflect.Type) error {
+	for target != nil && target.Kind() == reflect.Pointer {
+		target = target.Elem()
+	}
+	if target == nil {
+		return nil
+	}
+	switch target.Kind() {
+	case reflect.Struct:
+		return rejectSessionJSONObjectFieldAliases(raw, target)
+	case reflect.Slice, reflect.Array:
+		if target.Elem().Kind() == reflect.Uint8 {
+			return nil
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		start, ok := token.(json.Delim)
+		if !ok || start != '[' {
+			return nil
+		}
+		for decoder.More() {
+			var item json.RawMessage
+			if err := decoder.Decode(&item); err != nil {
+				return err
+			}
+			if err := rejectSessionJSONFieldAliases(item, target.Elem()); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	default:
+		return nil
+	}
+}
+
+func rejectSessionJSONObjectFieldAliases(raw []byte, target reflect.Type) error {
+	fieldsByFoldedName := make(map[string]string, target.NumField())
+	fieldTypes := make(map[string]reflect.Type, target.NumField())
+	for index := 0; index < target.NumField(); index++ {
+		field := target.Field(index)
+		if field.PkgPath != "" {
+			continue
+		}
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		folded := foldSessionJSONFieldName(name)
+		fieldsByFoldedName[folded] = name
+		fieldTypes[name] = field.Type
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	start, ok := token.(json.Delim)
+	if !ok || start != '{' {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(fieldsByFoldedName))
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return errors.New("session object key is not a string")
+		}
+		var fieldRaw json.RawMessage
+		if err := decoder.Decode(&fieldRaw); err != nil {
+			return err
+		}
+		canonicalName, known := fieldsByFoldedName[foldSessionJSONFieldName(key)]
+		if !known {
+			continue
+		}
+		if key != canonicalName {
+			return errors.New("session JSON field uses a noncanonical alias")
+		}
+		if _, duplicate := seen[canonicalName]; duplicate {
+			return errors.New("session JSON field is duplicated")
+		}
+		seen[canonicalName] = struct{}{}
+		if err := rejectSessionJSONFieldAliases(fieldRaw, fieldTypes[canonicalName]); err != nil {
+			return err
+		}
+	}
+	_, err = decoder.Token()
+	return err
+}
+
+func foldSessionJSONFieldName(value string) string {
+	bytes := []byte(value)
+	for index, char := range bytes {
+		if char >= 'A' && char <= 'Z' {
+			bytes[index] = char + ('a' - 'A')
+		}
+	}
+	return string(bytes)
 }
 
 func sessionPayloadRejected(message string) error {
@@ -755,6 +1081,7 @@ func sessionRecordFromDomain(value *domainsession.Session) (*sessionRecordDTO, e
 	address := sessionAddressFromDomain(value.ChannelAddress())
 	dto := &sessionRecordDTO{
 		ID:             value.ID(),
+		OwnerID:        value.OwnerID(),
 		LogicalDate:    value.LogicalDate(),
 		ChannelAddress: &address,
 		History:        make([]sessionTurnDTO, 0, value.HistoryCount()),
@@ -885,15 +1212,19 @@ func (dto *sessionRecordDTO) toDomain() (*domainsession.Session, error) {
 		}
 		memory[key] = value
 	}
-	value, err := domainsession.ReconstructCanonicalSession(
-		modulecore.SessionID(dto.ID),
-		dto.LogicalDate,
-		address,
-		history,
-		memory,
-		dto.CreatedAt,
-		dto.UpdatedAt,
-	)
+	var value *domainsession.Session
+	if dto.OwnerID == "" {
+		value, err = domainsession.ReconstructCanonicalSession(
+			modulecore.SessionID(dto.ID), dto.LogicalDate, address, history, memory, dto.CreatedAt, dto.UpdatedAt,
+		)
+	} else {
+		if err := domainsession.ValidateOwnerID(dto.OwnerID); err != nil {
+			return nil, errors.New("session owner binding is not canonical")
+		}
+		value, err = domainsession.ReconstructCanonicalSessionWithOwner(
+			modulecore.SessionID(dto.ID), dto.OwnerID, dto.LogicalDate, address, history, memory, dto.CreatedAt, dto.UpdatedAt,
+		)
+	}
 	if err != nil {
 		return nil, errors.New("session reconstruction rejected")
 	}
@@ -906,6 +1237,9 @@ func (dto *sessionRecordDTO) toDomain() (*domainsession.Session, error) {
 func validateStorageHostSession(value *domainsession.Session) error {
 	if value == nil || validateSessionID(value.ID()) != nil || domainsession.ValidateLogicalDate(value.LogicalDate()) != nil || value.ChannelAddress().Validate() != nil || value.CreatedAt().IsZero() || value.UpdatedAt().Before(value.CreatedAt()) {
 		return errors.New("session identity or timestamps rejected")
+	}
+	if value.OwnerID() != "" && domainsession.ValidateOwnerID(value.OwnerID()) != nil {
+		return errors.New("session owner binding rejected")
 	}
 	if value.HistoryCount() > maxSessionHistoryEntries {
 		return errors.New("session history limit exceeded")

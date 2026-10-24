@@ -3,9 +3,12 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -31,6 +34,14 @@ type messageTTSPusher func(ctx context.Context, sessionID string, route routing.
 // Conversation session, TTS session, and canonical turn IDs remain explicit.
 type messageSpeechPlanPusher func(ctx context.Context, ttsSessionID, conversationSessionID, turnID, speakerID string, plan speech.SpeechPlan) error
 
+// MioRetrievalPort delegates each semantic read to its existing source owner.
+// Implementations must use the authenticated turn scope from ctx/input and
+// return only content that passed the source owner's policy and freshness
+// checks. Web retrieval remains behind the existing policy-checked web owner.
+type MioRetrievalPort interface {
+	Retrieve(ctx context.Context, input domainconversation.TurnInput, request domainagent.MioRetrievalRequest) (domainagent.MioRetrievalResult, error)
+}
+
 type speechPlanRouteObservation struct {
 	Event            string `json:"event"`
 	TurnID           string `json:"turn_id"`
@@ -50,6 +61,280 @@ const (
 	speechPlanCallbackUnavailable = "speech_plan_callback_unavailable"
 )
 
+var (
+	ErrMioRetrievalUnavailable              = errors.New("Mio retrieval source is unavailable")
+	ErrMioRetrievalDenied                   = errors.New("Mio retrieval request was denied")
+	ErrMioRetrievalBudgetExceeded           = domainagent.ErrMioRetrievalBudgetExceeded
+	ErrMioAnswerDeltaSinkFull               = errors.New("Mio answer delta sink is full")
+	ErrMioAnswerDeltaTooLarge               = errors.New("Mio answer delta exceeds the in-memory sink limit")
+	ErrMioFinalResponsePublisherUnavailable = errors.New("guarded Mio final response publisher is unavailable")
+)
+
+type mioFinalResponsePublisher func(context.Context, string, modulecore.TaskID, modulecore.RunID, domainconversation.PreparedChatTurnGuard) (domainconversation.PreparedChatTurnPublicationGuard, error)
+
+type mioFinalResponsePublisherContextKey struct{}
+
+func withMioFinalResponsePublisher(ctx context.Context, publisher mioFinalResponsePublisher) context.Context {
+	if ctx == nil || publisher == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, mioFinalResponsePublisherContextKey{}, publisher)
+}
+
+func mioFinalResponsePublisherFromContext(ctx context.Context) mioFinalResponsePublisher {
+	if ctx == nil {
+		return nil
+	}
+	publisher, _ := ctx.Value(mioFinalResponsePublisherContextKey{}).(mioFinalResponsePublisher)
+	return publisher
+}
+
+const (
+	maxMioRetrievalRounds       = 2
+	maxMioRetrievalRequests     = 2
+	maxMioRetrievalItems        = 8
+	maxMioRetrievalEnvelopeSize = 64 * 1024
+	mioRetrievalSequenceLimit   = 10 * time.Second
+	mioRetrievalDatabaseLimit   = 2 * time.Second
+	mioRetrievalWebLimit        = 8 * time.Second
+)
+
+const (
+	mioAnswerDeltaQueueCapacity = 64
+	mioAnswerDeltaMaxBytes      = 16 * 1024
+)
+
+// mioAnswerDelta is an internal, turn-local projection of one already
+// validated logical answer_delta. It is not a public event or a durable record.
+type mioAnswerDelta struct {
+	TurnID    string
+	TraceID   string
+	TaskID    string
+	RunID     string
+	SessionID string
+	MessageID string
+	Text      string
+}
+
+// MioAnswerDelta is the bounded, turn-local projection exposed to an adapter
+// that opts into authenticated private response streaming. It is transient
+// transport data, not a canonical event or durable record.
+type MioAnswerDelta struct {
+	TurnID    string
+	TraceID   string
+	TaskID    string
+	RunID     string
+	SessionID string
+	MessageID string
+	Text      string
+}
+
+// WithMioAnswerDeltaAdmission opts one ProcessMessage request into a narrow
+// delta callback. The orchestrator still owns publication qualification and
+// invokes the callback only while the exact prepared turn and Session binding
+// are guarded. Adapters should make this callback a bounded nonblocking RAM
+// admission only.
+func WithMioAnswerDeltaAdmission(req ProcessMessageRequest, admit func(MioAnswerDelta, domainconversation.PreparedChatTurnPublicationGuard) (func(bool), error), drain func() error) ProcessMessageRequest {
+	if admit == nil {
+		return req
+	}
+	req.mioAnswerDeltaSink = &mioAnswerDeltaSink{admit: admit, drain: drain}
+	return req
+}
+
+// mioAnswerDeltaSink keeps the opt-in stream seam bounded and nonblocking.
+// Production adapters use admit, which is invoked only after the orchestrator
+// proves the private Session binding. The package-local channel exists only
+// for lifecycle unit tests and is not an external publication surface.
+type mioAnswerDeltaSink struct {
+	deltas chan mioAnswerDelta
+	admit  func(MioAnswerDelta, domainconversation.PreparedChatTurnPublicationGuard) (func(bool), error)
+	drain  func() error
+}
+
+func newMioAnswerDeltaSink() *mioAnswerDeltaSink {
+	return &mioAnswerDeltaSink{deltas: make(chan mioAnswerDelta, mioAnswerDeltaQueueCapacity)}
+}
+
+func (s *mioAnswerDeltaSink) offer(delta mioAnswerDelta) (func(bool), error) {
+	if s == nil {
+		return nil, errors.New("Mio answer delta sink is unavailable")
+	}
+	if len(delta.Text) > mioAnswerDeltaMaxBytes {
+		return nil, ErrMioAnswerDeltaTooLarge
+	}
+	if s.admit != nil {
+		return nil, errors.New("private Mio answer delta admission must use the canonical Session binding owner")
+	}
+	if s.deltas == nil {
+		return nil, errors.New("Mio answer delta sink is unavailable")
+	}
+	select {
+	case s.deltas <- delta:
+		return nil, nil
+	default:
+		return nil, ErrMioAnswerDeltaSinkFull
+	}
+}
+
+type mioEarlyStreamLifecycleContextKey struct{}
+
+type mioEarlyStreamLifecycle struct {
+	mu                 sync.Mutex
+	policyApplied      bool
+	policyDecision     routing.Decision
+	policyContext      context.Context
+	setupErr           error
+	deltasSuppressed   bool
+	prepared           bool
+	actor              string
+	taskID             modulecore.TaskID
+	runID              modulecore.RunID
+	runRecord          LeadAgentRunRecord
+	ttsSessionID       string
+	ttsStarted         bool
+	ownsTTS            bool
+	finishRunAttempted bool
+	finishTTSAttempted bool
+	unregisterRun      func()
+	cancelProvider     context.CancelFunc
+	stopProviderCancel func() bool
+}
+
+type mioEarlyStreamLifecycleSnapshot struct {
+	policyApplied      bool
+	policyDecision     routing.Decision
+	policyContext      context.Context
+	setupErr           error
+	deltasSuppressed   bool
+	prepared           bool
+	actor              string
+	taskID             modulecore.TaskID
+	runID              modulecore.RunID
+	runRecord          LeadAgentRunRecord
+	ttsSessionID       string
+	ttsStarted         bool
+	ownsTTS            bool
+	finishRunAttempted bool
+	finishTTSAttempted bool
+	unregisterRun      func()
+	cancelProvider     context.CancelFunc
+	stopProviderCancel func() bool
+}
+
+func withMioEarlyStreamLifecycle(ctx context.Context, lifecycle *mioEarlyStreamLifecycle) context.Context {
+	if ctx == nil || lifecycle == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, mioEarlyStreamLifecycleContextKey{}, lifecycle)
+}
+
+func mioEarlyStreamLifecycleFromContext(ctx context.Context) *mioEarlyStreamLifecycle {
+	if ctx == nil {
+		return nil
+	}
+	lifecycle, _ := ctx.Value(mioEarlyStreamLifecycleContextKey{}).(*mioEarlyStreamLifecycle)
+	return lifecycle
+}
+
+func (l *mioEarlyStreamLifecycle) snapshot() mioEarlyStreamLifecycleSnapshot {
+	if l == nil {
+		return mioEarlyStreamLifecycleSnapshot{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return mioEarlyStreamLifecycleSnapshot{
+		policyApplied:      l.policyApplied,
+		policyDecision:     l.policyDecision,
+		policyContext:      l.policyContext,
+		setupErr:           l.setupErr,
+		deltasSuppressed:   l.deltasSuppressed,
+		prepared:           l.prepared,
+		actor:              l.actor,
+		taskID:             l.taskID,
+		runID:              l.runID,
+		runRecord:          l.runRecord,
+		ttsSessionID:       l.ttsSessionID,
+		ttsStarted:         l.ttsStarted,
+		ownsTTS:            l.ownsTTS,
+		finishRunAttempted: l.finishRunAttempted,
+		finishTTSAttempted: l.finishTTSAttempted,
+		unregisterRun:      l.unregisterRun,
+		cancelProvider:     l.cancelProvider,
+		stopProviderCancel: l.stopProviderCancel,
+	}
+}
+
+func (l *mioEarlyStreamLifecycle) cachePolicy(decision routing.Decision, ctx context.Context) {
+	if l == nil {
+		return
+	}
+	decision.Evidence = append([]routing.DecisionEvidence(nil), decision.Evidence...)
+	l.mu.Lock()
+	l.policyApplied = true
+	l.policyDecision = decision
+	l.policyContext = ctx
+	l.deltasSuppressed = decision.Route != routing.RouteCHAT
+	l.mu.Unlock()
+}
+
+func (l *mioEarlyStreamLifecycle) fail(err error) {
+	if l == nil || err == nil {
+		return
+	}
+	l.mu.Lock()
+	if l.setupErr == nil {
+		l.setupErr = err
+	}
+	l.mu.Unlock()
+}
+
+func (l *mioEarlyStreamLifecycle) markPrepared(actor string, taskID modulecore.TaskID, runID modulecore.RunID, runRecord LeadAgentRunRecord, ctx context.Context, ttsSessionID string, ttsStarted, ownsTTS bool, unregisterRun func()) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.prepared = true
+	l.actor = actor
+	l.taskID = taskID
+	l.runID = runID
+	l.runRecord = runRecord
+	l.policyContext = ctx
+	l.ttsSessionID = ttsSessionID
+	l.ttsStarted = ttsStarted
+	l.ownsTTS = ownsTTS
+	l.unregisterRun = unregisterRun
+	l.mu.Unlock()
+}
+
+func (l *mioEarlyStreamLifecycle) markRunFinishAttempted() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.finishRunAttempted = true
+	l.mu.Unlock()
+}
+
+func (l *mioEarlyStreamLifecycle) markTTSFinishAttempted() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.finishTTSAttempted = true
+	l.mu.Unlock()
+}
+
+func (l *mioEarlyStreamLifecycle) setProviderCancellation(cancel context.CancelFunc, stop func() bool) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.cancelProvider = cancel
+	l.stopProviderCancel = stop
+	l.mu.Unlock()
+}
+
 type messageRouteDispatcher struct {
 	mio               MioAgent
 	shiroChat         MioAgent
@@ -62,6 +347,7 @@ type messageRouteDispatcher struct {
 	withStreamHooks   messageStreamHook
 	pushTTS           messageTTSPusher
 	pushSpeechPlan    messageSpeechPlanPusher
+	mioRetrieval      MioRetrievalPort
 	executeAutonomous autonomousRouteExecutor
 	canonicalEvents   CanonicalEventRecorder
 	nativeCoding      NativeCodingAdmission
@@ -101,6 +387,21 @@ func (d *messageRouteDispatcher) SetShiroChatAgent(chat MioAgent) {
 // orchestrator lifecycle owns wiring this seam to its active TTS bridge.
 func (d *messageRouteDispatcher) SetSpeechPlanPusher(pusher messageSpeechPlanPusher) {
 	d.pushSpeechPlan = pusher
+}
+
+// SetMioRetrievalPort installs the owner-mediated read seam for Mio's
+// same-turn CHAT continuation.
+func (d *messageRouteDispatcher) SetMioRetrievalPort(port MioRetrievalPort) {
+	d.mioRetrieval = port
+}
+
+// SetMioRetrievalPort configures the owner-mediated read seam before the
+// orchestrator begins processing turns.
+func (o *MessageOrchestrator) SetMioRetrievalPort(port MioRetrievalPort) {
+	if o == nil || o.routeDispatcher == nil {
+		return
+	}
+	o.routeDispatcher.SetMioRetrievalPort(port)
 }
 
 func (d *messageRouteDispatcher) SetSpeechPlanEnabled(enabled bool) {
@@ -197,6 +498,18 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 	sessionID, channel, chatID := turnInputMetadata(input)
 	taskIDText := taskID.String()
 	speaker := chatSpeakerForTurnInput(input)
+	finalPublisher := mioFinalResponsePublisherFromContext(ctx)
+	guardedMioFinal := finalPublisher != nil && chatDraft != nil && speaker == "mio"
+	abortUnpublished := func(stream *streamBundle) {
+		if stream == nil {
+			return
+		}
+		if guardedMioFinal {
+			stream.Abort()
+			return
+		}
+		stream.Finalize(ctx, "")
+	}
 	turntiming.Mark(ctx, turntiming.PointAgentStartPublicationStarted)
 	d.emit("agent.start", speaker, "user", "考え中...", "CHAT", taskIDText, sessionID, channel, chatID)
 	turntiming.Mark(ctx, turntiming.PointAgentStartPublicationEnded)
@@ -219,8 +532,12 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 			ChatWithDraft(context.Context, domainconversation.TurnInput, *domainagent.MioChatDraft) (string, error)
 		})
 		if !ok {
-			ttsStream.Finalize(ctx, "")
+			abortUnpublished(ttsStream)
 			return "", fmt.Errorf("Mio cannot adopt the prepared CHAT reply")
+		}
+		if err := d.completeMioRetrieval(ctx, input, chatDraft); err != nil {
+			abortUnpublished(ttsStream)
+			return "", err
 		}
 		resp, err = chatAgent.ChatWithDraft(streamCtx, input, chatDraft)
 	} else {
@@ -230,11 +547,47 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 		if speechPlanResult != nil {
 			d.logSpeechPlanObservation(string(input.TurnID()), speaker, *speechPlanResult, "")
 		} else if d.speechPlanEnabled {
-			ttsStream.Finalize(ctx, "")
+			abortUnpublished(ttsStream)
 			d.logSpeechPlanObservation(string(input.TurnID()), speaker, speech.Result{FallbackReason: speechPlanCallbackUnavailable}, "")
 		}
-		ttsStream.Finalize(ctx, "")
+		abortUnpublished(ttsStream)
 		return resp, err
+	}
+	if guardedMioFinal {
+		preparedGuard := chatDraft.TransferPreparedChatTurnGuard()
+		if preparedGuard == nil {
+			abortUnpublished(ttsStream)
+			return resp, fmt.Errorf("%w: prepared Mio turn guard was not transferable", ErrMioFinalResponsePublisherUnavailable)
+		}
+		defer preparedGuard.Release()
+		identity, identityErr := domainexecution.IdentityFromContext(ctx)
+		if identityErr != nil || identity.TaskID != taskID || identity.TraceID != input.TraceID() {
+			abortUnpublished(ttsStream)
+			if identityErr != nil {
+				return resp, fmt.Errorf("%w: read final execution identity: %v", ErrMioFinalResponsePublisherUnavailable, identityErr)
+			}
+			return resp, fmt.Errorf("%w: final execution identity does not match the adopted turn", ErrMioFinalResponsePublisherUnavailable)
+		}
+		qualification, publishErr := finalPublisher(ctx, resp, taskID, identity.RunID, preparedGuard)
+		if publishErr != nil {
+			if qualification != nil {
+				qualification.Release()
+			}
+			abortUnpublished(ttsStream)
+			return resp, publishErr
+		}
+		if qualification != nil {
+			defer qualification.Release()
+		}
+		var validateTTS func(func() error) error
+		if qualification != nil {
+			validateTTS = qualification.Use
+		}
+		ttsStream.FinalizeWithAdmission(ctx, resp, validateTTS)
+		if streamErr := ttsStream.Err(); streamErr != nil {
+			return resp, fmt.Errorf("Mio final response TTS handoff failed: %w", streamErr)
+		}
+		return resp, nil
 	}
 	d.emit("agent.response", speaker, "user", resp, "CHAT", taskIDText, sessionID, channel, chatID)
 	if speechPlanResult == nil {
@@ -265,6 +618,199 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 	}
 	d.logSpeechPlanObservation(string(input.TurnID()), speaker, result, routeFallbackReason)
 	return resp, nil
+}
+
+type mioRetrievalBudget struct {
+	cache   map[string]domainagent.MioRetrievalResult
+	ordered []domainagent.MioRetrievalResult
+	items   int
+}
+
+type mioRetrievalPending struct {
+	key     string
+	request domainagent.MioRetrievalRequest
+	result  domainagent.MioRetrievalResult
+	err     error
+}
+
+func (d *messageRouteDispatcher) completeMioRetrieval(ctx context.Context, input domainconversation.TurnInput, draft *domainagent.MioChatDraft) error {
+	outcome, ok := draft.Outcome()
+	if !ok || outcome.Kind != domainagent.MioTurnOutcomeRetrieve {
+		return nil
+	}
+	if d.mioRetrieval == nil {
+		return ErrMioRetrievalUnavailable
+	}
+	continuation, ok := d.mio.(interface {
+		ContinueChatDraft(context.Context, domainconversation.TurnInput, *domainagent.MioChatDraft, []domainagent.MioRetrievalResult) (domainagent.MioTurnOutcome, error)
+	})
+	if !ok {
+		return errors.New("Mio cannot continue a retrieved CHAT draft")
+	}
+	sequenceCtx, cancel := context.WithTimeout(ctx, mioRetrievalSequenceLimit)
+	defer cancel()
+	budget := mioRetrievalBudget{cache: make(map[string]domainagent.MioRetrievalResult)}
+	for round := 0; outcome.Kind == domainagent.MioTurnOutcomeRetrieve; round++ {
+		if round >= maxMioRetrievalRounds {
+			return domainagent.ErrMioRetrievalRoundsExceeded
+		}
+		if err := sequenceCtx.Err(); err != nil {
+			return err
+		}
+		results, err := d.retrieveMioResults(sequenceCtx, input, outcome.Requests, &budget)
+		if err != nil {
+			return err
+		}
+		outcome, err = continuation.ContinueChatDraft(sequenceCtx, input, draft, results)
+		if err != nil {
+			return err
+		}
+	}
+	if outcome.Kind != domainagent.MioTurnOutcomeAnswer {
+		return fmt.Errorf("%w: final CHAT continuation returned %q", domainagent.ErrInvalidMioTurnOutcome, outcome.Kind)
+	}
+	return nil
+}
+
+func (d *messageRouteDispatcher) retrieveMioResults(ctx context.Context, input domainconversation.TurnInput, requests []domainagent.MioRetrievalRequest, budget *mioRetrievalBudget) ([]domainagent.MioRetrievalResult, error) {
+	if d.mioRetrieval == nil {
+		return nil, ErrMioRetrievalUnavailable
+	}
+	if len(requests) == 0 || len(requests) > maxMioRetrievalRequests {
+		return nil, fmt.Errorf("%w: retrieval round has %d requests", domainagent.ErrInvalidMioTurnOutcome, len(requests))
+	}
+	pendingByKey := make(map[string]*mioRetrievalPending, len(requests))
+	newPending := make([]*mioRetrievalPending, 0, len(requests))
+	for index, request := range requests {
+		key, err := mioRetrievalRequestKey(request)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode request %d: %v", domainagent.ErrInvalidMioTurnOutcome, index+1, err)
+		}
+		if _, ok := budget.cache[key]; ok {
+			continue
+		}
+		if _, ok := pendingByKey[key]; ok {
+			continue
+		}
+		pending := &mioRetrievalPending{key: key, request: request}
+		pendingByKey[key] = pending
+		newPending = append(newPending, pending)
+	}
+
+	fetchCtx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	for _, pending := range newPending {
+		pending := pending
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			limit := mioRetrievalDatabaseLimit
+			if pending.request.SourceKind == domainagent.MioRetrievalSourceWebSearch {
+				limit = mioRetrievalWebLimit
+			}
+			requestCtx, requestCancel := context.WithTimeout(fetchCtx, limit)
+			defer requestCancel()
+			pending.result, pending.err = d.mioRetrieval.Retrieve(requestCtx, input, pending.request)
+			if pending.err == nil {
+				pending.err = validateMioRetrievalResponse(pending.request, pending.result)
+			}
+			if pending.err != nil {
+				cancel()
+			}
+		}()
+	}
+	workers.Wait()
+	cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var canceledErr error
+	for _, pending := range newPending {
+		if pending.err != nil {
+			if errors.Is(pending.err, context.Canceled) {
+				if canceledErr == nil {
+					canceledErr = pending.err
+				}
+				continue
+			}
+			return nil, fmt.Errorf("Mio retrieval source %s: %w", pending.request.SourceKind, pending.err)
+		}
+	}
+	if canceledErr != nil {
+		return nil, fmt.Errorf("Mio retrieval canceled after a peer failure: %w", canceledErr)
+	}
+	for _, pending := range newPending {
+		result := cloneMioRetrievalResult(pending.result)
+		budget.cache[pending.key] = result
+		budget.ordered = append(budget.ordered, cloneMioRetrievalResult(result))
+		budget.items += len(result.Items)
+		if budget.items > maxMioRetrievalItems {
+			return nil, ErrMioRetrievalBudgetExceeded
+		}
+	}
+	envelope, err := json.Marshal(budget.ordered)
+	if err != nil {
+		return nil, fmt.Errorf("encode Mio retrieval budget: %w", err)
+	}
+	if len(envelope) > maxMioRetrievalEnvelopeSize {
+		return nil, ErrMioRetrievalBudgetExceeded
+	}
+	// A continuation only receives newly fetched evidence. Results already in
+	// the retained draft prompt are not duplicated when Mio repeats a request.
+	newResults := make([]domainagent.MioRetrievalResult, 0, len(newPending))
+	for _, pending := range newPending {
+		newResults = append(newResults, cloneMioRetrievalResult(pending.result))
+	}
+	return newResults, nil
+}
+
+func validateMioRetrievalResponse(request domainagent.MioRetrievalRequest, result domainagent.MioRetrievalResult) error {
+	if result.SourceKind != request.SourceKind {
+		return fmt.Errorf("%w: response source %q does not match request source %q", domainagent.ErrInvalidMioRetrievalResult, result.SourceKind, request.SourceKind)
+	}
+	switch result.Status {
+	case domainagent.MioRetrievalStatusDenied, domainagent.MioRetrievalStatusBlocked:
+		return fmt.Errorf("%w: source status %q", ErrMioRetrievalDenied, result.Status)
+	case domainagent.MioRetrievalStatusFound, domainagent.MioRetrievalStatusPartial:
+		if len(result.Items) == 0 {
+			return fmt.Errorf("%w: status %q has no items", domainagent.ErrInvalidMioRetrievalResult, result.Status)
+		}
+		for index, item := range result.Items {
+			if strings.TrimSpace(item.Text) == "" {
+				return fmt.Errorf("%w: item %d has empty content", domainagent.ErrInvalidMioRetrievalResult, index+1)
+			}
+		}
+	case domainagent.MioRetrievalStatusNotFound, domainagent.MioRetrievalStatusDeleted, domainagent.MioRetrievalStatusUnavailable:
+		if len(result.Items) != 0 {
+			return fmt.Errorf("%w: status %q carries items", domainagent.ErrInvalidMioRetrievalResult, result.Status)
+		}
+	default:
+		return fmt.Errorf("%w: unknown status %q", domainagent.ErrInvalidMioRetrievalResult, result.Status)
+	}
+	return nil
+}
+
+func mioRetrievalRequestKey(request domainagent.MioRetrievalRequest) (string, error) {
+	request.Query = strings.ToLower(strings.Join(strings.Fields(request.Query), " "))
+	request.InformationNeeded = strings.ToLower(strings.Join(strings.Fields(request.InformationNeeded), " "))
+	request.References = append([]string(nil), request.References...)
+	for index := range request.References {
+		request.References[index] = strings.TrimSpace(request.References[index])
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func cloneMioRetrievalResult(result domainagent.MioRetrievalResult) domainagent.MioRetrievalResult {
+	result.Items = append([]domainagent.MioRetrievalItem(nil), result.Items...)
+	result.Provenance = append([]domainagent.MioRetrievalProvenance(nil), result.Provenance...)
+	for index := range result.Provenance {
+		result.Provenance[index].Reference.EvidenceEventIDs = append([]string(nil), result.Provenance[index].Reference.EvidenceEventIDs...)
+	}
+	return result
 }
 
 func (d *messageRouteDispatcher) generateChatResponse(ctx context.Context, input domainconversation.TurnInput, speaker string) (string, error) {

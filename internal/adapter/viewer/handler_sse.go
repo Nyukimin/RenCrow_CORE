@@ -61,6 +61,23 @@ type SessionPublicEventCursorResolver interface {
 // owner-supplied event boundary. Filtered events still advance the stream
 // cursor so a skipped v2 event cannot be replayed later as a duplicate.
 func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, filter SSEEventFilter) {
+	h.handleSSEWithFilterAndPrivateMioDeltas(w, r, filter, "")
+}
+
+// HandleSSEWithFilterAndPrivateMioDeltas adds one owner-keyed, live-only Mio
+// delta lane to the canonical event stream. The caller must provide the owner
+// only after Viewer CMD authentication has succeeded. Delta frames bypass the
+// canonical per-event filter because their EventHub fanout revalidates the
+// exact private Session binding immediately before delivery.
+func (h *EventHub) HandleSSEWithFilterAndPrivateMioDeltas(w http.ResponseWriter, r *http.Request, filter SSEEventFilter, ownerID string) {
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(ownerID) != ownerID {
+		http.Error(w, "authenticated private event owner is required", http.StatusForbidden)
+		return
+	}
+	h.handleSSEWithFilterAndPrivateMioDeltas(w, r, filter, ownerID)
+}
+
+func (h *EventHub) handleSSEWithFilterAndPrivateMioDeltas(w http.ResponseWriter, r *http.Request, filter SSEEventFilter, ownerID string) {
 	if filter == nil {
 		http.Error(w, "event stream policy is unavailable", http.StatusServiceUnavailable)
 		return
@@ -129,7 +146,19 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 	if resetReason != "" {
 		lastSeen = 0
 	}
-	ch, controlCh, replaySnapshot, controlSnapshot := h.SubscribeForReplayWithControl()
+	var ch chan []byte
+	var controlCh chan IdleChatControlSnapshot
+	var replaySnapshot EventReplaySnapshot
+	var controlSnapshot *IdleChatControlSnapshot
+	if ownerID != "" {
+		ch, controlCh, replaySnapshot, controlSnapshot = h.SubscribeForReplayWithControlAndPrivateMioDeltas(ownerID)
+		if ch == nil {
+			http.Error(w, "private event subscription is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	} else {
+		ch, controlCh, replaySnapshot, controlSnapshot = h.SubscribeForReplayWithControl()
+	}
 	defer h.Unsubscribe(ch)
 	replayCursor := lastSeen
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -251,18 +280,42 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 			if err := json.Unmarshal(data, &ev); err != nil {
 				continue
 			}
+			if ownerID != "" && isPrivateMioDeltaForOwner(ev, ownerID) {
+				if !h.ClaimOwnerScopedLiveEvent(ownerID, ch, data) {
+					continue
+				}
+				if err := writeSSEEvent(w, ev); err != nil {
+					return
+				}
+				flusher.Flush()
+				continue
+			}
+			ownerScopedFinal := isMioCommandFinal(ev)
+			if ownerScopedFinal && !isPrivateMioFinalForOwner(ev, ownerID) {
+				h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
+				continue
+			}
 			if ev.EventSeq > 0 {
 				if ev.EventSeq <= replayCursor {
+					if ownerScopedFinal {
+						h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
+					}
 					continue
 				}
 				liveSequence = ev.EventSeq
 				include, filterErr := filter(r.Context(), ev)
 				if filterErr != nil {
+					if ownerScopedFinal {
+						h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
+					}
 					log.Printf("[Viewer] SSE live event filter failed: %v", filterErr)
 					return
 				}
 				if !include {
 					replayCursor = liveSequence
+					if ownerScopedFinal {
+						h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
+					}
 					continue
 				}
 			} else {
@@ -271,10 +324,23 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 				}
 				include, filterErr := filter(r.Context(), ev)
 				if filterErr != nil {
+					if ownerScopedFinal {
+						h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
+					}
 					log.Printf("[Viewer] SSE live event filter failed: %v", filterErr)
 					return
 				}
 				if !include {
+					if ownerScopedFinal {
+						h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
+					}
+					continue
+				}
+			}
+			if ownerScopedFinal {
+				claimed, ticketFound := h.ClaimOwnerScopedLiveEventStatus(ownerID, ch, data)
+				if ticketFound && !claimed {
+					h.DiscardOwnerScopedLiveEvent(ownerID, ch, data)
 					continue
 				}
 			}
@@ -287,6 +353,21 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 			}
 		}
 	}
+}
+
+func isPrivateMioDeltaForOwner(event orchestrator.OrchestratorEvent, ownerID string) bool {
+	return strings.TrimSpace(ownerID) != "" && strings.TrimSpace(ownerID) == ownerID &&
+		event.Type == "agent.response_delta" && event.From == "mio" && event.To == "user" && event.Route == "CHAT" &&
+		event.EventSeq == 0 && event.Channel == "viewer" && event.ChannelAddress == "cmd:"+ownerID &&
+		event.EventID.Validate() == nil && event.TraceID.Validate() == nil && event.TaskID.Validate() == nil &&
+		event.RunID.Validate() == nil && event.SessionID.Validate() == nil && event.TurnID.Validate() == nil &&
+		event.MessageID.Validate() == nil && event.Content != "" && len(event.Content) <= privateMioDeltaMaxContentBytes
+}
+
+func isMioCommandFinal(event orchestrator.OrchestratorEvent) bool {
+	return event.Type == "agent.response" && event.From == "mio" && event.To == "user" && event.Route == "CHAT" &&
+		event.EventSeq > 0 && event.Channel == "viewer" && strings.HasPrefix(event.ChannelAddress, "cmd:") &&
+		event.ActorKind == "agent" && event.ActorID == "mio"
 }
 
 // IsResponseFirstViewerEvent identifies v2 public message envelopes that must

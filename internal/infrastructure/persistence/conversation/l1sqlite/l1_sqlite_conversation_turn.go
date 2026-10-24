@@ -268,6 +268,23 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 			)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversation_turn_outbox_claim ON conversation_turn_outbox(status, lease_expires_at, created_at, turn_id, target)`,
+		`CREATE TABLE IF NOT EXISTS conversation_head_reset_receipt (
+			operation_id TEXT NOT NULL PRIMARY KEY CHECK(length(operation_id) BETWEEN 1 AND 128),
+			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND lower(payload_sha256) = payload_sha256 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+			session_id TEXT NOT NULL CHECK(length(session_id) > 0),
+			owner_id TEXT NOT NULL CHECK(length(owner_id) BETWEEN 1 AND 1024),
+			previous_thread_id TEXT NOT NULL CHECK(length(previous_thread_id) > 0),
+			previous_thread_seq INTEGER NOT NULL CHECK(previous_thread_seq > 0),
+			previous_thread_kind TEXT NOT NULL CHECK(previous_thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
+			active_thread_id TEXT NOT NULL CHECK(length(active_thread_id) > 0),
+			active_thread_seq INTEGER NOT NULL CHECK(active_thread_seq > 0),
+			active_thread_kind TEXT NOT NULL CHECK(active_thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
+			domain TEXT NOT NULL CHECK(length(domain) > 0 AND length(domain) <= 1024),
+			reset_at TIMESTAMP NOT NULL,
+			CHECK(previous_thread_id <> active_thread_id),
+			CHECK(active_thread_seq = previous_thread_seq + 1),
+			CHECK(previous_thread_kind = active_thread_kind)
+		)`,
 		`CREATE TABLE IF NOT EXISTS conversation_turn_operation_receipt (
 			op_id TEXT NOT NULL PRIMARY KEY CHECK(length(op_id) BETWEEN 1 AND 128),
 			operation TEXT NOT NULL CHECK(operation IN ('outbox_claim', 'outbox_claim_next', 'complete', 'fail')),
@@ -1178,6 +1195,14 @@ func (s *L1SQLiteStore) LoadConversationThreadProjection(ctx context.Context, se
 }
 
 func loadConversationThreadProjection(ctx context.Context, query conversationThreadProjectionReader, sessionID string, threadID modulecore.ThreadID) ([]L1MemoryEvent, error) {
+	return loadConversationThreadProjectionMode(ctx, query, sessionID, threadID, false)
+}
+
+func loadConversationThreadProjectionAllowEmpty(ctx context.Context, query conversationThreadProjectionReader, sessionID string, threadID modulecore.ThreadID) ([]L1MemoryEvent, error) {
+	return loadConversationThreadProjectionMode(ctx, query, sessionID, threadID, true)
+}
+
+func loadConversationThreadProjectionMode(ctx context.Context, query conversationThreadProjectionReader, sessionID string, threadID modulecore.ThreadID, allowEmpty bool) ([]L1MemoryEvent, error) {
 	rows, err := query.QueryContext(ctx, `
 SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
@@ -1207,15 +1232,18 @@ WHERE session_id = ? AND thread_id = ?
 	if err := rows.Err(); err != nil {
 		return nil, domconv.ErrConversationTurnInternal
 	}
+	if allowEmpty && len(events) == 0 {
+		return events, nil
+	}
 	if err := validateConversationThreadProjection(sessionID, threadID, events); err != nil {
 		return nil, err
 	}
 	return events, nil
 }
 
-// LatestConversationThreadReference returns the highest canonical thread
-// sequence observed for a session. Row order is only a deterministic tie-break
-// when multiple rows carry the same sequence; unthreaded rows are ignored.
+// LatestConversationThreadReference returns the durable active head when one
+// exists, including an empty reset head. Older sessions without active metadata
+// fall back to their latest canonical message thread; unthreaded rows are ignored.
 func (s *L1SQLiteStore) LatestConversationThreadReference(ctx context.Context, sessionID string) (modulecore.ThreadID, modulecore.ThreadSeq, modulecore.ThreadKind, bool, error) {
 	if s == nil || s.db == nil {
 		return "", 0, "", false, domconv.ErrConversationTurnUnavailable
@@ -1228,10 +1256,16 @@ func (s *L1SQLiteStore) LatestConversationThreadReference(ctx context.Context, s
 	var rawSeq int64
 	err := s.db.QueryRowContext(ctx, `
 SELECT thread_id, thread_seq, thread_kind
+FROM conversation_active_thread
+WHERE session_id = ?`, sessionID).Scan(&rawID, &rawSeq, &rawKind)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = s.db.QueryRowContext(ctx, `
+SELECT thread_id, thread_seq, thread_kind
 FROM l1_memory_event
 WHERE session_id = ? AND thread_id <> ''
 	ORDER BY thread_seq DESC, rowid DESC
 LIMIT 1`, sessionID).Scan(&rawID, &rawSeq, &rawKind)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, "", false, nil
 	}
@@ -1245,6 +1279,225 @@ LIMIT 1`, sessionID).Scan(&rawID, &rawSeq, &rawKind)
 		return "", 0, "", false, domconv.ErrConversationTurnInvalid
 	}
 	return threadID, threadSeq, threadKind, true, nil
+}
+
+// ResetConversationHead atomically advances the durable active thread to an
+// empty generation. Existing messages and turn records remain retained; any
+// unfinished outbox work must finish before the generation can change.
+func (s *L1SQLiteStore) ResetConversationHead(ctx context.Context, request domconv.ConversationHeadResetRequest) (domconv.ConversationHeadResetReceipt, error) {
+	normalized, err := domconv.NormalizeConversationHeadResetRequest(request)
+	if err != nil {
+		return domconv.ConversationHeadResetReceipt{}, err
+	}
+	payloadHash, err := domconv.ConversationHeadResetPayloadSHA256(normalized)
+	if err != nil {
+		return domconv.ConversationHeadResetReceipt{}, domconv.ErrConversationTurnInvalid
+	}
+	base := domconv.ConversationHeadResetReceipt{
+		OperationID: normalized.OperationID, SessionID: normalized.SessionID, OwnerID: normalized.OwnerID,
+		PayloadSHA256: payloadHash,
+	}
+	if ctx == nil {
+		return base, domconv.ErrConversationTurnInvalid
+	}
+	if s == nil || s.db == nil {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+	rollback := func(cause error) (domconv.ConversationHeadResetReceipt, error) {
+		_ = tx.Rollback()
+		if cause != nil {
+			return base, cause
+		}
+		return base, domconv.ErrConversationTurnInternal
+	}
+
+	var storedHash, storedSessionID, storedOwnerID string
+	var previousID, previousKind, activeID, activeKind, storedDomain string
+	var previousSeq, activeSeq int64
+	var resetAt time.Time
+	err = tx.QueryRowContext(ctx, `
+SELECT payload_sha256, session_id, owner_id, previous_thread_id, previous_thread_seq, previous_thread_kind,
+       active_thread_id, active_thread_seq, active_thread_kind, domain, reset_at
+FROM conversation_head_reset_receipt
+WHERE operation_id = ?`, normalized.OperationID).Scan(
+		&storedHash, &storedSessionID, &storedOwnerID, &previousID, &previousSeq, &previousKind,
+		&activeID, &activeSeq, &activeKind, &storedDomain, &resetAt,
+	)
+	if err == nil {
+		if storedHash != payloadHash || storedSessionID != normalized.SessionID || storedOwnerID != normalized.OwnerID {
+			return rollback(domconv.ErrConversationTurnConflict)
+		}
+		previous := domconv.ConversationTurnThreadIdentity{ID: modulecore.ThreadID(previousID), Seq: modulecore.ThreadSeq(previousSeq), Kind: modulecore.ThreadKind(previousKind)}
+		active := domconv.ConversationTurnThreadIdentity{ID: modulecore.ThreadID(activeID), Seq: modulecore.ThreadSeq(activeSeq), Kind: modulecore.ThreadKind(activeKind)}
+		if validateL1BoundThreadTuple(previous.ID, previous.Seq, previous.Kind) != nil ||
+			validateL1BoundThreadTuple(active.ID, active.Seq, active.Kind) != nil ||
+			previous.ID != normalized.ExpectedThreadID || previous.Seq != normalized.ExpectedThreadSeq ||
+			active.ID == previous.ID || active.Seq != previous.Seq+1 || active.Kind != previous.Kind ||
+			storedDomain == "" || !utf8.ValidString(storedDomain) || strings.IndexByte(storedDomain, 0) >= 0 || resetAt.IsZero() {
+			return rollback(domconv.ErrConversationTurnInvalid)
+		}
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			return base, domconv.ErrConversationTurnInternal
+		}
+		replay := base
+		replay.PreviousThread = previous
+		replay.ActiveThread = active
+		replay.Domain = storedDomain
+		replay.ResetAt = resetAt
+		replay.IdempotentReplay = true
+		return replay, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return rollback(domconv.ErrConversationTurnInternal)
+	}
+
+	var currentID, currentKind, domain string
+	var currentSeq int64
+	var messageCount int64
+	if err := tx.QueryRowContext(ctx, `
+SELECT thread_id, thread_seq, thread_kind, domain, message_count
+FROM conversation_active_thread
+WHERE session_id = ?`, normalized.SessionID).Scan(&currentID, &currentSeq, &currentKind, &domain, &messageCount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return rollback(domconv.ErrConversationTurnConflict)
+		}
+		return rollback(domconv.ErrConversationTurnInternal)
+	}
+	current := domconv.ConversationTurnThreadIdentity{ID: modulecore.ThreadID(currentID), Seq: modulecore.ThreadSeq(currentSeq), Kind: modulecore.ThreadKind(currentKind)}
+	if validateL1BoundThreadTuple(current.ID, current.Seq, current.Kind) != nil || messageCount < 0 || messageCount > 12 ||
+		domain == "" || !utf8.ValidString(domain) || strings.IndexByte(domain, 0) >= 0 {
+		return rollback(domconv.ErrConversationTurnInvalid)
+	}
+	if current.ID != normalized.ExpectedThreadID || current.Seq != normalized.ExpectedThreadSeq {
+		return rollback(domconv.ErrConversationTurnConflict)
+	}
+	if current.Seq == modulecore.ThreadSeq(1<<63-1) {
+		return rollback(domconv.ErrConversationTurnConflict)
+	}
+	var pendingOutbox int
+	if err := tx.QueryRowContext(ctx, `
+SELECT EXISTS(
+	SELECT 1 FROM conversation_turn_outbox
+	WHERE session_id = ? AND status <> 'completed'
+)`, normalized.SessionID).Scan(&pendingOutbox); err != nil {
+		return rollback(domconv.ErrConversationTurnInternal)
+	}
+	if pendingOutbox != 0 && pendingOutbox != 1 {
+		return rollback(domconv.ErrConversationTurnInvalid)
+	}
+	if pendingOutbox == 1 {
+		return rollback(domconv.ErrConversationTurnConflict)
+	}
+
+	active := domconv.ConversationTurnThreadIdentity{
+		ID: modulecore.NewThreadID(), Seq: current.Seq + 1, Kind: current.Kind,
+	}
+	if active.ID == current.ID || validateL1BoundThreadTuple(active.ID, active.Seq, active.Kind) != nil {
+		return rollback(domconv.ErrConversationTurnInternal)
+	}
+	now := time.Now().UTC()
+	update, err := tx.ExecContext(ctx, `
+UPDATE conversation_active_thread
+SET thread_id = ?, thread_seq = ?, message_count = 0, updated_at = ?
+WHERE session_id = ? AND thread_id = ? AND thread_seq = ?`, active.ID, active.Seq, now,
+		normalized.SessionID, normalized.ExpectedThreadID, normalized.ExpectedThreadSeq)
+	if err != nil {
+		return rollback(domconv.ErrConversationTurnInternal)
+	}
+	affected, err := update.RowsAffected()
+	if err != nil {
+		return rollback(domconv.ErrConversationTurnInternal)
+	}
+	if affected != 1 {
+		return rollback(domconv.ErrConversationTurnConflict)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO conversation_head_reset_receipt (
+	operation_id, payload_sha256, session_id, owner_id,
+	previous_thread_id, previous_thread_seq, previous_thread_kind,
+	active_thread_id, active_thread_seq, active_thread_kind, domain, reset_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, normalized.OperationID, payloadHash, normalized.SessionID, normalized.OwnerID,
+		current.ID, current.Seq, current.Kind, active.ID, active.Seq, active.Kind, domain, now); err != nil {
+		return rollback(domconv.ErrConversationTurnInternal)
+	}
+	if err := tx.Commit(); err != nil {
+		return base, domconv.ErrConversationTurnInternal
+	}
+	base.PreviousThread = current
+	base.ActiveThread = active
+	base.Domain = domain
+	base.ResetAt = now
+	return base, nil
+}
+
+// LoadActiveConversationHead reads metadata and retained messages in one
+// read-only snapshot. OwnerID is the caller's already validated session scope.
+func (s *L1SQLiteStore) LoadActiveConversationHead(ctx context.Context, sessionID, ownerID string) (domconv.ConversationHeadSnapshot, error) {
+	if ctx == nil {
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInvalid
+	}
+	if s == nil || s.readDB == nil {
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnUnavailable
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || modulecore.SessionID(sessionID).Validate() != nil || domconv.ValidateConversationHeadOwnerID(ownerID) != nil {
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInvalid
+	}
+	tx, err := s.readDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnUnavailable
+	}
+	defer tx.Rollback()
+	var threadID, threadKind, domain string
+	var threadSeq, messageCount int64
+	var updatedAt time.Time
+	if err := tx.QueryRowContext(ctx, `
+SELECT thread_id, thread_seq, thread_kind, domain, message_count, updated_at
+FROM conversation_active_thread
+WHERE session_id = ?`, sessionID).Scan(&threadID, &threadSeq, &threadKind, &domain, &messageCount, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domconv.ConversationHeadSnapshot{}, domconv.ErrThreadNotFound
+		}
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInternal
+	}
+	thread := domconv.ConversationTurnThreadIdentity{ID: modulecore.ThreadID(threadID), Seq: modulecore.ThreadSeq(threadSeq), Kind: modulecore.ThreadKind(threadKind)}
+	if validateL1BoundThreadTuple(thread.ID, thread.Seq, thread.Kind) != nil || messageCount < 0 || messageCount > 12 ||
+		domain == "" || !utf8.ValidString(domain) || strings.IndexByte(domain, 0) >= 0 || updatedAt.IsZero() {
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInvalid
+	}
+	events, err := loadConversationThreadProjectionAllowEmpty(ctx, tx, sessionID, thread.ID)
+	if err != nil {
+		return domconv.ConversationHeadSnapshot{}, err
+	}
+	if int64(len(events)) != messageCount {
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInvalid
+	}
+	for _, event := range events {
+		if event.ThreadSeq != thread.Seq || event.ThreadKind != thread.Kind {
+			return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInvalid
+		}
+		if eventDomain, ok := event.Meta["domain"].(string); !ok || eventDomain != domain {
+			return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInvalid
+		}
+	}
+	messages := make([]domconv.ConversationHeadMessage, len(events))
+	for index, event := range events {
+		messages[index] = domconv.ConversationHeadMessage{
+			ID: modulecore.MessageID(event.ID), Speaker: event.Speaker, Message: event.Message,
+			Meta: event.Meta, CreatedAt: event.CreatedAt, UpdatedAt: event.UpdatedAt,
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domconv.ConversationHeadSnapshot{}, domconv.ErrConversationTurnInternal
+	}
+	return domconv.ConversationHeadSnapshot{
+		SessionID: sessionID, OwnerID: ownerID, Thread: thread, Domain: domain,
+		MessageCount: messageCount, Messages: messages, UpdatedAt: updatedAt,
+	}, nil
 }
 
 // LoadActiveConversationThreadProjection resolves the active thread ID from

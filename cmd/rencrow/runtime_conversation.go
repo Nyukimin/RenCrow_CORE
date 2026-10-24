@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -25,18 +27,20 @@ import (
 )
 
 type conversationRuntime struct {
-	Engine                conversation.ConversationEngine
-	Manager               *conversationpersistence.RealConversationManager
-	L1Store               *l1sqlite.L1SQLiteStore
-	ChatL1Store           conversationpersistence.L1ConversationStore
-	AcceptedOPSInputStore conversation.AcceptedOPSInputStore
-	ArchiveStore          *archivesqlite.ArchiveSQLiteStore
-	ChatArchiveStore      conversationpersistence.ConversationArchiveStore
-	UserMemoryStore       domainagent.UserMemoryManager
-	Closer                conversationRuntimeCloser
-	ArchiveCloser         conversationRuntimeCloser // nil when Closer owns archive/L1 shutdown
-	WebGatherFetcher      tools.WebGatherFetcher
-	ProfilePromotion      *memorypromotionapp.Service
+	Engine                 conversation.ConversationEngine
+	Manager                *conversationpersistence.RealConversationManager
+	L1Store                *l1sqlite.L1SQLiteStore
+	ChatL1Store            conversationpersistence.L1ConversationStore
+	AcceptedOPSInputStore  conversation.AcceptedOPSInputStore
+	CategoryRecallRegistry *conversation.DeterministicCategoryRecallRegistry
+	PreparedRecallRuntime  *conversationpersistence.PreparedRecallRuntime
+	ArchiveStore           *archivesqlite.ArchiveSQLiteStore
+	ChatArchiveStore       conversationpersistence.ConversationArchiveStore
+	UserMemoryStore        domainagent.UserMemoryManager
+	Closer                 conversationRuntimeCloser
+	ArchiveCloser          conversationRuntimeCloser // nil when Closer owns archive/L1 shutdown
+	WebGatherFetcher       tools.WebGatherFetcher
+	ProfilePromotion       *memorypromotionapp.Service
 }
 
 type conversationRuntimeCloser interface {
@@ -56,6 +60,7 @@ func buildConversationRuntime(
 	var l1Store *l1sqlite.L1SQLiteStore
 	var chatL1Store conversationpersistence.L1ConversationStore
 	var acceptedOPSInputStore conversation.AcceptedOPSInputStore
+	var preparedRecallRuntime *conversationpersistence.PreparedRecallRuntime
 	var archiveStore *archivesqlite.ArchiveSQLiteStore
 	var chatArchiveStore conversationpersistence.ConversationArchiveStore
 	var userMemoryStore domainagent.UserMemoryManager
@@ -80,6 +85,15 @@ func buildConversationRuntime(
 		l1Store, err = l1sqlite.NewL1SQLiteStore(cfg.Storage.Databases.ConversationL1)
 		if err != nil {
 			log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
+		}
+		if authenticatedOwnerID := configuredLocalAgentOpsPrincipal(cfg); authenticatedOwnerID != "" {
+			preparedRecallRuntime, err = conversationpersistence.NewPreparedRecallRuntime(authenticatedOwnerID, l1Store)
+			if err != nil {
+				log.Printf("  Prepared Recall: unavailable (runtime initialization failed): %v", err)
+				preparedRecallRuntime = nil
+			} else {
+				l1Store.WithUserMemoryMutationCallback(preparedRecallRuntime.HandleUserMemoryMutation)
+			}
 		}
 		chatL1Store = l1Store
 		userMemoryStore = l1Store
@@ -109,6 +123,15 @@ func buildConversationRuntime(
 		log.Printf("  L1 SQLite: %s", cfg.Storage.Databases.ConversationL1)
 	}
 	logStartupPhase("chatgpt_import_reconcile", reconcileStartedAt)
+	if preparedRecallRuntime != nil {
+		warmCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := preparedRecallRuntime.Warm(warmCtx); err != nil {
+			log.Printf("  Prepared Recall: unavailable (initial warm failed): %v", err)
+		} else {
+			log.Printf("  Prepared Recall: ready for configured LocalAgentOps user")
+		}
+		cancel()
+	}
 	// Conversation Archive is a CORE-owned L2 boundary for user-memory
 	// archive/receipt routes. It must be available with standard L1-only
 	// startup; advanced Redis/vector conversation is not a prerequisite.
@@ -217,7 +240,7 @@ func buildConversationRuntime(
 		engine := conversationpersistence.NewRealConversationEngine(
 			realMgr,
 			mioPersona,
-		).WithDetector(detector)
+		).WithDetector(detector).WithPreparedRecallRuntime(preparedRecallRuntime)
 		if categoryRecallRegistry != nil {
 			engine = engine.WithCategoryRecallRegistry(categoryRecallRegistry).WithCategoryRecallScope("public")
 			log.Printf("  Category Recall Registry: enabled")
@@ -251,7 +274,7 @@ func buildConversationRuntime(
 			engine := conversationpersistence.NewRealConversationEngine(
 				l1Manager,
 				mioPersona,
-			).WithUserMemoryStore(userMemoryStore, ownerID)
+			).WithUserMemoryStore(userMemoryStore, ownerID).WithPreparedRecallRuntime(preparedRecallRuntime)
 			if categoryRecallRegistry != nil {
 				engine = engine.WithCategoryRecallRegistry(categoryRecallRegistry).WithCategoryRecallScope("public")
 				log.Printf("  Category Recall Registry: enabled")
@@ -321,28 +344,59 @@ func buildConversationRuntime(
 			log.Printf("Daily source brief direct URL fetch enabled without L1 staging; web_gather search disabled because no provider is configured")
 		}
 	}
-	return conversationRuntime{
-		Engine:                convEngine,
-		Manager:               realMgr,
-		L1Store:               l1Store,
-		ChatL1Store:           chatL1Store,
-		AcceptedOPSInputStore: acceptedOPSInputStore,
-		ArchiveStore:          archiveStore,
-		ChatArchiveStore:      chatArchiveStore,
-		UserMemoryStore:       userMemoryStore,
-		Closer: func() conversationRuntimeCloser {
-			if realMgr != nil {
-				return realMgr
-			}
-			if l1Store != nil {
-				return l1Store
-			}
-			return nil
-		}(),
-		ArchiveCloser:    conversationRuntimeArchiveCloser(realMgr, archiveStore),
-		WebGatherFetcher: dailySourceFetcher,
-		ProfilePromotion: profilePromotion,
+	var closer conversationRuntimeCloser
+	if realMgr != nil {
+		closer = realMgr
+	} else if l1Store != nil {
+		closer = l1Store
 	}
+	closer = conversationRuntimeCloserWithPreparedRecall(preparedRecallRuntime, closer)
+
+	return conversationRuntime{
+		Engine:                 convEngine,
+		Manager:                realMgr,
+		L1Store:                l1Store,
+		ChatL1Store:            chatL1Store,
+		AcceptedOPSInputStore:  acceptedOPSInputStore,
+		CategoryRecallRegistry: categoryRecallRegistry,
+		PreparedRecallRuntime:  preparedRecallRuntime,
+		ArchiveStore:           archiveStore,
+		ChatArchiveStore:       chatArchiveStore,
+		UserMemoryStore:        userMemoryStore,
+		Closer:                 closer,
+		ArchiveCloser:          conversationRuntimeArchiveCloser(realMgr, archiveStore),
+		WebGatherFetcher:       dailySourceFetcher,
+		ProfilePromotion:       profilePromotion,
+	}
+}
+
+func conversationRuntimeCloserWithPreparedRecall(preparedRecall, underlying conversationRuntimeCloser) conversationRuntimeCloser {
+	if preparedRecall == nil {
+		return underlying
+	}
+	return &preparedRecallConversationCloser{preparedRecall: preparedRecall, underlying: underlying}
+}
+
+type preparedRecallConversationCloser struct {
+	preparedRecall conversationRuntimeCloser
+	underlying     conversationRuntimeCloser
+	once           sync.Once
+	err            error
+}
+
+func (c *preparedRecallConversationCloser) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.once.Do(func() {
+		if c.preparedRecall != nil {
+			c.err = errors.Join(c.err, c.preparedRecall.Close())
+		}
+		if c.underlying != nil {
+			c.err = errors.Join(c.err, c.underlying.Close())
+		}
+	})
+	return c.err
 }
 
 func configuredLocalAgentOpsPrincipal(cfg *config.Config) string {

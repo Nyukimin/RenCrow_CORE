@@ -107,6 +107,13 @@ type conversationTurnL1Store interface {
 	LoadActiveConversationThreadProjection(context.Context, string) ([]l1sqlite.L1MemoryEvent, error)
 }
 
+// conversationHeadL1Store is the narrow durable reset/read boundary. Session
+// ownership is verified by the conversation manager before it supplies OwnerID.
+type conversationHeadL1Store interface {
+	LoadActiveConversationHead(context.Context, string, string) (conversation.ConversationHeadSnapshot, error)
+	ResetConversationHead(context.Context, conversation.ConversationHeadResetRequest) (conversation.ConversationHeadResetReceipt, error)
+}
+
 type conversationThreadArchiveStore interface {
 	GetThreadSummary(context.Context, modulecore.ThreadID) (*conversation.ThreadSummary, error)
 }
@@ -120,4 +127,5 @@ var _ archiveStoreIface = (*archivesqlite.ArchiveSQLiteStore)(nil)
 var _ vectordbStoreIface = (*vectordb.VectorDBStore)(nil)
 var _ l1StoreIface = (*l1sqlite.L1SQLiteStore)(nil)
 var _ conversationTurnL1Store = (*l1sqlite.L1SQLiteStore)(nil)
+var _ conversationHeadL1Store = (*l1sqlite.L1SQLiteStore)(nil)
 var _ conversationThreadArchiveStore = (*archivesqlite.ArchiveSQLiteStore)(nil)

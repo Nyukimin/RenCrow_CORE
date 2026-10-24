@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -297,6 +298,9 @@ func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task
 	if m.expectedCriteriaRevision != "" && (draft.Route == domaintask.RouteGeneral || draft.Route == domaintask.RouteOperations) {
 		draft.ExpectedCriteriaRevision = m.expectedCriteriaRevision
 	}
+	if err := bindOriginPublicationToResolvedSession(ctx, &draft); err != nil {
+		return domaintask.Task{}, err
+	}
 	if err := draft.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
@@ -333,6 +337,26 @@ func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task
 		return domaintask.Task{}, err
 	}
 	return draft, nil
+}
+
+func bindOriginPublicationToResolvedSession(ctx context.Context, draft *domaintask.Task) error {
+	if draft == nil {
+		return errors.New("Task draft is required")
+	}
+	var expected *domaintask.OriginPublicationProvenance
+	if binding, ok := domainconversation.SessionBindingFromContext(ctx); ok &&
+		binding.ValidateForPublication() == nil && binding.SessionID() == draft.OriginSessionID {
+		provenance, err := domaintask.NewOriginPublicationProvenance(binding)
+		if err != nil {
+			return fmt.Errorf("resolve Task origin publication provenance: %w", err)
+		}
+		expected = &provenance
+	}
+	if draft.OriginPublication != nil && (expected == nil || *draft.OriginPublication != *expected) {
+		return errors.New("Task origin publication provenance does not match the validated SessionBinding")
+	}
+	draft.OriginPublication = expected
+	return nil
 }
 
 // RecordRouting persists the orchestrator route and the event that produced it.

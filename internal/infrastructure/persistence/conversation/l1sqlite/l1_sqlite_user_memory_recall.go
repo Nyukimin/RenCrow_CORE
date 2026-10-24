@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
@@ -26,6 +27,279 @@ func ownerScopeForRecall(ctx context.Context, requestID, ownerID string) (domain
 		return domaintool.ToolExecutionScope{}, domainmemory.ErrUserMemoryOwnerForbidden
 	}
 	return scope, nil
+}
+
+func chatOwnerScopeForRecall(ctx context.Context, ownerID string) error {
+	scope, ok := domaintool.ToolExecutionScopeFromContext(ctx)
+	if !ok || scope.Validate() != nil || scope.AuthenticatedUserID != ownerID || !scope.Allows(domaintool.DataScopeUser) || scope.Allows(domaintool.DataScopeInternal) {
+		return domainmemory.ErrUserMemoryOwnerForbidden
+	}
+	userProof, ok := domaintool.AuthenticatedHTTPUserScopeFromContext(ctx)
+	if !ok || userProof.Validate() != nil || userProof.ActorKind != domaintool.ActorKindUser || userProof.AuthenticationSource != domaintool.AuthenticationSourceHTTP || userProof.ActorID != ownerID || userProof.AuthenticatedUserID != ownerID || !userProof.Allows(domaintool.DataScopeUser) {
+		return domainmemory.ErrUserMemoryOwnerForbidden
+	}
+	switch scope.ActorKind {
+	case domaintool.ActorKindUser:
+		if scope.AuthenticationSource != domaintool.AuthenticationSourceHTTP || scope.ActorID != ownerID {
+			return domainmemory.ErrUserMemoryOwnerForbidden
+		}
+	case domaintool.ActorKindAgent:
+		if scope.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || scope.ActorID != "mio" || (scope.AgentRole != "chat" && scope.AgentRole != "conversation") {
+			return domainmemory.ErrUserMemoryOwnerForbidden
+		}
+	default:
+		return domainmemory.ErrUserMemoryOwnerForbidden
+	}
+	return nil
+}
+
+func normalizeUserMemoryChatReadRequest(request domainmemory.UserMemoryChatReadRequest) (domainmemory.UserMemoryChatReadRequest, error) {
+	if strings.TrimSpace(request.OwnerID) != request.OwnerID {
+		return domainmemory.UserMemoryChatReadRequest{}, domainmemory.ErrUserMemoryOwnerInvalid
+	}
+	request.OwnerID = strings.TrimSpace(request.OwnerID)
+	request.Query = strings.TrimSpace(request.Query)
+	request.Persona = strings.ToLower(strings.TrimSpace(request.Persona))
+	if request.Persona == "" {
+		request.Persona = "mio"
+	}
+	if request.OwnerID == "" || !utf8.ValidString(request.Query) || request.Query == "" || len([]rune(request.Query)) > 512 || request.Persona != "mio" {
+		return domainmemory.UserMemoryChatReadRequest{}, domainmemory.ErrUserMemoryOwnerInvalid
+	}
+	if _, err := BuildL1Namespace(NamespaceKindUser, request.OwnerID); err != nil {
+		return domainmemory.UserMemoryChatReadRequest{}, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerInvalid, err)
+	}
+	if err := request.SessionID.Validate(); err != nil {
+		return domainmemory.UserMemoryChatReadRequest{}, fmt.Errorf("%w: invalid chat session ID", domainmemory.ErrUserMemoryOwnerInvalid)
+	}
+	if err := request.TurnID.Validate(); err != nil {
+		return domainmemory.UserMemoryChatReadRequest{}, fmt.Errorf("%w: invalid chat turn ID", domainmemory.ErrUserMemoryOwnerInvalid)
+	}
+	if err := request.TraceID.Validate(); err != nil {
+		return domainmemory.UserMemoryChatReadRequest{}, fmt.Errorf("%w: invalid chat trace ID", domainmemory.ErrUserMemoryOwnerInvalid)
+	}
+	if err := request.RootTaskID.Validate(); err != nil {
+		return domainmemory.UserMemoryChatReadRequest{}, fmt.Errorf("%w: invalid chat root task ID", domainmemory.ErrUserMemoryOwnerInvalid)
+	}
+	if string(request.TurnID) == string(request.TraceID) || string(request.TurnID) == string(request.RootTaskID) || string(request.TraceID) == string(request.RootTaskID) {
+		return domainmemory.UserMemoryChatReadRequest{}, domainmemory.ErrUserMemoryOwnerInvalid
+	}
+	if request.Limit <= 0 {
+		request.Limit = domainmemory.UserMemoryRecallDefaultLimit
+	}
+	if request.Limit > domainmemory.UserMemoryRecallMaxLimit || len(request.References) > domainmemory.UserMemoryRecallMaxReferences {
+		return domainmemory.UserMemoryChatReadRequest{}, domainmemory.ErrUserMemoryOwnerInvalid
+	}
+	if len(request.References) > 0 {
+		return domainmemory.UserMemoryChatReadRequest{}, domainmemory.ErrUserMemoryRecallReferencesUnsupported
+	}
+	return request, nil
+}
+
+func (s *L1SQLiteStore) readAndRankUserMemories(ctx context.Context, ownerID, query, persona string, limit int) ([]domainmemory.UserMemoryRecallDecision, error) {
+	memories, err := s.OwnerListUserMemories(ctx, ownerID, "", true, domainmemory.UserMemoryRecallMaxScan)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range memories {
+		if item.UserID != ownerID || item.Namespace != NamespaceKindUser+":"+ownerID {
+			return nil, domainmemory.ErrUserMemoryOwnerForbidden
+		}
+	}
+	if persona == "" {
+		return domainmemory.RankUserMemoriesForRecall(query, memories, limit), nil
+	}
+	return domainmemory.RankUserMemoriesForRecallForPersona(query, memories, limit, persona), nil
+}
+
+// readAndRankChatUserMemories applies Mio's recall eligibility in SQLite
+// before the bounded candidate LIMIT. The owner-facing list/recall path keeps
+// its existing newest-row window; chat must not let newer ineligible rows
+// hide an older confirmed memory.
+func (s *L1SQLiteStore) readAndRankChatUserMemories(ctx context.Context, ownerID, query string, limit int) ([]domainmemory.UserMemoryRecallDecision, bool, error) {
+	memories, hasMore, err := s.listEligibleChatUserMemories(ctx, ownerID, domainmemory.UserMemoryRecallMaxScan)
+	if err != nil {
+		return nil, false, err
+	}
+	decisions := domainmemory.RankUserMemoriesForRecallForPersona(query, memories, limit, "mio")
+	for _, decision := range decisions {
+		if decision.Status != domainmemory.UserMemoryRecallStatusInjected && decision.Status != domainmemory.UserMemoryRecallStatusBudgetDropped {
+			return nil, false, fmt.Errorf("%w: chat UserMemory eligibility query returned an ineligible row", domainmemory.ErrUserMemoryOwnerUnavailable)
+		}
+	}
+	return decisions, hasMore, nil
+}
+
+func (s *L1SQLiteStore) listEligibleChatUserMemories(ctx context.Context, ownerID string, limit int) ([]domainmemory.UserMemory, bool, error) {
+	if s == nil || s.db == nil {
+		return nil, false, domainmemory.ErrUserMemoryOwnerUnavailable
+	}
+	if limit <= 0 || limit > domainmemory.UserMemoryRecallMaxScan {
+		return nil, false, domainmemory.ErrUserMemoryOwnerInvalid
+	}
+	query := `
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event
+WHERE namespace = ? AND speaker = ? AND layer = ?
+  AND memory_state IN (?, ?)
+  AND COALESCE(json_extract(meta_json, '$.active'), 1) = 1
+  AND trim(COALESCE(json_extract(meta_json, '$.superseded_by'), '')) = ''
+  AND lower(trim(COALESCE(json_extract(meta_json, '$.lifecycle_status'), ''))) <> 'decayed'
+  AND lower(trim(COALESCE(json_extract(meta_json, '$.sensitivity'), 'normal'))) = 'normal'
+  AND lower(trim(COALESCE(json_extract(meta_json, '$.scope'), 'all_personas'))) IN ('', 'all', 'all_personas', 'global', 'mio', 'mio_only')
+ORDER BY created_at DESC, rowid DESC
+LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, query,
+		NamespaceKindUser+":"+ownerID, string(domconv.SpeakerMemory), MemoryLayerL1,
+		domainmemory.MemoryStateConfirmed, domainmemory.MemoryStatePinned, limit+1,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to query eligible chat UserMemory candidates: %w", err)
+	}
+	defer rows.Close()
+	events, err := scanL1Events(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
+	memories := make([]domainmemory.UserMemory, 0, len(events))
+	for _, event := range events {
+		item, strictErr := strictUserMemoryFromEvent(event)
+		if strictErr != nil || item.UserID != ownerID || item.Namespace != NamespaceKindUser+":"+ownerID {
+			return nil, false, fmt.Errorf("%w: selected chat UserMemory row is invalid", domainmemory.ErrUserMemoryOwnerUnavailable)
+		}
+		memories = append(memories, *item)
+	}
+	return memories, hasMore, nil
+}
+
+// ReadUserMemoriesForChat returns a bounded owner-scoped selection for the
+// current Mio turn. It reuses the owner recall ranking, echoes canonical IDs,
+// and returns source provenance for a later capability guard. It does not
+// create recall traces, prompt-injection events, receipts, or IDs.
+func (s *L1SQLiteStore) ReadUserMemoriesForChat(ctx context.Context, request domainmemory.UserMemoryChatReadRequest) (domainmemory.UserMemoryChatReadResult, error) {
+	if ctx == nil {
+		return domainmemory.UserMemoryChatReadResult{}, domainmemory.ErrUserMemoryOwnerInvalid
+	}
+	request, err := normalizeUserMemoryChatReadRequest(request)
+	if err != nil {
+		return domainmemory.UserMemoryChatReadResult{}, err
+	}
+	if err := chatOwnerScopeForRecall(ctx, request.OwnerID); err != nil {
+		return domainmemory.UserMemoryChatReadResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return domainmemory.UserMemoryChatReadResult{}, fmt.Errorf("%w: chat UserMemory read cancelled: %w", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+	}
+
+	decisions, hasMore, err := s.readAndRankChatUserMemories(ctx, request.OwnerID, request.Query, request.Limit)
+	if err != nil {
+		if errors.Is(err, domainmemory.ErrUserMemoryOwnerForbidden) {
+			return domainmemory.UserMemoryChatReadResult{}, err
+		}
+		return domainmemory.UserMemoryChatReadResult{}, fmt.Errorf("%w: failed to read chat UserMemory candidates: %w", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+	}
+	selected := make([]domainmemory.UserMemoryRecallDecision, 0, request.Limit)
+	for _, decision := range decisions {
+		if decision.Selected {
+			selected = append(selected, decision)
+		}
+	}
+	references, err := s.readChatUserMemorySourceReferences(ctx, request.OwnerID, request.SessionID, selected)
+	if err != nil {
+		return domainmemory.UserMemoryChatReadResult{}, err
+	}
+	result := domainmemory.UserMemoryChatReadResult{
+		OwnerID: request.OwnerID, SessionID: request.SessionID, TurnID: request.TurnID,
+		TraceID: request.TraceID, RootTaskID: request.RootTaskID, Persona: request.Persona,
+		TotalCandidates: len(decisions), HasMore: hasMore, Items: make([]domainmemory.UserMemoryChatRecallItem, 0, len(selected)),
+	}
+	for _, decision := range selected {
+		projection := domainmemory.UserMemoryOwnerRecallItem{
+			UserMemoryOwnerView: domainmemory.UserMemoryOwnerViewFromMemory(decision.Item),
+			Score:               decision.Score,
+		}
+		result.Items = append(result.Items, domainmemory.UserMemoryChatRecallItem{Item: projection, Reference: references[decision.Item.ID]})
+	}
+	return result, nil
+}
+
+func (s *L1SQLiteStore) readChatUserMemorySourceReferences(ctx context.Context, ownerID string, sessionID modulecore.SessionID, selected []domainmemory.UserMemoryRecallDecision) (map[string]domainmemory.UserMemoryChatRecallSourceReference, error) {
+	references := make(map[string]domainmemory.UserMemoryChatRecallSourceReference, len(selected))
+	if len(selected) == 0 {
+		return references, nil
+	}
+	if len(selected) > domainmemory.UserMemoryRecallMaxLimit {
+		return nil, domainmemory.ErrUserMemoryOwnerInvalid
+	}
+	queryDB := s.readDB
+	if queryDB == nil {
+		queryDB = s.db
+	}
+	if queryDB == nil {
+		return nil, domainmemory.ErrUserMemoryOwnerUnavailable
+	}
+	ids := make(map[string]domainmemory.UserMemoryRecallDecision, len(selected))
+	args := []interface{}{NamespaceKindUser + ":" + ownerID, string(domconv.SpeakerMemory), MemoryLayerL1}
+	for _, decision := range selected {
+		if decision.Item.ID == "" || len(decision.Item.EvidenceEventIDs) == 0 || len(decision.Item.EvidenceEventIDs) > domainmemory.UserMemoryRecallMaxEvidenceReferences {
+			return nil, fmt.Errorf("%w: selected UserMemory has missing or excessive source references", domainmemory.ErrUserMemoryOwnerUnavailable)
+		}
+		ids[decision.Item.ID] = decision
+		args = append(args, decision.Item.ID)
+	}
+	query := `
+SELECT id, namespace, source, updated_at
+FROM l1_memory_event
+WHERE namespace = ? AND speaker = ? AND layer = ? AND id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(selected)), ",") + `)
+ORDER BY id ASC
+LIMIT ?`
+	args = append(args, len(selected)+1)
+	rows, err := queryDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to read chat UserMemory provenance: %w", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, namespace, source string
+		var updatedAt time.Time
+		if err := rows.Scan(&id, &namespace, &source, &updatedAt); err != nil {
+			return nil, fmt.Errorf("%w: failed to scan chat UserMemory provenance: %w", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+		}
+		decision, ok := ids[id]
+		if !ok || namespace != NamespaceKindUser+":"+ownerID || strings.TrimSpace(source) == "" || !decision.Item.UpdatedAt.Equal(updatedAt) {
+			return nil, fmt.Errorf("%w: chat UserMemory provenance no longer matches the selected owner projection", domainmemory.ErrUserMemoryOwnerUnavailable)
+		}
+		evidenceIDs := append([]string(nil), decision.Item.EvidenceEventIDs...)
+		for _, evidenceID := range evidenceIDs {
+			if strings.TrimSpace(evidenceID) == "" {
+				return nil, fmt.Errorf("%w: selected UserMemory has an empty evidence reference", domainmemory.ErrUserMemoryOwnerUnavailable)
+			}
+		}
+		references[id] = domainmemory.UserMemoryChatRecallSourceReference{
+			OwnerID: ownerID, SessionID: sessionID, MemoryID: id, Namespace: namespace,
+			SourceType: "user_memory", Source: source, EvidenceEventIDs: evidenceIDs,
+			CreatedByEventID: decision.Item.CreatedByEventID, UpdatedByEventID: decision.Item.UpdatedByEventID,
+			PersonaScope: decision.Item.Scope, State: decision.Item.State, Sensitivity: decision.Item.Sensitivity,
+			Active: decision.Item.Active, SupersededBy: decision.Item.SupersededBy,
+			UpdatedAt:    updatedAt.UTC(),
+			OwnerVersion: updatedAt.UTC().Format(time.RFC3339Nano),
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: failed to iterate chat UserMemory provenance: %w", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("%w: failed to close chat UserMemory provenance: %w", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+	}
+	if len(references) != len(selected) {
+		return nil, fmt.Errorf("%w: chat UserMemory source reference is missing", domainmemory.ErrUserMemoryOwnerUnavailable)
+	}
+	return references, nil
 }
 
 // OwnerRecallUserMemories performs the owner-only deterministic recall and
@@ -68,8 +342,11 @@ func (s *L1SQLiteStore) OwnerRecallUserMemories(ctx context.Context, requestID, 
 		return domainmemory.UserMemoryOwnerRecallResult{}, fmt.Errorf("%w: failed to start owner recall trace: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 
-	memories, err := s.OwnerListUserMemories(ctx, ownerID, "", true, domainmemory.UserMemoryRecallMaxScan)
+	decisions, err := s.readAndRankUserMemories(ctx, ownerID, query, "", limit)
 	if err != nil {
+		if errors.Is(err, domainmemory.ErrUserMemoryOwnerForbidden) {
+			return domainmemory.UserMemoryOwnerRecallResult{}, err
+		}
 		failure := domconv.RecallTraceItemRecord{
 			ItemID:        traceIDText + ":source-failure",
 			TraceID:       traceIDText,
@@ -85,13 +362,6 @@ func (s *L1SQLiteStore) OwnerRecallUserMemories(ctx context.Context, requestID, 
 		}
 		return domainmemory.UserMemoryOwnerRecallResult{}, fmt.Errorf("%w: failed to read owner memories: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
-	for _, item := range memories {
-		if item.UserID != ownerID || item.Namespace != NamespaceKindUser+":"+ownerID {
-			return domainmemory.UserMemoryOwnerRecallResult{}, domainmemory.ErrUserMemoryOwnerForbidden
-		}
-	}
-
-	decisions := domainmemory.RankUserMemoriesForRecall(query, memories, limit)
 	selected := make([]domainmemory.UserMemoryOwnerRecallItem, 0, limit)
 	traceItems := make([]domconv.RecallTraceItemRecord, 0, len(decisions))
 	for i, decision := range decisions {

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -212,10 +213,11 @@ func TestRenCrowTTSBridgePushSpeechPlanPostsAndPublishesUtterancesInOrder(t *tes
 		HTTPBaseURL: server.URL,
 		OutputDir:   outputDir,
 		VoiceID:     "mio",
-		OnChunkReady: func(string, string, string, int, string, string, string, string, string) {
+		OnChunkReady: func(string, string, string, string, int, string, string, string, string, string, domainconversation.SessionBinding) error {
 			legacyCallbackCount++
+			return nil
 		},
-		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) {
+		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) error {
 			if err := latch.MarkStarted(chunk.UtteranceIndex); err != nil {
 				t.Errorf("MarkStarted(%d): %v", chunk.UtteranceIndex, err)
 			}
@@ -225,6 +227,7 @@ func TestRenCrowTTSBridgePushSpeechPlanPostsAndPublishesUtterancesInOrder(t *tes
 			mu.Lock()
 			defer mu.Unlock()
 			speechReady = append(speechReady, chunk)
+			return nil
 		},
 	})
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
@@ -369,7 +372,7 @@ func TestRenCrowTTSBridgeUsesLocalPlaybackSinkForSpeechPlan(t *testing.T) {
 		OutputDir:          t.TempDir(),
 		DownloadAudio:      true,
 		Sink:               sink,
-		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) { ready <- chunk },
+		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) error { ready <- chunk; return nil },
 	})
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-local-speech", CharacterID: "mio", VoiceID: "mio"}); err != nil {
 		t.Fatal(err)
@@ -506,12 +509,13 @@ func TestRenCrowTTSBridgeLimitsLookaheadAndReleasesSynthesisGateDuringPlaybackWa
 		HTTPBaseURL: server.URL,
 		OutputDir:   t.TempDir(),
 		Sink:        sink,
-		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) {
+		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) error {
 			if chunk.TurnID == turnA {
 				readyA <- chunk
-				return
+				return nil
 			}
 			readyB <- chunk
+			return nil
 		},
 	})
 	for _, sessionID := range []string{"tts-plan-a", "tts-plan-b"} {
@@ -635,7 +639,7 @@ func TestRenCrowTTSBridgeCancellationDuringPlaybackWaitDropsRemainingUtterances(
 		HTTPBaseURL:        server.URL,
 		OutputDir:          t.TempDir(),
 		Sink:               sink,
-		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) { ready <- chunk },
+		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) error { ready <- chunk; return nil },
 	})
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-cancel-wait", CharacterID: "mio", VoiceID: "mio"}); err != nil {
 		t.Fatal(err)
@@ -693,7 +697,7 @@ func TestRenCrowTTSBridgePlaybackErrorDropsRemainingUtterances(t *testing.T) {
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL:        server.URL,
 		OutputDir:          t.TempDir(),
-		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) { ready <- chunk },
+		OnSpeechChunkReady: func(chunk SpeechPlanChunkReady) error { ready <- chunk; return nil },
 	})
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-error-wait", CharacterID: "mio", VoiceID: "mio"}); err != nil {
 		t.Fatal(err)
@@ -926,8 +930,9 @@ func TestRenCrowTTSBridgePushSpeechPlanCancellationSuppressesLateAudio(t *testin
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: server.URL,
 		OutputDir:   outputDir,
-		OnSpeechChunkReady: func(SpeechPlanChunkReady) {
+		OnSpeechChunkReady: func(SpeechPlanChunkReady) error {
 			callbackCount++
+			return nil
 		},
 	})
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-cancel", CharacterID: "mio", VoiceID: "mio"}); err != nil {
@@ -1225,11 +1230,12 @@ func TestRenCrowTTSBridgeLogsBoundedSpeechPlanTransportAndPlaybackMetrics(t *tes
 	progress := orchestrator.NewSpeechTurnCancellation()
 	ctx := orchestrator.WithSpeechTurnCancellation(context.Background(), progress)
 	ready := make(chan struct{})
-	bridge.cfg.OnSpeechChunkReady = func(SpeechPlanChunkReady) {
+	bridge.cfg.OnSpeechChunkReady = func(SpeechPlanChunkReady) error {
 		if err := progress.MarkStarted(0); err != nil {
 			t.Errorf("MarkStarted(0): %v", err)
 		}
 		close(ready)
+		return nil
 	}
 	done := make(chan error, 1)
 	go func() {

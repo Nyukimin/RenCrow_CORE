@@ -153,7 +153,7 @@ func (m *MioAgent) decideAction(ctx context.Context, t conversation.TurnInput, a
 	})
 
 	if allowCombined && m.canUseCombinedChatDraft(ctx, t) {
-		if _, ok := m.classifier.(RouteReplyClassifier); ok {
+		if _, ok := m.classifier.(MioTurnClassifier); ok {
 			return m.classifyChatWithDraft(ctx, t, evidence)
 		}
 	}

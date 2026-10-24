@@ -197,7 +197,7 @@ INSERT INTO l1_memory_event (
 		MemoryStateCandidate, MemoryLayerL1, ownerMemorySourcePrefix+actorID, now, now); err != nil {
 		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, fmt.Errorf("failed to create owner candidate: %w", err))
 	}
-	_, err = appendL1EventLog(ctx, tx, "memory.user_owner_proposed", namespace, "", "", 0, "", map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.user_owner_proposed", namespace, "", "", 0, "", map[string]interface{}{
 		"memory_id":         candidateID,
 		"evidence_event_id": evidenceID,
 		"request_id":        requestID,
@@ -233,6 +233,7 @@ INSERT INTO l1_memory_event (
 	if err := tx.Commit(); err != nil {
 		return domainmemory.UserMemoryOwnerResult{}, err
 	}
+	s.notifyUserMemoryMutation(ownerID, []string{candidateID}, string(auditEventID(auditEntry)))
 	return result, nil
 }
 
@@ -386,6 +387,7 @@ WHERE id = ? AND namespace = ?
 	if err := tx.Commit(); err != nil {
 		return domainmemory.UserMemoryOwnerResult{}, err
 	}
+	s.notifyUserMemoryMutation(ownerID, []string{id}, string(auditEventID(auditEntry)))
 	return result, nil
 }
 

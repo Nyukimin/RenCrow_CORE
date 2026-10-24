@@ -74,7 +74,7 @@ func (w noIntentDurableStoreWorkflow) Handle(context.Context, appdurablestore.In
 func TestMessageOrchestratorCombinedChatDraftKeepsRAMAdmission(t *testing.T) {
 	ctx, _, fallbackCalls, _ := newEmptyFallbackContext(t)
 	durableHandlerCalls := &atomic.Int32{}
-	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"combined answer"}`}}
+	provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"combined answer"}}`}}
 	manager := newRecordingTaskLifecycleManager()
 	engine := &chatReplyConversationEngine{manager: manager}
 	mio := agent.NewMioAgent(
@@ -92,7 +92,7 @@ func TestMessageOrchestratorCombinedChatDraftKeepsRAMAdmission(t *testing.T) {
 		t.Fatalf("ProcessMessage() error = %v", err)
 	}
 	if resp.Route != routing.RouteCHAT || resp.Response != "combined answer" {
-		t.Fatalf("response = %+v, want combined Mio CHAT reply", resp)
+		t.Fatalf("response = %+v, want combined Mio CHAT answer", resp)
 	}
 	if got := fallbackCalls.Load(); got != 0 {
 		t.Fatalf("synchronous fallback calls = %d, want none for a valid combined CHAT draft", got)
@@ -104,7 +104,7 @@ func TestMessageOrchestratorCombinedChatDraftKeepsRAMAdmission(t *testing.T) {
 
 func TestMessageOrchestratorFailedCombinedChatDraftStaysTerminalWithoutFallback(t *testing.T) {
 	ctx, _, fallbackCalls, _ := newEmptyFallbackContext(t)
-	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":`}}
+	provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CHAT","outcome":`}}
 	manager := newRecordingTaskLifecycleManager()
 	engine := &chatReplyConversationEngine{manager: manager}
 	mio := agent.NewMioAgent(
@@ -116,7 +116,7 @@ func TestMessageOrchestratorFailedCombinedChatDraftStaysTerminalWithoutFallback(
 	orch.SetTaskLifecycleManager(manager)
 
 	_, err := orch.ProcessMessage(ctx, defaultReq())
-	if err == nil || !strings.Contains(err.Error(), "combined Mio CHAT reply is unavailable") {
+	if err == nil || !strings.Contains(err.Error(), "combined Mio CHAT outcome is unavailable") {
 		t.Fatalf("ProcessMessage() error = %v, want terminal combined-draft error", err)
 	}
 	if got := fallbackCalls.Load(); got != 0 {

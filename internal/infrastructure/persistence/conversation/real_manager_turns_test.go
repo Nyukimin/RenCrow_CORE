@@ -37,17 +37,32 @@ type admittedTurnCommitGateStore struct {
 	fail     error
 }
 
+type orderedTurnCommitGateStore struct {
+	*l1sqlite.L1SQLiteStore
+	mu            sync.Mutex
+	calls         int
+	started       chan int
+	releaseFirst  chan struct{}
+	releaseSecond chan struct{}
+	firstOnce     sync.Once
+	secondOnce    sync.Once
+	readCalls     int
+}
+
 type blockingActiveProjectionStore struct {
 	*l1sqlite.L1SQLiteStore
 	started chan struct{}
 	release chan struct{}
 	mu      sync.Mutex
 	loads   int
+	commits int
+	failOn  int
 }
 
 func (s *blockingActiveProjectionStore) LoadActiveConversationThreadProjection(ctx context.Context, sessionID string) ([]l1sqlite.L1MemoryEvent, error) {
 	s.mu.Lock()
 	s.loads++
+	loads := s.loads
 	s.mu.Unlock()
 	select {
 	case s.started <- struct{}{}:
@@ -60,13 +75,29 @@ func (s *blockingActiveProjectionStore) LoadActiveConversationThreadProjection(c
 			return nil, ctx.Err()
 		}
 	}
+	if loads == s.failOn {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
 	return s.L1SQLiteStore.LoadActiveConversationThreadProjection(ctx, sessionID)
+}
+
+func (s *blockingActiveProjectionStore) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	s.mu.Lock()
+	s.commits++
+	s.mu.Unlock()
+	return s.L1SQLiteStore.CommitConversationTurn(ctx, request)
 }
 
 func (s *blockingActiveProjectionStore) loadCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loads
+}
+
+func (s *blockingActiveProjectionStore) commitCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.commits
 }
 
 type conversationTurnPreparationManager interface {
@@ -104,6 +135,46 @@ func (s *admittedTurnCommitGateStore) CommitConversationTurn(ctx context.Context
 
 func (s *admittedTurnCommitGateStore) unblock() {
 	s.release1.Do(func() { close(s.release) })
+}
+
+func (s *orderedTurnCommitGateStore) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	s.mu.Lock()
+	s.calls++
+	call := s.calls
+	s.mu.Unlock()
+	s.started <- call
+	var release <-chan struct{}
+	if call == 1 {
+		release = s.releaseFirst
+	} else if call == 2 {
+		release = s.releaseSecond
+	}
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnFailed}, ctx.Err()
+		}
+	}
+	return s.L1SQLiteStore.CommitConversationTurn(ctx, request)
+}
+
+func (s *orderedTurnCommitGateStore) LoadActiveConversationThreadProjection(ctx context.Context, sessionID string) ([]l1sqlite.L1MemoryEvent, error) {
+	s.mu.Lock()
+	s.readCalls++
+	s.mu.Unlock()
+	return s.L1SQLiteStore.LoadActiveConversationThreadProjection(ctx, sessionID)
+}
+
+func (s *orderedTurnCommitGateStore) unblock() {
+	s.firstOnce.Do(func() { close(s.releaseFirst) })
+	s.secondOnce.Do(func() { close(s.releaseSecond) })
+}
+
+func (s *orderedTurnCommitGateStore) activeReadCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readCalls
 }
 
 func newConversationTurnAdmission(t *testing.T, commandCount int) (*persistencequeue.Queue[persistencequeue.PersistenceCommand], *persistencequeue.Admission, context.Context) {
@@ -311,6 +382,664 @@ func TestRealConversationManagerWorkerCompletionKeepsPreparedRAMHead(t *testing.
 	if err := admission.Barrier(context.Background()); err != nil {
 		t.Fatalf("second admission barrier: %v", err)
 	}
+}
+
+func TestRealConversationManagerCombinesCommittedAndPendingHeadsWithoutRewind(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "committed-head-projection.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	sessionID := string(modulecore.NewSessionID())
+	seed := managerTurnTestRequest("committed-head-projection-seed", sessionID)
+	seedResult, err := l1.CommitConversationTurn(context.Background(), seed)
+	if err != nil {
+		t.Fatalf("seed active thread: %v", err)
+	}
+	store := &orderedTurnCommitGateStore{
+		L1SQLiteStore: l1, started: make(chan int, 3),
+		releaseFirst: make(chan struct{}), releaseSecond: make(chan struct{}),
+	}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: store}
+	_, admission, ctx := newConversationTurnAdmission(t, 3)
+	defer store.unblock()
+
+	firstRequest := managerTurnTestRequest("committed-head-projection-first", sessionID)
+	firstRequest.Targets = manager.ConversationTurnTargets()
+	prepareManagerTurnForTest(t, ctx, manager, &firstRequest)
+	if loads := store.activeReadCount(); loads != 1 {
+		t.Fatalf("initial active-head reads=%d, want one cold read", loads)
+	}
+	first, err := manager.CommitConversationTurn(ctx, firstRequest)
+	if err != nil || first.Status != domconv.ConversationTurnAccepted || first.ThreadID != seedResult.ThreadID {
+		t.Fatalf("first=%+v err=%v, want accepted on seed thread", first, err)
+	}
+	select {
+	case call := <-store.started:
+		if call != 1 {
+			t.Fatalf("first writer call=%d, want 1", call)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first persistence call did not reach its gate")
+	}
+
+	secondRequest := managerTurnTestRequest("committed-head-projection-second", sessionID)
+	secondRequest.Targets = manager.ConversationTurnTargets()
+	readsBeforeSecondPreparation := store.activeReadCount()
+	secondPreparation, err := manager.PrepareConversationTurn(ctx, secondRequest.TurnID, secondRequest.SessionID, secondRequest.OwnerID)
+	if err != nil || secondPreparation == nil || secondPreparation.ActiveThread == nil || len(secondPreparation.ActiveThread.Turns) != 4 ||
+		secondPreparation.ActiveThread.Turns[3].Msg != firstRequest.AgentMessage {
+		t.Fatalf("second preparation=%+v err=%v, want first accepted turn in RAM head", secondPreparation, err)
+	}
+	if loads := store.activeReadCount(); loads != readsBeforeSecondPreparation {
+		t.Fatalf("second preparation changed active-head reads from %d to %d", readsBeforeSecondPreparation, loads)
+	}
+	secondRequest.Preparation = secondPreparation
+	second, err := manager.CommitConversationTurn(ctx, secondRequest)
+	if err != nil || second.Status != domconv.ConversationTurnAccepted || second.ThreadID != first.ThreadID {
+		t.Fatalf("second=%+v err=%v, want accepted on first turn thread", second, err)
+	}
+
+	store.firstOnce.Do(func() { close(store.releaseFirst) })
+	select {
+	case call := <-store.started:
+		if call != 2 {
+			t.Fatalf("second writer call=%d, want 2", call)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second persistence call did not reach its gate after first completed")
+	}
+
+	thirdRequest := managerTurnTestRequest("committed-head-projection-third", sessionID)
+	thirdRequest.Targets = manager.ConversationTurnTargets()
+	readsBeforeThirdPreparation := store.activeReadCount()
+	thirdPreparation, err := manager.PrepareConversationTurn(ctx, thirdRequest.TurnID, thirdRequest.SessionID, thirdRequest.OwnerID)
+	if err != nil || thirdPreparation == nil || thirdPreparation.ActiveThread == nil || len(thirdPreparation.ActiveThread.Turns) != 6 ||
+		thirdPreparation.ActiveThread.Turns[5].Msg != secondRequest.AgentMessage {
+		t.Fatalf("third preparation=%+v err=%v, want second pending turn retained after first durable completion", thirdPreparation, err)
+	}
+	if loads := store.activeReadCount(); loads != readsBeforeThirdPreparation {
+		t.Fatalf("third preparation changed active-head reads from %d to %d", readsBeforeThirdPreparation, loads)
+	}
+	thirdRequest.Preparation = thirdPreparation
+	third, err := manager.CommitConversationTurn(ctx, thirdRequest)
+	if err != nil || third.Status != domconv.ConversationTurnAccepted || third.ThreadID != first.ThreadID {
+		t.Fatalf("third=%+v err=%v, want accepted on same thread", third, err)
+	}
+
+	store.secondOnce.Do(func() { close(store.releaseSecond) })
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("admission barrier: %v", err)
+	}
+
+	fourthRequest := managerTurnTestRequest("committed-head-projection-fourth", sessionID)
+	readsBeforeFourthPreparation := store.activeReadCount()
+	fourthPreparation, err := manager.PrepareConversationTurn(ctx, fourthRequest.TurnID, fourthRequest.SessionID, fourthRequest.OwnerID)
+	if err != nil || fourthPreparation == nil || fourthPreparation.ActiveThread == nil || len(fourthPreparation.ActiveThread.Turns) != 8 ||
+		fourthPreparation.ActiveThread.Turns[7].Msg != thirdRequest.AgentMessage {
+		t.Fatalf("fourth preparation=%+v err=%v, want all durable turns in committed head", fourthPreparation, err)
+	}
+	if loads := store.activeReadCount(); loads != readsBeforeFourthPreparation {
+		t.Fatalf("fourth preparation changed active-head reads from %d to %d after all turns became durable", readsBeforeFourthPreparation, loads)
+	}
+}
+
+func TestRealConversationManagerSynchronousCommitProjectsCommittedHeadWithoutPostCommitRead(t *testing.T) {
+	for _, prepared := range []bool{false, true} {
+		name := "cold"
+		if prepared {
+			name = "prepared"
+		}
+		t.Run(name, func(t *testing.T) {
+			l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "synchronous-committed-head.db"))
+			if err != nil {
+				t.Fatalf("NewL1SQLiteStore: %v", err)
+			}
+			defer l1.Close()
+			store := &blockingActiveProjectionStore{L1SQLiteStore: l1, started: make(chan struct{}, 4), failOn: 3}
+			manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: store}
+
+			request := managerTurnTestRequest("synchronous-committed-head", string(modulecore.NewSessionID()))
+			request.Targets = manager.ConversationTurnTargets()
+			if prepared {
+				prepareManagerTurnForTest(t, context.Background(), manager, &request)
+			}
+			committed, err := manager.CommitConversationTurn(context.Background(), request)
+			if err != nil || committed.Status != domconv.ConversationTurnCompleted {
+				t.Fatalf("committed=%+v err=%v, want completed durable turn without a post-commit read error", committed, err)
+			}
+			if reads := store.loadCount(); reads != 2 {
+				t.Fatalf("active-head reads=%d, want cold/prepared load plus required Redis projection only", reads)
+			}
+			if commits := store.commitCount(); commits != 1 {
+				t.Fatalf("durable commit calls=%d, want one write", commits)
+			}
+
+			manager.turnOverlayMu.RLock()
+			overlay := manager.turnOverlays[request.SessionID]
+			var head *domconv.Thread
+			if overlay != nil {
+				head = cloneThreadForStore(overlay.head)
+			}
+			manager.turnOverlayMu.RUnlock()
+			if head == nil || head.ID != committed.ThreadID || len(head.Turns) != 2 || head.Turns[1].Msg != request.AgentMessage {
+				t.Fatalf("committed RAM head=%+v, want the durable thread %s", head, committed.ThreadID)
+			}
+
+			next := managerTurnTestRequest("synchronous-committed-head-next", request.SessionID)
+			preparation, err := manager.PrepareConversationTurn(context.Background(), next.TurnID, next.SessionID, next.OwnerID)
+			if err != nil || preparation == nil || preparation.ActiveThread == nil || preparation.ActiveThread.ID != committed.ThreadID || len(preparation.ActiveThread.Turns) != 2 {
+				t.Fatalf("next preparation=%+v err=%v, want retained durable head", preparation, err)
+			}
+			if reads := store.loadCount(); reads != 2 {
+				t.Fatalf("next preparation changed active-head reads to %d, want no extra read", reads)
+			}
+		})
+	}
+}
+
+func TestRealConversationManagerColdExistingSessionWithoutActiveHeadFailsClosed(t *testing.T) {
+	for _, existing := range []string{"typed turn receipt", "legacy L1 thread reference"} {
+		t.Run(existing, func(t *testing.T) {
+			l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "existing-session.db"))
+			if err != nil {
+				t.Fatalf("NewL1SQLiteStore: %v", err)
+			}
+			defer l1.Close()
+			sessionID := string(modulecore.NewSessionID())
+			if existing == "typed turn receipt" {
+				if _, err := l1.CommitConversationTurn(context.Background(), managerTurnTestRequest("existing-head-receipt", sessionID)); err != nil {
+					t.Fatalf("seed existing typed session: %v", err)
+				}
+			} else {
+				threadID := modulecore.NewThreadID()
+				message := domconv.NewMessage(domconv.SpeakerUser, "existing legacy message", nil)
+				if err := l1.SaveMessage(context.Background(), sessionID, threadID, 1, modulecore.ThreadKindUserConversation, "conv:"+string(threadID), message, l1sqlite.MemoryStateObserved); err != nil {
+					t.Fatalf("seed existing legacy thread: %v", err)
+				}
+			}
+
+			manager := &RealConversationManager{
+				redisStore: newMockRedisStore(),
+				l1Store:    &missingActiveRecallProjectionStore{L1SQLiteStore: l1},
+			}
+			nextTurn := managerTurnTestRequest("existing-session-next-turn", sessionID)
+			preparation, err := manager.PrepareConversationTurn(context.Background(), nextTurn.TurnID, sessionID, "owner-manager")
+			if preparation != nil || !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
+				t.Fatalf("preparation=%+v err=%v, want unavailable instead of an empty new head", preparation, err)
+			}
+			manager.turnOverlayMu.RLock()
+			_, reserved := manager.turnOverlays[sessionID]
+			manager.turnOverlayMu.RUnlock()
+			if reserved {
+				t.Fatal("failed activation left an empty head reservation behind")
+			}
+
+			unprepared := managerTurnTestRequest("existing-session-unprepared-turn", sessionID)
+			unprepared.Targets = manager.ConversationTurnTargets()
+			result, err := manager.CommitConversationTurn(context.Background(), unprepared)
+			if result.Status != domconv.ConversationTurnFailed || !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
+				t.Fatalf("unprepared commit=%+v err=%v, want fail-closed for existing session without active head", result, err)
+			}
+		})
+	}
+}
+
+func TestRealConversationEngineBeginTurnReadsOwnedRAMHeadWithoutQueueAdmission(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "owner-scoped-head.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+
+	sessionID := string(modulecore.NewSessionID())
+	ownerID := "owner-manager"
+	seed := managerTurnTestRequest("owner-scoped-head-seed", sessionID)
+	if _, err := l1.CommitConversationTurn(ctx, seed); err != nil {
+		t.Fatalf("seed durable head: %v", err)
+	}
+	gate := &admittedTurnCommitGateStore{
+		L1SQLiteStore: l1,
+		started:       make(chan domconv.ConversationTurnRequest, 1),
+		release:       make(chan struct{}),
+	}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: gate}
+	if err := manager.redisStore.SaveSession(ctx, domconv.NewSessionConversation(sessionID, ownerID)); err != nil {
+		t.Fatalf("save persisted session owner: %v", err)
+	}
+	_, _, admittedCtx := newConversationTurnAdmission(t, 1)
+	defer gate.unblock()
+
+	request := managerTurnTestRequest("owner-scoped-head-pending", sessionID)
+	request.Targets = manager.ConversationTurnTargets()
+	prepareManagerTurnForTest(t, admittedCtx, manager, &request)
+	accepted, err := manager.CommitConversationTurn(admittedCtx, request)
+	if err != nil || accepted.Status != domconv.ConversationTurnAccepted {
+		t.Fatalf("accepted=%+v err=%v, want admitted pending turn", accepted, err)
+	}
+	select {
+	case <-gate.started:
+	case <-time.After(time.Second):
+		t.Fatal("persistence writer did not reach the blocked commit")
+	}
+
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, ownerID)
+	pack, err := engine.BeginTurn(context.Background(), sessionID, "continue")
+	if err != nil {
+		t.Fatalf("BeginTurn without queue admission: %v", err)
+	}
+	if !hasRecallMessage(pack.ShortContext, request.UserMessage) || !hasRecallMessage(pack.ShortContext, request.AgentMessage) {
+		t.Fatalf("owner CHAT recall omitted the retained pending head: %#v", pack.ShortContext)
+	}
+	if _, err := manager.recallForOwner(context.Background(), sessionID, "different-owner", "continue", 3); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("wrong-owner recall error=%v, want owner conflict", err)
+	}
+
+	// Session-only reads remain durable-only. The owner-scoped API is the
+	// capability that allows ordinary authenticated CHAT to read pending RAM.
+	durable, err := manager.LoadActiveConversationThread(context.Background(), sessionID)
+	if err != nil || durable == nil || hasThreadMessage(durable, request.AgentMessage) {
+		t.Fatalf("unscoped active head=%+v err=%v, want durable-only view", durable, err)
+	}
+}
+
+func TestRealConversationManagerColdOwnerRecallUsesCanonicalL1HeadInsteadOfStaleRedis(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "cold-owner-recall.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+
+	sessionID := string(modulecore.NewSessionID())
+	ownerID := "owner-cold-recall"
+	seed := managerTurnTestRequest("cold-owner-recall-seed", sessionID)
+	if _, err := l1.CommitConversationTurn(ctx, seed); err != nil {
+		t.Fatalf("seed canonical L1 head: %v", err)
+	}
+
+	redis := newMockRedisStore()
+	stale, err := domconv.NewThread(sessionID, "stale-redis", domconv.ThreadKindUserConversation, 1)
+	if err != nil {
+		t.Fatalf("NewThread stale Redis head: %v", err)
+	}
+	if err := stale.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "stale Redis user message", nil)); err != nil {
+		t.Fatalf("add stale Redis user message: %v", err)
+	}
+	if err := stale.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "stale Redis agent message", nil)); err != nil {
+		t.Fatalf("add stale Redis agent message: %v", err)
+	}
+	session := domconv.NewSessionConversation(sessionID, ownerID)
+	session.LastThreadID = stale.ID
+	session.LastThreadSeq = stale.ThreadSeq
+	session.LastThreadKind = stale.ThreadKind
+	if err := redis.SaveThread(ctx, stale); err != nil {
+		t.Fatalf("save stale Redis thread: %v", err)
+	}
+	if err := redis.SaveSession(ctx, session); err != nil {
+		t.Fatalf("save persisted session owner: %v", err)
+	}
+
+	manager := &RealConversationManager{redisStore: redis, l1Store: l1}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, ownerID)
+	pack, err := engine.BeginTurn(ctx, sessionID, "continue")
+	if err != nil {
+		t.Fatalf("BeginTurn cold owner recall: %v", err)
+	}
+	if !hasRecallMessage(pack.ShortContext, seed.UserMessage) || !hasRecallMessage(pack.ShortContext, seed.AgentMessage) {
+		t.Fatalf("cold owner recall omitted canonical L1 head: %#v", pack.ShortContext)
+	}
+	if hasRecallMessage(pack.ShortContext, "stale Redis user message") || hasRecallMessage(pack.ShortContext, "stale Redis agent message") {
+		t.Fatalf("cold owner recall included stale Redis head: %#v", pack.ShortContext)
+	}
+}
+
+func TestRealConversationManagerColdOwnerPreparationLoadsResetHeadAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "cold-owner-reset-head.db")
+	l1, err := l1sqlite.NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer func() {
+		if l1 != nil {
+			_ = l1.Close()
+		}
+	}()
+
+	sessionID := string(modulecore.NewSessionID())
+	ownerID := "owner-reset-restart"
+	seed := managerTurnTestRequest("cold-owner-reset-seed", sessionID)
+	seed.OwnerID = ownerID
+	seedResult, err := l1.CommitConversationTurn(ctx, seed)
+	if err != nil {
+		t.Fatalf("seed durable head: %v", err)
+	}
+	reset, err := l1.ResetConversationHead(ctx, domconv.ConversationHeadResetRequest{
+		OperationID:       "cold-owner-reset-operation",
+		SessionID:         sessionID,
+		OwnerID:           ownerID,
+		ExpectedThreadID:  seedResult.ThreadID,
+		ExpectedThreadSeq: seedResult.ThreadSeq,
+	})
+	if err != nil {
+		t.Fatalf("ResetConversationHead: %v", err)
+	}
+
+	redis := newMockRedisStore()
+	if err := redis.SaveSession(ctx, domconv.NewSessionConversation(sessionID, ownerID)); err != nil {
+		t.Fatalf("save persisted session owner: %v", err)
+	}
+	if err := l1.Close(); err != nil {
+		t.Fatalf("close L1 before manager restart: %v", err)
+	}
+	l1 = nil
+	l1, err = l1sqlite.NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("reopen L1: %v", err)
+	}
+
+	manager := &RealConversationManager{redisStore: redis, l1Store: l1}
+	thread, err := manager.loadActiveConversationThreadForOwner(ctx, sessionID, ownerID)
+	if err != nil {
+		t.Fatalf("load reset head after manager restart: %v", err)
+	}
+	if thread == nil || thread.ID != reset.ActiveThread.ID || thread.ThreadSeq != reset.ActiveThread.Seq ||
+		thread.ThreadKind != reset.ActiveThread.Kind || thread.Domain != reset.Domain || len(thread.Turns) != 0 {
+		t.Fatalf("reset thread=%+v, want typed empty head %+v", thread, reset)
+	}
+
+	preparation, err := manager.PrepareConversationTurn(ctx, modulecore.NewTurnID(), sessionID, ownerID)
+	if err != nil {
+		t.Fatalf("prepare reset head after manager restart: %v", err)
+	}
+	if preparation == nil || preparation.ActiveThread == nil || preparation.ActiveThread.ID != reset.ActiveThread.ID ||
+		preparation.ActiveThread.ThreadSeq != reset.ActiveThread.Seq || len(preparation.ActiveThread.Turns) != 0 {
+		t.Fatalf("preparation=%+v, want the durable empty reset head", preparation)
+	}
+	if err := manager.ReleaseConversationTurnPreparation(ctx, preparation); err != nil {
+		t.Fatalf("release reset head preparation: %v", err)
+	}
+}
+
+func TestRealConversationManagerColdResetHeadRequiresPersistedOwner(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "cold-reset-head-owner.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+
+	sessionID := string(modulecore.NewSessionID())
+	seed := managerTurnTestRequest("cold-reset-owner-seed", sessionID)
+	seedResult, err := l1.CommitConversationTurn(ctx, seed)
+	if err != nil {
+		t.Fatalf("seed durable head: %v", err)
+	}
+	if _, err := l1.ResetConversationHead(ctx, domconv.ConversationHeadResetRequest{
+		OperationID:       "cold-reset-owner-operation",
+		SessionID:         sessionID,
+		OwnerID:           seed.OwnerID,
+		ExpectedThreadID:  seedResult.ThreadID,
+		ExpectedThreadSeq: seedResult.ThreadSeq,
+	}); err != nil {
+		t.Fatalf("ResetConversationHead: %v", err)
+	}
+
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: l1}
+	preparation, err := manager.PrepareConversationTurn(ctx, modulecore.NewTurnID(), sessionID, seed.OwnerID)
+	if preparation != nil || !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
+		t.Fatalf("preparation=%+v err=%v, want unavailable without a persisted owner", preparation, err)
+	}
+	manager.turnOverlayMu.RLock()
+	_, reserved := manager.turnOverlays[sessionID]
+	manager.turnOverlayMu.RUnlock()
+	if reserved {
+		t.Fatal("failed owner validation left a cold preparation reservation behind")
+	}
+}
+
+func TestRealConversationManagerColdOwnerRecallRejectsWrongPersistedSessionOwner(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "cold-owner-mismatch.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+
+	sessionID := string(modulecore.NewSessionID())
+	seed := managerTurnTestRequest("cold-owner-mismatch-seed", sessionID)
+	if _, err := l1.CommitConversationTurn(ctx, seed); err != nil {
+		t.Fatalf("seed canonical L1 head: %v", err)
+	}
+	redis := newMockRedisStore()
+	if err := redis.SaveSession(ctx, domconv.NewSessionConversation(sessionID, "persisted-owner")); err != nil {
+		t.Fatalf("save persisted session owner: %v", err)
+	}
+	manager := &RealConversationManager{redisStore: redis, l1Store: l1}
+
+	if _, err := manager.recallForOwner(ctx, sessionID, "different-owner", "continue", 3); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("wrong persisted session owner error=%v, want owner conflict", err)
+	}
+}
+
+func TestRealConversationManagerColdOwnerRecallFailsClosedWithoutPersistedSessionOwner(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "cold-owner-missing-owner.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+
+	sessionID := string(modulecore.NewSessionID())
+	seed := managerTurnTestRequest("cold-owner-missing-owner-seed", sessionID)
+	if _, err := l1.CommitConversationTurn(ctx, seed); err != nil {
+		t.Fatalf("seed canonical L1 head: %v", err)
+	}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: l1}
+
+	if _, err := manager.recallForOwner(ctx, sessionID, seed.OwnerID, "continue", 3); !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
+		t.Fatalf("owner read without persisted session identity error=%v, want unavailable", err)
+	}
+}
+
+func TestRealConversationManagerCreateThreadInvalidatesOldPreparationAndBlocksStaleColdHead(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "lifecycle-head.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	sessionID := string(modulecore.NewSessionID())
+	seed := managerTurnTestRequest("lifecycle-head-seed", sessionID)
+	seedResult, err := l1.CommitConversationTurn(ctx, seed)
+	if err != nil {
+		t.Fatalf("seed durable head: %v", err)
+	}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: l1}
+	request := managerTurnTestRequest("lifecycle-head-old-lease", sessionID)
+	preparation, err := manager.PrepareConversationTurn(ctx, request.TurnID, request.SessionID, request.OwnerID)
+	if err != nil || preparation == nil || preparation.ActiveThread == nil || preparation.ActiveThread.ID != seedResult.ThreadID {
+		t.Fatalf("preparation=%+v err=%v, want seeded L1 head", preparation, err)
+	}
+	publication, err := manager.retainConversationTurnPublicationEpoch(preparation)
+	if err != nil || publication == nil {
+		t.Fatalf("retain pending publication epoch=%v err=%v", publication, err)
+	}
+	defer publication.Release()
+
+	if _, err := manager.CreateThread(ctx, sessionID, "general"); err != nil {
+		t.Fatalf("CreateThread lifecycle: %v", err)
+	}
+	claimed := false
+	if err := publication.Use(func() error { claimed = true; return nil }); !errors.Is(err, domconv.ErrConversationTurnConflict) || claimed {
+		t.Fatalf("publication claim after CreateThread reset: claimed=%t err=%v, want stale and unclaimed", claimed, err)
+	}
+	if err := manager.ValidateConversationTurnPreparation(ctx, preparation); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("old preparation validation error=%v, want lifecycle conflict", err)
+	}
+	request.Preparation = preparation
+	if _, err := manager.CommitConversationTurn(ctx, request); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("old prepared commit error=%v, want lifecycle conflict", err)
+	}
+	if next, err := manager.PrepareConversationTurn(ctx, modulecore.NewTurnID(), sessionID, request.OwnerID); next != nil || !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
+		t.Fatalf("post-lifecycle preparation=%+v err=%v, want fail-closed until L1 lifecycle state is available", next, err)
+	}
+}
+
+func TestRealConversationManagerCreateThreadAllowsFirstOwnedPreparation(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "new-session-lifecycle.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: l1}
+	sessionID := string(modulecore.NewSessionID())
+	if _, err := manager.CreateThread(ctx, sessionID, "general"); err != nil {
+		t.Fatalf("CreateThread new session: %v", err)
+	}
+	preparation, err := manager.PrepareConversationTurn(ctx, modulecore.NewTurnID(), sessionID, "new-session-owner")
+	if err != nil || preparation == nil || preparation.ActiveThread != nil {
+		t.Fatalf("first owned preparation=%+v err=%v, want valid empty head", preparation, err)
+	}
+	if err := manager.ReleaseConversationTurnPreparation(ctx, preparation); err != nil {
+		t.Fatalf("release first preparation: %v", err)
+	}
+}
+
+func TestRealConversationManagerFlushActiveHeadInvalidatesLeaseAndKeepsL1Context(t *testing.T) {
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "flush-lifecycle-head.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	sessionID := string(modulecore.NewSessionID())
+	seed := managerTurnTestRequest("flush-lifecycle-seed", sessionID)
+	seedResult, err := l1.CommitConversationTurn(ctx, seed)
+	if err != nil {
+		t.Fatalf("seed durable head: %v", err)
+	}
+	redis := newMockRedisStore()
+	manager := &RealConversationManager{redisStore: redis, l1Store: l1}
+	preparation, err := manager.PrepareConversationTurn(ctx, modulecore.NewTurnID(), sessionID, seed.OwnerID)
+	if err != nil || preparation == nil || preparation.ActiveThread == nil || preparation.ActiveThread.ID != seedResult.ThreadID {
+		t.Fatalf("preparation=%+v err=%v, want seeded L1 head", preparation, err)
+	}
+	if err := redis.SaveThread(ctx, preparation.ActiveThread); err != nil {
+		t.Fatalf("seed Redis active projection: %v", err)
+	}
+
+	if _, err := manager.FlushThread(ctx, preparation.ActiveThread.ID); err != nil {
+		t.Fatalf("FlushThread: %v", err)
+	}
+	if err := manager.ValidateConversationTurnPreparation(ctx, preparation); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("flushed preparation validation=%v, want lifecycle conflict", err)
+	}
+	next, err := manager.PrepareConversationTurn(ctx, modulecore.NewTurnID(), sessionID, seed.OwnerID)
+	if err != nil || next == nil || next.ActiveThread == nil || next.ActiveThread.ID != seedResult.ThreadID || !hasThreadMessage(next.ActiveThread, seed.AgentMessage) {
+		t.Fatalf("post-flush preparation=%+v err=%v, want reloaded canonical L1 context", next, err)
+	}
+	if err := manager.ReleaseConversationTurnPreparation(ctx, next); err != nil {
+		t.Fatalf("release post-flush preparation: %v", err)
+	}
+}
+
+func TestRealConversationManagerBoundsDurableHeadRetentionWithoutEvictingActiveLease(t *testing.T) {
+	const retainedHeadLimit = 256
+	ctx := context.Background()
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "bounded-head-retention.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	store := &blockingActiveProjectionStore{L1SQLiteStore: l1}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: store}
+
+	active := managerTurnTestRequest("retention-active-lease", "retention-active-session")
+	activeResult, err := l1.CommitConversationTurn(ctx, active)
+	if err != nil {
+		t.Fatalf("seed active lease head: %v", err)
+	}
+	activePreparation, err := manager.PrepareConversationTurn(ctx, active.TurnID, active.SessionID, active.OwnerID)
+	if err != nil || activePreparation == nil || activePreparation.ActiveThread == nil || activePreparation.ActiveThread.ID != activeResult.ThreadID {
+		t.Fatalf("active preparation=%+v err=%v", activePreparation, err)
+	}
+
+	requests := make(map[string]domconv.ConversationTurnRequest, retainedHeadLimit+1)
+	for index := 0; index <= retainedHeadLimit; index++ {
+		request := managerTurnTestRequest(fmt.Sprintf("retention-head-%03d", index), fmt.Sprintf("retention-session-%03d", index))
+		result, err := l1.CommitConversationTurn(ctx, request)
+		if err != nil {
+			t.Fatalf("seed retained head %d: %v", index, err)
+		}
+		requests[request.SessionID] = request
+		preparation, err := manager.PrepareConversationTurn(ctx, request.TurnID, request.SessionID, request.OwnerID)
+		if err != nil || preparation == nil || preparation.ActiveThread == nil || preparation.ActiveThread.ID != result.ThreadID {
+			t.Fatalf("retained preparation %d=%+v err=%v", index, preparation, err)
+		}
+		if err := manager.ReleaseConversationTurnPreparation(ctx, preparation); err != nil {
+			t.Fatalf("release retained preparation %d: %v", index, err)
+		}
+	}
+
+	manager.turnOverlayMu.RLock()
+	quiescent := 0
+	var evictedSession string
+	for _, overlay := range manager.turnOverlays {
+		if overlay != nil && overlay.preparation == nil && overlay.preparingTurnID == "" && overlay.syncTurnID == "" && len(overlay.pending) == 0 && overlay.headFailure == nil {
+			quiescent++
+		}
+	}
+	for sessionID := range requests {
+		if _, retained := manager.turnOverlays[sessionID]; !retained {
+			evictedSession = sessionID
+			break
+		}
+	}
+	activeOverlay := manager.turnOverlays[active.SessionID]
+	_, activeStillPresent := manager.turnOverlays[active.SessionID]
+	manager.turnOverlayMu.RUnlock()
+	if quiescent > retainedHeadLimit {
+		t.Fatalf("quiescent durable head count=%d, want <=%d", quiescent, retainedHeadLimit)
+	}
+	if !activeStillPresent || activeOverlay.preparation == nil || !sameConversationTurnPreparation(activeOverlay.preparation, activePreparation) {
+		t.Fatal("retention evicted or changed the active preparation lease")
+	}
+	if evictedSession == "" {
+		t.Fatal("retention did not evict any quiescent durable head after exceeding its bound")
+	}
+
+	evictedRequest := requests[evictedSession]
+	readsBeforeReload := store.loadCount()
+	reloaded, err := manager.PrepareConversationTurn(ctx, evictedRequest.TurnID, evictedSession, evictedRequest.OwnerID)
+	if err != nil || reloaded == nil || reloaded.ActiveThread == nil || reloaded.ActiveThread.ID == "" || !hasThreadMessage(reloaded.ActiveThread, evictedRequest.AgentMessage) {
+		t.Fatalf("reloaded evicted head=%+v err=%v, want original L1 context", reloaded, err)
+	}
+	if reads := store.loadCount(); reads != readsBeforeReload+1 {
+		t.Fatalf("evicted head reloads=%d after %d, want one cold L1 activation", reads, readsBeforeReload)
+	}
+	if err := manager.ReleaseConversationTurnPreparation(ctx, reloaded); err != nil {
+		t.Fatalf("release reloaded preparation: %v", err)
+	}
+}
+
+func hasRecallMessage(messages []domconv.Message, text string) bool {
+	for _, message := range messages {
+		if message.Msg == text {
+			return true
+		}
+	}
+	return false
+}
+
+func hasThreadMessage(thread *domconv.Thread, text string) bool {
+	if thread == nil {
+		return false
+	}
+	return hasRecallMessage(thread.Turns, text)
 }
 
 func TestRealConversationManagerAdmittedTurnIsVisibleBeforeBlockedWriter(t *testing.T) {

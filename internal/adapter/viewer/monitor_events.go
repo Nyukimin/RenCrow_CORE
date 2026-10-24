@@ -1,12 +1,17 @@
 package viewer
 
 import (
+	"context"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
 func (s *MonitorStore) OnEvent(ev orchestrator.OrchestratorEvent) {
+	if !s.eventIsPublic(context.Background(), ev) {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -31,4 +36,7 @@ func (s *MonitorStore) SetAgentUnavailable(id, reason string) {
 		Reason:    shortText(reason, 160),
 		UpdatedAt: now,
 	})
+	if snapshot, ok := s.agents[id]; ok {
+		s.operationalAgents[id] = snapshot
+	}
 }

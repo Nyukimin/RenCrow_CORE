@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
@@ -34,9 +35,12 @@ type RealConversationManager struct {
 	threadMu                    sync.Mutex
 	turnOverlayMu               sync.RWMutex
 	turnOverlays                map[string]*conversationTurnOverlay
-	backgroundWG                sync.WaitGroup
-	backgroundClosed            bool
-	backgroundFlushTimeout      time.Duration
+	// publicationEpochs contains only sessions with live prepared-turn or
+	// pending-publication tickets. Entries disappear with the last ticket.
+	publicationEpochs      map[string]*conversationTurnPublicationEpoch
+	backgroundWG           sync.WaitGroup
+	backgroundClosed       bool
+	backgroundFlushTimeout time.Duration
 }
 
 type acceptedConversationTurn struct {
@@ -56,6 +60,21 @@ type conversationTurnOverlay struct {
 	syncTurnID      modulecore.TurnID
 	pending         []acceptedConversationTurn
 	headFailure     error
+}
+
+// conversationTurnPublicationEpoch is a RAM-only reset fence. Its generation
+// changes when a lifecycle operation replaces or flushes the active head; a
+// normal EndTurn keeps the generation stable. refs bounds map retention to
+// active prepared-turn/publication tickets.
+type conversationTurnPublicationEpoch struct {
+	generation uint64 // protected by RealConversationManager.turnOverlayMu
+	refs       atomic.Int64
+}
+
+type conversationTurnPublicationEpochGuard interface {
+	Use(func() error) error
+	Retain() conversationTurnPublicationEpochGuard
+	Release()
 }
 
 // turnProjectionLock serializes the required active Redis projection with

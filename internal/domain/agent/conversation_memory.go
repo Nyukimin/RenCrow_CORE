@@ -92,6 +92,37 @@ type preparedConversationTurnEngine interface {
 	ReleaseConversationTurnPreparation(context.Context, *conversation.ConversationTurnPreparation) error
 }
 
+type preparedChatTurnEngine interface {
+	PrepareChatTurn(context.Context, string, string, string) (*conversation.PreparedChatTurn, error)
+}
+
+type preparedChatTurnCapability interface {
+	SupportsPreparedChatTurn() bool
+}
+
+func supportsPreparedChatTurn(engine conversation.ConversationEngine) bool {
+	if _, ok := engine.(preparedChatTurnEngine); !ok {
+		return false
+	}
+	if capability, ok := engine.(preparedChatTurnCapability); ok {
+		return capability.SupportsPreparedChatTurn()
+	}
+	return true
+}
+
+// prepareReadyChatTurn opts production engines into the atomic RecallPack,
+// head preparation, and guard path. Engines that explicitly report this
+// capability unsupported, or legacy test engines that do not implement it,
+// retain the existing combined-draft behavior.
+func prepareReadyChatTurn(ctx context.Context, engine conversation.ConversationEngine, t conversation.TurnInput) (*conversation.PreparedChatTurn, error) {
+	preparedEngine, ok := engine.(preparedChatTurnEngine)
+	if !ok {
+		return nil, conversation.ErrConversationTurnUnavailable
+	}
+	prepared, err := preparedEngine.PrepareChatTurn(ctx, string(t.TurnID()), t.SessionID(), t.MessageText())
+	return prepared, err
+}
+
 func prepareConversationTurn(ctx context.Context, engine conversation.ConversationEngine, t conversation.TurnInput) (*conversation.ConversationTurnPreparation, error) {
 	if !supportsConversationTurnPreparation(engine) {
 		return nil, conversation.ErrConversationTurnUnavailable
@@ -129,6 +160,15 @@ func releaseConversationTurnPreparation(ctx context.Context, engine conversation
 	}
 	if err := releaser.ReleaseConversationTurnPreparation(ctx, preparation); err != nil {
 		log.Printf("[ConversationTurn] prepared head release failed: %v", err)
+	}
+}
+
+func releasePreparedChatTurnGuard(guard conversation.PreparedChatTurnGuard) {
+	if guard == nil {
+		return
+	}
+	if err := guard.Release(); err != nil {
+		log.Printf("[ConversationTurn] prepared chat turn release failed: %v", err)
 	}
 }
 

@@ -147,6 +147,7 @@ func buildOrchestratorRuntime(
 		llmRuntime.Coder4,
 		workerExecutionService,
 	)
+	orch.SetMioRetrievalPort(deps.mioRetrieval)
 	orch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 	orch.SetDurableStoreWorkflow(deps.durableStoreWorkflow)
 	orch.SetSpeechPlanEnabled(cfg.TTS.SpeechPlanEnabled)

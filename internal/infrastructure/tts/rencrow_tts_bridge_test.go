@@ -16,10 +16,24 @@ import (
 	"unicode/utf8"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
+
+func TestRenCrowTTSBridgeRejectsCanonicalSessionWithoutFrozenBinding(t *testing.T) {
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: "http://tts.local"})
+	err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
+		SessionID:          "canonical-tts-session",
+		CanonicalSessionID: string(modulecore.NewSessionID()),
+		CharacterID:        "mio",
+		VoiceID:            "mio",
+	})
+	if err == nil {
+		t.Fatal("canonical TTS session without a frozen SessionBinding must fail closed")
+	}
+}
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
@@ -40,8 +54,9 @@ func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {
 		AuthToken:   "owner-test-token",
 		VoiceID:     "female_01",
 		Sink:        sink,
-		OnChunkReady: func(_, _, _ string, _ int, _, _, _, audioPath, audioURL string) {
+		OnChunkReady: func(_, _, _, _ string, _ int, _, _, _, audioPath, audioURL string, _ domainconversation.SessionBinding) error {
 			gotAudioURL = moduletts.ChooseNonEmpty(audioURL, audioPath)
+			return nil
 		},
 	})
 	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -138,10 +153,11 @@ func TestRenCrowTTSBridgePreservesOneTraceAcrossSessionCallbacks(t *testing.T) {
 	var completedTraceID string
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
-		OnChunkReady: func(_, _, gotTraceID string, _ int, _, _, _, _, _ string) {
+		OnChunkReady: func(_, _, _, gotTraceID string, _ int, _, _, _, _, _ string, _ domainconversation.SessionBinding) error {
 			chunkTraceID = gotTraceID
+			return nil
 		},
-		OnSessionCompleted: func(_, gotTraceID, _ string) {
+		OnSessionCompleted: func(_, gotTraceID, _ string, _ domainconversation.SessionBinding) {
 			completedTraceID = gotTraceID
 		},
 	})
@@ -172,10 +188,11 @@ func TestRenCrowTTSBridgeGeneratesOneTraceForIndependentSession(t *testing.T) {
 	var completedTraceID string
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
-		OnChunkReady: func(_, _, gotTraceID string, _ int, _, _, _, _, _ string) {
+		OnChunkReady: func(_, _, _, gotTraceID string, _ int, _, _, _, _, _ string, _ domainconversation.SessionBinding) error {
 			chunkTraceID = gotTraceID
+			return nil
 		},
-		OnSessionCompleted: func(_, gotTraceID, _ string) {
+		OnSessionCompleted: func(_, gotTraceID, _ string, _ domainconversation.SessionBinding) {
 			completedTraceID = gotTraceID
 		},
 	})
@@ -204,7 +221,7 @@ func TestRenCrowTTSBridgeGeneratesOneTraceForIndependentSession(t *testing.T) {
 func TestRenCrowTTSBridgeEndUnknownSessionEmitsCanonicalTrace(t *testing.T) {
 	var completedTraceID string
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
-		OnSessionCompleted: func(_, gotTraceID, _ string) {
+		OnSessionCompleted: func(_, gotTraceID, _ string, _ domainconversation.SessionBinding) {
 			completedTraceID = gotTraceID
 		},
 	})
@@ -246,9 +263,10 @@ func TestRenCrowTTSBridge_FormatsProviderSpeechTextOnly(t *testing.T) {
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "female_01",
-		OnChunkReady: func(_, _, _ string, _ int, _, speechText, displayText, _, _ string) {
+		OnChunkReady: func(_, _, _, _ string, _ int, _, speechText, displayText, _, _ string, _ domainconversation.SessionBinding) error {
 			readySpeech = speechText
 			readyDisplay = displayText
+			return nil
 		},
 	})
 	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -291,9 +309,10 @@ func TestRenCrowTTSBridgeUsesGatewayRelayPathForViewer(t *testing.T) {
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "female_01",
-		OnChunkReady: func(_, _, _ string, _ int, _, _, _, audioPath, audioURL string) {
+		OnChunkReady: func(_, _, _, _ string, _ int, _, _, _, audioPath, audioURL string, _ domainconversation.SessionBinding) error {
 			gotAudioPath = audioPath
 			gotAudioURL = audioURL
+			return nil
 		},
 	})
 	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -327,10 +346,11 @@ func TestRenCrowTTSBridge_SplitsTextWithSharedChunkPlan(t *testing.T) {
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "female_01",
 		Sink:        sink,
-		OnChunkReady: func(_, _, _ string, chunkIndex int, _, text, displayText, _, _ string) {
+		OnChunkReady: func(_, _, _, _ string, chunkIndex int, _, text, displayText, _, _ string, _ domainconversation.SessionBinding) error {
 			readyIndexes = append(readyIndexes, chunkIndex)
 			readyTexts = append(readyTexts, text)
 			readyDisplays = append(readyDisplays, displayText)
+			return nil
 		},
 	})
 	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -398,10 +418,11 @@ func TestRenCrowTTSBridge_SynthesizesTwoChunksConcurrentlyAndPublishesInOrder(t 
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "mio",
-		OnChunkReady: func(_, _, _ string, chunkIndex int, _, _, _, _, _ string) {
+		OnChunkReady: func(_, _, _, _ string, chunkIndex int, _, _, _, _, _ string, _ domainconversation.SessionBinding) error {
 			mu.Lock()
 			ready = append(ready, chunkIndex)
 			mu.Unlock()
+			return nil
 		},
 	})
 	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {

@@ -75,11 +75,12 @@ type L1SQLiteStore struct {
 	opsAcceptanceCommitHook func(context.Context, *sql.Conn) error
 	// Package-local seam for proving that a failed rollback discards its connection.
 	// Production stores leave it nil and issue ROLLBACK with a bounded cleanup context.
-	opsAcceptanceRollbackHook func(context.Context, *sql.Conn) error
-	dailyDigestSummarizer     DailyDigestSummarizer
-	knowledgeVectorSink       L1KnowledgeVectorSink
-	vectorCleanupSink         L1VectorCleanupSink
-	lifecycleMu               sync.Mutex
+	opsAcceptanceRollbackHook  func(context.Context, *sql.Conn) error
+	dailyDigestSummarizer      DailyDigestSummarizer
+	knowledgeVectorSink        L1KnowledgeVectorSink
+	vectorCleanupSink          L1VectorCleanupSink
+	userMemoryMutationCallback UserMemoryMutationCallback
+	lifecycleMu                sync.Mutex
 }
 
 func NewL1SQLiteStore(dbPath string) (*L1SQLiteStore, error) {
@@ -173,6 +174,21 @@ func (s *L1SQLiteStore) WithKnowledgeVectorSink(sink L1KnowledgeVectorSink) *L1S
 
 func (s *L1SQLiteStore) WithVectorCleanupSink(sink L1VectorCleanupSink) *L1SQLiteStore {
 	s.vectorCleanupSink = sink
+	return s
+}
+
+// WithUserMemoryMutationCallback installs the optional RAM invalidation hook
+// used by prepared UserMemory projections. Configure it before concurrent
+// store use. Notifications run synchronously after commit and before the
+// mutation method returns success. The commit-to-callback interval is not
+// atomic with database visibility. Concurrent mutations can invoke the hook
+// concurrently and their callback order is unspecified; ChangeID is opaque
+// and may only be compared for equality. The callback must do bounded in-memory
+// invalidation only, serialize each revoke through completion before it
+// returns, and never publish or rebuild from a notice. It must not do
+// store/database or model work.
+func (s *L1SQLiteStore) WithUserMemoryMutationCallback(callback UserMemoryMutationCallback) *L1SQLiteStore {
+	s.userMemoryMutationCallback = callback
 	return s
 }
 

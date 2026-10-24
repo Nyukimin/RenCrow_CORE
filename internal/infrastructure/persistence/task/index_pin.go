@@ -5,20 +5,27 @@ import (
 )
 
 // taskPin is what the fold of the Task log compares between two versions of the
-// same Task: the criteria revision fixed by its first save and the append-only
-// native OPS Resume claims (see foldTaskRecords and transactionStore.appendTask).
+// same Task: first-save criteria revision and publication provenance, plus the
+// append-only native OPS Resume claims (see foldTaskRecords and appendTask).
 type taskPin struct {
-	revision string
-	claims   []domaintask.NativeOPSResumeClaim
+	revision             string
+	claims               []domaintask.NativeOPSResumeClaim
+	originPublication    domaintask.OriginPublicationProvenance
+	hasOriginPublication bool
 }
 
 func pinOfTask(value domaintask.Task) taskPin {
-	return taskPin{revision: value.ExpectedCriteriaRevision, claims: value.NativeResumeClaims}
+	pin := taskPin{revision: value.ExpectedCriteriaRevision, claims: value.NativeResumeClaims}
+	if value.OriginPublication != nil {
+		pin.originPublication = *value.OriginPublication
+		pin.hasOriginPublication = true
+	}
+	return pin
 }
 
-// checkTaskPinTransition refuses a version of a Task that changes its criteria
-// revision (including setting or clearing it) or rewrites an earlier Resume
-// claim. It is the one rule shared by the fold of the log and the index.
+// checkTaskPinTransition refuses changes to first-save criteria revision or
+// origin publication provenance, and rewrites of earlier Resume claims. It is
+// the one rule shared by the fold of the log and the index.
 func checkTaskPinTransition(previous taskPin, next domaintask.Task) error {
 	if previous.revision != next.ExpectedCriteriaRevision {
 		return ErrExpectedCriteriaRevisionImmutable
@@ -26,20 +33,25 @@ func checkTaskPinTransition(previous taskPin, next domaintask.Task) error {
 	if !domaintask.NativeOPSResumeClaimsExtend(previous.claims, next.NativeResumeClaims) {
 		return ErrNativeOPSResumeClaimImmutable
 	}
+	nextHasOriginPublication := next.OriginPublication != nil
+	if previous.hasOriginPublication != nextHasOriginPublication ||
+		(previous.hasOriginPublication && previous.originPublication != *next.OriginPublication) {
+		return ErrTaskOriginPublicationProvenanceImmutable
+	}
 	return nil
 }
 
 // committedPinLocator reports whether the Task is in the index and, when its
-// latest version carries a criteria revision or Resume claims, where that line
-// is. A Task with neither needs no read: its pin state is the empty one. The
-// caller holds mu for reading or applyMu.
+// latest version carries immutable first-save data, where that line is. A Task
+// with none needs no read: its pin state is the empty one. The caller holds mu
+// for reading or applyMu.
 func (ix *taskIndex) committedPinLocator(key key16) (flags uint8, pos linePos, found bool) {
 	slot, ok := ix.taskMap[key]
 	if !ok {
 		return 0, linePos{}, false
 	}
 	rec := &ix.tasks[slot]
-	flags = rec.flags & (flagPinned | flagClaims)
+	flags = rec.flags & (flagPinned | flagClaims | flagOriginPublication)
 	if flags != 0 {
 		pos = ix.lt.pos(rec.stateTail)
 	}

@@ -1,18 +1,25 @@
 package memory
 
 import (
+	"errors"
 	"sort"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
-	UserMemoryRecallDefaultLimit = 12
-	UserMemoryRecallMaxLimit     = 50
-	UserMemoryRecallMaxScan      = 100
-	UserMemoryTraceDefaultLimit  = 20
-	UserMemoryTraceMaxLimit      = 100
+	UserMemoryRecallDefaultLimit          = 12
+	UserMemoryRecallMaxLimit              = 50
+	UserMemoryRecallMaxScan               = 100
+	UserMemoryRecallMaxReferences         = 8
+	UserMemoryRecallMaxEvidenceReferences = 8
+	UserMemoryTraceDefaultLimit           = 20
+	UserMemoryTraceMaxLimit               = 100
 )
+
+var ErrUserMemoryRecallReferencesUnsupported = errors.New("user memory recall references are unsupported")
 
 const (
 	UserMemoryRecallStatusInjected            = "injected"
@@ -53,6 +60,67 @@ type UserMemoryOwnerRecallResult struct {
 	Items   []UserMemoryOwnerRecallItem `json:"items"`
 	Trace   UserMemoryRecallTrace       `json:"trace"`
 	Receipt UserMemoryOwnerReceipt      `json:"receipt"`
+}
+
+// UserMemoryChatReadRequest binds an in-turn UserMemory read to the canonical
+// request identity and authenticated owner. References are accepted as input
+// shape for retrieval contracts, but a backend must reject non-empty values
+// until it can resolve them as exact owner-scoped references.
+type UserMemoryChatReadRequest struct {
+	OwnerID    string               `json:"owner_id"`
+	SessionID  modulecore.SessionID `json:"session_id"`
+	TurnID     modulecore.TurnID    `json:"turn_id"`
+	TraceID    modulecore.TraceID   `json:"trace_id"`
+	RootTaskID modulecore.TaskID    `json:"root_task_id"`
+	Persona    string               `json:"persona,omitempty"`
+	Query      string               `json:"query"`
+	References []string             `json:"references,omitempty"`
+	Limit      int                  `json:"limit,omitempty"`
+}
+
+// UserMemoryChatRecallSourceReference carries the bounded owner and evidence
+// provenance needed to bind a selected memory to a later in-turn capability
+// guard. OwnerVersion is the source owner's updated_at version.
+type UserMemoryChatRecallSourceReference struct {
+	OwnerID          string               `json:"owner_id"`
+	SessionID        modulecore.SessionID `json:"session_id"`
+	MemoryID         string               `json:"memory_id"`
+	Namespace        string               `json:"namespace"`
+	SourceType       string               `json:"source_type"`
+	Source           string               `json:"source"`
+	EvidenceEventIDs []string             `json:"evidence_event_ids"`
+	CreatedByEventID modulecore.EventID   `json:"created_by_event_id,omitempty"`
+	UpdatedByEventID modulecore.EventID   `json:"updated_by_event_id,omitempty"`
+	PersonaScope     string               `json:"persona_scope"`
+	State            string               `json:"state"`
+	Sensitivity      string               `json:"sensitivity"`
+	Active           bool                 `json:"active"`
+	SupersededBy     string               `json:"superseded_by,omitempty"`
+	UpdatedAt        time.Time            `json:"updated_at"`
+	OwnerVersion     string               `json:"owner_version"`
+}
+
+// UserMemoryChatRecallItem joins the existing bounded recall projection with
+// its exact source reference. It does not imply prompt injection or publication.
+type UserMemoryChatRecallItem struct {
+	Item      UserMemoryOwnerRecallItem           `json:"item"`
+	Reference UserMemoryChatRecallSourceReference `json:"reference"`
+}
+
+// UserMemoryChatReadResult returns the same request identity and selected
+// projections without creating a trace, receipt, or injection event. HasMore
+// reports that the bounded eligible-candidate scan found additional rows; an
+// empty incomplete scan cannot prove that no eligible memory exists.
+type UserMemoryChatReadResult struct {
+	OwnerID         string                     `json:"owner_id"`
+	SessionID       modulecore.SessionID       `json:"session_id"`
+	TurnID          modulecore.TurnID          `json:"turn_id"`
+	TraceID         modulecore.TraceID         `json:"trace_id"`
+	RootTaskID      modulecore.TaskID          `json:"root_task_id"`
+	Persona         string                     `json:"persona"`
+	TotalCandidates int                        `json:"total_candidates"`
+	HasMore         bool                       `json:"has_more"`
+	Items           []UserMemoryChatRecallItem `json:"items"`
 }
 
 // UserMemoryTraceSummary is the owner-safe list projection for one trace.

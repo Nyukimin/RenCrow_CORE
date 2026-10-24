@@ -629,11 +629,18 @@ WHERE id = ? AND meta_json = ? AND updated_at = ?` + expectedWhere
 	if affected == 0 {
 		return false, rollbackL1Tx(tx, nil)
 	}
-	if _, err := appendL1EventLog(ctx, tx, eventType, ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, payload, "memory_lifecycle"); err != nil {
+	auditEntry, err := appendL1EventLog(ctx, tx, eventType, ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, payload, "memory_lifecycle")
+	if err != nil {
 		return false, rollbackL1Tx(tx, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("failed to commit lifecycle metadata for %s: %w", ev.ID, err)
+	}
+	mutated := ev
+	mutated.Meta = meta
+	mutated.UpdatedAt = updatedAt.UTC()
+	if userMemory, strictErr := strictUserMemoryFromEvent(mutated); strictErr == nil {
+		s.notifyUserMemoryMutation(userMemory.UserID, []string{userMemory.ID}, string(auditEventID(auditEntry)))
 	}
 	return true, nil
 }

@@ -167,6 +167,12 @@ func cleanExecutionScopes(values []string) []string {
 
 type toolExecutionScopeContextKey struct{}
 
+type authenticatedHTTPUserProofContextKey struct{}
+
+type authenticatedHTTPUserProof struct {
+	scope ToolExecutionScope
+}
+
 // WithToolExecutionScope carries a scope through Chat, Worker, delegate and
 // ToolLoop wrappers without exposing it to model-controlled arguments.
 func WithToolExecutionScope(ctx context.Context, scope ToolExecutionScope) context.Context {
@@ -185,6 +191,28 @@ func ToolExecutionScopeFromContext(ctx context.Context) (ToolExecutionScope, boo
 		return ToolExecutionScope{}, false
 	}
 	return cloneToolExecutionScope(scope), true
+}
+
+// AuthenticatedHTTPUserScopeFromContext returns the validated HTTP User proof
+// that backs the current scope. An Agent scope receives this proof only when
+// DeriveAgentToolExecutionScope derived it from that HTTP User scope, and only
+// while the current Agent scope still delegates the same user data access.
+func AuthenticatedHTTPUserScopeFromContext(ctx context.Context) (ToolExecutionScope, bool) {
+	if ctx == nil {
+		return ToolExecutionScope{}, false
+	}
+	scope, found := ToolExecutionScopeFromContext(ctx)
+	if !found || scope.Validate() != nil {
+		return ToolExecutionScope{}, false
+	}
+	if isAuthenticatedHTTPUserScope(scope) {
+		return scope, true
+	}
+	proof, ok := ctx.Value(authenticatedHTTPUserProofContextKey{}).(authenticatedHTTPUserProof)
+	if !ok || !isAuthenticatedHTTPUserScope(proof.scope) || !agentScopeDelegatesHTTPUser(scope, proof.scope.AuthenticatedUserID) {
+		return ToolExecutionScope{}, false
+	}
+	return cloneToolExecutionScope(proof.scope), true
 }
 
 func cloneToolExecutionScope(scope ToolExecutionScope) ToolExecutionScope {
@@ -245,7 +273,23 @@ func DeriveAgentToolExecutionScope(
 	if err := derived.Validate(); err != nil {
 		return nil, err
 	}
-	return WithToolExecutionScope(ctx, derived), nil
+	derivedContext := ctx
+	if proof, found := AuthenticatedHTTPUserScopeFromContext(ctx); found && agentScopeDelegatesHTTPUser(derived, proof.AuthenticatedUserID) {
+		derivedContext = context.WithValue(derivedContext, authenticatedHTTPUserProofContextKey{}, authenticatedHTTPUserProof{scope: cloneToolExecutionScope(proof)})
+	}
+	return WithToolExecutionScope(derivedContext, derived), nil
+}
+
+func isAuthenticatedHTTPUserScope(scope ToolExecutionScope) bool {
+	return scope.Validate() == nil && scope.ActorKind == ActorKindUser &&
+		scope.AuthenticationSource == AuthenticationSourceHTTP &&
+		scope.ActorID == scope.AuthenticatedUserID && scope.Allows(DataScopeUser)
+}
+
+func agentScopeDelegatesHTTPUser(scope ToolExecutionScope, userID string) bool {
+	return scope.Validate() == nil && scope.ActorKind == ActorKindAgent &&
+		scope.AuthenticationSource == AuthenticationSourceAgentOrchestrator &&
+		scope.AuthenticatedUserID == userID && scope.Allows(DataScopeUser)
 }
 
 func containsExecutionScope(scopes []string, want string) bool {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -22,7 +25,7 @@ import (
 
 func TestBuildTTSClientBridge_Disabled(t *testing.T) {
 	cfg := &config.Config{}
-	if got := buildTTSClientBridge(cfg, nil, nil, nil); got != nil {
+	if got := buildTTSClientBridge(cfg, nil, nil, nil, nil); got != nil {
 		t.Fatal("expected nil bridge when tts is disabled")
 	}
 }
@@ -39,13 +42,15 @@ func TestBuildTTSClientBridgeLoadsOwnerTokenAndAuthenticatesSynthesis(t *testing
 		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/test.wav"}`)
 	}))
 	t.Cleanup(server.Close)
+	outputDir := t.TempDir()
+	audioOwner, canonicalSessionID, binding := newTTSClientBridgeTestAudioOwner(t, outputDir, server.URL, "")
 	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
-		Enabled: true, GatewayBaseURL: server.URL, AuthTokenFile: tokenPath, VoiceID: "mio", TimeoutMS: 15000,
-	}}, nil, nil, nil)
+		Enabled: true, GatewayBaseURL: server.URL, AuthTokenFile: tokenPath, VoiceID: "mio", TimeoutMS: 15000, OutputDir: outputDir,
+	}}, audioOwner, nil, nil, nil)
 	if bridge == nil {
 		t.Fatal("expected authenticated TTS bridge")
 	}
-	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "auth-session", VoiceID: "mio"}); err != nil {
+	if err := bridge.StartSession(domainconversation.WithSessionBinding(context.Background(), binding), orchestrator.TTSSessionStart{SessionID: "auth-session", CanonicalSessionID: string(canonicalSessionID), VoiceID: "mio"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := bridge.PushText(context.Background(), "auth-session", "認証確認です。", nil); err != nil {
@@ -53,6 +58,54 @@ func TestBuildTTSClientBridgeLoadsOwnerTokenAndAuthenticatesSynthesis(t *testing
 	}
 	if authorization != "Bearer owner-test-token" {
 		t.Fatalf("Authorization = %q, want owner bearer", authorization)
+	}
+}
+
+func TestBuildTTSClientBridgeRegistersAudioBeforePublishingChunk(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/registered.wav"}`)
+	}))
+	t.Cleanup(server.Close)
+
+	outputDir := t.TempDir()
+	audioOwner, sessionID, binding := newTTSClientBridgeTestAudioOwner(t, outputDir, server.URL, "")
+	var readyRegistered, eventRegistered, eventBindingCorrect bool
+	var audioEventCount int
+	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
+		Enabled: true, GatewayBaseURL: server.URL, VoiceID: "mio", TimeoutMS: 10000, OutputDir: outputDir,
+	}}, audioOwner, func(event orchestrator.OrchestratorEvent) {
+		if event.Type != "tts.audio_chunk" {
+			return
+		}
+		address := binding.ChannelAddress()
+		eventBindingCorrect = event.SessionID == binding.SessionID() &&
+			event.PublicationIncarnation == binding.PublicationIncarnation() &&
+			event.Channel == address.ChannelType() && event.ChannelAddress == address.ExternalConversationID() &&
+			event.Visibility == string(binding.Audience())
+		audioEventCount++
+		registeredSession, found := audioOwner.lookupURL(server.URL + "/audio/registered.wav")
+		eventRegistered = found && registeredSession == string(sessionID)
+	}, func(_, _, _ string) {
+		registeredSession, found := audioOwner.lookupURL(server.URL + "/audio/registered.wav")
+		readyRegistered = found && registeredSession == string(sessionID)
+	}, nil)
+	if bridge == nil {
+		t.Fatal("expected TTS bridge")
+	}
+	if err := bridge.StartSession(domainconversation.WithSessionBinding(context.Background(), binding), orchestrator.TTSSessionStart{
+		SessionID: "tts-register-audio", CanonicalSessionID: string(sessionID), CharacterID: "mio", VoiceID: "mio",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.PushText(context.Background(), "tts-register-audio", "登録確認です。", nil); err != nil {
+		t.Fatalf("PushText(): %v", err)
+	}
+	if !readyRegistered {
+		t.Fatal("audio resource was not bound to the canonical Session before onChunkReady")
+	}
+	if !eventRegistered || !eventBindingCorrect || audioEventCount != 1 {
+		t.Fatalf("audio event registration=%v binding=%v count=%d, want exact frozen binding before one event", eventRegistered, eventBindingCorrect, audioEventCount)
 	}
 }
 
@@ -80,16 +133,18 @@ func TestBuildTTSClientBridgePublishesOneSpeechPlanEventPerUtterance(t *testing.
 	}))
 	defer server.Close()
 
-	sessionID := modulecore.NewSessionID()
 	turnID := modulecore.NewTurnID()
 	taskID := modulecore.NewTaskID()
 	messageID := modulecore.NewMessageID()
+	outputDir := t.TempDir()
+	audioOwner, sessionID, binding := newTTSClientBridgeTestAudioOwner(t, outputDir, server.URL, "")
 	registerTTSPublicSessionWithMessage("tts-speech-plan-event", string(sessionID), taskID.String(), string(messageID), 3)
 	var events []orchestrator.OrchestratorEvent
 	playback := orchestrator.NewSpeechTurnCancellation()
+	registeredSpeechPlanEvents := 0
 	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
-		Enabled: true, GatewayBaseURL: server.URL, VoiceID: "mio", TimeoutMS: 10000, OutputDir: t.TempDir(),
-	}}, func(ev orchestrator.OrchestratorEvent) {
+		Enabled: true, GatewayBaseURL: server.URL, VoiceID: "mio", TimeoutMS: 10000, OutputDir: outputDir,
+	}}, audioOwner, func(ev orchestrator.OrchestratorEvent) {
 		events = append(events, ev)
 		if ev.Type != "tts.audio_chunk" {
 			return
@@ -98,6 +153,12 @@ func TestBuildTTSClientBridgePublishesOneSpeechPlanEventPerUtterance(t *testing.
 		if err := json.Unmarshal([]byte(ev.Content), &payload); err != nil {
 			t.Errorf("decode audio chunk event for playback progress: %v", err)
 			return
+		}
+		registeredSession, registered := audioOwner.lookupPathRel(payload.AudioPath)
+		if !registered || registeredSession != string(sessionID) {
+			t.Errorf("SpeechPlan resource %q registered=%v Session=%q, want canonical Session %q before event", payload.AudioPath, registered, registeredSession, sessionID)
+		} else {
+			registeredSpeechPlanEvents++
 		}
 		if err := playback.MarkStarted(payload.ChunkIndex); err != nil {
 			t.Errorf("MarkStarted(%d): %v", payload.ChunkIndex, err)
@@ -110,8 +171,8 @@ func TestBuildTTSClientBridgePublishesOneSpeechPlanEventPerUtterance(t *testing.
 	if bridge == nil {
 		t.Fatal("TTS bridge unavailable")
 	}
-	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
-		SessionID: "tts-speech-plan-event", PublicPlaybackRef: taskID.String(), TraceID: string(modulecore.NewTraceID()), CharacterID: "mio", VoiceID: "mio",
+	if err := bridge.StartSession(domainconversation.WithSessionBinding(context.Background(), binding), orchestrator.TTSSessionStart{
+		SessionID: "tts-speech-plan-event", CanonicalSessionID: string(sessionID), PublicPlaybackRef: taskID.String(), TraceID: string(modulecore.NewTraceID()), CharacterID: "mio", VoiceID: "mio",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +201,9 @@ func TestBuildTTSClientBridgePublishesOneSpeechPlanEventPerUtterance(t *testing.
 	}
 	if len(chunks) != 2 {
 		t.Fatalf("SpeechPlan audio event count = %d, want 2: %#v", len(chunks), chunks)
+	}
+	if registeredSpeechPlanEvents != len(chunks) {
+		t.Fatalf("registered SpeechPlan audio event count=%d, want %d", registeredSpeechPlanEvents, len(chunks))
 	}
 	for index, chunk := range chunks {
 		if chunk.TurnID != string(turnID) || chunk.ChunkIndex != index {
@@ -252,33 +316,46 @@ func TestNextTTSPublicPlaybackRefForMessageKeepsForecastAnnouncementsOutOfMessag
 	}
 }
 
-func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *testing.T) {
+func TestTTSClientBridgePublishesIdleChatChunkWithCurrentPublicRoute(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 	clearAllIdleChatTTSPending()
+	t.Cleanup(resetTTSPublicSessionStateForTest)
 	t.Cleanup(clearAllIdleChatTTSPending)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/idle.wav"}`)
+		switch {
+		case r.Method == http.MethodPost:
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/idle.wav"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/audio/idle.wav":
+			w.Header().Set("Content-Type", "audio/wav")
+			fmt.Fprint(w, "RIFF-idle-audio")
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(srv.Close)
 
 	var chunks []orchestrator.OrchestratorEvent
+	outputDir := t.TempDir()
+	audioOwner, _, _ := newTTSClientBridgeTestAudioOwner(t, outputDir, srv.URL, "")
+	readyCount := 0
 	bridge := buildTTSClientBridge(&config.Config{
 		TTS: config.TTSConfig{
 			Enabled:        true,
 			GatewayBaseURL: srv.URL,
 			VoiceID:        "mio",
 			TimeoutMS:      15000,
+			OutputDir:      outputDir,
 		},
-	}, func(ev orchestrator.OrchestratorEvent) {
+	}, audioOwner, func(ev orchestrator.OrchestratorEvent) {
 		chunks = append(chunks, ev)
-	}, nil, nil)
+	}, func(_, _, _ string) { readyCount++ }, nil)
 	if bridge == nil {
 		t.Fatal("expected bridge")
 	}
 
-	registerTTSPublicSessionWithMessage("idle-canon-tts", "idle-canon", "idle-canon:0003", "idle-canon:msg:0003", 3)
+	registerTTSPublicSessionForPlayback("idle-canon-tts", "idle-canon", "idle-canon:0003", "idle-canon:msg:0003", 3, "test-runtime", 1)
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
 		SessionID:         "idle-canon-tts",
 		PublicPlaybackRef: "idle-canon:0003",
@@ -292,31 +369,167 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 		t.Fatalf("expected display bridge, got %T", bridge)
 	}
 	if err := displayBridge.PushTextWithDisplay(context.Background(), "idle-canon-tts", "同じチャンクです。", "同じチャンクです。", nil); err != nil {
-		t.Fatalf("push text: %v", err)
+		t.Fatalf("IdleChat chunk with a current public route: %v", err)
 	}
 
 	audioChunks := ttsAudioChunkEvents(chunks)
 	if len(audioChunks) != 1 {
-		t.Fatalf("expected one audio chunk event, got %d events=%#v", len(audioChunks), chunks)
+		t.Fatalf("IdleChat with a current public route published %d chunks, want 1: %#v", len(audioChunks), chunks)
 	}
-	var payload map[string]any
+	var payload moduletts.AudioChunkEventPayload
 	if err := json.Unmarshal([]byte(audioChunks[0].Content), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		t.Fatalf("decode IdleChat audio payload: %v", err)
 	}
-	if payload["session_id"] != "idle-canon" || payload["message_id"] != "idle-canon:msg:0003" {
-		t.Fatalf("unexpected identity payload: %#v", payload)
+	if payload.SessionID != "idle-canon" || payload.MessageID != "idle-canon:msg:0003" {
+		t.Fatalf("unexpected public identity payload: %#v", payload)
 	}
-	if audioChunks[0].MessageID != "idle-canon:msg:0003" || audioChunks[0].TraceID.Validate() != nil || !audioChunks[0].TaskID.IsZero() {
-		t.Fatalf("top-level TTS identity drifted: %#v", audioChunks[0])
+	if payload.SpeechText != "😊同じチャンクです。" || payload.Text != "😊同じチャンクです。" || payload.DisplayText != "同じチャンクです。" {
+		t.Fatalf("speech/display fields must preserve the emotion prefix and clean display text: %#v", payload)
 	}
-	if payload["speech_text"] != "😊同じチャンクです。" || payload["text"] != "😊同じチャンクです。" || payload["display_text"] != "同じチャンクです。" {
-		t.Fatalf("speech/display fields must preserve emotion-prefixed speech and clean display text: %#v", payload)
+	registration, found := audioOwner.lookupURLRegistration(srv.URL + "/audio/idle.wav")
+	if !found || registration.authorityKind != ttsAudioIdleChatPublicAuthority || registration.publicProof.PublicSessionID != "idle-canon" || registration.publicProof.RuntimeEpoch != "test-runtime" || registration.publicProof.PlaybackGeneration != 1 {
+		t.Fatalf("IdleChat audio registration=%+v found=%v, want current public route proof", registration, found)
 	}
-	if payload["track"] != "default" {
-		t.Fatalf("track = %#v, want default", payload["track"])
+	if _, found := audioOwner.lookupURL(srv.URL + "/audio/idle.wav"); found {
+		t.Fatal("public IdleChat resource was exposed as a canonical Session registration")
 	}
-	if payload["audio_path"] == "" && payload["audio_url"] == "" {
-		t.Fatalf("audio path/url missing: %#v", payload)
+	if readyCount != 1 {
+		t.Fatalf("IdleChat current route notified chunk-ready %d times, want 1", readyCount)
+	}
+
+	serve := handleTTSAudio(outputDir, srv.URL, audioOwner)
+	request := httptest.NewRequest(http.MethodGet, "/viewer/tts/audio?url="+url.QueryEscape(srv.URL+"/audio/idle.wav"), nil)
+	served := httptest.NewRecorder()
+	serve.ServeHTTP(served, request)
+	if served.Code != http.StatusOK || served.Body.String() != "RIFF-idle-audio" {
+		t.Fatalf("current IdleChat route audio response=%d body=%q, want 200 RIFF-idle-audio", served.Code, served.Body.String())
+	}
+
+	resetTTSPublicSessionRoutesForIdleChat()
+	request = httptest.NewRequest(http.MethodGet, "/viewer/tts/audio?url="+url.QueryEscape(srv.URL+"/audio/idle.wav"), nil)
+	stale := httptest.NewRecorder()
+	serve.ServeHTTP(stale, request)
+	if stale.Code != http.StatusNotFound {
+		t.Fatalf("stale IdleChat route audio status=%d body=%q, want 404", stale.Code, stale.Body.String())
+	}
+}
+
+func TestTTSClientBridgeReturnsPublicRegistrationErrorWithoutPublishingChunk(t *testing.T) {
+	resetTTSPublicSessionStateForTest()
+	t.Cleanup(resetTTSPublicSessionStateForTest)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/unregistered.wav"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	outputDir := t.TempDir()
+	audioOwner, _, _ := newTTSClientBridgeTestAudioOwner(t, outputDir, srv.URL, "")
+	var events []orchestrator.OrchestratorEvent
+	readyCount := 0
+	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
+		Enabled: true, GatewayBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000, OutputDir: outputDir,
+	}}, audioOwner, func(event orchestrator.OrchestratorEvent) {
+		events = append(events, event)
+	}, func(_, _, _ string) { readyCount++ }, nil)
+	if bridge == nil {
+		t.Fatal("expected bridge")
+	}
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
+		SessionID: "idle-unregistered-tts", PublicPlaybackRef: "idle-unregistered:0000", CharacterID: "mio", VoiceID: "mio",
+	}); err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	displayBridge, ok := bridge.(orchestrator.TTSDisplayBridge)
+	if !ok {
+		t.Fatalf("expected display bridge, got %T", bridge)
+	}
+	if err := displayBridge.PushTextWithDisplay(context.Background(), "idle-unregistered-tts", "route proof is missing", "route proof is missing", nil); err == nil {
+		t.Fatal("missing public route proof must surface an audio registration error")
+	}
+	if got := ttsAudioChunkEvents(events); len(got) != 0 {
+		t.Fatalf("chunk published without public route proof: %#v", got)
+	}
+	if readyCount != 0 || audioOwner.RegisteredResourceCount() != 0 {
+		t.Fatalf("missing public route proof left ready=%d registered=%d, want both zero", readyCount, audioOwner.RegisteredResourceCount())
+	}
+}
+
+func TestTTSClientBridgeRejectsDelayedCanonicalCallbackAfterSameIDRecreationWithoutIdleChatFallback(t *testing.T) {
+	resetTTSPublicSessionStateForTest()
+	t.Cleanup(resetTTSPublicSessionStateForTest)
+	requestStarted := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-releaseResponse
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/canonical-failure.wav"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	outputDir := t.TempDir()
+	canonicalSessionID, canonicalSession := ttsAudioTestSession(t, "")
+	repository := ttsAudioTestSessionRepository{sessions: map[string]*domainsession.Session{
+		string(canonicalSessionID): canonicalSession,
+	}}
+	binding := ttsAudioTestSessionBinding(t, canonicalSessionID, canonicalSession, 1)
+	audioOwner := newTTSAudioAccessOwner(outputDir, srv.URL, "ren", []byte(ttsAudioTestOwnerToken), newRuntimeSessionVisibility(repository))
+	var events []orchestrator.OrchestratorEvent
+	readyCount := 0
+	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
+		Enabled: true, GatewayBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000, OutputDir: outputDir,
+	}}, audioOwner, func(event orchestrator.OrchestratorEvent) {
+		events = append(events, event)
+	}, func(_, _, _ string) { readyCount++ }, nil)
+	if bridge == nil {
+		t.Fatal("expected bridge")
+	}
+	registerTTSPublicSessionForPlayback("idle-invalid-canonical-tts", "idle-invalid-canonical", "idle-invalid-canonical:0000", "idle-invalid-canonical:msg:0001", 1, "test-runtime", 1)
+	if err := bridge.StartSession(domainconversation.WithSessionBinding(context.Background(), binding), orchestrator.TTSSessionStart{
+		SessionID: "idle-invalid-canonical-tts", CanonicalSessionID: string(canonicalSessionID),
+		PublicPlaybackRef: "idle-invalid-canonical:0000", CharacterID: "mio", VoiceID: "mio",
+	}); err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	displayBridge, ok := bridge.(orchestrator.TTSDisplayBridge)
+	if !ok {
+		t.Fatalf("expected display bridge, got %T", bridge)
+	}
+	pushResult := make(chan error, 1)
+	go func() {
+		pushResult <- displayBridge.PushTextWithDisplay(context.Background(), "idle-invalid-canonical-tts", "canonical authority must fail", "canonical authority must fail", nil)
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("synthesis request did not reach the TTS gateway")
+	}
+	recreatedSession, err := domainsession.NewCanonicalSession(canonicalSessionID, "2026-10-24", binding.ChannelAddress(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recreatedSession.PublicationIncarnation() == binding.PublicationIncarnation() {
+		t.Fatal("same-ID recreation reused the old publication incarnation")
+	}
+	repository.sessions[string(canonicalSessionID)] = recreatedSession
+	close(releaseResponse)
+	select {
+	case err := <-pushResult:
+		if err == nil {
+			t.Fatal("stale canonical callback must fail even when an IdleChat route proof exists")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delayed TTS synthesis callback did not finish")
+	}
+	if got := ttsAudioChunkEvents(events); len(got) != 0 {
+		t.Fatalf("chunk published after failed canonical registration: %#v", got)
+	}
+	if readyCount != 0 || audioOwner.RegisteredResourceCount() != 0 {
+		t.Fatalf("failed canonical registration left ready=%d registered=%d, want both zero", readyCount, audioOwner.RegisteredResourceCount())
+	}
+	if _, found := audioOwner.lookupURLRegistration(srv.URL + "/audio/canonical-failure.wav"); found {
+		t.Fatal("stale canonical callback fell back to the IdleChat public authority")
 	}
 }
 
@@ -330,14 +543,16 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsPublicPlaybackRef(t *testing
 	var events []orchestrator.OrchestratorEvent
 	traceID := modulecore.NewTraceID()
 	taskID := modulecore.NewTaskID()
+	outputDir := t.TempDir()
+	audioOwner, canonicalSessionID, binding := newTTSClientBridgeTestAudioOwner(t, outputDir, srv.URL, "")
 	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
-		Enabled: true, GatewayBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000,
-	}}, func(event orchestrator.OrchestratorEvent) {
+		Enabled: true, GatewayBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000, OutputDir: outputDir,
+	}}, audioOwner, func(event orchestrator.OrchestratorEvent) {
 		events = append(events, event)
 	}, nil, nil)
 
-	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
-		SessionID: "viewer-chat-1", PublicPlaybackRef: taskID.String(), TraceID: string(traceID), CharacterID: "mio", VoiceID: "mio",
+	if err := bridge.StartSession(domainconversation.WithSessionBinding(context.Background(), binding), orchestrator.TTSSessionStart{
+		SessionID: "viewer-chat-1", CanonicalSessionID: string(canonicalSessionID), PublicPlaybackRef: taskID.String(), TraceID: string(traceID), CharacterID: "mio", VoiceID: "mio",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -377,9 +592,10 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsPublicPlaybackRef(t *testing
 	t.Fatal("tts.session_completed event was not emitted")
 }
 
-func TestTTSClientBridgeTopicPayloadIncludesBrightTopicPrefix(t *testing.T) {
+func TestTTSClientBridgePublishesIdleChatTopicWithCurrentPublicRoute(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 	clearAllIdleChatTTSPending()
+	t.Cleanup(resetTTSPublicSessionStateForTest)
 	t.Cleanup(clearAllIdleChatTTSPending)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -389,21 +605,25 @@ func TestTTSClientBridgeTopicPayloadIncludesBrightTopicPrefix(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	var chunks []orchestrator.OrchestratorEvent
+	outputDir := t.TempDir()
+	audioOwner, _, _ := newTTSClientBridgeTestAudioOwner(t, outputDir, srv.URL, "")
+	readyCount := 0
 	bridge := buildTTSClientBridge(&config.Config{
 		TTS: config.TTSConfig{
 			Enabled:        true,
 			GatewayBaseURL: srv.URL,
 			VoiceID:        "mio",
 			TimeoutMS:      15000,
+			OutputDir:      outputDir,
 		},
-	}, func(ev orchestrator.OrchestratorEvent) {
+	}, audioOwner, func(ev orchestrator.OrchestratorEvent) {
 		chunks = append(chunks, ev)
-	}, nil, nil)
+	}, func(_, _, _ string) { readyCount++ }, nil)
 	if bridge == nil {
 		t.Fatal("expected bridge")
 	}
 
-	registerTTSPublicSessionWithMessage("idle-topic-tts", "idle-topic", "idle-topic:0000", "idle-topic:topic", 0)
+	registerTTSPublicSessionForPlayback("idle-topic-tts", "idle-topic", "idle-topic:0000", "idle-topic:topic", 0, "test-runtime", 1)
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
 		SessionID:         "idle-topic-tts",
 		PublicPlaybackRef: "idle-topic:0000",
@@ -418,19 +638,77 @@ func TestTTSClientBridgeTopicPayloadIncludesBrightTopicPrefix(t *testing.T) {
 	}
 	topicSpeech := "きょうのおだい、車輪の軌跡と乗り手の皮膚感覚。"
 	if err := displayBridge.PushTextWithDisplay(context.Background(), "idle-topic-tts", topicSpeech, "今日のお題：車輪の軌跡と乗り手の皮膚感覚", nil); err != nil {
-		t.Fatalf("push text: %v", err)
+		t.Fatalf("IdleChat topic with a current public route: %v", err)
 	}
 
 	audioChunks := ttsAudioChunkEvents(chunks)
 	if len(audioChunks) != 1 {
-		t.Fatalf("expected one audio chunk event, got %d events=%#v", len(audioChunks), chunks)
+		t.Fatalf("IdleChat topic with a current public route published %d chunks, want 1: %#v", len(audioChunks), chunks)
 	}
-	var payload map[string]any
+	var payload moduletts.AudioChunkEventPayload
 	if err := json.Unmarshal([]byte(audioChunks[0].Content), &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+		t.Fatalf("decode topic payload: %v", err)
 	}
-	if payload["speech_text"] != "😊"+topicSpeech || payload["text"] != "😊"+topicSpeech {
-		t.Fatalf("topic speech must preserve bright prefix and full topic speech text: %#v", payload)
+	if payload.SpeechText != "😊"+topicSpeech || payload.Text != "😊"+topicSpeech {
+		t.Fatalf("topic speech must preserve the bright prefix and full topic text: %#v", payload)
+	}
+	registration, found := audioOwner.lookupURLRegistration(srv.URL + "/audio/topic.wav")
+	if !found || registration.authorityKind != ttsAudioIdleChatPublicAuthority || registration.publicProof.PublicSessionID != "idle-topic" || registration.publicProof.RuntimeEpoch != "test-runtime" || registration.publicProof.PlaybackGeneration != 1 {
+		t.Fatalf("topic registration=%+v found=%v, want current public route proof", registration, found)
+	}
+	if readyCount != 1 {
+		t.Fatalf("IdleChat topic notified chunk-ready %d times, want 1", readyCount)
+	}
+}
+
+func TestBuildTTSClientBridgeStampsFrozenPublicAndPrivateSessionBindings(t *testing.T) {
+	for _, ownerID := range []string{"", "ren"} {
+		name := "public"
+		wantVisibility := string(domainconversation.SessionAudiencePublic)
+		if ownerID != "" {
+			name = "private"
+			wantVisibility = string(domainconversation.SessionAudiencePrivate)
+		}
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/frozen-binding.wav"}`)
+			}))
+			defer server.Close()
+			outputDir := t.TempDir()
+			audioOwner, sessionID, binding := newTTSClientBridgeTestAudioOwner(t, outputDir, server.URL, ownerID)
+			var events []orchestrator.OrchestratorEvent
+			bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
+				Enabled: true, GatewayBaseURL: server.URL, VoiceID: "mio", TimeoutMS: 10000, OutputDir: outputDir,
+			}}, audioOwner, func(event orchestrator.OrchestratorEvent) {
+				events = append(events, event)
+			}, nil, nil)
+			if bridge == nil {
+				t.Fatal("TTS bridge unavailable")
+			}
+			if err := bridge.StartSession(domainconversation.WithSessionBinding(context.Background(), binding), orchestrator.TTSSessionStart{
+				SessionID: "tts-frozen-binding", CanonicalSessionID: string(sessionID), CharacterID: "mio", VoiceID: "mio",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := bridge.PushText(context.Background(), "tts-frozen-binding", "binding stamp", nil); err != nil {
+				t.Fatalf("PushText(): %v", err)
+			}
+			address := binding.ChannelAddress()
+			for _, event := range events {
+				if event.Type != "metrics.latency" && event.Type != "tts.audio_chunk" {
+					continue
+				}
+				if event.SessionID != sessionID || event.PublicationIncarnation != binding.PublicationIncarnation() ||
+					event.Channel != address.ChannelType() || event.ChannelAddress != address.ExternalConversationID() ||
+					event.Visibility != wantVisibility {
+					t.Errorf("%s event binding = session:%q incarnation:%q route:%s/%s visibility:%q", event.Type, event.SessionID, event.PublicationIncarnation, event.Channel, event.ChannelAddress, event.Visibility)
+				}
+			}
+			if got := ttsAudioChunkEvents(events); len(got) != 1 {
+				t.Fatalf("audio chunk events=%d, want one", len(got))
+			}
+		})
 	}
 }
 
@@ -442,6 +720,16 @@ func ttsAudioChunkEvents(events []orchestrator.OrchestratorEvent) []orchestrator
 		}
 	}
 	return filtered
+}
+
+func newTTSClientBridgeTestAudioOwner(t *testing.T, outputDir, gatewayURL, ownerID string) (*ttsAudioAccessOwner, modulecore.SessionID, domainconversation.SessionBinding) {
+	t.Helper()
+	sessionID, canonicalSession := ttsAudioTestSession(t, ownerID)
+	repository := ttsAudioTestSessionRepository{sessions: map[string]*domainsession.Session{
+		string(sessionID): canonicalSession,
+	}}
+	binding := ttsAudioTestSessionBinding(t, sessionID, canonicalSession, 1)
+	return newTTSAudioAccessOwner(outputDir, gatewayURL, "ren", []byte(ttsAudioTestOwnerToken), newRuntimeSessionVisibility(repository)), sessionID, binding
 }
 
 func TestTTSPublicSessionRouteSurvivesSessionCompletedUntilPlaybackAck(t *testing.T) {
@@ -521,7 +809,7 @@ func TestBuildTTSClientBridge_Enabled(t *testing.T) {
 			TimeoutMS:      15000,
 		},
 	}
-	if got := buildTTSClientBridge(cfg, nil, nil, nil); got == nil {
+	if got := buildTTSClientBridge(cfg, nil, nil, nil, nil); got == nil {
 		t.Fatal("expected non-nil bridge when tts is enabled")
 	}
 }
@@ -535,7 +823,7 @@ func TestBuildTTSClientBridge_UsesRenCrowBridge(t *testing.T) {
 			TimeoutMS:      15000,
 		},
 	}
-	got := buildTTSClientBridge(cfg, nil, nil, nil)
+	got := buildTTSClientBridge(cfg, nil, nil, nil, nil)
 	if got == nil {
 		t.Fatal("expected non-nil bridge")
 	}
@@ -553,7 +841,7 @@ func TestBuildTTSClientBridge_UsesGatewayOnly(t *testing.T) {
 			VoiceID:        "mio",
 		},
 	}
-	got := buildTTSClientBridge(cfg, nil, nil, nil)
+	got := buildTTSClientBridge(cfg, nil, nil, nil, nil)
 	if got == nil {
 		t.Fatal("expected non-nil bridge")
 	}
@@ -572,7 +860,7 @@ func TestBuildTTSClientBridge_WithoutPlaybackCommands(t *testing.T) {
 		},
 	}
 
-	got := buildTTSClientBridge(cfg, nil, nil, nil)
+	got := buildTTSClientBridge(cfg, nil, nil, nil, nil)
 	if got == nil {
 		t.Fatal("expected non-nil bridge")
 	}

@@ -33,6 +33,19 @@ type shutdownOrderEventStore struct {
 
 var errRecordTest = errors.New("record failed")
 
+func publicRelayFixtureEvent(event orchestrator.OrchestratorEvent) orchestrator.OrchestratorEvent {
+	event.Visibility = "public"
+	return event
+}
+
+func newPublicRelayFixtureMonitor(archive viewer.EventLogReader) *viewer.MonitorStore {
+	monitor := viewer.NewMonitorStore(nil, archive)
+	monitor.SetPublicEventVisibilityPredicate(func(_ context.Context, event orchestrator.OrchestratorEvent) (bool, error) {
+		return event.Visibility == "public", nil
+	})
+	return monitor
+}
+
 type responsePublicationMarkerStub struct {
 	store       *shutdownOrderEventStore
 	calls       int
@@ -161,7 +174,7 @@ func TestEventRelayRestoresCanonicalProjectionBeforeLiveSubscription(t *testing.
 	if err != nil {
 		t.Fatalf("NewCanonicalEventLog() error = %v", err)
 	}
-	monitor := viewer.NewMonitorStore(nil, archive)
+	monitor := newPublicRelayFixtureMonitor(archive)
 	marker := &responsePublicationMarkerStub{store: store}
 	relay := &idleAwareEventListener{hub: hub, monitor: monitor, archive: archive, responseMarker: marker}
 	taskID := modulecore.NewTaskID().String()
@@ -184,6 +197,7 @@ func TestEventRelayRestoresCanonicalProjectionBeforeLiveSubscription(t *testing.
 			event = orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "historical final response", "CHAT", taskID, string(sessionID), "viewer", "chat-1")
 			event.TurnID = turnID
 		}
+		event = publicRelayFixtureEvent(event)
 		persisted, appendErr := archive.AppendSequenced(event)
 		if appendErr != nil {
 			t.Fatalf("AppendSequenced historical event %d: %v", index, appendErr)
@@ -226,7 +240,7 @@ func TestEventRelayRestoresCanonicalProjectionBeforeLiveSubscription(t *testing.
 	default:
 	}
 
-	newFinal := orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "agent.response", "mio", "user", "new live response", "WEB", taskID, string(sessionID), "viewer", "chat-1")
+	newFinal := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "agent.response", "mio", "user", "new live response", "WEB", taskID, string(sessionID), "viewer", "chat-1"))
 	newFinal.TurnID = modulecore.NewTurnID()
 	if err := relay.OnEvent(newFinal); err != nil {
 		t.Fatalf("OnEvent() after restore: %v", err)
@@ -260,7 +274,7 @@ func TestEventRelayRestoreCanonicalProjectionReturnsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCanonicalEventLog() error = %v", err)
 	}
-	monitor := viewer.NewMonitorStore(nil, archive)
+	monitor := newPublicRelayFixtureMonitor(archive)
 	relay := &idleAwareEventListener{hub: hub, monitor: monitor, archive: archive}
 
 	if err := relay.RestoreCanonicalProjection(context.Background()); !errors.Is(err, errRecordTest) {
@@ -346,7 +360,7 @@ func TestEventRelayPersistsBeforeProjection(t *testing.T) {
 
 	taskID := modulecore.NewTaskID().String()
 	sessionID := string(modulecore.NewSessionID())
-	if err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "WEB", taskID, sessionID, "viewer", "chat-1")); err != nil {
+	if err := relay.OnEvent(publicRelayFixtureEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "WEB", taskID, sessionID, "viewer", "chat-1"))); err != nil {
 		t.Fatalf("OnEvent() error = %v", err)
 	}
 
@@ -371,7 +385,7 @@ func TestEventRelayMarksOnlyDurablyAppendedPublicFinalResponse(t *testing.T) {
 	sessionID := modulecore.NewSessionID()
 	messageID := modulecore.NewMessageID()
 	newFinal := func() orchestrator.OrchestratorEvent {
-		event := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "the complete reply", "WEB", modulecore.NewTaskID().String(), string(sessionID), "viewer", "chat-1")
+		event := publicRelayFixtureEvent(orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "the complete reply", "WEB", modulecore.NewTaskID().String(), string(sessionID), "viewer", "chat-1"))
 		event.TurnID = turnID
 		event.MessageID = messageID
 		return event
@@ -445,7 +459,7 @@ func TestEventRelayAppendFailureReturnsErrorAndDoesNotProject(t *testing.T) {
 	}
 	relay := &idleAwareEventListener{hub: hub, archive: archive}
 
-	err = relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
+	err = relay.OnEvent(publicRelayFixtureEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")))
 	if !errors.Is(err, errRecordTest) {
 		t.Fatalf("OnEvent() error = %v, want %v", err, errRecordTest)
 	}
@@ -515,8 +529,8 @@ func TestEventRelaySerializesPublicationAndPreservesCanonicalOrder(t *testing.T)
 				t.Fatalf("NewCanonicalEventLog() error = %v", err)
 			}
 			relay := &idleAwareEventListener{hub: hub, archive: archive}
-			first := orchestrator.NewEvent("message.received", "user", "mio", "first", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
-			second := orchestrator.NewEvent("routing.decision", "mio", "shiro", "second", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
+			first := publicRelayFixtureEvent(orchestrator.NewEvent("message.received", "user", "mio", "first", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
+			second := publicRelayFixtureEvent(orchestrator.NewEvent("routing.decision", "mio", "shiro", "second", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
 
 			firstDone := make(chan error, 1)
 			go func() {
@@ -607,7 +621,7 @@ func TestEventRelayRequiresCanonicalArchive(t *testing.T) {
 	hub := viewer.NewEventHub(4)
 	relay := &idleAwareEventListener{hub: hub}
 
-	err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
+	err := relay.OnEvent(publicRelayFixtureEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")))
 	if !errors.Is(err, errCanonicalEventArchiveRequired) {
 		t.Fatalf("OnEvent() error = %v, want %v", err, errCanonicalEventArchiveRequired)
 	}

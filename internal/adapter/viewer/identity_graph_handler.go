@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -29,6 +30,11 @@ type IdentityGraphEventReader interface {
 type IdentityGraphTaskReader interface {
 	GetTask(context.Context, modulecore.TaskID) (domaintask.Task, error)
 }
+
+// PublicSessionVisibility is trusted runtime policy for exposing Session
+// references in the public Identity Graph route. It receives the canonical
+// envelope so runtime policy can bind the event to its issuance incarnation.
+type PublicSessionVisibility func(context.Context, modulecore.EventEnvelope) (bool, error)
 
 type identityGraphResponse struct {
 	Schema       string                     `json:"schema"`
@@ -89,12 +95,20 @@ var (
 	errIdentityGraphConflict    = errors.New("identity graph is inconsistent")
 	errIdentityGraphRead        = errors.New("identity graph read failed")
 	errIdentityGraphUnavailable = errors.New("identity graph is unavailable")
+	errIdentityGraphHidden      = errors.New("identity graph is not public")
 )
 
 // HandleIdentityGraph returns a bounded, read-only projection of one
 // canonical TraceID. It intentionally exposes no event payload, Task body,
 // filesystem path, or owner error value.
 func HandleIdentityGraph(events IdentityGraphEventReader, tasks IdentityGraphTaskReader) http.HandlerFunc {
+	return HandleIdentityGraphWithPublicVisibility(events, tasks, nil, nil)
+}
+
+// HandleIdentityGraphWithPublicVisibility only projects a trace after trusted
+// policy approves every referenced Task and Session. Request parameters never
+// grant access to graph metadata.
+func HandleIdentityGraphWithPublicVisibility(events IdentityGraphEventReader, tasks IdentityGraphTaskReader, taskVisibility PublicTaskVisibility, sessionVisibility PublicSessionVisibility) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r == nil || r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -104,6 +118,10 @@ func HandleIdentityGraph(events IdentityGraphEventReader, tasks IdentityGraphTas
 		traceID, ok := parseIdentityGraphTraceID(r.URL)
 		if !ok {
 			http.Error(w, "invalid identity graph query", http.StatusBadRequest)
+			return
+		}
+		if taskVisibility == nil && sessionVisibility == nil {
+			http.Error(w, "trace_id is unknown", http.StatusNotFound)
 			return
 		}
 		if events == nil || tasks == nil {
@@ -117,15 +135,18 @@ func HandleIdentityGraph(events IdentityGraphEventReader, tasks IdentityGraphTas
 			return
 		}
 		if len(traceEvents) == 0 {
-			http.Error(w, "trace_id is unknown", http.StatusBadRequest)
+			http.Error(w, "trace_id is unknown", http.StatusNotFound)
 			return
 		}
 
-		projection, err := buildIdentityGraph(r.Context(), traceID, traceEvents, tasks)
+		projection, err := buildIdentityGraph(r.Context(), traceID, traceEvents, tasks, taskVisibility, sessionVisibility)
 		if err != nil {
 			status := http.StatusInternalServerError
 			message := "identity graph read failed"
 			switch {
+			case errors.Is(err, errIdentityGraphHidden):
+				status = http.StatusNotFound
+				message = "trace_id is unknown"
 			case errors.Is(err, errIdentityGraphConflict):
 				status = http.StatusConflict
 				message = "identity graph is inconsistent"
@@ -163,7 +184,7 @@ func parseIdentityGraphTraceID(rawURL *url.URL) (modulecore.TraceID, bool) {
 	return traceID, true
 }
 
-func buildIdentityGraph(ctx context.Context, traceID modulecore.TraceID, sourceEvents []modulecore.EventEnvelope, tasks IdentityGraphTaskReader) (identityGraphResponse, error) {
+func buildIdentityGraph(ctx context.Context, traceID modulecore.TraceID, sourceEvents []modulecore.EventEnvelope, tasks IdentityGraphTaskReader, taskVisibility PublicTaskVisibility, sessionVisibility PublicSessionVisibility) (identityGraphResponse, error) {
 	if ctx == nil || tasks == nil {
 		return identityGraphResponse{}, errIdentityGraphUnavailable
 	}
@@ -175,10 +196,22 @@ func buildIdentityGraph(ctx context.Context, traceID modulecore.TraceID, sourceE
 	if err := validateIdentityGraphEvents(traceID, traceEvents); err != nil {
 		return identityGraphResponse{}, errors.Join(errIdentityGraphConflict, err)
 	}
+	if err := validateIdentityGraphSessionVisibility(ctx, traceEvents, sessionVisibility); err != nil {
+		return identityGraphResponse{}, err
+	}
 
-	taskValues, taskEdges, err := loadIdentityGraphTasks(ctx, traceEvents, tasks)
+	taskValues, taskEdges, err := loadIdentityGraphTasks(ctx, traceEvents, tasks, taskVisibility)
 	if err != nil {
 		return identityGraphResponse{}, err
+	}
+	// Task-owner reads can outlive the Session publication they were approved
+	// against. Re-resolve every event binding immediately before admitting the
+	// response so a same-ID deletion/recreation cannot inherit an old graph.
+	if err := validateIdentityGraphSessionVisibility(ctx, traceEvents, sessionVisibility); err != nil {
+		return identityGraphResponse{}, err
+	}
+	if len(taskValues) == 0 && !identityGraphHasSessionReference(traceEvents) {
+		return identityGraphResponse{}, errIdentityGraphHidden
 	}
 
 	response := identityGraphResponse{
@@ -314,7 +347,7 @@ func validateIdentityGraphActor(kind, id string) error {
 	return nil
 }
 
-func loadIdentityGraphTasks(ctx context.Context, events []modulecore.EventEnvelope, reader IdentityGraphTaskReader) (map[modulecore.TaskID]domaintask.Task, []identityGraphTaskEdge, error) {
+func loadIdentityGraphTasks(ctx context.Context, events []modulecore.EventEnvelope, reader IdentityGraphTaskReader, visibility PublicTaskVisibility) (map[modulecore.TaskID]domaintask.Task, []identityGraphTaskEdge, error) {
 	rootSet := make(map[modulecore.TaskID]struct{})
 	for _, event := range events {
 		if event.TaskID != "" {
@@ -328,6 +361,9 @@ func loadIdentityGraphTasks(ctx context.Context, events []modulecore.EventEnvelo
 	sort.Slice(rootIDs, func(i, j int) bool { return rootIDs[i] < rootIDs[j] })
 	if len(rootIDs) > identityGraphTaskLimit {
 		return nil, nil, errors.Join(errIdentityGraphConflict, errors.New("task graph exceeds the bound"))
+	}
+	if len(rootIDs) > 0 && visibility == nil {
+		return nil, nil, errIdentityGraphHidden
 	}
 
 	values := make(map[modulecore.TaskID]domaintask.Task, len(rootIDs))
@@ -361,6 +397,11 @@ func loadIdentityGraphTasks(ctx context.Context, events []modulecore.EventEnvelo
 		if err := value.Validate(); err != nil {
 			delete(visiting, taskID)
 			return errors.Join(errIdentityGraphConflict, errors.New("task is invalid"))
+		}
+		visible, visibilityErr := visibility(ctx, value)
+		if visibilityErr != nil || !visible {
+			delete(visiting, taskID)
+			return errIdentityGraphHidden
 		}
 		values[taskID] = value
 
@@ -405,6 +446,46 @@ func loadIdentityGraphTasks(ctx context.Context, events []modulecore.EventEnvelo
 		return left.Kind < right.Kind
 	})
 	return values, edges, nil
+}
+
+func validateIdentityGraphSessionVisibility(ctx context.Context, events []modulecore.EventEnvelope, visibility PublicSessionVisibility) error {
+	hasSessionReference := identityGraphHasSessionReference(events)
+	if !hasSessionReference {
+		return nil
+	}
+	if visibility == nil {
+		return errIdentityGraphHidden
+	}
+	for _, event := range events {
+		if event.SessionID == "" {
+			continue
+		}
+		if !identityGraphEventHasPublicationProof(event) {
+			return errIdentityGraphHidden
+		}
+		visible, err := visibility(ctx, event)
+		if err != nil || !visible {
+			return errIdentityGraphHidden
+		}
+	}
+	return nil
+}
+
+func identityGraphEventHasPublicationProof(event modulecore.EventEnvelope) bool {
+	if event.SessionID.Validate() != nil || event.Payload == nil {
+		return false
+	}
+	incarnation, ok := event.Payload["publication_incarnation"].(string)
+	return ok && domainsession.ValidatePublicationIncarnation(incarnation) == nil
+}
+
+func identityGraphHasSessionReference(events []modulecore.EventEnvelope) bool {
+	for _, event := range events {
+		if event.SessionID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedTaskIDs(values []modulecore.TaskID) []modulecore.TaskID {

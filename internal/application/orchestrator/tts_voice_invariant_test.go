@@ -92,7 +92,7 @@ func runVoicedTurn(t *testing.T, decision routing.Decision, recipient, message s
 	t.Helper()
 	orch, bridge, listener := newVoiceInvariantOrchestrator(t, decision)
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "voice-invariant",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: message,
@@ -148,7 +148,7 @@ func TestProcessMessageVoicesDailyNewsWithRespondingAgentNotRecipient(t *testing
 				}, nil
 			}))
 			_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-				SessionID:   "voice-news",
+				SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 				Channel:     "viewer",
 				ChatID:      "viewer-user",
 				UserMessage: "今朝のニュースを教えて",
@@ -177,7 +177,7 @@ func TestProcessMessageVoicesShiroWhenMioFailsDailyNews(t *testing.T) {
 		}, nil
 	}))
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "voice-news-fallback",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "今朝のニュースを教えて",

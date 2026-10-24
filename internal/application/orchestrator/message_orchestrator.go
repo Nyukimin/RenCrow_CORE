@@ -21,6 +21,7 @@ import (
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domaindurablestore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
@@ -62,6 +63,7 @@ type ProcessMessageRequest struct {
 	ResumeNextAction         string
 	ResumeCheckpointID       modulecore.CheckpointID
 	CanonicalRunID           modulecore.RunID `json:"-"`
+	mioAnswerDeltaSink       *mioAnswerDeltaSink
 	originalUserMessage      string
 }
 
@@ -524,10 +526,29 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 	turntiming.Mark(ctx, turntiming.PointProcessSessionStarted)
-	sess, req, err := o.sessions.ResolveForRequest(ctx, req, latencyStartedAt.UTC())
+	sess, req, boundOwnerID, err := o.sessions.ResolveForRequestWithOwner(ctx, req, latencyStartedAt.UTC())
 	turntiming.Mark(ctx, turntiming.PointProcessSessionEnded)
 	if err != nil {
 		return ProcessMessageResponse{}, err
+	}
+	binding, err := bindingForResolvedProcessSession(sess, req, boundOwnerID, domainconversation.BindingGenerationUnavailable)
+	if err != nil {
+		return ProcessMessageResponse{}, err
+	}
+	if generationRepository, ok := o.sessions.sessionRepo.(canonicalSessionBindingGenerationRepository); ok {
+		generation, generationErr := generationRepository.BindingGeneration(ctx, binding)
+		if generationErr == nil && generation != domainconversation.BindingGenerationUnavailable {
+			binding, err = bindingForResolvedProcessSession(sess, req, boundOwnerID, generation)
+			if err != nil {
+				return ProcessMessageResponse{}, err
+			}
+		}
+	}
+	ctx = domainconversation.WithSessionBinding(ctx, binding)
+	if binding.Audience() == domainconversation.SessionAudiencePrivate && boundOwnerID != "" {
+		ctx = agent.ContextWithMioTurnGenerateRequestAdmissionFactory(ctx, func(admissionCtx context.Context, guard domainconversation.PreparedChatTurnGuard) (*domainllm.GenerateRequestAdmission, error) {
+			return o.newPrivateMioGenerateRequestAdmission(admissionCtx, req, guard)
+		})
 	}
 	defer func() {
 		if err == nil {
@@ -558,7 +579,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		defer o.events.ReleaseTiming(traceID)
 	}
 	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.message")
-	o.events.BindConversationIdentity(rootTaskID.String(), modulecore.TurnID(req.TurnID), modulecore.TraceID(req.TraceID), modulecore.SessionID(req.SessionID))
+	if err := o.events.BindConversationSessionBinding(rootTaskID.String(), modulecore.TurnID(req.TurnID), modulecore.TraceID(req.TraceID), binding); err != nil {
+		return ProcessMessageResponse{}, fmt.Errorf("bind canonical Session publication identity to message events: %w", err)
+	}
 	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
 	defer func() {
 		o.events.ReleaseTrace(rootTaskID.String())
@@ -866,6 +889,177 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	endPreRouteChecks()
 
 	combinedChatAllowed := o.routeDispatcher != nil && !o.routeDispatcher.speechPlanEnabled
+	if combinedChatAllowed && req.mioAnswerDeltaSink != nil && req.mioAnswerDeltaSink.admit != nil &&
+		req.Channel == "viewer" && req.To == "mio" && req.OperationSource == "RenCrow_CMD" {
+		ctx = withMioFinalResponsePublisher(ctx, func(finalCtx context.Context, response string, finalTaskID modulecore.TaskID, finalRunID modulecore.RunID, guard domainconversation.PreparedChatTurnGuard) (domainconversation.PreparedChatTurnPublicationGuard, error) {
+			// Finish every accepted transient delta before the canonical final
+			// enters the relay's ordered live queue.
+			if req.mioAnswerDeltaSink.drain != nil {
+				if drainErr := req.mioAnswerDeltaSink.drain(); drainErr != nil {
+					return nil, fmt.Errorf("drain private Mio answer deltas before final response: %w", drainErr)
+				}
+			}
+			return o.publishPrivateMioFinalResponse(finalCtx, req, response, finalTaskID, finalRunID, guard)
+		})
+	}
+	var earlyStream *mioEarlyStreamLifecycle
+	var actor string
+	var leadRunID modulecore.RunID
+	var runStartedAt LeadAgentRunRecord
+	leadRunInput := leadAgentRunInputFromRequest(req)
+	if combinedChatAllowed && req.mioAnswerDeltaSink != nil && o.taskLifecycle != nil {
+		earlyStream = &mioEarlyStreamLifecycle{}
+		var cancelMioStream context.CancelFunc
+		ctx, cancelMioStream = context.WithCancel(ctx)
+		earlyStream.setProviderCancellation(cancelMioStream, nil)
+		defer cancelMioStream()
+		ctx = withMioEarlyStreamLifecycle(ctx, earlyStream)
+		ctx = agent.ContextWithMioTurnStreamEventHandler(ctx, func(event domainllm.LogicalOutcomeEvent, guard agent.MioTurnStreamGuardUse) (func(bool), error) {
+			switch event.Kind {
+			case domainllm.LogicalOutcomeAnswerStart:
+				state := earlyStream.snapshot()
+				if state.policyApplied {
+					if state.prepared || state.deltasSuppressed {
+						return nil, nil
+					}
+					return nil, errors.New("Mio CHAT stream lifecycle was not prepared before answer_start")
+				}
+				if event.Route != routing.RouteCHAT.String() {
+					err := fmt.Errorf("Mio answer_start route %q is not CHAT", event.Route)
+					earlyStream.fail(err)
+					return nil, err
+				}
+				reason := "LLM generated MioTurnOutcome v2: answer on CHAT"
+				provisional := routing.NewDecisionWithEvidence(routing.RouteCHAT, 0.7, reason, routing.DecisionEvidence{
+					Source: routing.EvidenceSourceClassifier, Matched: true, Route: routing.RouteCHAT,
+					Confidence: 0.7, Reason: reason,
+				})
+				policyDecision, policyCtx, policyErr := o.routeDecisions.applyHeavyWorkerPolicy(ctx, provisional, req, taskID)
+				if policyErr != nil {
+					earlyStream.fail(policyErr)
+					return nil, policyErr
+				}
+				earlyStream.cachePolicy(policyDecision, policyCtx)
+				ctx = policyCtx
+				if policyDecision.Route != routing.RouteCHAT {
+					return nil, nil
+				}
+
+				turntiming.Mark(ctx, turntiming.PointTaskActivationStarted)
+				actor, err = actualCoreActorForRequest(routing.RouteCHAT, req)
+				if err != nil {
+					earlyStream.fail(err)
+					return nil, err
+				}
+				if directViewerExecutionActor(req, routing.RouteCHAT, actor) {
+					ctx = withOrchestrationLLMInitiator(ctx, actor)
+				}
+				preparedTaskID, activateErr := taskActivation.Activate(ctx, routing.RouteCHAT, actor, fmt.Sprintf("confidence %.0f%% evidence=%s", policyDecision.Confidence*100, routeDecisionEvidenceSummary(policyDecision.Evidence)))
+				turntiming.Mark(ctx, turntiming.PointTaskActivationEnded)
+				rejectAttachedMismatch(activateErr)
+				if preparedTaskID != "" {
+					executionTaskID = preparedTaskID
+					taskID = preparedTaskID
+					ctx = withOrchestrationLLMTask(ctx, preparedTaskID)
+				}
+				if activateErr != nil {
+					earlyStream.fail(activateErr)
+					return nil, activateErr
+				}
+				turntiming.Mark(ctx, turntiming.PointLeadRunResolutionStarted)
+				leadRunID, err = resolveLeadAgentRun(ctx, o.taskLifecycle, taskID, o.superAgentRuns, o.superAgentRunController)
+				turntiming.Mark(ctx, turntiming.PointLeadRunResolutionEnded)
+				if err != nil {
+					earlyStream.fail(err)
+					return nil, err
+				}
+				boundCtx, bindErr := domainexecution.WithIdentity(ctx, taskID, leadRunID, input.TraceID())
+				if bindErr != nil {
+					earlyStream.fail(bindErr)
+					return nil, fmt.Errorf("bind early Mio CHAT execution identity: %w", bindErr)
+				}
+				ctx = boundCtx
+				turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceStarted)
+				runStartedAt, err = RecordLeadAgentRunStarted(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, routing.RouteCHAT)
+				turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceEnded)
+				if err != nil {
+					earlyStream.fail(err)
+					return nil, err
+				}
+				var unregisterRun func()
+				if o.superAgentRunController != nil {
+					ctx, unregisterRun = o.superAgentRunController.RegisterRun(ctx, string(leadRunID))
+					stopProviderCancel := context.AfterFunc(ctx, cancelMioStream)
+					earlyStream.setProviderCancellation(cancelMioStream, stopProviderCancel)
+				}
+				if leadRunID != "" {
+					ctx = appsubagent.WithSuperAgentRuntime(ctx, taskID, leadRunID, actor, runStartedAt.TraceID, runStartedAt.StartedEventID, []string{"session:" + req.SessionID, "route:" + string(routing.RouteCHAT)}, nil, "return summary-only subagent result to Lead Agent")
+					turntiming.Mark(ctx, turntiming.PointLeadRunContextReady)
+				}
+				streamTTSStarted := false
+				if o.ttsBridge != nil && ttsSessionID != "" {
+					turntiming.Mark(ctx, turntiming.PointTTSSessionSetupStarted)
+					streamTTSStarted = o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, policyDecision, ttsSessionID)
+					turntiming.Mark(ctx, turntiming.PointTTSSessionSetupEnded)
+					if !streamTTSStarted {
+						ttsSessionID = ""
+					}
+				}
+				earlyStream.markPrepared(actor, taskID, leadRunID, runStartedAt, ctx, ttsSessionID, streamTTSStarted, true, unregisterRun)
+				return nil, nil
+			case domainllm.LogicalOutcomeAnswerDelta:
+				state := earlyStream.snapshot()
+				if state.deltasSuppressed {
+					return nil, nil
+				}
+				if !state.prepared {
+					err := errors.New("Mio answer_delta arrived before its Task and Lead Run were prepared")
+					earlyStream.fail(err)
+					return nil, err
+				}
+				if event.Text == "" {
+					return nil, nil
+				}
+				turntiming.Mark(ctx, turntiming.PointFirstTextCallback)
+				delta := mioAnswerDelta{
+					TurnID: req.TurnID, TraceID: req.TraceID, TaskID: state.taskID.String(), RunID: string(state.runID),
+					SessionID: req.SessionID, MessageID: req.AgentMessageID, Text: event.Text,
+				}
+				if req.mioAnswerDeltaSink.admit != nil {
+					return o.admitPrivateMioAnswerDelta(ctx, req, delta, guard)
+				}
+				return req.mioAnswerDeltaSink.offer(delta)
+			default:
+				return nil, nil
+			}
+		})
+		defer func() {
+			state := earlyStream.snapshot()
+			cleanupCtx := ctx
+			if state.policyContext != nil {
+				cleanupCtx = state.policyContext
+			}
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(cleanupCtx), 5*time.Second)
+			defer cleanupCancel()
+			if !state.finishRunAttempted && !state.runRecord.StartedAt.IsZero() {
+				earlyStream.markRunFinishAttempted()
+				_ = RecordLeadAgentRunFinished(cleanupCtx, o.superAgentRuns, leadRunInput, state.taskID, state.runID, state.actor, routing.RouteCHAT, state.runRecord, "failed", "Mio logical answer stream ended before Lead Agent completion")
+			}
+			if state.ownsTTS && state.ttsStarted && !state.finishTTSAttempted {
+				earlyStream.markTTSFinishAttempted()
+				o.ttsLifecycle.EndSession(cleanupCtx, state.ttsSessionID)
+			}
+			if state.unregisterRun != nil {
+				state.unregisterRun()
+			}
+			if state.stopProviderCancel != nil {
+				state.stopProviderCancel()
+			}
+			if state.cancelProvider != nil {
+				state.cancelProvider()
+			}
+		}()
+	}
 	turntiming.Mark(ctx, turntiming.PointRouteDecisionStarted)
 	routeResult, err := o.routeDecisions.DecideWithChatDraft(ctx, input, req, taskID, combinedChatAllowed)
 	if err != nil {
@@ -874,7 +1068,16 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if routeResult.Context != nil {
 		ctx = routeResult.Context
 	}
-	defer o.routeDecisions.releaseChatDraft(ctx, routeResult.ChatDraft)
+	defer func() {
+		// Keep the prepared-turn guard alive until every queued transient delta
+		// has either passed its final owner/generation check or been discarded.
+		if req.mioAnswerDeltaSink != nil && req.mioAnswerDeltaSink.drain != nil {
+			if drainErr := req.mioAnswerDeltaSink.drain(); err == nil && drainErr != nil {
+				err = fmt.Errorf("drain private Mio answer deltas: %w", drainErr)
+			}
+		}
+		o.routeDecisions.releaseChatDraft(ctx, routeResult.ChatDraft)
+	}()
 	decision := routeResult.Decision
 	if decision.Route != routing.RouteCHAT || routeResult.ChatDraft == nil {
 		effect := "non-CHAT route execution"
@@ -887,30 +1090,42 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		}
 	}
 	turntiming.Mark(ctx, turntiming.PointRouteDecided)
-	actor, err := actualCoreActorForRequest(decision.Route, req)
-	if err != nil {
-		return ProcessMessageResponse{}, err
-	}
-	if directViewerExecutionActor(req, decision.Route, actor) {
-		ctx = withOrchestrationLLMInitiator(ctx, actor)
-	}
-	turntiming.Mark(ctx, turntiming.PointTaskActivationStarted)
-	preparedTaskID, err := taskActivation.Activate(ctx, decision.Route, actor, fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)))
-	turntiming.Mark(ctx, turntiming.PointTaskActivationEnded)
-	rejectAttachedMismatch(err)
-	if preparedTaskID != "" {
-		executionTaskID = preparedTaskID
-		taskID = preparedTaskID
-		ctx = withOrchestrationLLMTask(ctx, preparedTaskID)
-	}
-	if err != nil {
-		return ProcessMessageResponse{}, err
-	}
-	turntiming.Mark(ctx, turntiming.PointLeadRunResolutionStarted)
-	leadRunID, err := resolveLeadAgentRun(ctx, o.taskLifecycle, taskID, o.superAgentRuns, o.superAgentRunController)
-	turntiming.Mark(ctx, turntiming.PointLeadRunResolutionEnded)
-	if err != nil {
-		return ProcessMessageResponse{}, err
+	earlyState := earlyStream.snapshot()
+	earlyPrepared := earlyState.prepared
+	if earlyPrepared {
+		actor = earlyState.actor
+		taskID = earlyState.taskID
+		leadRunID = earlyState.runID
+		runStartedAt = earlyState.runRecord
+		if earlyState.policyContext != nil {
+			ctx = earlyState.policyContext
+		}
+	} else {
+		actor, err = actualCoreActorForRequest(decision.Route, req)
+		if err != nil {
+			return ProcessMessageResponse{}, err
+		}
+		if directViewerExecutionActor(req, decision.Route, actor) {
+			ctx = withOrchestrationLLMInitiator(ctx, actor)
+		}
+		turntiming.Mark(ctx, turntiming.PointTaskActivationStarted)
+		preparedTaskID, activateErr := taskActivation.Activate(ctx, decision.Route, actor, fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)))
+		turntiming.Mark(ctx, turntiming.PointTaskActivationEnded)
+		rejectAttachedMismatch(activateErr)
+		if preparedTaskID != "" {
+			executionTaskID = preparedTaskID
+			taskID = preparedTaskID
+			ctx = withOrchestrationLLMTask(ctx, preparedTaskID)
+		}
+		if activateErr != nil {
+			return ProcessMessageResponse{}, activateErr
+		}
+		turntiming.Mark(ctx, turntiming.PointLeadRunResolutionStarted)
+		leadRunID, err = resolveLeadAgentRun(ctx, o.taskLifecycle, taskID, o.superAgentRuns, o.superAgentRunController)
+		turntiming.Mark(ctx, turntiming.PointLeadRunResolutionEnded)
+		if err != nil {
+			return ProcessMessageResponse{}, err
+		}
 	}
 	emitLatencyMetric(o.events.Emit, "llm", "route_decision", latencyStartedAt, string(decision.Route), taskID.String(), req.SessionID, req.Channel, req.ChatID, decision.Reason)
 	if err := o.events.PublicationError(traceID); err != nil {
@@ -925,7 +1140,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	if o.ttsBridge != nil && ttsSessionID != "" {
+	if !earlyPrepared && o.ttsBridge != nil && ttsSessionID != "" {
 		boundCtx, bindErr := domainexecution.WithIdentity(ctx, taskID, leadRunID, input.TraceID())
 		if bindErr != nil {
 			return ProcessMessageResponse{}, fmt.Errorf("bind TTS execution identity: %w", bindErr)
@@ -935,7 +1150,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if ttsSessionID != "" {
 		turntiming.Mark(ctx, turntiming.PointTTSSessionSetupStarted)
 	}
-	ttsSessionStarted := o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID)
+	ttsSessionStarted := false
+	if earlyPrepared {
+		ttsSessionID = earlyState.ttsSessionID
+		ttsSessionStarted = earlyState.ttsStarted
+	} else {
+		ttsSessionStarted = o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID)
+	}
 	if ttsSessionID != "" {
 		turntiming.Mark(ctx, turntiming.PointTTSSessionSetupEnded)
 	}
@@ -952,27 +1173,50 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			endCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			o.ttsLifecycle.EndSession(endCtx, ttsSessionID)
+			if earlyStream != nil && earlyPrepared {
+				earlyStream.markTTSFinishAttempted()
+			}
 		}()
 	}
 
 	endWorkerBusy := o.idleBusyGuards.BeginWorker(decision.Route)
 	defer endWorkerBusy()
 
-	leadRunInput := leadAgentRunInputFromRequest(req)
-	turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceStarted)
-	runStartedAt, err := RecordLeadAgentRunStarted(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route)
-	turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceEnded)
-	if err != nil {
-		return ProcessMessageResponse{}, err
+	if !earlyPrepared {
+		turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceStarted)
+		runStartedAt, err = RecordLeadAgentRunStarted(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route)
+		turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceEnded)
+		if err != nil {
+			return ProcessMessageResponse{}, err
+		}
+		if o.superAgentRunController != nil {
+			var unregister func()
+			ctx, unregister = o.superAgentRunController.RegisterRun(ctx, string(leadRunID))
+			defer unregister()
+			if earlyStream != nil && decision.Route == routing.RouteCHAT {
+				stopProviderCancel := context.AfterFunc(ctx, earlyState.cancelProvider)
+				earlyStream.setProviderCancellation(earlyState.cancelProvider, stopProviderCancel)
+			}
+		}
+		if leadRunID != "" {
+			ctx = appsubagent.WithSuperAgentRuntime(ctx, taskID, leadRunID, actor, runStartedAt.TraceID, runStartedAt.StartedEventID, []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
+			turntiming.Mark(ctx, turntiming.PointLeadRunContextReady)
+		}
+		if earlyStream != nil && decision.Route == routing.RouteCHAT && routeResult.ChatDraft != nil {
+			earlyStream.markPrepared(actor, taskID, leadRunID, runStartedAt, ctx, ttsSessionID, ttsSessionStarted, false, nil)
+		}
 	}
-	if o.superAgentRunController != nil {
-		var unregister func()
-		ctx, unregister = o.superAgentRunController.RegisterRun(ctx, string(leadRunID))
-		defer unregister()
-	}
-	if leadRunID != "" {
-		ctx = appsubagent.WithSuperAgentRuntime(ctx, taskID, leadRunID, actor, runStartedAt.TraceID, runStartedAt.StartedEventID, []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
-		turntiming.Mark(ctx, turntiming.PointLeadRunContextReady)
+	finishLeadRun := func(finishCtx context.Context, status, reason string) error {
+		if earlyStream != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(finishCtx), 5*time.Second)
+			defer cancel()
+			err := RecordLeadAgentRunFinished(cleanupCtx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, status, reason)
+			if err == nil {
+				earlyStream.markRunFinishAttempted()
+			}
+			return err
+		}
+		return RecordLeadAgentRunFinished(finishCtx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, status, reason)
 	}
 
 	// 4. ルートに応じて実行
@@ -991,9 +1235,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	if err != nil {
 		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(string(leadRunID)) {
-			_ = RecordLeadAgentRunFinished(context.Background(), o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "paused", "pause requested; task execution canceled")
+			_ = finishLeadRun(context.Background(), "paused", "pause requested; task execution canceled")
 		} else {
-			_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+			_ = finishLeadRun(ctx, "failed", err.Error())
 		}
 		return ProcessMessageResponse{}, fmt.Errorf("task execution failed: %w", err)
 	}
@@ -1003,6 +1247,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	o.ttsLifecycle.EndSession(ctx, ttsSessionID)
 	ttsSessionEnded = true
+	if earlyStream != nil && earlyPrepared {
+		earlyStream.markTTSFinishAttempted()
+	}
 	var verificationReport *domainverification.VerificationReport
 	if o.verifier != nil {
 		verification, err := o.verifier.VerifyResponse(ctx, appverification.Request{
@@ -1015,7 +1262,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			TaskID:        taskID,
 		})
 		if err != nil {
-			_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+			_ = finishLeadRun(ctx, "failed", err.Error())
 			return ProcessMessageResponse{}, fmt.Errorf("response verification failed: %w", err)
 		}
 		response = verification.Response
@@ -1027,17 +1274,17 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 
 	if applied, err := o.applyPersonaCanonicalResponse(ctx, req, response); err != nil {
-		_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+		_ = finishLeadRun(ctx, "failed", err.Error())
 		return ProcessMessageResponse{}, err
 	} else if applied != "" {
 		response = applied
 	}
 
 	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
-		_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+		_ = finishLeadRun(ctx, "failed", err.Error())
 		return ProcessMessageResponse{}, err
 	}
-	if err := RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
+	if err := finishLeadRun(ctx, "completed", "Lead Agent completed"); err != nil {
 		return ProcessMessageResponse{}, err
 	}
 

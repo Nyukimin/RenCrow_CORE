@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -100,11 +102,15 @@ type Dependencies struct {
 	combinedChatAdmissionEnabled   bool
 	redisHealthCheck               func(context.Context) error
 	dataCapabilityCatalog          *runtimeDataCapabilityCatalog
+	mioRetrieval                   orchestrator.MioRetrievalPort
 	lineHandler                    http.Handler
 	telegramHandler                http.Handler
 	discordHandler                 http.Handler
 	slackHandler                   http.Handler
 	eventHub                       *viewer.EventHub                            // live viewer
+	sessionRepository              orchestrator.SessionRepository              // canonical Session owner used by Viewer event projections
+	sessionVisibility              *runtimeSessionVisibility                   // shared public/session-owner boundary cache
+	ttsAudioAccessOwner            *ttsAudioAccessOwner                        // canonical Session registration shared by TTS producer and reader
 	monitorStore                   *viewer.MonitorStore                        // viewer monitor snapshots
 	eventLogStore                  *viewer.CanonicalEventLog                   // canonical orchestrator event projection
 	canonicalEventStore            runtimeCanonicalEventStore                  // canonical append-only Event Store
@@ -352,6 +358,8 @@ type Dependencies struct {
 	personRelatedCatalogLookup     viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
 	personRelatedCatalogPeople     viewer.PersonRelatedCatalogPeopleProvider   // indexed explicitly assessed people projection
 	serenaMCPClient                serenaMCPClient                             // lifecycle owner for the connected Serena MCP process
+	runtimeCapabilityRefreshCancel context.CancelFunc                          // stops the periodic prompt capability discovery loop
+	runtimeCapabilityRefreshDone   <-chan struct{}                             // joined before runtime MCP clients are stopped
 	moduleChatService              chatModuleService                           // module contract view of Chat service
 	moduleLLMProviders             map[string]modulellm.Provider               // module contract view of LLM providers
 	moduleTTSProvider              moduletts.Provider                          // module contract view of primary TTS provider
@@ -367,6 +375,14 @@ type Dependencies struct {
 	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
 }
 
+func newConfiguredTTSAudioAccessOwner(cfg *config.Config, visibility *runtimeSessionVisibility) *ttsAudioAccessOwner {
+	if cfg == nil {
+		return nil
+	}
+	ownerID, ownerToken := viewerEventsCMDOwnerCredentials(cfg)
+	return newTTSAudioAccessOwner(cfg.TTS.OutputDir, cfg.TTS.GatewayURL(), ownerID, ownerToken, visibility)
+}
+
 func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Runtime) (orchestrator.NativeCodingAdmission, error) {
 	if cfg == nil || !cfg.NativeHarness.Profile.Enabled {
 		return nil, nil
@@ -380,6 +396,16 @@ func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Run
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
 	queueOwnersSafeToClose := true
+	if d.runtimeCapabilityRefreshCancel != nil {
+		d.runtimeCapabilityRefreshCancel()
+		if d.runtimeCapabilityRefreshDone != nil {
+			select {
+			case <-d.runtimeCapabilityRefreshDone:
+			case <-time.After(2 * time.Second):
+				log.Printf("Runtime capability discovery did not stop before shutdown timeout")
+			}
+		}
+	}
 	if d.classifierShadow != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		closeErr := d.classifierShadow.Close(ctx)
@@ -552,6 +578,158 @@ func (d *Dependencies) Shutdown() {
 		}
 	}
 	log.Println("Shutdown complete")
+}
+
+const (
+	runtimeCapabilityPromptSnapshotRefreshInterval = time.Minute
+	runtimeCapabilityPromptDiscoveryTimeout        = 5 * time.Second
+)
+
+type runtimeCapabilityPromptDiscovery func(context.Context) ([]domaintool.ToolMetadata, []runtimeMCPObservation, string)
+
+type runtimeCapabilityPromptSnapshot struct {
+	toolMetadata      []domaintool.ToolMetadata
+	mcpObservations   []runtimeMCPObservation
+	unavailableReason string
+}
+
+// runtimeCapabilityPromptSnapshotCache owns the immutable discovery projection
+// used by prompts. Refreshes run on one background loop; prompt reads only load
+// the last published snapshot and render it with in-memory owner observations.
+type runtimeCapabilityPromptSnapshotCache struct {
+	discover  runtimeCapabilityPromptDiscovery
+	refreshMu sync.Mutex
+	current   atomic.Pointer[runtimeCapabilityPromptSnapshot]
+}
+
+func newRuntimeCapabilityPromptSnapshotCache(discover runtimeCapabilityPromptDiscovery) *runtimeCapabilityPromptSnapshotCache {
+	cache := &runtimeCapabilityPromptSnapshotCache{discover: discover}
+	cache.current.Store(&runtimeCapabilityPromptSnapshot{
+		unavailableReason: "Worker Tool一覧の起動時取得を待っています",
+	})
+	return cache
+}
+
+func runtimeCapabilityPromptDiscoveryForRunner(
+	runner domaintool.RunnerV2,
+	client *mcp.MCPClient,
+) runtimeCapabilityPromptDiscovery {
+	return func(ctx context.Context) ([]domaintool.ToolMetadata, []runtimeMCPObservation, string) {
+		observations := observeGenericMCPClient(ctx, client)
+		if runner == nil {
+			return nil, observations, "Worker ToolRunnerが未接続です"
+		}
+		metadata, err := runner.ListTools(ctx)
+		if err != nil {
+			return nil, observations, "Worker Tool一覧を取得できません"
+		}
+		return metadata, observations, ""
+	}
+}
+
+func (c *runtimeCapabilityPromptSnapshotCache) refresh(ctx context.Context) {
+	if c == nil {
+		return
+	}
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, runtimeCapabilityPromptDiscoveryTimeout)
+	defer cancel()
+	if c.discover == nil {
+		c.current.Store(&runtimeCapabilityPromptSnapshot{unavailableReason: "Worker Tool一覧を取得できません"})
+		return
+	}
+	metadata, observations, unavailableReason := c.discover(refreshCtx)
+	if unavailableReason == "" && refreshCtx.Err() != nil {
+		unavailableReason = "Worker Tool一覧を取得できません"
+	}
+	if unavailableReason != "" {
+		c.current.Store(&runtimeCapabilityPromptSnapshot{
+			mcpObservations:   cloneRuntimeMCPObservations(observations),
+			unavailableReason: unavailableReason,
+		})
+		return
+	}
+	c.current.Store(&runtimeCapabilityPromptSnapshot{
+		toolMetadata:    cloneRuntimeCapabilityToolMetadata(metadata),
+		mcpObservations: cloneRuntimeMCPObservations(observations),
+	})
+}
+
+func (c *runtimeCapabilityPromptSnapshotCache) start(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(runtimeCapabilityPromptSnapshotRefreshInterval)
+		defer ticker.Stop()
+		c.refresh(ctx)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.refresh(ctx)
+			}
+		}
+	}()
+	return done
+}
+
+func (c *runtimeCapabilityPromptSnapshotCache) render(
+	loadedSkills []domaincontext.SkillMetadata,
+	skillManifests []domainskill.SkillManifest,
+	currentObservations []runtimeMCPObservation,
+) string {
+	snapshot := (*runtimeCapabilityPromptSnapshot)(nil)
+	if c != nil {
+		snapshot = c.current.Load()
+	}
+	if snapshot == nil {
+		snapshot = &runtimeCapabilityPromptSnapshot{unavailableReason: "Worker Tool一覧は利用できません"}
+	}
+	observations := make([]runtimeMCPObservation, 0, len(snapshot.mcpObservations)+len(currentObservations))
+	observations = append(observations, snapshot.mcpObservations...)
+	observations = append(observations, currentObservations...)
+	if snapshot.unavailableReason != "" {
+		return buildRuntimeCapabilityContextWithToolFailureAndSkills(
+			loadedSkills,
+			skillManifests,
+			observations,
+			snapshot.unavailableReason,
+		)
+	}
+	available := make(map[string]struct{}, len(snapshot.toolMetadata))
+	for _, metadata := range snapshot.toolMetadata {
+		available[metadata.ToolID] = struct{}{}
+	}
+	for i := range observations {
+		if exposedName := observations[i].ExposedName; exposedName != "" {
+			if _, ok := available[exposedName]; !ok {
+				observations[i].Available = false
+				observations[i].Reason = "Observed MCP tool is unavailable in the current Worker catalog"
+			}
+		}
+	}
+	return buildRuntimeCapabilityContextWithSkills(snapshot.toolMetadata, loadedSkills, skillManifests, observations)
+}
+
+func cloneRuntimeCapabilityToolMetadata(metadata []domaintool.ToolMetadata) []domaintool.ToolMetadata {
+	cloned := make([]domaintool.ToolMetadata, 0, len(metadata))
+	for _, item := range metadata {
+		cloned = append(cloned, domaintool.ToolMetadata{
+			ToolID:      item.ToolID,
+			Description: item.Description,
+			Origin:      item.Origin,
+		})
+	}
+	return cloned
+}
+
+func cloneRuntimeMCPObservations(observations []runtimeMCPObservation) []runtimeMCPObservation {
+	return append([]runtimeMCPObservation(nil), observations...)
 }
 
 // prepareAtlasLifecycleService applies the one startup migration before
@@ -751,6 +929,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		selectedGlossaryOwner = storageOwners.GlossaryStore
 	}
 	glossaryRuntime := buildGlossaryRuntime(cfg, selectedGlossaryOwner)
+	deps.mioRetrieval = newRuntimeMioRetrieval(glossaryRuntime.IndexedLookup, conversationRuntime.CategoryRecallRegistry).
+		withPreparedUserMemoryOwner(conversationRuntime.L1Store, conversationRuntime.PreparedRecallRuntime)
 	// Conversation runtime may attach late-bound web_gather adapters to the
 	// production Worker runner. Build the Agent snapshot only after every
 	// runtime Tool has been registered so awareness and execution stay equal.
@@ -775,6 +955,12 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		advisorRuntime.Policy,
 	)
 	sessionRuntime := buildSessionRuntime(cfg)
+	if storageOwners.SessionRepository != nil {
+		sessionRuntime.SessionRepo = storageOwners.SessionRepository
+	}
+	deps.sessionRepository = sessionRuntime.SessionRepo
+	deps.sessionVisibility = newRuntimeSessionVisibility(deps.sessionRepository)
+	deps.ttsAudioAccessOwner = newConfiguredTTSAudioAccessOwner(cfg, deps.sessionVisibility)
 	workerExecutionService := service.NewWorkerExecutionService(cfg.Worker, deps.taskManager)
 	log.Printf("WorkerExecutionService initialized (Workspace: %s, Parallel: %v)",
 		cfg.Worker.Workspace, cfg.Worker.ParallelExecution)
@@ -1715,11 +1901,15 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			deps.dreamConsolidationReview = viewer.HandleDreamConsolidationReview(knowledgeMemoryStore)
 		}
 	}
-	runtimeCapabilityContext := func(ctx context.Context) string {
-		observations := serenaRuntime.currentObservations()
-		observations = append(observations, observeGenericMCPClient(ctx, mcpClient)...)
+	runtimeCapabilitySnapshot := newRuntimeCapabilityPromptSnapshotCache(
+		runtimeCapabilityPromptDiscoveryForRunner(toolRuntime.WorkerRuntimeRunnerV2, mcpClient),
+	)
+	runtimeCapabilityRefreshCtx, runtimeCapabilityRefreshCancel := context.WithCancel(context.Background())
+	deps.runtimeCapabilityRefreshCancel = runtimeCapabilityRefreshCancel
+	deps.runtimeCapabilityRefreshDone = runtimeCapabilitySnapshot.start(runtimeCapabilityRefreshCtx)
+	runtimeCapabilityContext := func(context.Context) string {
 		return combineRuntimeCapabilityContexts(
-			runtimeCapabilityContextFromWorkerRunnerWithSkills(ctx, toolRuntime.WorkerRuntimeRunnerV2, runtimeSkillMetadata, runtimeSkillManifests, observations),
+			runtimeCapabilitySnapshot.render(runtimeSkillMetadata, runtimeSkillManifests, serenaRuntime.currentObservations()),
 			renderRuntimeDataRouteContext(dataRecallRegistry, dataWriteRegistry),
 		)
 	}
@@ -1744,6 +1934,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	lipSync := newTTSVTuberLipSync(vtuberBridge)
 	ttsBridge := buildTTSClientBridge(
 		cfg,
+		deps.ttsAudioAccessOwner,
 		func(ev orchestrator.OrchestratorEvent) {
 			if deps.eventRelay != nil {
 				if err := deps.eventRelay.OnEvent(ev); err != nil {

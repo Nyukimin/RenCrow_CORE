@@ -604,6 +604,352 @@ func TestSessionGroupRejectsMalformedPayloadBeforeOwnerExecution(t *testing.T) {
 	}
 }
 
+type canonicalOwnerSessionRepository interface {
+	LoadCanonicalForOwner(context.Context, string, string, conversation.ChannelAddress) (domainsession.CanonicalSessionOwnerResolution, error)
+	LoadOrCreateCanonicalForOwner(context.Context, string, conversation.ChannelAddress, string, time.Time) (domainsession.CanonicalSessionOwnerResolution, error)
+}
+
+type canonicalOwnerSessionOwnerStub struct {
+	*session.JSONSessionRepository
+	readCalls   int
+	createCalls int
+	read        domainsession.CanonicalSessionOwnerResolution
+	create      domainsession.CanonicalSessionOwnerResolution
+	readInput   struct {
+		id      string
+		ownerID string
+		address conversation.ChannelAddress
+	}
+	createInput struct {
+		logicalDate string
+		ownerID     string
+		address     conversation.ChannelAddress
+		createdAt   time.Time
+	}
+}
+
+func (o *canonicalOwnerSessionOwnerStub) LoadCanonicalForOwner(_ context.Context, id, ownerID string, address conversation.ChannelAddress) (domainsession.CanonicalSessionOwnerResolution, error) {
+	o.readCalls++
+	o.readInput.id, o.readInput.ownerID, o.readInput.address = id, ownerID, address
+	return o.read, nil
+}
+
+func (o *canonicalOwnerSessionOwnerStub) LoadOrCreateCanonicalForOwner(_ context.Context, logicalDate string, address conversation.ChannelAddress, ownerID string, createdAt time.Time) (domainsession.CanonicalSessionOwnerResolution, error) {
+	o.createCalls++
+	o.createInput.logicalDate, o.createInput.ownerID, o.createInput.address, o.createInput.createdAt = logicalDate, ownerID, address, createdAt
+	return o.create, nil
+}
+
+func newOwnerBoundStorageHostSession(t *testing.T, ownerID string) (*domainsession.Session, conversation.ChannelAddress) {
+	t.Helper()
+	address, err := conversation.NewChannelAddress("line", "U-owner-bound")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	value, err := domainsession.NewCanonicalSessionWithOwner(modulecore.NewSessionID(), ownerID, "2026-10-24", address, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value, address
+}
+
+func TestSessionGroupSaveAndLoadPreservesCanonicalOwnerBinding(t *testing.T) {
+	owner := newSessionGroupOwner(t)
+	fixture := newSessionGroupFixture(t, owner)
+	want, _ := newOwnerBoundStorageHostSession(t, "ren")
+	if err := fixture.client.Save(context.Background(), want); err != nil {
+		t.Fatalf("Save owner-bound Session: %v", err)
+	}
+	got, err := fixture.client.Load(context.Background(), want.ID())
+	if err != nil {
+		t.Fatalf("Load owner-bound Session: %v", err)
+	}
+	if got.OwnerID() != "ren" {
+		t.Fatalf("Load OwnerID() = %q, want immutable owner ren", got.OwnerID())
+	}
+}
+
+func TestSessionGroupCanonicalOwnerProtocolDelegatesTypedResolution(t *testing.T) {
+	value, address := newOwnerBoundStorageHostSession(t, "ren")
+	owner := &canonicalOwnerSessionOwnerStub{
+		JSONSessionRepository: newSessionGroupOwner(t),
+		read: domainsession.CanonicalSessionOwnerResolution{
+			Session: value, BoundOwnerID: "ren", Status: domainsession.CanonicalSessionOwnerMatched,
+		},
+		create: domainsession.CanonicalSessionOwnerResolution{
+			Session: value, BoundOwnerID: "ren", Status: domainsession.CanonicalSessionOwnerCreated,
+		},
+	}
+	fixture := newSessionGroupFixture(t, owner)
+	api, ok := any(fixture.client).(canonicalOwnerSessionRepository)
+	if !ok {
+		t.Fatal("SessionRepositoryClient does not expose canonical owner operations")
+	}
+
+	read, err := api.LoadCanonicalForOwner(context.Background(), value.ID(), "ren", address)
+	if err != nil || read.Status != domainsession.CanonicalSessionOwnerMatched || read.Session == nil || read.Session.ID() != value.ID() || read.Session.OwnerID() != "ren" || read.BoundOwnerID != "ren" {
+		t.Fatalf("LoadCanonicalForOwner() = %+v, %v; want matched owner-bound Session", read, err)
+	}
+	if owner.readCalls != 1 || owner.readInput.id != value.ID() || owner.readInput.ownerID != "ren" || owner.readInput.address != address {
+		t.Fatalf("owner read delegation = calls:%d input:%+v, want exact request", owner.readCalls, owner.readInput)
+	}
+
+	createdAt := value.CreatedAt().Add(time.Hour)
+	created, err := api.LoadOrCreateCanonicalForOwner(context.Background(), value.LogicalDate(), address, "ren", createdAt)
+	if err != nil || created.Status != domainsession.CanonicalSessionOwnerCreated || created.Session == nil || created.Session.ID() != value.ID() || created.Session.OwnerID() != "ren" || created.BoundOwnerID != "ren" {
+		t.Fatalf("LoadOrCreateCanonicalForOwner() = %+v, %v; want created owner-bound Session", created, err)
+	}
+	if owner.createCalls != 1 || owner.createInput.logicalDate != value.LogicalDate() || owner.createInput.ownerID != "ren" || owner.createInput.address != address || !owner.createInput.createdAt.Equal(createdAt) {
+		t.Fatalf("owner create delegation = calls:%d input:%+v, want exact request", owner.createCalls, owner.createInput)
+	}
+}
+
+func TestSessionGroupCanonicalOwnerResolutionUsesJSONSessionOwner(t *testing.T) {
+	owner := newSessionGroupOwner(t)
+	fixture := newSessionGroupFixture(t, owner)
+	want, address := newOwnerBoundStorageHostSession(t, "ren")
+	if err := owner.Save(context.Background(), want); err != nil {
+		t.Fatalf("seed owner-bound Session: %v", err)
+	}
+	api := canonicalOwnerSessionRepository(fixture.client)
+
+	matched, err := api.LoadCanonicalForOwner(context.Background(), want.ID(), "ren", address)
+	if err != nil || matched.Status != domainsession.CanonicalSessionOwnerMatched || matched.Session == nil || matched.Session.ID() != want.ID() || matched.BoundOwnerID != "ren" {
+		t.Fatalf("LoadCanonicalForOwner(same owner) = %+v, %v; want matched", matched, err)
+	}
+	conflict, err := api.LoadCanonicalForOwner(context.Background(), want.ID(), "other", address)
+	if err != nil || conflict.Status != domainsession.CanonicalSessionOwnerConflict || conflict.Session != nil || conflict.BoundOwnerID != "" {
+		t.Fatalf("LoadCanonicalForOwner(other owner) = %+v, %v; want payload-free conflict", conflict, err)
+	}
+	otherAddress, err := conversation.NewChannelAddress("line", "U-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict, err = api.LoadCanonicalForOwner(context.Background(), want.ID(), "ren", otherAddress)
+	if err != nil || conflict.Status != domainsession.CanonicalSessionOwnerConflict || conflict.Session != nil {
+		t.Fatalf("LoadCanonicalForOwner(other address) = %+v, %v; want payload-free conflict", conflict, err)
+	}
+	missing, err := api.LoadCanonicalForOwner(context.Background(), string(modulecore.NewSessionID()), "ren", address)
+	if err != nil || missing.Status != domainsession.CanonicalSessionOwnerNotFound || missing.Session != nil {
+		t.Fatalf("LoadCanonicalForOwner(missing) = %+v, %v; want payload-free not_found", missing, err)
+	}
+
+	legacy := newStorageHostSession(t)
+	if err := owner.Save(context.Background(), legacy); err != nil {
+		t.Fatalf("seed legacy Session: %v", err)
+	}
+	legacyResolution, err := api.LoadCanonicalForOwner(context.Background(), legacy.ID(), "ren", legacy.ChannelAddress())
+	if err != nil || legacyResolution.Status != domainsession.CanonicalSessionOwnerUnavailable || legacyResolution.Session != nil || legacyResolution.BoundOwnerID != "" {
+		t.Fatalf("LoadCanonicalForOwner(legacy) = %+v, %v; want payload-free unavailable", legacyResolution, err)
+	}
+}
+
+func TestSessionGroupCanonicalOwnerProtocolFailsClosedOnUnboundStatuses(t *testing.T) {
+	value, address := newOwnerBoundStorageHostSession(t, "ren")
+	for _, status := range []domainsession.CanonicalSessionOwnerStatus{
+		domainsession.CanonicalSessionOwnerUnavailable,
+		domainsession.CanonicalSessionOwnerConflict,
+		domainsession.CanonicalSessionOwnerNotFound,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			owner := &canonicalOwnerSessionOwnerStub{
+				JSONSessionRepository: newSessionGroupOwner(t),
+				read:                  domainsession.CanonicalSessionOwnerResolution{Status: status},
+			}
+			fixture := newSessionGroupFixture(t, owner)
+			api, ok := any(fixture.client).(canonicalOwnerSessionRepository)
+			if !ok {
+				t.Fatal("SessionRepositoryClient does not expose canonical owner operations")
+			}
+			got, err := api.LoadCanonicalForOwner(context.Background(), value.ID(), "ren", address)
+			if err != nil || got.Status != status || got.Session != nil || got.BoundOwnerID != "" {
+				t.Fatalf("LoadCanonicalForOwner() = %+v, %v; want payload-free %s", got, err, status)
+			}
+		})
+	}
+}
+
+func TestSessionGroupCanonicalOwnerRequestRejectsUserIDAndDuplicateOwnerAliases(t *testing.T) {
+	value, address := newOwnerBoundStorageHostSession(t, "ren")
+	owner := &canonicalOwnerSessionOwnerStub{JSONSessionRepository: newSessionGroupOwner(t)}
+	fixture := newSessionGroupFixture(t, owner)
+	addressDTO := sessionAddressFromDomain(address)
+	addressJSON, err := json.Marshal(addressDTO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := `"id":"` + value.ID() + `","channel_address":` + string(addressJSON)
+	for name, raw := range map[string]string{
+		"caller user_id":      `{"id":"` + value.ID() + `","owner_id":"ren","user_id":"ren","channel_address":` + string(addressJSON) + `}`,
+		"duplicate owner_id":  `{` + base + `,"owner_id":"ren","owner_id":"other"}`,
+		"owner_id case alias": `{` + base + `,"owner_id":"ren","OWNER_ID":"other"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := fixture.client.client.Call(context.Background(), GroupSession, "load_canonical_for_owner", json.RawMessage(raw), nil)
+			var storageErr *Error
+			if !errors.As(err, &storageErr) || storageErr.Code != ErrorCodeSchemaRejected {
+				t.Fatalf("owner request error = %v, want schema_rejected", err)
+			}
+			if owner.readCalls != 0 {
+				t.Fatalf("owner read calls = %d, want zero for rejected input", owner.readCalls)
+			}
+		})
+	}
+}
+
+func TestSessionGroupSaveRejectsDuplicateOrAliasedOwnerProvenance(t *testing.T) {
+	owner := &countedSessionOwner{JSONSessionRepository: newSessionGroupOwner(t)}
+	fixture := newSessionGroupFixture(t, owner)
+	value, _ := newOwnerBoundStorageHostSession(t, "ren")
+	dto, err := sessionRecordFromDomain(value)
+	if err != nil {
+		t.Fatalf("sessionRecordFromDomain: %v", err)
+	}
+	record, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("marshal session DTO: %v", err)
+	}
+	baseRecord := string(record[:len(record)-1])
+	for name, suffix := range map[string]string{
+		"duplicate owner_id":  `,"owner_id":"other"}`,
+		"owner_id case alias": `,"OWNER_ID":"other"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := json.RawMessage(`{"session":` + baseRecord + suffix + `}`)
+			err := fixture.client.client.Call(context.Background(), GroupSession, "save", raw, nil)
+			var storageErr *Error
+			if !errors.As(err, &storageErr) || storageErr.Code != ErrorCodeSchemaRejected {
+				t.Fatalf("duplicate owner provenance error = %v, want schema_rejected", err)
+			}
+			if owner.saves != 0 {
+				t.Fatalf("owner Save calls = %d, want zero for rejected DTO", owner.saves)
+			}
+		})
+	}
+}
+
+func TestSessionGroupCanonicalOwnerRejectsInvalidOwnerResolution(t *testing.T) {
+	value, address := newOwnerBoundStorageHostSession(t, "ren")
+	tests := []struct {
+		name       string
+		resolution domainsession.CanonicalSessionOwnerResolution
+	}{
+		{
+			name: "matched owner mismatch",
+			resolution: domainsession.CanonicalSessionOwnerResolution{
+				Session: value, BoundOwnerID: "other", Status: domainsession.CanonicalSessionOwnerMatched,
+			},
+		},
+		{
+			name: "unavailable leaks session",
+			resolution: domainsession.CanonicalSessionOwnerResolution{
+				Session: value, Status: domainsession.CanonicalSessionOwnerUnavailable,
+			},
+		},
+		{
+			name: "unknown status",
+			resolution: domainsession.CanonicalSessionOwnerResolution{
+				Status: domainsession.CanonicalSessionOwnerStatus("future_status"),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			owner := &canonicalOwnerSessionOwnerStub{
+				JSONSessionRepository: newSessionGroupOwner(t), read: test.resolution,
+			}
+			fixture := newSessionGroupFixture(t, owner)
+			api, ok := any(fixture.client).(canonicalOwnerSessionRepository)
+			if !ok {
+				t.Fatal("SessionRepositoryClient does not expose canonical owner operations")
+			}
+			_, err := api.LoadCanonicalForOwner(context.Background(), value.ID(), "ren", address)
+			var storageErr *Error
+			if !errors.As(err, &storageErr) || storageErr.Code != ErrorCodeStoreUnavailable {
+				t.Fatalf("invalid owner result error = %v, want store_unavailable", err)
+			}
+		})
+	}
+}
+
+func TestSessionGroupCanonicalOwnerClientValidatesOwnerAndAddress(t *testing.T) {
+	value, address := newOwnerBoundStorageHostSession(t, "ren")
+	owner := &canonicalOwnerSessionOwnerStub{JSONSessionRepository: newSessionGroupOwner(t)}
+	fixture := newSessionGroupFixture(t, owner)
+	api, ok := any(fixture.client).(canonicalOwnerSessionRepository)
+	if !ok {
+		t.Fatal("SessionRepositoryClient does not expose canonical owner operations")
+	}
+	if _, err := api.LoadCanonicalForOwner(context.Background(), "not-a-session", "ren", address); err == nil {
+		t.Fatal("LoadCanonicalForOwner accepted a noncanonical SessionID")
+	}
+	if _, err := api.LoadCanonicalForOwner(context.Background(), value.ID(), "", address); err == nil {
+		t.Fatal("LoadCanonicalForOwner accepted an empty owner")
+	}
+	if _, err := api.LoadCanonicalForOwner(context.Background(), value.ID(), "ren", conversation.ChannelAddress{}); err == nil {
+		t.Fatal("LoadCanonicalForOwner accepted an invalid ChannelAddress")
+	}
+	if _, err := api.LoadOrCreateCanonicalForOwner(context.Background(), "not-a-date", address, "ren", value.CreatedAt()); err == nil {
+		t.Fatal("LoadOrCreateCanonicalForOwner accepted an invalid logical date")
+	}
+	if _, err := api.LoadOrCreateCanonicalForOwner(context.Background(), value.LogicalDate(), conversation.ChannelAddress{}, "ren", value.CreatedAt()); err == nil {
+		t.Fatal("LoadOrCreateCanonicalForOwner accepted an invalid ChannelAddress")
+	}
+	if _, err := api.LoadOrCreateCanonicalForOwner(context.Background(), value.LogicalDate(), address, "", value.CreatedAt()); err == nil {
+		t.Fatal("LoadOrCreateCanonicalForOwner accepted an empty owner")
+	}
+	if owner.readCalls != 0 || owner.createCalls != 0 || len(fixture.handler.journal.entries()) != 0 {
+		t.Fatalf("invalid client requests reached owner or journal: read=%d create=%d journal=%+v", owner.readCalls, owner.createCalls, fixture.handler.journal.entries())
+	}
+}
+
+func TestSessionGroupOwnerCreationUncertaintyRetainsOperationID(t *testing.T) {
+	value, address := newOwnerBoundStorageHostSession(t, "ren")
+	owner := &canonicalOwnerSessionOwnerStub{
+		JSONSessionRepository: newSessionGroupOwner(t),
+		create: domainsession.CanonicalSessionOwnerResolution{
+			Session: value, BoundOwnerID: "ren", Status: domainsession.CanonicalSessionOwnerCreated,
+		},
+	}
+	fixture := newSessionGroupFixture(t, owner)
+	api, ok := any(fixture.client).(canonicalOwnerSessionRepository)
+	if !ok {
+		t.Fatal("SessionRepositoryClient does not expose canonical owner operations")
+	}
+	createdAt := value.CreatedAt()
+	committedOpID := ""
+	fixture.client.client.sendHook = func() error {
+		fixture.client.client.sendHook = nil
+		entries := fixture.handler.journal.entries()
+		if len(entries) != 1 || entries[0].Status != journalStatusDone || entries[0].Op != "load_or_create_canonical_for_owner" {
+			t.Errorf("journal at lost owner-create response = %+v, want committed operation", entries)
+			return errConnectionResetAfterSend
+		}
+		committedOpID = entries[0].OpID
+		if err := fixture.handler.journal.complete(entries[0].OpID, []byte(`{"status":"created","bound_owner_id":"ren","session":{"id":"bad-result"}}`)); err != nil {
+			t.Errorf("replace stored owner-create result: %v", err)
+		}
+		return errConnectionResetAfterSend
+	}
+
+	_, firstErr := api.LoadOrCreateCanonicalForOwner(context.Background(), value.LogicalDate(), address, "ren", createdAt)
+	if !isOutcomeUnknown(firstErr) {
+		t.Fatalf("first owner-create error = %v, want outcome_unknown", firstErr)
+	}
+	_, retryErr := api.LoadOrCreateCanonicalForOwner(context.Background(), value.LogicalDate(), address, "ren", createdAt)
+	if !isOutcomeUnknown(retryErr) {
+		t.Fatalf("same owner-create retry error = %v, want outcome_unknown", retryErr)
+	}
+	if owner.createCalls != 1 {
+		t.Fatalf("owner create calls = %d, want one after unresolved result", owner.createCalls)
+	}
+	entries := fixture.handler.journal.entries()
+	if len(entries) != 1 || entries[0].OpID != committedOpID || entries[0].Status != journalStatusDone {
+		t.Fatalf("journal after unresolved retry = %+v, want original DONE op_id %q", entries, committedOpID)
+	}
+}
+
 func TestSessionGroupContractIsClosedAndRejectsPathOperations(t *testing.T) {
 	fixture := newSessionGroupFixture(t, newSessionGroupOwner(t))
 	contract, err := fixture.client.client.Contract(context.Background())
@@ -611,15 +957,17 @@ func TestSessionGroupContractIsClosedAndRejectsPathOperations(t *testing.T) {
 		t.Fatalf("Contract: %v", err)
 	}
 	want := map[string]bool{
-		"save":                       true,
-		"load":                       false,
-		"exists":                     false,
-		"delete":                     true,
-		"load_canonical":             false,
-		"load_canonical_reservation": false,
-		"load_or_create_canonical":   true,
-		"reserve_canonical_v2":       true,
-		"is_v2_reserved":             false,
+		"save":                               true,
+		"load":                               false,
+		"exists":                             false,
+		"delete":                             true,
+		"load_canonical":                     false,
+		"load_canonical_for_owner":           false,
+		"load_canonical_reservation":         false,
+		"load_or_create_canonical":           true,
+		"load_or_create_canonical_for_owner": true,
+		"reserve_canonical_v2":               true,
+		"is_v2_reserved":                     false,
 	}
 	for _, spec := range contract.Operations {
 		if spec.Group != GroupSession {

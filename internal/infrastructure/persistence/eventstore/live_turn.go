@@ -517,6 +517,7 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 			return AcceptedTurn{}, err
 		}
 		committed = true
+		s.recordSessionProtocolPin(input.InputEvent.SessionID, input.OwnerID, input.RuntimeVersion)
 		return accepted, nil
 	}
 
@@ -546,6 +547,7 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 			return AcceptedTurn{}, err
 		}
 		committed = true
+		s.recordSessionProtocolPin(input.InputEvent.SessionID, input.OwnerID, input.RuntimeVersion)
 		return accepted, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -667,6 +669,7 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 		return AcceptedTurn{}, err
 	}
 	committed = true
+	s.recordSessionProtocolPin(input.InputEvent.SessionID, input.OwnerID, input.RuntimeVersion)
 	s.observeCommittedOrchestratorEvent(accepted.InputEvent)
 	return accepted, nil
 }

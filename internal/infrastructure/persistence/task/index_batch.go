@@ -480,6 +480,9 @@ func (ix *taskIndex) merge(b *indexBatch) error {
 		if bt.facts.hasClaims {
 			rec.flags |= flagClaims
 		}
+		if bt.facts.hasOriginPublication {
+			rec.flags |= flagOriginPublication
+		}
 		if bt.facts.readOnly {
 			rec.flags |= flagReadOnly
 		}

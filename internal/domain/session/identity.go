@@ -1,7 +1,10 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -18,17 +21,54 @@ func ValidateLogicalDate(value string) error {
 	return nil
 }
 
+// NewPublicationIncarnation creates an opaque 128-bit generation token for a
+// canonical Session publication lifecycle.
+func NewPublicationIncarnation() (string, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", fmt.Errorf("generate publication incarnation: %w", err)
+	}
+	return hex.EncodeToString(random[:]), nil
+}
+
+func ValidatePublicationIncarnation(value string) error {
+	if len(value) != 32 || strings.ToLower(value) != value {
+		return fmt.Errorf("publication_incarnation must be 32 lowercase hexadecimal characters")
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return fmt.Errorf("publication_incarnation must be 32 lowercase hexadecimal characters")
+	}
+	return nil
+}
+
 // NewCanonicalSession constructs a Session whose opaque identity and lookup
 // attributes are separate canonical values.
 func NewCanonicalSession(id modulecore.SessionID, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*Session, error) {
-	return ReconstructCanonicalSession(id, logicalDate, address, nil, nil, createdAt, createdAt)
+	incarnation, err := NewPublicationIncarnation()
+	if err != nil {
+		return nil, err
+	}
+	return ReconstructCanonicalSessionWithPublicationIncarnation(id, logicalDate, address, nil, nil, createdAt, createdAt, incarnation)
 }
 
 // ReconstructCanonicalSession restores a persisted canonical session without
 // changing its timestamps while history and memory are hydrated.
 func ReconstructCanonicalSession(id modulecore.SessionID, logicalDate string, address conversation.ChannelAddress, history []conversation.TurnInput, memory map[string]interface{}, createdAt, updatedAt time.Time) (*Session, error) {
+	incarnation, err := NewPublicationIncarnation()
+	if err != nil {
+		return nil, err
+	}
+	return ReconstructCanonicalSessionWithPublicationIncarnation(id, logicalDate, address, history, memory, createdAt, updatedAt, incarnation)
+}
+
+// ReconstructCanonicalSessionWithPublicationIncarnation restores a canonical
+// Session using the exact generation persisted by its owner.
+func ReconstructCanonicalSessionWithPublicationIncarnation(id modulecore.SessionID, logicalDate string, address conversation.ChannelAddress, history []conversation.TurnInput, memory map[string]interface{}, createdAt, updatedAt time.Time, publicationIncarnation string) (*Session, error) {
 	if err := id.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid session_id: %w", err)
+	}
+	if err := ValidatePublicationIncarnation(publicationIncarnation); err != nil {
+		return nil, err
 	}
 	if err := ValidateLogicalDate(logicalDate); err != nil {
 		return nil, err
@@ -50,12 +90,13 @@ func ReconstructCanonicalSession(id modulecore.SessionID, logicalDate string, ad
 		storedMemory[key] = value
 	}
 	return &Session{
-		id:             string(id),
-		logicalDate:    logicalDate,
-		channelAddress: address,
-		history:        storedHistory,
-		memory:         storedMemory,
-		createdAt:      createdAt,
-		updatedAt:      updatedAt,
+		id:                     string(id),
+		publicationIncarnation: publicationIncarnation,
+		logicalDate:            logicalDate,
+		channelAddress:         address,
+		history:                storedHistory,
+		memory:                 storedMemory,
+		createdAt:              createdAt,
+		updatedAt:              updatedAt,
 	}, nil
 }

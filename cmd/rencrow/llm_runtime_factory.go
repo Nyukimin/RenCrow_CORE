@@ -11,16 +11,18 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	llmmiddleware "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/middleware"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
+	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 type primaryLLMProviders struct {
-	Chat         llm.LLMProvider
-	Worker       llm.LLMProvider
-	ChatWorker   llm.LLMProvider
-	Heavy        llm.LLMProvider
-	Wild         llm.LLMProvider
-	Conversation *llmmiddleware.ConversationProvider
-	Readback     map[string]*llmmiddleware.ConversationProvider
+	Chat                    llm.LLMProvider
+	Worker                  llm.LLMProvider
+	ChatWorker              llm.LLMProvider
+	Heavy                   llm.LLMProvider
+	Wild                    llm.LLMProvider
+	Conversation            *llmmiddleware.ConversationProvider
+	Readback                map[string]*llmmiddleware.ConversationProvider
+	GatewayWriteDiagnostics map[string]modulellm.GatewayRequestWriteDiagnosticsProvider
 }
 
 func buildPrimaryLLMProviders(cfg *config.Config, contextBudgetRecorder llmmiddleware.ContextBudgetRecorder) primaryLLMProviders {
@@ -40,32 +42,38 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	gatewayProvider := func(role, alias, agentID string) llm.LLMProvider {
+	gatewayWriteDiagnostics := make(map[string]modulellm.GatewayRequestWriteDiagnosticsProvider)
+	gatewayProvider := func(role, alias, agentID string, diagnostic bool) llm.LLMProvider {
 		raw := rencrowllm.NewGatewayProviderWithOptions(apiKey, alias, baseURL, timeout).
 			WithRenCrowExecution(agentID, role, alias)
+		if diagnostic {
+			raw.WithGatewayRequestWriteRecorder(rencrowllm.NewGatewayRequestWriteRecorder())
+			gatewayWriteDiagnostics[role] = raw
+		}
 		return enforceThinkingPolicyForRole(role, raw)
 	}
-	provider := func(role, alias, agentID string) llm.LLMProvider {
-		return wrapPrimaryLLMProvider(cfg, role, gatewayProvider(role, alias, agentID), recorder)
+	provider := func(role, alias, agentID string, diagnostic bool) llm.LLMProvider {
+		return wrapPrimaryLLMProvider(cfg, role, gatewayProvider(role, alias, agentID, diagnostic), recorder)
 	}
 	conversationProvider := func(agentID, role, alias string) *llmmiddleware.ConversationProvider {
 		return llmmiddleware.NewConversationProvider(
-			gatewayProvider(role, alias, agentID), agentID+"-readback", contextBudgetPolicyForConfig(cfg))
+			gatewayProvider(role, alias, agentID, false), agentID+"-readback", contextBudgetPolicyForConfig(cfg))
 	}
 	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
 	return primaryLLMProviders{
-		Chat:       provider("chat", "mio", "mio"),
-		Worker:     provider("worker", "worker", "shiro"),
-		ChatWorker: provider("chatworker", "shiro", "shiro"),
-		Heavy:      provider("heavy", "kuro", "kuro"),
-		Wild:       provider("wild", "midori", "midori"),
+		Chat:       provider("chat", "mio", "mio", true),
+		Worker:     provider("worker", "worker", "shiro", false),
+		ChatWorker: provider("chatworker", "shiro", "shiro", false),
+		Heavy:      provider("heavy", "kuro", "kuro", false),
+		Wild:       provider("wild", "midori", "midori", false),
 		Conversation: llmmiddleware.NewConversationProvider(
-			gatewayProvider("chat", "mio", "mio"), "mio-conversation", contextBudgetPolicyForConfig(cfg)),
+			gatewayProvider("chat", "mio", "mio", false), "mio-conversation", contextBudgetPolicyForConfig(cfg)),
 		Readback: map[string]*llmmiddleware.ConversationProvider{
 			"shiro":  conversationProvider("shiro", "chatworker", "shiro"),
 			"kuro":   conversationProvider("kuro", "heavy", "kuro"),
 			"midori": conversationProvider("midori", "wild", "midori"),
 		},
+		GatewayWriteDiagnostics: gatewayWriteDiagnostics,
 	}
 }
 

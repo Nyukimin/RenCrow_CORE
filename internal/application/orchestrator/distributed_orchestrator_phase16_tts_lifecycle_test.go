@@ -38,6 +38,9 @@ func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 	if bridge.startReqs[0].SessionID != wantSessionID {
 		t.Fatalf("expected start request session %s, got %s", wantSessionID, bridge.startReqs[0].SessionID)
 	}
+	if bridge.startReqs[0].CanonicalSessionID != req.SessionID {
+		t.Fatalf("canonical Session ID = %q, want resolved request Session ID %q", bridge.startReqs[0].CanonicalSessionID, req.SessionID)
+	}
 
 	lifecycle.Push(context.Background(), ttsSessionID, routing.RouteOPS, "shiro", "agent.response", "完了しました")
 	if len(bridge.pushes) == 0 {

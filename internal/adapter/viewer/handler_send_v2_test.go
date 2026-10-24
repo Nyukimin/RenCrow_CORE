@@ -18,6 +18,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -118,6 +119,48 @@ func TestHandleSendV2AcceptsDurablyBeforeAckAndReturnsCanonicalReceipt(t *testin
 		}
 	case <-time.After(time.Second):
 		t.Fatal("foreground processing was not scheduled after durable acceptance")
+	}
+}
+
+func TestHandleSendV2CarriesAuthenticatedOwnerScopeIntoDetachedProcessing(t *testing.T) {
+	const token = "viewer-send-owner-token-0123456789"
+	processScope := make(chan domaintool.ToolExecutionScope, 1)
+	sessionID := modulecore.NewSessionID()
+	options := &V2SendOptions{
+		Enabled: true, ActorID: "viewer-user", Admission: testV2Admission(),
+		ResolveSessionID: func(context.Context) (modulecore.SessionID, error) { return sessionID, nil },
+		Accept: func(_ context.Context, request V2SendRequest) (V2AcceptedTurn, error) {
+			return acceptedV2Turn(request, false), nil
+		},
+		Process: func(ctx context.Context, _ V2AcceptedTurn) error {
+			scope, _ := domaintool.ToolExecutionScopeFromContext(ctx)
+			processScope <- scope
+			return nil
+		},
+	}
+	base := HandleSendWithProtocolV2(func(context.Context, SendRequest) (string, error) {
+		return "legacy", nil
+	}, nil, nil, nil, nil, options)
+	handler := WithCMDMioOwnerAuthentication(base, "ren", []byte(token))
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"protocol_version":2,"message":"hello","client_submission_id":"cmd-submit-1","to":"mio","user_id":"attacker"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	request.Header.Set("X-RenCrow-Interaction-Profile", "cmd-chat")
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Host = "127.0.0.1:18790"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s, want accepted v2 turn", response.Code, response.Body.String())
+	}
+	select {
+	case scope := <-processScope:
+		if err := scope.Validate(); err != nil || scope.ActorKind != domaintool.ActorKindUser || scope.AuthenticationSource != domaintool.AuthenticationSourceHTTP || scope.AuthenticatedUserID != "ren" || !scope.Allows(domaintool.DataScopeUser) {
+			t.Fatalf("detached process scope=%+v, want configured authenticated owner", scope)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached v2 processing did not receive the owner scope")
 	}
 }
 
@@ -982,6 +1025,70 @@ func TestHandleSendLegacyPreSessionAdmissionRunsForUnversionedRequest(t *testing
 	}
 	if hookCalls.Load() != 1 || releaseCalls.Load() != 1 {
 		t.Fatalf("hook calls=%d release calls=%d, want one each", hookCalls.Load(), releaseCalls.Load())
+	}
+}
+
+func TestHandleSendLegacyPreSessionAdmissionPreservesOnlyValidatedHTTPUserScope(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ownerID   string
+		wantOwner bool
+	}{
+		{name: "authenticated user", ownerID: "user-a", wantOwner: true},
+		{name: "public request"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admission := newViewerTestRAMAdmission(t)
+			scopeContext := context.Background()
+			if tc.wantOwner {
+				scope, err := domaintool.NewToolExecutionScope(
+					"authenticated-viewer-send", domaintool.ActorKindUser, tc.ownerID, tc.ownerID,
+					[]string{domaintool.DataScopePublic, domaintool.DataScopeUser}, domaintool.AuthenticationSourceHTTP,
+				)
+				if err != nil {
+					t.Fatalf("NewToolExecutionScope: %v", err)
+				}
+				scopeContext = domaintool.WithToolExecutionScope(scopeContext, scope)
+			}
+			processed := make(chan struct{}, 1)
+			h := HandleSendWithProtocolV2(func(ctx context.Context, _ SendRequest) (string, error) {
+				_, found := domaintool.ToolExecutionScopeFromContext(ctx)
+				if found != tc.wantOwner {
+					t.Errorf("MessageHandler has owner scope=%t, want %t", found, tc.wantOwner)
+				}
+				processed <- struct{}{}
+				return "ok", nil
+			}, nil, nil, func(ctx context.Context) (modulecore.SessionID, error) {
+				scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
+				if found != tc.wantOwner {
+					return "", fmt.Errorf("SessionIDResolver has owner scope=%t, want %t", found, tc.wantOwner)
+				}
+				if tc.wantOwner {
+					proof, verified := domaintool.AuthenticatedHTTPUserScopeFromContext(ctx)
+					if !verified || proof.AuthenticatedUserID != tc.ownerID || scope.ActorKind != domaintool.ActorKindUser {
+						return "", errors.New("SessionIDResolver lost the validated HTTP User proof")
+					}
+				}
+				return modulecore.NewSessionID(), nil
+			}, nil, &V2SendOptions{
+				LegacyPreSessionAdmission: func(_ context.Context, _ LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+					return persistencequeue.WithAdmission(context.Background(), admission), func() {}, nil
+				},
+			})
+			request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"legacy","to":"mio"}`)).WithContext(scopeContext)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+			response := httptest.NewRecorder()
+			h.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			select {
+			case <-processed:
+			case <-time.After(time.Second):
+				t.Fatal("legacy request did not reach MessageHandler")
+			}
+		})
 	}
 }
 

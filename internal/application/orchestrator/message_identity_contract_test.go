@@ -58,6 +58,7 @@ func TestProcessMessageRejectsMalformedIdentityBeforeSessionState(t *testing.T) 
 }
 
 func TestProcessMessageKeepsSynchronousSessionLogErrorsBestEffort(t *testing.T) {
+	sessionID := newMockCanonicalSessionID("cmd", "cmd-user")
 	logger := &contextAwareRecordingTurnLogger{
 		userErr:      errors.New("ignored synchronous user log error"),
 		assistantErr: errors.New("ignored synchronous assistant log error"),
@@ -75,7 +76,7 @@ func TestProcessMessageKeepsSynchronousSessionLogErrorsBestEffort(t *testing.T) 
 	orch.SetSessionTurnLogger(logger)
 
 	if _, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID: "session-1", Channel: "cmd", ChatID: "cmd-user", UserMessage: "hello",
+		SessionID: sessionID, Channel: "cmd", ChatID: "cmd-user", UserMessage: "hello",
 	}); err != nil {
 		t.Fatalf("ProcessMessage() error = %v, want synchronous log errors to stay best effort", err)
 	}
@@ -168,7 +169,7 @@ func TestProcessMessagePropagatesContextAwareSessionLogErrors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"hello back"}`}}
+			provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"hello back"}}`}}
 			manager := newRecordingTaskLifecycleManager()
 			engine := &chatReplyConversationEngine{manager: manager}
 			mio := domainagent.NewMioAgent(
@@ -187,8 +188,9 @@ func TestProcessMessagePropagatesContextAwareSessionLogErrors(t *testing.T) {
 
 			ctx, _, _, _ := newEmptyFallbackContext(t)
 			ctx = context.WithValue(ctx, sessionLogContextKey{}, marker)
+			sessionID := newMockCanonicalSessionID("cmd", "cmd-user")
 			_, err := orch.ProcessMessage(ctx, ProcessMessageRequest{
-				SessionID: "session-1", Channel: "cmd", ChatID: "cmd-user", UserMessage: "hello",
+				SessionID: sessionID, Channel: "cmd", ChatID: "cmd-user", UserMessage: "hello",
 			})
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("ProcessMessage error = %v, want %v", err, tc.wantErr)
@@ -234,10 +236,11 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	ingressRootTaskID := string(modulecore.NewTaskID())
 	ingressMessageID := string(modulecore.NewMessageID())
 	ingressAgentMessageID := string(modulecore.NewMessageID())
+	sessionID := newMockCanonicalSessionID("viewer", "viewer-user")
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID: ingressRootTaskID, TurnID: ingressTurnID, TraceID: ingressTraceID,
 		MessageID: ingressMessageID, AgentMessageID: ingressAgentMessageID,
-		SessionID: "session-1", Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello",
+		SessionID: sessionID, Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello",
 	})
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)

@@ -127,7 +127,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_JSONPatch(t *test
 	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "/code3 test.txtを作成して",
@@ -173,7 +173,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE2_ReadOnlyDiagnosticNoChangeSucc
 	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "20260620-viewer-readonly",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer"),
 		Channel:     "viewer",
 		ChatID:      "viewer",
 		UserMessage: "/code2 診断です。ファイル変更やコマンド実行はせず、Worker/Coder経路に届いたことだけ短く報告してください。",
@@ -219,7 +219,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_RetriesRetryableProposalFailur
 	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "20260620-viewer-retry",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer"),
 		Channel:     "viewer",
 		ChatID:      "viewer",
 		UserMessage: "/code3 retry.txtを作成して",
@@ -269,7 +269,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_MarkdownPatch(t *
 	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "/code3 hello.goを実装して",
@@ -316,7 +316,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_InvalidProposal(t *testing.T) 
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "/code3 テスト",
@@ -344,7 +344,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_NoCoder3Available(t *testing.T
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "/code3 テスト",
@@ -378,7 +378,7 @@ func TestFormatExecutionResult_SuccessWithGitCommit(t *testing.T) {
 	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
-		SessionID:   "test",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "/code3 test",
@@ -420,7 +420,7 @@ func TestFormatExecutionResult_PartialFailure(t *testing.T) {
 	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
-		SessionID:   "test",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "/code3 test",

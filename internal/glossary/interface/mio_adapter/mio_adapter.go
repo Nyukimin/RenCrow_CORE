@@ -3,7 +3,6 @@ package mio_adapter
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/application/service"
 )
@@ -14,6 +13,10 @@ type MioGlossaryAdapter struct {
 
 func NewMioGlossaryAdapter(service *service.GlossaryService) *MioGlossaryAdapter {
 	return &MioGlossaryAdapter{glossaryService: service}
+}
+
+func (a *MioGlossaryAdapter) RefreshRecentPromptSnapshot(ctx context.Context) error {
+	return a.glossaryService.RefreshRecentPromptSnapshot(ctx)
 }
 
 func (a *MioGlossaryAdapter) GetContextForTerm(ctx context.Context, term string) (string, error) {
@@ -30,41 +33,11 @@ func (a *MioGlossaryAdapter) GetContextForTerm(ctx context.Context, term string)
 }
 
 func (a *MioGlossaryAdapter) GetRecentTopics(ctx context.Context, limit int) ([]string, error) {
-	items, err := a.glossaryService.GetRecentGlossary(ctx, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	var topics []string
-	for _, item := range items {
-		topics = append(topics, fmt.Sprintf("%s: %s", item.Term, item.Explanation))
-	}
-
+	_, topics := a.glossaryService.RecentPromptSnapshot(limit)
 	return topics, nil
 }
 
 func (a *MioGlossaryAdapter) GetRecentContext(ctx context.Context, limit int) (string, error) {
-	items, err := a.glossaryService.GetRecentGlossary(ctx, limit)
-	if err != nil {
-		return "", err
-	}
-	if len(items) == 0 {
-		return "", nil
-	}
-
-	var b strings.Builder
-	b.WriteString("最近語彙メモ:\n")
-	for _, item := range items {
-		b.WriteString("- ")
-		b.WriteString(item.Term)
-		b.WriteString(": ")
-		b.WriteString(item.Explanation)
-		if item.Source != "" {
-			b.WriteString(" (")
-			b.WriteString(item.Source)
-			b.WriteString(")")
-		}
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String()), nil
+	contextText, _ := a.glossaryService.RecentPromptSnapshot(limit)
+	return contextText, nil
 }

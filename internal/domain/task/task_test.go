@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -94,6 +95,65 @@ func TestTaskRejectsInvalidExpectedCriteriaRevision(t *testing.T) {
 	}
 	if err := value.Validate(); err == nil {
 		t.Fatal("Task accepted an uppercase criteria SHA-256 revision")
+	}
+}
+
+func TestTaskOriginPublicationProvenanceValidationAndJSONRoundTrip(t *testing.T) {
+	sessionID := modulecore.NewSessionID()
+	address, err := conversation.NewChannelAddress("viewer", "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnation := "0123456789abcdef0123456789abcdef"
+	binding, err := conversation.NewSessionBindingWithPublicationIncarnation(
+		sessionID, address, conversation.SessionAudiencePublic, "", 0, incarnation,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance, err := NewOriginPublicationProvenance(binding)
+	if err != nil {
+		t.Fatalf("NewOriginPublicationProvenance: %v", err)
+	}
+	task := validTask()
+	task.OriginSessionID = sessionID
+	task.OriginPublication = &provenance
+	if err := task.Validate(); err != nil {
+		t.Fatalf("Task with current public origin proof is invalid: %v", err)
+	}
+
+	encoded, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Task
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoded.Validate(); err != nil {
+		t.Fatalf("round-tripped Task is invalid: %v", err)
+	}
+	if decoded.OriginPublication == nil || *decoded.OriginPublication != provenance {
+		t.Fatalf("round-tripped origin publication = %#v, want %#v", decoded.OriginPublication, provenance)
+	}
+	if decoded.OwnerID != task.OwnerID {
+		t.Fatalf("publication provenance changed Agent Task.OwnerID: got %q want %q", decoded.OwnerID, task.OwnerID)
+	}
+
+	invalid := task
+	bad := provenance
+	bad.PublicationIncarnation = "legacy-or-invalid"
+	invalid.OriginPublication = &bad
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("Task accepted an invalid origin publication incarnation")
+	}
+	invalid = task
+	bad = provenance
+	bad.Audience = conversation.SessionAudiencePrivate
+	bad.OwnerID = ""
+	invalid.OriginPublication = &bad
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("Task accepted private origin provenance without an authenticated User owner")
 	}
 }
 

@@ -180,10 +180,11 @@ func (s *L1SQLiteStore) ConfirmChatGPTImportCandidates(ctx context.Context, inpu
 		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, chatGPTConfirmError(domainmemory.ChatGPTImportErrorConflict))
 	}
 	now := time.Now().UTC()
-	matched, err := scanChatGPTConfirmCandidates(ctx, tx, input.OwnerID, input.ExportID, input.Apply, now)
+	changedIDs, err := scanChatGPTConfirmCandidates(ctx, tx, input.OwnerID, input.ExportID, input.Apply, now)
 	if err != nil {
 		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, err)
 	}
+	matched := len(changedIDs)
 	result := domainmemory.ChatGPTImportConfirmResult{
 		RequestID:           input.RequestID,
 		ExportID:            input.ExportID,
@@ -203,7 +204,7 @@ func (s *L1SQLiteStore) ConfirmChatGPTImportCandidates(ctx context.Context, inpu
 	}
 	result.Confirmed = matched
 	result.AuditReference = chatGPTConfirmAuditReference(input)
-	_, err = appendL1EventLog(ctx, tx, chatGPTConfirmAuditEventType, "user:"+input.OwnerID, "", "", 0, "", map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, chatGPTConfirmAuditEventType, "user:"+input.OwnerID, "", "", 0, "", map[string]interface{}{
 		"request_id":            input.RequestID,
 		"export_id":             input.ExportID,
 		"reason":                input.Reason,
@@ -238,6 +239,9 @@ INSERT INTO l1_chatgpt_import_confirm_receipt (
 	}
 	if err := tx.Commit(); err != nil {
 		return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError(err)
+	}
+	if len(changedIDs) > 0 {
+		s.notifyUserMemoryMutation(input.OwnerID, changedIDs, string(auditEventID(auditEntry)))
 	}
 	return result, nil
 }
@@ -818,13 +822,13 @@ LIMIT ?`, "user:"+ownerID, "profile_extractor", domainmemory.MemoryStateCandidat
 	return page, nil
 }
 
-func scanChatGPTConfirmCandidates(ctx context.Context, tx *sql.Tx, ownerID, exportID string, apply bool, updatedAt time.Time) (int, error) {
-	matched := 0
+func scanChatGPTConfirmCandidates(ctx context.Context, tx *sql.Tx, ownerID, exportID string, apply bool, updatedAt time.Time) ([]string, error) {
+	changedIDs := make([]string, 0)
 	var cursor int64
 	for {
 		page, err := loadChatGPTConfirmCandidatePage(ctx, tx, ownerID, cursor)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if len(page) == 0 {
 			break
@@ -836,12 +840,12 @@ SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, m
 FROM l1_memory_event
 WHERE rowid = ? AND id = ?`, ref.RowID, ref.ID))
 			if err != nil || len(events) != 1 {
-				return 0, chatGPTConfirmInternalError(err)
+				return nil, chatGPTConfirmInternalError(err)
 			}
 			event := events[0]
 			item, strictErr := strictUserMemoryFromEvent(event)
 			if strictErr != nil {
-				return 0, chatGPTConfirmInternalError()
+				return nil, chatGPTConfirmInternalError()
 			}
 			if item.UserID != ownerID || item.Namespace != "user:"+ownerID || item.State != domainmemory.MemoryStateCandidate || !item.Active || item.Sensitivity != "normal" || !chatGPTConfirmExplicitActiveNormalEvidence(event.Meta) {
 				continue
@@ -854,7 +858,7 @@ WHERE rowid = ? AND id = ?`, ref.RowID, ref.ID))
 			for _, evidenceID := range evidenceIDs {
 				eligible, err := chatGPTConfirmEvidenceEligible(ctx, tx, ownerID, exportID, evidenceID)
 				if err != nil {
-					return 0, err
+					return nil, err
 				}
 				if !eligible {
 					allExpected = false
@@ -864,8 +868,8 @@ WHERE rowid = ? AND id = ?`, ref.RowID, ref.ID))
 			if !allExpected {
 				continue
 			}
-			matched++
 			if !apply {
+				changedIDs = append(changedIDs, item.ID)
 				continue
 			}
 			updated, err := tx.ExecContext(ctx, `
@@ -875,16 +879,17 @@ WHERE rowid = ? AND id = ? AND namespace = ? AND source = ? AND memory_state = ?
 				domainmemory.MemoryStateConfirmed, updatedAt, ref.RowID, ref.ID,
 				"user:"+ownerID, "profile_extractor", domainmemory.MemoryStateCandidate)
 			if err != nil {
-				return 0, chatGPTConfirmInternalError(err)
+				return nil, chatGPTConfirmInternalError(err)
 			}
 			affected, err := updated.RowsAffected()
 			if err != nil || affected != 1 {
-				return 0, chatGPTConfirmInternalError(err)
+				return nil, chatGPTConfirmInternalError(err)
 			}
+			changedIDs = append(changedIDs, item.ID)
 		}
 		cursor = page[len(page)-1].RowID
 	}
-	return matched, nil
+	return changedIDs, nil
 }
 
 func chatGPTConfirmEvidenceEligible(ctx context.Context, tx *sql.Tx, ownerID, exportID, evidenceID string) (bool, error) {

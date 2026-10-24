@@ -21,16 +21,23 @@ func (m *MioAgent) beginChatRecall(ctx context.Context, t conversation.TurnInput
 	if err != nil {
 		log.Printf("[Mio] BeginTurn failed: %v", err)
 	}
+	turntiming.Mark(ctx, turntiming.PointRecallProjectionStarted)
+	chatPack, messages := projectChatRecallPack(recallPack)
+	turntiming.Mark(ctx, turntiming.PointRecallProjectionEnded)
+	return chatPack, messages
+}
+
+// projectChatRecallPack produces the one role-filtered pack used by the Mio
+// prompt, deterministic exact recall, continuation, and commit trace.
+func projectChatRecallPack(recallPack *conversation.RecallPack) (*conversation.RecallPack, []llm.Message) {
 	if recallPack == nil {
 		return nil, nil
 	}
-	turntiming.Mark(ctx, turntiming.PointRecallProjectionStarted)
 	filtered := recallPack.FilterForRole("chat").WithoutPersonaSystemPrompt()
 	recallPack = &filtered
 	var messages []llm.Message
 	messages = appendSharedConversationContinuityPrompt(messages, recallPack)
 	messages = append(messages, recallPack.ToPromptMessages()...)
-	turntiming.Mark(ctx, turntiming.PointRecallProjectionEnded)
 	return recallPack, messages
 }
 

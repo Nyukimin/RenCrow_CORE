@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
@@ -20,6 +22,7 @@ import (
 
 func buildTTSClientBridge(
 	cfg *config.Config,
+	audioAccessOwner *ttsAudioAccessOwner,
 	onChunk func(ev orchestrator.OrchestratorEvent),
 	onChunkReady func(sessionID, characterID, text string),
 	onSessionCompleted func(sessionID, characterID string),
@@ -42,10 +45,26 @@ func buildTTSClientBridge(
 		player := ttsinfra.NewCommandPlayer(cmds)
 		sink = ttsinfra.NewAsyncAudioSink(ttsinfra.NewPlaybackAudioSink(player, ""))
 	}
-	publishChunk := func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL, turnID string, pauseAfterMS int, playbackOutput string) {
+	publishChunk := func(sessionID, canonicalSessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL, turnID string, pauseAfterMS int, playbackOutput string, binding conversation.SessionBinding) error {
 		if isStaleTTSPublicSession(sessionID) {
 			log.Printf("[TTS] dropping stale idlechat chunk session=%s public_playback_ref=%s chunk=%d", sessionID, publicPlaybackRef, chunkIndex)
-			return
+			return nil
+		}
+		registrationAuthority := "canonical Session"
+		var registrationErr error
+		if strings.TrimSpace(canonicalSessionID) == "" {
+			registrationAuthority = "IdleChat public route"
+			registrationErr = registerTTSPublicAudioResource(audioAccessOwner, sessionID, audioPath, audioURL)
+		} else {
+			if string(binding.SessionID()) != strings.TrimSpace(canonicalSessionID) {
+				registrationErr = errTTSAudioAccessRegistration
+			} else {
+				registrationErr = registerTTSAudioResource(audioAccessOwner, binding, audioPath, audioURL)
+			}
+		}
+		if registrationErr != nil {
+			log.Printf("[TTS] dropping audio chunk because its %s resource could not be registered session=%s canonical_session=%s chunk=%d: %v", registrationAuthority, sessionID, canonicalSessionID, chunkIndex, registrationErr)
+			return fmt.Errorf("register TTS audio resource for %s: %w", registrationAuthority, registrationErr)
 		}
 		notifyIdleChatTTSSynthesisReady(sessionID)
 		publicSessionID, publicChunkIndex := resolveTTSPublicChunk(sessionID, chunkIndex)
@@ -76,7 +95,7 @@ func buildTTSClientBridge(
 			onChunkReady(payload.SessionID, payload.CharacterID, payload.DisplayText)
 		}
 		if onChunk == nil {
-			return
+			return nil
 		}
 		metricJSON, metricErr := json.Marshal(map[string]any{
 			"kind":        "tts",
@@ -87,26 +106,30 @@ func buildTTSClientBridge(
 		})
 		if metricErr == nil {
 			route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", canonicalTaskIDText(payload.PublicPlaybackRef), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID))
+			metric := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", canonicalTaskIDText(payload.PublicPlaybackRef), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
+			stampTTSEventWithSessionBinding(&metric, binding)
+			onChunk(metric)
 		}
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
 			log.Printf("WARN: tts chunk payload marshal failed: %v", err)
-			return
+			return fmt.Errorf("marshal TTS audio chunk payload: %w", err)
 		}
 		route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
 		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.PublicPlaybackRef), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
+		stampTTSEventWithSessionBinding(&event, binding)
 		event.MessageID = modulecore.MessageID(payload.MessageID)
 		event.TurnIndex = payload.TurnIndex
 		onChunk(event)
+		return nil
 	}
-	onChunkFn := func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
-		publishChunk(sessionID, publicPlaybackRef, traceID, chunkIndex, characterID, text, displayText, audioPath, audioURL, "", 0, "")
+	onChunkFn := func(sessionID, canonicalSessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string, binding conversation.SessionBinding) error {
+		return publishChunk(sessionID, canonicalSessionID, publicPlaybackRef, traceID, chunkIndex, characterID, text, displayText, audioPath, audioURL, "", 0, "", binding)
 	}
-	onSpeechChunkFn := func(chunk ttsinfra.SpeechPlanChunkReady) {
-		publishChunk(chunk.TTSSessionID, chunk.PublicPlaybackRef, chunk.TraceID, chunk.UtteranceIndex, chunk.SpeakerID, chunk.SpeechText, chunk.DisplayText, chunk.AudioPath, chunk.AudioURL, chunk.TurnID, chunk.PauseAfterMS, chunk.PlaybackOutput)
+	onSpeechChunkFn := func(chunk ttsinfra.SpeechPlanChunkReady) error {
+		return publishChunk(chunk.TTSSessionID, chunk.ConversationSessionID, chunk.PublicPlaybackRef, chunk.TraceID, chunk.UtteranceIndex, chunk.SpeakerID, chunk.SpeechText, chunk.DisplayText, chunk.AudioPath, chunk.AudioURL, chunk.TurnID, chunk.PauseAfterMS, chunk.PlaybackOutput, chunk.SessionBinding)
 	}
-	onSessionDoneFn := func(sessionID, traceID, characterID string) {
+	onSessionDoneFn := func(sessionID, traceID, characterID string, binding conversation.SessionBinding) {
 		if isStaleTTSPublicSession(sessionID) {
 			log.Printf("[TTS] dropping stale idlechat completion session=%s", sessionID)
 			retireTTSPublicSession(sessionID)
@@ -136,6 +159,7 @@ func buildTTSClientBridge(
 			} else {
 				route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
 				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.PublicPlaybackRef), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
+				stampTTSEventWithSessionBinding(&event, binding)
 				event.MessageID = modulecore.MessageID(payload.MessageID)
 				event.TurnIndex = payload.TurnIndex
 				onChunk(event)
@@ -162,6 +186,39 @@ func buildTTSClientBridge(
 	})
 	log.Printf("TTS RenCrow_TTS Gateway bridge enabled (/api/tts base=%s)", gatewayBaseURL)
 	return bridge
+}
+
+func registerTTSAudioResource(owner *ttsAudioAccessOwner, binding conversation.SessionBinding, audioPath, audioURL string) error {
+	if owner == nil {
+		return fmt.Errorf("TTS audio access owner is unavailable")
+	}
+	audioURL = strings.TrimSpace(audioURL)
+	if audioURL != "" {
+		parsed, err := url.Parse(audioURL)
+		if err != nil {
+			return fmt.Errorf("parse TTS audio URL: %w", err)
+		}
+		if parsed.IsAbs() {
+			return owner.RegisterURL(binding, audioURL)
+		}
+	}
+	audioPath = strings.TrimSpace(audioPath)
+	if audioPath == "" {
+		return fmt.Errorf("TTS audio resource is unavailable")
+	}
+	return owner.RegisterPath(binding, audioPath)
+}
+
+func stampTTSEventWithSessionBinding(event *orchestrator.OrchestratorEvent, binding conversation.SessionBinding) {
+	if event == nil || binding.ValidateForPublication() != nil || binding.BindingGeneration() == conversation.BindingGenerationUnavailable {
+		return
+	}
+	address := binding.ChannelAddress()
+	event.SessionID = binding.SessionID()
+	event.PublicationIncarnation = binding.PublicationIncarnation()
+	event.Channel = address.ChannelType()
+	event.ChannelAddress = address.ExternalConversationID()
+	event.Visibility = string(binding.Audience())
 }
 
 // canonicalTaskIDText preserves the TaskID text supplied by normal TTS callers.

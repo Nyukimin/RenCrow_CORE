@@ -34,6 +34,36 @@ func TestBuildDiagnosticsSnapshot(t *testing.T) {
 	}
 }
 
+func TestCollectRoleStatusIncludesOptionalGatewayWriteDiagnostics(t *testing.T) {
+	checkedAt := time.Date(2026, 5, 30, 1, 2, 3, 0, time.UTC)
+	durationNS := int64(41)
+	want := &GatewayRequestWriteDiagnosticsSnapshot{
+		Capacity: 1,
+		Requests: []GatewayRequestWriteSample{{
+			RequestID:           "request-1",
+			DoStartedAtUTC:      "2026-05-30T01:02:03.000000001Z",
+			WroteRequestAtUTC:   "2026-05-30T01:02:03.000000042Z",
+			DoToWriteDurationNS: &durationNS,
+		}},
+	}
+	got := CollectRoleStatus(context.Background(), map[string]Provider{
+		"chat": fakeGatewayWriteDiagnosticsProvider{fakeDiagnosticsProvider: fakeDiagnosticsProvider{name: "chat-provider"}, diagnostics: want},
+	}, checkedAt)
+	if len(got) != 1 || got[0].GatewayRequestWrite == nil {
+		t.Fatalf("optional Gateway write diagnostics were not exposed: %+v", got)
+	}
+	if got[0].GatewayRequestWrite.Capacity != want.Capacity || len(got[0].GatewayRequestWrite.Requests) != 1 || got[0].GatewayRequestWrite.Requests[0] != want.Requests[0] {
+		t.Fatalf("unexpected Gateway write diagnostics: %+v", got[0].GatewayRequestWrite)
+	}
+
+	withoutDiagnostics := CollectRoleStatus(context.Background(), map[string]Provider{
+		"chat": fakeDiagnosticsProvider{name: "chat-provider"},
+	}, checkedAt)
+	if withoutDiagnostics[0].GatewayRequestWrite != nil {
+		t.Fatalf("provider without the optional interface exposed Gateway write diagnostics: %+v", withoutDiagnostics[0])
+	}
+}
+
 func TestCollectRoleStatusOrdersRolesAndIncludesNilProvider(t *testing.T) {
 	checkedAt := time.Date(2026, 5, 30, 1, 2, 3, 0, time.UTC)
 	got := CollectRoleStatus(context.Background(), map[string]Provider{
@@ -84,6 +114,15 @@ func (p fakeDiagnosticsProvider) Health(context.Context) core.HealthReport {
 
 func (p fakeDiagnosticsProvider) Generate(context.Context, GenerateRequest) (GenerateResponse, error) {
 	return GenerateResponse{Content: "ok"}, nil
+}
+
+type fakeGatewayWriteDiagnosticsProvider struct {
+	fakeDiagnosticsProvider
+	diagnostics *GatewayRequestWriteDiagnosticsSnapshot
+}
+
+func (p fakeGatewayWriteDiagnosticsProvider) GatewayRequestWriteDiagnostics() *GatewayRequestWriteDiagnosticsSnapshot {
+	return p.diagnostics
 }
 
 func containsString(values []string, want string) bool {

@@ -99,7 +99,11 @@ func (m *distMockSessionRepo) Load(ctx context.Context, id string) (*session.Ses
 	}
 	sess, exists := m.sessions[id]
 	if !exists {
-		sess = newCanonicalOrchestratorTestSession("test", "test")
+		var err error
+		sess, err = newMockCanonicalSession(id)
+		if err != nil {
+			return nil, err
+		}
 		m.sessions[id] = sess
 	}
 	return sess, nil
@@ -187,7 +191,7 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  taskID.String(),
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "hello",
@@ -218,7 +222,7 @@ func TestDistributedOrchestrator_CanonicalEventFailureStopsBeforeLLM(t *testing.
 	orch.SetEventListener(&failingEventListener{err: wantErr})
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID: "event-failure", Channel: "viewer", ChatID: "viewer-user", UserMessage: "must not reach LLM",
+		SessionID: newMockCanonicalSessionID("viewer", "viewer-user"), Channel: "viewer", ChatID: "viewer-user", UserMessage: "must not reach LLM",
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("ProcessMessage() error=%v, want %v", err, wantErr)
@@ -260,7 +264,7 @@ func TestDistributedOrchestrator_ProcessMessage_ViewerRecipientBecomesChatSpeake
 	orch.SetEventListener(rec)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "合言葉 RC_midori_contract で返答して",
@@ -310,7 +314,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *te
 	rec := &distRecordingEventListener{}
 	orch.SetEventListener(rec)
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-dci",
+		SessionID:   newMockCanonicalSessionID("line", "chat-dci"),
 		Channel:     "line",
 		ChatID:      "chat-dci",
 		UserMessage: "docs から DCI を探して",
@@ -357,7 +361,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *t
 	rec := &distRecordingEventListener{}
 	orch.SetEventListener(rec)
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-dci-recall",
+		SessionID:   newMockCanonicalSessionID("line", "chat-dci-recall"),
 		Channel:     "line",
 		ChatID:      "chat-dci-recall",
 		UserMessage: "DCI を探して",
@@ -397,7 +401,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(
 	rec := &distRecordingEventListener{}
 	orch.SetEventListener(rec)
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-dci-fail",
+		SessionID:   newMockCanonicalSessionID("line", "chat-dci-fail"),
 		Channel:     "line",
 		ChatID:      "chat-dci-fail",
 		UserMessage: "ログを探して",
@@ -429,7 +433,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteUsesWildAgentWithoutFal
 	orch.SetEventListener(rec)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "wild-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "/wild make something",
@@ -471,7 +475,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteRecordsSkillBootstrap(t
 	orch.SetSkillBootstrapRecorder(recorder)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "wild-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "/wild make something",
@@ -506,7 +510,7 @@ func TestDistributedOrchestrator_ProcessMessage_SkillBootstrapFailureStopsRoute(
 	orch.SetSkillBootstrapRecorder(&mockSkillBootstrapRecorder{err: errors.New("skill store failed")})
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "wild-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "/wild make something",
@@ -553,7 +557,7 @@ func TestDistributedOrchestrator_RegisteredSlashCommandExpandsRuntimePrompt(t *t
 	}}})
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "dist-command-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "/review-architecture docs を確認",
@@ -593,7 +597,7 @@ func TestDistributedOrchestrator_RecordsLeadAgentRun(t *testing.T) {
 	orch.SetSuperAgentRunController(controller)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "dist-lead-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "hello",
@@ -662,7 +666,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteWithoutAgentFailsInstea
 	attachCanonicalTestTaskOwner(t, orch)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "wild-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "/wild make something",
@@ -695,7 +699,7 @@ func TestDistributedOrchestrator_ProcessMessage_AnalyzeRouteUsesHeavyAgentWithou
 	orch.SetCanonicalEventRecorder(canonicalEvents)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "analyze-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "分析して",
@@ -742,7 +746,7 @@ func TestDistributedOrchestrator_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *t
 	})
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "deep-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "この件を深掘りして",
@@ -780,7 +784,7 @@ func TestDistributedOrchestrator_ProcessMessage_AnalyzeRouteWithoutHeavyFailsIns
 	attachCanonicalTestTaskOwner(t, orch)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "analyze-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "分析して",
@@ -809,7 +813,7 @@ func TestDistributedOrchestrator_ProcessMessage_SavesEvidenceOnSuccess(t *testin
 	orch.SetReportStore(reporter)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "hello",
@@ -909,7 +913,7 @@ func TestDistributedOrchestrator_TTSBridge_StreamAndEnd(t *testing.T) {
 	orch.SetTTSBridge(bridge)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "hello",
@@ -946,7 +950,7 @@ func TestDistributedOrchestrator_TTSBridge_StreamsSentenceChunks(t *testing.T) {
 	orch.SetTTSBridge(bridge)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "hello",
@@ -999,8 +1003,9 @@ func TestDistributedOrchestrator_AttributionGuardOnUserChat(t *testing.T) {
 	attachCanonicalTestTaskOwner(t, orch)
 
 	// first turn
+	guardSessionID := newMockCanonicalSessionID("line", "U123")
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "guard-session",
+		SessionID:   guardSessionID,
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "最初の質問",
@@ -1011,7 +1016,7 @@ func TestDistributedOrchestrator_AttributionGuardOnUserChat(t *testing.T) {
 
 	// second turn should include attribution guard context from memory
 	_, err = orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "guard-session",
+		SessionID:   guardSessionID,
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "続きの質問",
@@ -1278,7 +1283,7 @@ func TestDistributedOrchestrator_SSHExecution(t *testing.T) {
 	}()
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "generate code",
@@ -1338,7 +1343,7 @@ func TestDistributedOrchestrator_DistributedExecution(t *testing.T) {
 	}()
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "run script",
@@ -1403,7 +1408,7 @@ func TestDistributedOrchestrator_CodeRoute_FinalResponseComesFromMio(t *testing.
 	}()
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "generate code",
@@ -1512,7 +1517,7 @@ func TestDistributedOrchestrator_CodeRoute_RetriesOnWorkerRetryableFailure(t *te
 	}()
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "retry-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "generate code with retry",
@@ -1547,7 +1552,7 @@ func TestDistributedOrchestrator_ProcessMessage_CodeRoute_UnconnectedExplicitCod
 	orch.SetReportStore(reporter)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "generate code",
@@ -1586,7 +1591,7 @@ func TestDistributedWorkerTerminalFailurePersistsFailedTaskAndRun(t *testing.T) 
 	worker := &distMockTransport{response: domaintransport.Message{From: "shiro", To: "mio", Type: domaintransport.MessageTypeResult, Content: "implementation complete\n```go\npackage main\n```", Result: &domaintransport.ResultPayload{Success: false, Summary: "test failed", FailureKind: "test_impact_failed", FailureReason: "provider proposal validation failed", Retryable: false, TestStatus: "failed"}}}
 	orch := NewDistributedOrchestrator(&distMockSessionRepo{}, &distMockMioAgent{routeResponse: "CODE3"}, router, session.NewCentralMemory(), map[string]domaintransport.Transport{"coder3": coder, "shiro": worker})
 	orch.SetTaskLifecycleManager(owner)
-	_, err = orch.ProcessMessage(context.Background(), ProcessMessageRequest{SessionID: "terminal-test", Channel: "viewer", ChatID: "viewer-user", UserMessage: "generate code"})
+	_, err = orch.ProcessMessage(context.Background(), ProcessMessageRequest{SessionID: newMockCanonicalSessionID("viewer", "viewer-user"), Channel: "viewer", ChatID: "viewer-user", UserMessage: "generate code"})
 	if err == nil {
 		t.Fatal("worker failure was accepted as route success")
 	}

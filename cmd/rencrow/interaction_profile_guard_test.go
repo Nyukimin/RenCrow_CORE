@@ -412,6 +412,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd diagnostics can read LLM provider diagnostics",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodGet,
+			path:    "/viewer/modules/llm/diagnostics",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd diagnostics cannot mutate LLM provider diagnostics",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodPost,
+			path:    "/viewer/modules/llm/diagnostics",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "cmd diagnostics can read profile promotion diagnostics",
 			client:  "RenCrow_CMD",
 			profile: "cmd-diagnostics",

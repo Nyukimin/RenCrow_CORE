@@ -184,6 +184,10 @@ func isTransactionContextError(err error) bool {
 func cloneTransactionTask(value domaintask.Task) domaintask.Task {
 	value.CoderRoles = append([]string(nil), value.CoderRoles...)
 	value.DependencyTaskIDs = append([]modulecore.TaskID(nil), value.DependencyTaskIDs...)
+	if value.OriginPublication != nil {
+		originPublication := *value.OriginPublication
+		value.OriginPublication = &originPublication
+	}
 	value.NextActions = append([]string(nil), value.NextActions...)
 	value.Evidence = append([]string(nil), value.Evidence...)
 	value.Artifacts = append([]string(nil), value.Artifacts...)

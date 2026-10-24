@@ -93,7 +93,7 @@ func HandleMonitorLogs(store *MonitorStore) http.HandlerFunc {
 			ChannelAddress: strings.TrimSpace(r.URL.Query().Get("channel_address")),
 			Limit:          limit,
 		}
-		items := store.Logs(filter)
+		items := store.LogsContext(r.Context(), filter)
 		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "persisted") {
 			archived, err := store.ArchivedLogs(r.Context(), filter)
 			if err != nil {

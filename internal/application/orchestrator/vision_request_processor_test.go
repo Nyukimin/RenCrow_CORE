@@ -280,7 +280,7 @@ func TestMessageOrchestratorRunsVisionBeforeAgentRouting(t *testing.T) {
 	})
 
 	response, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "vision-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "この画像を説明して",

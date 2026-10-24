@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -23,6 +24,14 @@ import (
 
 type canonicalViewerSessionRepository interface {
 	LoadOrCreateCanonical(context.Context, string, domainconversation.ChannelAddress, time.Time) (*domainsession.Session, bool, error)
+}
+
+type canonicalViewerOwnerSessionRepository interface {
+	LoadOrCreateCanonicalForOwner(context.Context, string, domainconversation.ChannelAddress, string, time.Time) (domainsession.CanonicalSessionOwnerResolution, error)
+}
+
+type canonicalViewerSynchronousOwnerSessionRepository interface {
+	LoadOrCreateCanonicalForOwnerSynchronously(context.Context, string, domainconversation.ChannelAddress, string, time.Time) (domainsession.CanonicalSessionOwnerResolution, error)
 }
 
 type canonicalViewerSessionReader interface {
@@ -38,6 +47,35 @@ type viewerSessionRuntimeVersionReader interface {
 	ReadSessionState(context.Context, modulecore.SessionID, string) (eventstore.SessionState, bool, error)
 }
 
+type viewerSessionRuntimeVersionProjection interface {
+	SessionRuntimeVersion(context.Context, modulecore.SessionID, string) (string, bool, error)
+}
+
+const (
+	publicViewerChatID  = "viewer-user"
+	cmdViewerChatPrefix = "cmd:"
+)
+
+// viewerSessionIdentity keeps the public Viewer transport identity separate
+// from the authenticated CMD user's private transport namespace. The owner ID
+// remains the authenticated user; CMD is not an Agent or Session owner.
+func viewerSessionIdentity(ctx context.Context) (domainconversation.ChannelAddress, string, string, error) {
+	chatID := publicViewerChatID
+	ownerID := ""
+	if userScope, verified := domaintool.AuthenticatedHTTPUserScopeFromContext(ctx); verified {
+		ownerID = userScope.AuthenticatedUserID
+		if err := domainsession.ValidateOwnerID(ownerID); err != nil || !agentOpsUserIDPattern.MatchString(ownerID) {
+			return domainconversation.ChannelAddress{}, "", "", fmt.Errorf("authenticated Viewer owner ID is invalid")
+		}
+		chatID = cmdViewerChatPrefix + ownerID
+	}
+	address, err := domainconversation.NewChannelAddress("viewer", chatID)
+	if err != nil {
+		return domainconversation.ChannelAddress{}, "", "", err
+	}
+	return address, chatID, ownerID, nil
+}
+
 type viewerBridgeFactories struct {
 	ViewerSendFromOrch   func(messageProcessor) http.HandlerFunc
 	V2ConversationEvents http.HandlerFunc
@@ -45,6 +83,17 @@ type viewerBridgeFactories struct {
 	SpeechProgress       http.HandlerFunc
 	EntryFromOrch        func(messageProcessor) http.HandlerFunc
 	ChromeBridgeFromOrch func(messageProcessor) (http.HandlerFunc, http.HandlerFunc, http.HandlerFunc)
+}
+
+func validatePublicCanonicalViewerSession(sess *domainsession.Session, logicalDate string, address domainconversation.ChannelAddress) error {
+	if sess == nil {
+		return fmt.Errorf("canonical Viewer session resolution returned no Session")
+	}
+	if sess.OwnerID() != "" || sess.LogicalDate() != logicalDate || sess.ChannelAddress() != address ||
+		modulecore.SessionID(sess.ID()).Validate() != nil {
+		return fmt.Errorf("public canonical Viewer session resolution returned conflicting identity")
+	}
+	return nil
 }
 
 func buildViewerBridgeHandlers(
@@ -62,6 +111,42 @@ func buildViewerBridgeHandlers(
 		}
 	}
 	resolveSession := func(ctx context.Context) (*domainsession.Session, bool, error) {
+		address, _, authenticatedUserID, err := viewerSessionIdentity(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		now := time.Now().UTC()
+		logicalDate := now.Format("2006-01-02")
+		if authenticatedUserID != "" {
+			var resolution domainsession.CanonicalSessionOwnerResolution
+			if deps != nil && !deps.combinedChatProcessorEligible {
+				ownerRepo, ok := sessionRepo.(canonicalViewerSynchronousOwnerSessionRepository)
+				if !ok {
+					return nil, false, fmt.Errorf("synchronous owner-aware canonical Viewer session repository is unavailable")
+				}
+				resolution, err = ownerRepo.LoadOrCreateCanonicalForOwnerSynchronously(ctx, logicalDate, address, authenticatedUserID, now)
+			} else {
+				ownerRepo, ok := sessionRepo.(canonicalViewerOwnerSessionRepository)
+				if !ok {
+					return nil, false, fmt.Errorf("owner-aware canonical Viewer session repository is unavailable")
+				}
+				resolution, err = ownerRepo.LoadOrCreateCanonicalForOwner(ctx, logicalDate, address, authenticatedUserID, now)
+			}
+			if err != nil {
+				return nil, false, fmt.Errorf("resolve owner-bound canonical Viewer session: %w", err)
+			}
+			if resolution.Status != domainsession.CanonicalSessionOwnerCreated && resolution.Status != domainsession.CanonicalSessionOwnerMatched {
+				return nil, false, fmt.Errorf("owner-bound canonical Viewer session resolution rejected: %s", resolution.Status)
+			}
+			if resolution.Session == nil || resolution.BoundOwnerID != authenticatedUserID ||
+				domainsession.ValidateOwnerID(resolution.BoundOwnerID) != nil ||
+				resolution.Session.OwnerID() != authenticatedUserID ||
+				resolution.Session.LogicalDate() != logicalDate || resolution.Session.ChannelAddress() != address ||
+				modulecore.SessionID(resolution.Session.ID()).Validate() != nil {
+				return nil, false, fmt.Errorf("owner-bound canonical Viewer session resolution returned conflicting identity")
+			}
+			return resolution.Session, resolution.Status == domainsession.CanonicalSessionOwnerCreated, nil
+		}
 		canonicalRepo, ok := sessionRepo.(canonicalViewerSessionRepository)
 		if !ok {
 			return nil, false, fmt.Errorf("canonical Viewer session repository is unavailable")
@@ -70,17 +155,11 @@ func buildViewerBridgeHandlers(
 		if !ok {
 			return nil, false, fmt.Errorf("canonical Viewer session reader is unavailable")
 		}
-		address, err := domainconversation.NewChannelAddress("viewer", "viewer-user")
-		if err != nil {
-			return nil, false, err
-		}
-		now := time.Now().UTC()
-		logicalDate := now.Format("2006-01-02")
 		if sess, found, readErr := canonicalReader.LoadCanonical(ctx, logicalDate, address); readErr != nil {
 			return nil, false, readErr
 		} else if found {
-			if sess == nil {
-				return nil, false, fmt.Errorf("canonical Viewer session reader returned no session")
+			if err := validatePublicCanonicalViewerSession(sess, logicalDate, address); err != nil {
+				return nil, false, err
 			}
 			return sess, false, nil
 		}
@@ -92,11 +171,17 @@ func buildViewerBridgeHandlers(
 			// the mutating lookup's generic error.
 			existing, found, readErr := canonicalReader.LoadCanonical(ctx, logicalDate, address)
 			if readErr == nil && found && existing != nil {
+				if identityErr := validatePublicCanonicalViewerSession(existing, logicalDate, address); identityErr != nil {
+					return nil, false, identityErr
+				}
 				return existing, false, nil
 			}
 			if readErr != nil {
 				return nil, false, fmt.Errorf("canonical Viewer session lookup failed: %w", err)
 			}
+			return nil, false, err
+		}
+		if err := validatePublicCanonicalViewerSession(sess, logicalDate, address); err != nil {
 			return nil, false, err
 		}
 		return sess, created, nil
@@ -114,6 +199,17 @@ func buildViewerBridgeHandlers(
 		return canonicalRepo.LoadCanonical(ctx, logicalDate, address)
 	}
 	viewerSendFromOrch := func(proc messageProcessor) http.HandlerFunc {
+		ownerID := ""
+		var ownerToken []byte
+		if cfg != nil && cfg.LocalAgentOps.Enabled {
+			configuredUserID := strings.TrimSpace(cfg.LocalAgentOps.UserID)
+			if agentOpsUserIDPattern.MatchString(configuredUserID) {
+				if token, err := readAgentOpsToken(cfg.LocalAgentOps.AuthTokenFile); err == nil {
+					ownerID = configuredUserID
+					ownerToken = token
+				}
+			}
+		}
 		attachmentStore := newRuntimeAttachmentStore(cfg)
 		resolveSessionID := func(ctx context.Context) (modulecore.SessionID, error) {
 			sess, _, err := resolveSession(ctx)
@@ -131,9 +227,12 @@ func buildViewerBridgeHandlers(
 			if !ok || deps.responseFirst == nil {
 				return "", fmt.Errorf("canonical Viewer v2 reservation owner is unavailable")
 			}
-			address, err := domainconversation.NewChannelAddress("viewer", "viewer-user")
+			address, _, authenticatedUserID, err := viewerSessionIdentity(ctx)
 			if err != nil {
 				return "", err
+			}
+			if authenticatedUserID != "" && authenticatedUserID != deps.responseFirst.ownerID {
+				return "", fmt.Errorf("canonical Viewer v2 owner conflicts with authenticated CMD user")
 			}
 			now := time.Now().UTC()
 			logicalDate := now.Format("2006-01-02")
@@ -172,17 +271,34 @@ func buildViewerBridgeHandlers(
 			return sessionID, nil
 		}
 		messageHandler := func(ctx context.Context, req viewer.SendRequest) (string, error) {
-			// Viewer metadata may identify a user for correlation, but it is not
-			// an authentication claim. The trusted orchestrator route therefore
-			// grants only reviewed public Knowledge projections here. A future
-			// authenticated ingress may add a user scope explicitly to ctx.
-			trustedCtx, scopeErr := withTrustedAgentPublicToolScope(ctx, req.TraceID, string(req.To))
+			// AuthenticatedViewerOwnerID intentionally accepts only the HTTP User
+			// scope installed by Viewer ingress. Capture that owner before deriving
+			// Mio's Agent execution scope; later code verifies it still matches the
+			// owner carried by the delegated proof.
+			authenticatedCMDOwnerID := ""
+			authenticatedCMDUser := false
+			if deps != nil && deps.eventHub != nil && req.To == "mio" &&
+				req.Provenance.OperationSource == "RenCrow_CMD" && req.Provenance.InteractionProfile == "cmd-chat" {
+				var authErr error
+				authenticatedCMDOwnerID, authenticatedCMDUser, authErr = viewer.AuthenticatedViewerOwnerID(ctx)
+				if authErr != nil {
+					return "", authErr
+				}
+			}
+			// The typed owner scope is supplied by the Viewer ingress only after
+			// validating the configured loopback CMD Bearer. Derivation preserves
+			// that validated scope while keeping anonymous clients public-only.
+			trustedCtx, scopeErr := domaintool.DeriveAgentToolExecutionScope(ctx, req.TraceID, string(req.To), "chat", "", false)
 			if scopeErr != nil {
 				return "", scopeErr
 			}
 			ctx = trustedCtx
+			_, chatID, _, identityErr := viewerSessionIdentity(ctx)
+			if identityErr != nil {
+				return "", identityErr
+			}
 			log.Printf("[main] viewerSendFromOrch: start root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.RootTaskID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
-			resp, err := proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
+			processReq := orchestrator.ProcessMessageRequest{
 				MessageID:       req.MessageID,
 				AgentMessageID:  req.AgentMessageID,
 				TurnID:          req.TurnID,
@@ -190,25 +306,49 @@ func buildViewerBridgeHandlers(
 				RootTaskID:      req.RootTaskID,
 				SessionID:       req.SessionID,
 				Channel:         "viewer",
-				ChatID:          "viewer-user",
+				ChatID:          chatID,
 				UserMessage:     req.Message,
 				To:              string(req.To),
 				OperationSource: req.Provenance.OperationSource,
 				AudioOutput:     orchestrator.AudioOutputIntent(req.AudioOutput),
 				Attachments:     req.Attachments,
-			})
+			}
+			var deltaPublisher *mioDeltaPublicationQueue
+			if ownerID != "" && deps != nil && deps.eventHub != nil && req.To == "mio" &&
+				req.Provenance.OperationSource == "RenCrow_CMD" && req.Provenance.InteractionProfile == "cmd-chat" {
+				if authenticatedCMDUser && authenticatedCMDOwnerID == ownerID {
+					deltaPublisher = newMioDeltaPublicationQueue(authenticatedCMDOwnerID, deps.eventHub)
+					processReq = orchestrator.WithMioAnswerDeltaAdmission(processReq, func(delta orchestrator.MioAnswerDelta, qualification domainconversation.PreparedChatTurnPublicationGuard) (func(bool), error) {
+						return deltaPublisher.Admit(ctx, delta, qualification)
+					}, deltaPublisher.CloseAndWait)
+				}
+			}
+			resp, err := proc.ProcessMessage(ctx, processReq)
+			var publicationErr error
+			if deltaPublisher != nil {
+				publicationErr = deltaPublisher.CloseAndWait()
+			}
 			if err != nil {
 				log.Printf("[main] viewerSendFromOrch: error root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", req.RootTaskID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, req.Provenance.LogFields(), err)
 				return "", err
+			}
+			if publicationErr != nil {
+				log.Printf("[main] viewerSendFromOrch: transient Mio delta publication failed root_task_id=%s trace_id=%s message_id=%s err=%v", req.RootTaskID, req.TraceID, req.MessageID, publicationErr)
+				return "", publicationErr
 			}
 			log.Printf("[main] viewerSendFromOrch: complete task_id=%s root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s route=%s %s", resp.TaskID, resp.RootTaskID, resp.TraceID, resp.MessageID, req.ViewerClientID, req.To, resp.Route, req.Provenance.LogFields())
 			return resp.Response, nil
 		}
 		errorHandler := func(ctx context.Context, req viewer.SendRequest, err error) {
 			if deps.eventRelay != nil {
+				_, chatID, _, identityErr := viewerSessionIdentity(ctx)
+				if identityErr != nil {
+					log.Printf("[Viewer] error event identity unavailable task=%s: %v", req.RootTaskID, identityErr)
+					return
+				}
 				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
 					"viewer.error", "system", "viewer", err.Error(),
-					"", req.RootTaskID, req.SessionID, "viewer", "viewer-user",
+					"", req.RootTaskID, req.SessionID, "viewer", chatID,
 				)
 				if recorder := turntiming.FromContext(ctx); recorder != nil {
 					snapshot := recorder.Snapshot()
@@ -258,7 +398,8 @@ func buildViewerBridgeHandlers(
 				log.Printf("[Viewer] response-first processing failed session_id=%s turn_id=%s error_type=%T", accepted.SessionID, accepted.TurnID, err)
 			}
 		}
-		return viewer.HandleSendWithProtocolV2(messageHandler, errorHandler, attachmentStore, resolveSessionID, speechCancellationRegistry, v2Options)
+		handler := viewer.HandleSendWithProtocolV2(messageHandler, errorHandler, attachmentStore, resolveSessionID, speechCancellationRegistry, v2Options)
+		return viewer.WithCMDMioOwnerAuthentication(handler, ownerID, ownerToken)
 	}
 	v2ConversationEvents := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if deps == nil || deps.eventHub == nil || deps.responseFirst == nil {
@@ -339,15 +480,29 @@ func buildViewerBridgeHandlers(
 		bridge := chromeadapter.HandleBridge(func(ctx context.Context, req entryadapter.Request) (entryadapter.Result, error) {
 			return processEntryRequestWithRuntime(ctx, proc, req, reportPath, ttsRuntime)
 		})
-		status := chromeadapter.HandleBridgeStatus(func() []orchestrator.OrchestratorEvent {
-			if deps.eventHub == nil {
-				return nil
+		var sessionAccess chromeadapter.SessionAccessFilter
+		var eventAccess chromeadapter.SessionEventAccessFilter
+		var history func() []orchestrator.OrchestratorEvent
+		var eventStream viewer.EventStream
+		if deps != nil && deps.eventHub != nil && deps.sessionVisibility != nil {
+			history = deps.eventHub.History
+			eventStream = deps.eventHub
+			visibility := deps.sessionVisibility
+			sessionAccess = func(ctx context.Context, sessionID string) (bool, error) {
+				return visibility.CanAccessSession(ctx, sessionID, "")
 			}
-			return deps.eventHub.History()
-		}, func() time.Time {
+			eventAccess = func(ctx context.Context, event orchestrator.OrchestratorEvent) (bool, error) {
+				binding, allowed, err := visibility.ResolveEvent(ctx, event, "")
+				if err != nil || !allowed {
+					return false, err
+				}
+				return visibility.IsCurrent(ctx, binding)
+			}
+		}
+		status := chromeadapter.HandleBridgeStatusWithSessionEventAccess(history, func() time.Time {
 			return time.Now().UTC()
-		})
-		events := chromeadapter.HandleBridgeEvents(deps.eventHub)
+		}, sessionAccess, eventAccess)
+		events := chromeadapter.HandleBridgeEventsWithSessionEventAccess(eventStream, sessionAccess, eventAccess)
 		return bridge, status, events
 	}
 	return viewerBridgeFactories{
@@ -427,32 +582,48 @@ func viewerForegroundPresenceSurface(profile string) (string, bool) {
 }
 
 func newViewerSessionProtocolAdmission(cfg *config.Config, deps *Dependencies, sessionRepo orchestrator.SessionRepository) *viewer.SessionProtocolAdmission {
-	var store viewerSessionRuntimeVersionReader
-	ownerID := conversationRuntimeUserID(cfg)
+	var projection viewerSessionRuntimeVersionProjection
+	configuredOwnerID := conversationRuntimeUserID(cfg)
 	if deps != nil {
 		if deps.responseFirst != nil {
-			store = deps.responseFirst.store
-			ownerID = deps.responseFirst.ownerID
-		} else if canonicalStore, ok := deps.canonicalEventStore.(viewerSessionRuntimeVersionReader); ok {
-			store = canonicalStore
+			if canonicalProjection, ok := deps.responseFirst.store.(viewerSessionRuntimeVersionProjection); ok {
+				projection = canonicalProjection
+			}
+			configuredOwnerID = deps.responseFirst.ownerID
+		} else if canonicalProjection, ok := deps.canonicalEventStore.(viewerSessionRuntimeVersionProjection); ok {
+			projection = canonicalProjection
 		}
 	}
-	if store == nil || strings.TrimSpace(ownerID) == "" {
+	if projection == nil || strings.TrimSpace(configuredOwnerID) == "" {
 		return viewer.NewSessionProtocolAdmission(func(context.Context, modulecore.SessionID) (string, bool, error) {
-			return "", false, fmt.Errorf("owner-checked session runtime version lookup is unavailable")
+			return "", false, fmt.Errorf("EventStore session protocol projection is unavailable")
 		})
 	}
-	versionLookup := func(ctx context.Context, sessionID modulecore.SessionID) (string, bool, error) {
-		state, found, err := store.ReadSessionState(ctx, sessionID, ownerID)
-		if err != nil || !found {
-			return "", found, err
+	ownerForRequest := func(ctx context.Context) (string, error) {
+		ownerID := configuredOwnerID
+		if userScope, verified := domaintool.AuthenticatedHTTPUserScopeFromContext(ctx); verified {
+			ownerID = userScope.AuthenticatedUserID
+		} else if scope, found := domaintool.ToolExecutionScopeFromContext(ctx); found &&
+			(scope.AuthenticatedUserID != "" || scope.Allows(domaintool.DataScopeUser)) {
+			return "", fmt.Errorf("authenticated Viewer owner proof is unavailable")
 		}
-		return state.RuntimeVersion, true, nil
+		return ownerID, nil
+	}
+	versionLookup := func(ctx context.Context, sessionID modulecore.SessionID) (string, bool, error) {
+		ownerID, err := ownerForRequest(ctx)
+		if err != nil {
+			return "", false, err
+		}
+		return projection.SessionRuntimeVersion(ctx, sessionID, ownerID)
 	}
 	reservationLookup := func(ctx context.Context, sessionID modulecore.SessionID) (bool, error) {
 		reader, ok := sessionRepo.(responseFirstReservationReader)
 		if !ok {
 			return false, fmt.Errorf("owner-checked session reservation lookup is unavailable")
+		}
+		ownerID, err := ownerForRequest(ctx)
+		if err != nil {
+			return false, err
 		}
 		return reader.IsCanonicalV2Reserved(ctx, string(sessionID), ownerID)
 	}

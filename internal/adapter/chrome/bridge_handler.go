@@ -2,6 +2,7 @@ package chrome
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -75,6 +76,29 @@ func HandleBridge(process entryadapter.Processor) http.HandlerFunc {
 }
 
 func HandleBridgeStatus(history func() []orchestrator.OrchestratorEvent, now func() time.Time) http.HandlerFunc {
+	return HandleBridgeStatusWithSessionAccess(history, now, nil)
+}
+
+// SessionEventAccessFilter authorizes one event against its immutable issuance
+// identity and the current canonical Session binding.
+type SessionEventAccessFilter func(context.Context, orchestrator.OrchestratorEvent) (bool, error)
+
+// SessionAccessFilter admits a requested Session selector before Chrome bridge
+// handlers inspect the shared event stream.
+type SessionAccessFilter func(context.Context, string) (bool, error)
+
+// HandleBridgeStatusWithSessionAccess exposes status only after the trusted
+// runtime confirms access to the canonical session bound to the request. It
+// has no event-level publication proof, so it returns the existing unknown
+// stage until a caller supplies one through HandleBridgeStatusWithSessionEventAccess.
+func HandleBridgeStatusWithSessionAccess(history func() []orchestrator.OrchestratorEvent, now func() time.Time, sessionAccess SessionAccessFilter) http.HandlerFunc {
+	return HandleBridgeStatusWithSessionEventAccess(history, now, sessionAccess, nil)
+}
+
+// HandleBridgeStatusWithSessionEventAccess checks every candidate against its
+// event-time Session publication identity before projecting stage, route, or
+// task details. A missing or failing event policy leaves status at "unknown".
+func HandleBridgeStatusWithSessionEventAccess(history func() []orchestrator.OrchestratorEvent, now func() time.Time, sessionAccess SessionAccessFilter, eventAccess SessionEventAccessFilter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -85,6 +109,19 @@ func HandleBridgeStatus(history func() []orchestrator.OrchestratorEvent, now fun
 			http.Error(w, "session_id is required", http.StatusBadRequest)
 			return
 		}
+		if sessionAccess == nil {
+			http.Error(w, "session access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		allowed, err := sessionAccess(r.Context(), sessionID)
+		if err != nil {
+			http.Error(w, "session access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if !allowed {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		events := history()
 		stage := "unknown"
 		route := ""
@@ -92,6 +129,10 @@ func HandleBridgeStatus(history func() []orchestrator.OrchestratorEvent, now fun
 		for i := len(events) - 1; i >= 0; i-- {
 			ev := events[i]
 			if string(ev.SessionID) != sessionID || ev.Type != "entry.stage" {
+				continue
+			}
+			allowed, _ := checkSessionEventAccess(r.Context(), eventAccess, ev)
+			if !allowed {
 				continue
 			}
 			stage = strings.TrimSpace(ev.Content)
@@ -113,6 +154,21 @@ func HandleBridgeStatus(history func() []orchestrator.OrchestratorEvent, now fun
 }
 
 func HandleBridgeEvents(stream viewer.EventStream) http.HandlerFunc {
+	return HandleBridgeEventsWithSessionAccess(stream, nil)
+}
+
+// HandleBridgeEventsWithSessionAccess requires a trusted runtime session
+// policy before touching the global event stream. Without an event-level
+// publication proof it emits no events; use
+// HandleBridgeEventsWithSessionEventAccess for visible candidates.
+func HandleBridgeEventsWithSessionAccess(stream viewer.EventStream, sessionAccess SessionAccessFilter) http.HandlerFunc {
+	return HandleBridgeEventsWithSessionEventAccess(stream, sessionAccess, nil)
+}
+
+// HandleBridgeEventsWithSessionEventAccess rechecks selector admission and
+// validates each matching replayed or live event immediately before writing.
+// Event identities without a trusted current-binding decision fail closed.
+func HandleBridgeEventsWithSessionEventAccess(stream viewer.EventStream, sessionAccess SessionAccessFilter, eventAccess SessionEventAccessFilter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -121,6 +177,19 @@ func HandleBridgeEvents(stream viewer.EventStream) http.HandlerFunc {
 		sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 		if sessionID == "" {
 			http.Error(w, "session_id is required", http.StatusBadRequest)
+			return
+		}
+		if sessionAccess == nil {
+			http.Error(w, "session access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		allowed, err := sessionAccess(r.Context(), sessionID)
+		if err != nil {
+			http.Error(w, "session access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if !allowed {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		lastSeen, err := parseLastEventID(r.Header.Get("Last-Event-ID"))
@@ -143,8 +212,25 @@ func HandleBridgeEvents(stream viewer.EventStream) http.HandlerFunc {
 		defer clearReplayDeadline()
 
 		replayWrote := false
+		replayAccessFailed := false
 		replayCursor, err := stream.Replay(r.Context(), lastSeen, history, func(ev orchestrator.OrchestratorEvent) error {
-			if string(ev.SessionID) != sessionID || viewer.IsTransientReplayEvent(ev) {
+			if string(ev.SessionID) != sessionID {
+				return nil
+			}
+			allowed, accessErr := sessionAccess(r.Context(), sessionID)
+			if accessErr != nil {
+				replayAccessFailed = true
+				return accessErr
+			}
+			if !allowed {
+				return nil
+			}
+			allowed, accessErr = checkSessionEventAccess(r.Context(), eventAccess, ev)
+			if accessErr != nil {
+				replayAccessFailed = true
+				return accessErr
+			}
+			if !allowed || viewer.IsTransientReplayEvent(ev) {
 				return nil
 			}
 			data, err := json.Marshal(ev)
@@ -164,6 +250,12 @@ func HandleBridgeEvents(stream viewer.EventStream) http.HandlerFunc {
 		})
 		if err != nil {
 			if r.Context().Err() != nil {
+				return
+			}
+			if replayAccessFailed {
+				if !replayWrote {
+					http.Error(w, "session access unavailable", http.StatusServiceUnavailable)
+				}
 				return
 			}
 			log.Printf("[Chrome] bridge SSE replay failed: %v", err)
@@ -193,6 +285,20 @@ func HandleBridgeEvents(stream viewer.EventStream) http.HandlerFunc {
 				if ev.EventSeq > 0 && ev.EventSeq <= replayCursor {
 					continue
 				}
+				allowed, accessErr := sessionAccess(r.Context(), sessionID)
+				if accessErr != nil {
+					return
+				}
+				if !allowed {
+					continue
+				}
+				allowed, accessErr = checkSessionEventAccess(r.Context(), eventAccess, ev)
+				if accessErr != nil {
+					return
+				}
+				if !allowed {
+					continue
+				}
 				if ev.EventSeq > 0 {
 					if _, err := fmt.Fprintf(w, "id: %d\n", ev.EventSeq); err != nil {
 						return
@@ -205,6 +311,13 @@ func HandleBridgeEvents(stream viewer.EventStream) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+func checkSessionEventAccess(ctx context.Context, access SessionEventAccessFilter, event orchestrator.OrchestratorEvent) (bool, error) {
+	if access == nil {
+		return false, nil
+	}
+	return access(ctx, event)
 }
 
 func parseLastEventID(v string) (modulecore.EventSeq, error) {

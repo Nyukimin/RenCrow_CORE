@@ -9,20 +9,31 @@ import (
 )
 
 type LLMProviderAdapter struct {
-	provider domainllm.LLMProvider
+	provider    domainllm.LLMProvider
+	diagnostics modulellm.GatewayRequestWriteDiagnosticsProvider
 }
 
 func NewLLMProviderAdapter(provider domainllm.LLMProvider) *LLMProviderAdapter {
 	return &LLMProviderAdapter{provider: provider}
 }
 
-func NewLLMRoleProviders(chat, worker, heavy, wild domainllm.LLMProvider) map[string]modulellm.Provider {
+func NewLLMRoleProviders(
+	chat, worker, heavy, wild domainllm.LLMProvider,
+	diagnostics map[string]modulellm.GatewayRequestWriteDiagnosticsProvider,
+) map[string]modulellm.Provider {
 	return modulellm.BuildRoleProviderMap(modulellm.RoleProviders{
-		Chat:   NewLLMProviderAdapter(chat),
-		Worker: NewLLMProviderAdapter(worker),
-		Heavy:  NewLLMProviderAdapter(heavy),
-		Wild:   NewLLMProviderAdapter(wild),
+		Chat:   &LLMProviderAdapter{provider: chat, diagnostics: diagnostics[modulellm.RoleChat]},
+		Worker: &LLMProviderAdapter{provider: worker, diagnostics: diagnostics[modulellm.RoleWorker]},
+		Heavy:  &LLMProviderAdapter{provider: heavy, diagnostics: diagnostics[modulellm.RoleHeavy]},
+		Wild:   &LLMProviderAdapter{provider: wild, diagnostics: diagnostics[modulellm.RoleWild]},
 	})
+}
+
+func (a *LLMProviderAdapter) GatewayRequestWriteDiagnostics() *modulellm.GatewayRequestWriteDiagnosticsSnapshot {
+	if a == nil || a.diagnostics == nil {
+		return nil
+	}
+	return a.diagnostics.GatewayRequestWriteDiagnostics()
 }
 
 func (a *LLMProviderAdapter) Name() string {

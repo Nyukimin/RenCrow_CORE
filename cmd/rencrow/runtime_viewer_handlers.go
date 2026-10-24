@@ -1,17 +1,24 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"log"
 	"path/filepath"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	characterruntimeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func buildViewerRuntimeHandlers(
@@ -115,6 +122,7 @@ func buildViewerRuntimeHandlers(
 	deps.viewerPromptDebug = viewer.HandlePromptDebugLogs(viewer.PromptDebugLogOptions{})
 	setIdleChatViewerClientCount(hub.ClientCount)
 	hub.SetClientCountListener(handleIdleChatViewerClientCountChanged)
+	taskVisibility := runtimePublicTaskVisibility(deps.sessionVisibility)
 	if deps.canonicalEventStore != nil {
 		eventLogStore, err := viewer.NewCanonicalEventLog(deps.canonicalEventStore)
 		if err != nil {
@@ -126,6 +134,7 @@ func buildViewerRuntimeHandlers(
 	}
 	if reportStore, err := executionpersistence.NewJSONLReportStore(reportPath); err != nil {
 		deps.monitorStore = viewer.NewMonitorStore(nil, deps.eventLogStore)
+		setRuntimeMonitorEventVisibility(deps.monitorStore, deps.sessionVisibility)
 		deps.eventRelay = &idleAwareEventListener{hub: hub, monitor: deps.monitorStore, archive: deps.eventLogStore, responseMarker: realMgr}
 		deps.viewerStatus = viewer.HandleMonitorStatus(deps.monitorStore)
 		deps.viewerAgents = viewer.HandleMonitorAgents(deps.monitorStore)
@@ -136,29 +145,115 @@ func buildViewerRuntimeHandlers(
 	} else {
 		deps.reportStore = reportStore
 		deps.monitorStore = viewer.NewMonitorStore(reportStore, deps.eventLogStore)
+		setRuntimeMonitorEventVisibility(deps.monitorStore, deps.sessionVisibility)
 		deps.eventRelay = &idleAwareEventListener{hub: hub, monitor: deps.monitorStore, archive: deps.eventLogStore, responseMarker: realMgr}
 		deps.viewerStatus = viewer.HandleMonitorStatus(deps.monitorStore)
 		deps.viewerAgents = viewer.HandleMonitorAgents(deps.monitorStore)
 		deps.viewerAgentDetail = viewer.HandleMonitorAgentDetail(deps.monitorStore)
 		deps.viewerLogs = viewer.HandleMonitorLogs(deps.monitorStore)
 		deps.viewerAuditSummary = viewer.HandleMonitorAuditSummary(deps.monitorStore)
-		deps.evidenceHandler = viewer.HandleEvidenceRecent(reportStore)
-		deps.evidenceDetail = viewer.HandleEvidenceDetail(reportStore)
+		deps.evidenceHandler = viewer.HandleEvidenceRecentWithPublicVisibility(reportStore, deps.taskStore, taskVisibility)
+		deps.evidenceDetail = viewer.HandleEvidenceDetailWithPublicVisibility(reportStore, deps.taskStore, taskVisibility)
 		deps.evidenceSummary = viewer.HandleEvidenceSummary(reportStore)
 		log.Printf("Viewer evidence API enabled: %s", reportPath)
 	}
 	deps.characterRuntime = avatarfeature.HandleCharacterRuntime(characterruntimeapp.NewService(), deps.eventRelay)
 	graphEvents, _ := deps.canonicalEventStore.(viewer.IdentityGraphEventReader)
-	deps.identityGraph = viewer.HandleIdentityGraph(graphEvents, nil)
+	deps.identityGraph = viewer.HandleIdentityGraphWithPublicVisibility(graphEvents, nil, nil, nil)
 	if deps.taskStore == nil || deps.taskManager == nil {
 		log.Printf("WARN: task API disabled: canonical Task owner unavailable")
 	} else {
-		deps.tasks = viewer.HandleTasks(deps.taskStore)
-		deps.taskDetail = viewer.HandleTaskDetail(deps.taskStore)
-		deps.identityGraph = viewer.HandleIdentityGraph(graphEvents, deps.taskStore)
-		deps.taskNotifications = viewer.HandleTaskNotifications(deps.taskStore)
+		deps.tasks = viewer.HandleTasksWithPublicVisibility(deps.taskStore, taskVisibility)
+		deps.taskDetail = viewer.HandleTaskDetailWithPublicVisibility(deps.taskStore, taskVisibility)
+		deps.identityGraph = viewer.HandleIdentityGraphWithPublicVisibility(
+			graphEvents,
+			deps.taskStore,
+			taskVisibility,
+			runtimePublicSessionVisibility(deps.sessionVisibility),
+		)
+		deps.taskNotifications = viewer.HandleTaskNotificationsWithPublicVisibility(deps.taskStore, taskVisibility)
 		log.Printf("Viewer task API and Orchestrator task lifecycle enabled")
 	}
+}
+
+func runtimePublicTaskVisibility(sessions *runtimeSessionVisibility) viewer.PublicTaskVisibility {
+	return func(ctx context.Context, task domaintask.Task) (bool, error) {
+		provenance := task.OriginPublication
+		if provenance == nil || task.OriginSessionID.Validate() != nil || sessions == nil || sessions.reader == nil {
+			return false, nil
+		}
+		if err := provenance.Validate(task.OriginSessionID); err != nil ||
+			provenance.Audience != domainconversation.SessionAudiencePublic || provenance.OwnerID != "" {
+			return false, nil
+		}
+		current, err := sessions.reader.CurrentPublicationBinding(ctx, string(task.OriginSessionID))
+		if err != nil {
+			return false, err
+		}
+		if err := current.Validate(); err != nil {
+			return false, err
+		}
+		address := current.ChannelAddress()
+		return current.SessionID() == task.OriginSessionID &&
+			current.PublicationIncarnation() == provenance.PublicationIncarnation &&
+			address.ChannelType() == provenance.Channel &&
+			address.ExternalConversationID() == provenance.ChannelAddress &&
+			current.Audience() == provenance.Audience && current.OwnerID() == provenance.OwnerID, nil
+	}
+}
+
+func runtimePublicSessionVisibility(sessions *runtimeSessionVisibility) viewer.PublicSessionVisibility {
+	return func(ctx context.Context, envelope modulecore.EventEnvelope) (bool, error) {
+		if envelope.SessionID.Validate() != nil || envelope.Payload == nil || sessions == nil {
+			return false, nil
+		}
+		encoded, err := json.Marshal(envelope.Payload)
+		if err != nil {
+			return false, nil
+		}
+		var event orchestrator.OrchestratorEvent
+		if err := json.Unmarshal(encoded, &event); err != nil || event.SessionID != envelope.SessionID {
+			return false, nil
+		}
+		binding, visible, err := sessions.ResolveEvent(ctx, event, "")
+		if err != nil || !visible {
+			return false, err
+		}
+		return sessions.IsCurrent(ctx, binding)
+	}
+}
+
+func setRuntimeMonitorEventVisibility(store *viewer.MonitorStore, sessions *runtimeSessionVisibility) {
+	if store == nil {
+		return
+	}
+	if sessions == nil {
+		store.SetPublicEventVisibilityPredicate(nil)
+		return
+	}
+	store.SetPublicEventVisibilityPredicate(func(ctx context.Context, event orchestrator.OrchestratorEvent) (bool, error) {
+		switch visibility := strings.ToLower(strings.TrimSpace(event.Visibility)); visibility {
+		case "", "public":
+		case "private":
+			return false, nil
+		default:
+			return false, nil
+		}
+
+		if event.TaskID != "" {
+			if err := event.TaskID.Validate(); err != nil {
+				return false, nil
+			}
+		}
+		if event.SessionID == "" {
+			return event.Type == "agent.unavailable" && event.TaskID == "", nil
+		}
+		if err := event.SessionID.Validate(); err != nil {
+			return false, nil
+		}
+		_, visible, err := sessions.ResolveEvent(ctx, event, "")
+		return visible, err
+	})
 }
 
 func defaultGameBridgeStorePath(workspaceDir string) string {

@@ -109,11 +109,11 @@ func (e *chatReplyConversationEngine) CommitConversationTurn(_ context.Context, 
 	}, nil
 }
 
-func TestMessageOrchestrator_UsesCombinedMioRouteAndReplyAfterTaskActivation(t *testing.T) {
+func TestMessageOrchestrator_UsesCombinedMioRouteAndAnswerAfterTaskActivation(t *testing.T) {
 	bridge := &mockTTSBridge{}
 	var streamedTokens []string
 	provider := &sequentialChatReplyProvider{responses: []string{
-		`{"route":"CHAT","reply":"Mio combined answer"}`,
+		`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"Mio combined answer"}}`,
 		"separate second answer must not be generated",
 	}}
 	classifier := infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy")
@@ -137,7 +137,7 @@ func TestMessageOrchestrator_UsesCombinedMioRouteAndReplyAfterTaskActivation(t *
 		t.Fatalf("ProcessMessage() error = %v", err)
 	}
 	if resp.Response != "Mio combined answer" {
-		t.Fatalf("response = %q, want route-and-reply response", resp.Response)
+		t.Fatalf("response = %q, want combined Mio answer", resp.Response)
 	}
 	if got := len(provider.requests); got != 1 {
 		t.Fatalf("provider Generate calls = %d, want 1", got)
@@ -176,9 +176,9 @@ func TestMessageOrchestrator_UsesCombinedMioRouteAndReplyAfterTaskActivation(t *
 	if combined.Messages[0].Role != "system" || combined.Messages[0].Content != "canonical Mio persona" {
 		t.Fatalf("character message = %#v", combined.Messages[0])
 	}
-	if combined.Messages[1].Metadata["runtime_context_kind"] != "classifier_route_contract" ||
+	if combined.Messages[1].Metadata["runtime_context_kind"] != "classifier_mio_turn_outcome_contract" ||
 		!strings.Contains(combined.Messages[1].Content, "current Mio classifier route policy") ||
-		!strings.Contains(combined.Messages[1].Content, "Return exactly one JSON object") {
+		!strings.Contains(combined.Messages[1].Content, "MioTurnOutcome schema_version 2") {
 		t.Fatalf("typed classifier policy/JSON contract = %#v", combined.Messages[1])
 	}
 	if !strings.Contains(combined.Messages[2].Content, "RecallPack contains the authoritative shared conversation history") {
@@ -234,8 +234,8 @@ func TestMessageOrchestrator_DoesNotRetryInvalidOrEmptyCombinedReply(t *testing.
 		name     string
 		response string
 	}{
-		{name: "invalid JSON", response: `{"route":"CHAT","reply":`},
-		{name: "empty CHAT reply", response: `{"route":"CHAT","reply":"  "}`},
+		{name: "invalid JSON", response: `{"schema_version":2,"route":"CHAT","outcome":`},
+		{name: "empty CHAT answer", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"  "}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := &sequentialChatReplyProvider{responses: []string{tc.response, "must not repair with a second generation"}}
@@ -285,7 +285,7 @@ func TestMessageOrchestrator_DoesNotRetryInvalidOrEmptyCombinedReply(t *testing.
 }
 
 func TestMessageRouteDispatcherFinalizesDraftStreamWhenMioCannotAdopt(t *testing.T) {
-	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"prepared answer"}`}}
+	provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"prepared answer"}}`}}
 	classifier := infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy")
 	taskManager := newRecordingTaskLifecycleManager()
 	preparedMio := domainagent.NewMioAgent(provider, classifier, chatReplyRuleDictionary{}, nil, nil, &chatReplyConversationEngine{manager: taskManager}).
@@ -350,7 +350,7 @@ func TestMessageRouteDispatcherFinalizesDraftStreamWhenMioCannotAdopt(t *testing
 }
 
 func TestRouteDecisionCoordinatorKeepsNonChatRouteAndDiscardsDraft(t *testing.T) {
-	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CODE2","reply":""}`}}
+	provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CODE2","outcome":{"kind":"handoff"}}`}}
 	classifier := infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy")
 	taskManager := newRecordingTaskLifecycleManager()
 	mio := domainagent.NewMioAgent(provider, classifier, chatReplyRuleDictionary{}, nil, nil, &chatReplyConversationEngine{manager: taskManager}).
@@ -378,8 +378,64 @@ func TestRouteDecisionCoordinatorKeepsNonChatRouteAndDiscardsDraft(t *testing.T)
 	}
 }
 
+func TestMessageOrchestrator_CombinedHandoffActivatesNonChatRoute(t *testing.T) {
+	provider := &sequentialChatReplyProvider{responses: []string{
+		`{"schema_version":2,"route":"CODE2","outcome":{"kind":"handoff"}}`,
+	}}
+	taskManager := newRecordingTaskLifecycleManager()
+	engine := &chatReplyConversationEngine{manager: taskManager}
+	mio := domainagent.NewMioAgent(
+		provider,
+		infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy"),
+		chatReplyRuleDictionary{}, nil, nil, engine,
+	).WithSystemPrompt("canonical Mio persona")
+	coder2 := &mockCoderAgent{response: "impl ready\n```\npatch applied\n```"}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{response: "unused"}, nil, coder2, nil, nil, nil)
+	orch.SetTaskLifecycleManager(taskManager)
+	recorder := &recordingEventListener{}
+	orch.SetEventListener(recorder)
+	req := defaultReq()
+	req.UserMessage = "実装を進めて"
+	req.AudioOutput = AudioOutputDisabled
+
+	response, err := orch.ProcessMessage(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProcessMessage() error = %v, want CODE2 handoff to execute", err)
+	}
+	if response.Route != domainrouting.RouteCODE2 {
+		t.Fatalf("response route = %s, want CODE2", response.Route)
+	}
+	if len(provider.requests) != 1 {
+		t.Fatalf("Mio provider Generate calls = %d, want one combined route-and-handoff generation", len(provider.requests))
+	}
+	code2Tasks := 0
+	for _, task := range taskManager.tasks {
+		if task.Route == domaintask.RouteCODE2 && task.Assignee == "shiro" && task.ParentTaskID != "" {
+			code2Tasks++
+		}
+	}
+	if code2Tasks != 1 {
+		t.Fatalf("activated CODE2 child tasks = %d, want one non-CHAT Task assigned to Shiro; tasks=%#v", code2Tasks, taskManager.tasks)
+	}
+	if engine.commitCalls != 0 {
+		t.Fatalf("Mio conversation commits = %d, want no Mio CHAT commit for handoff", engine.commitCalls)
+	}
+	if engine.preparationActive || engine.releaseCalls != 1 {
+		t.Fatalf("conversation preparation active=%v releases=%d, want released exactly once for handoff", engine.preparationActive, engine.releaseCalls)
+	}
+	foundRoute := false
+	for _, event := range recorder.events {
+		if event.Type == "routing.decision" && event.Route == domainrouting.RouteCODE2.String() {
+			foundRoute = true
+		}
+	}
+	if !foundRoute {
+		t.Fatalf("no CODE2 routing.decision event in %#v", recorder.events)
+	}
+}
+
 func TestRouteDecisionCoordinatorDiscardsDraftWhenPolicyChangesRoute(t *testing.T) {
-	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"candidate answer"}`}}
+	provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"candidate answer"}}`}}
 	classifier := infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy")
 	taskManager := newRecordingTaskLifecycleManager()
 	engine := &chatReplyConversationEngine{manager: taskManager}
@@ -410,12 +466,12 @@ func TestRouteDecisionCoordinatorDiscardsDraftWhenPolicyChangesRoute(t *testing.
 		t.Fatalf("policy-changed route lease active=%v releases=%d, want released exactly once", engine.preparationActive, engine.releaseCalls)
 	}
 	if len(provider.requests) != 1 {
-		t.Fatalf("provider Generate calls = %d, want one route-and-reply generation", len(provider.requests))
+		t.Fatalf("provider Generate calls = %d, want one route-and-answer generation", len(provider.requests))
 	}
 }
 
 func TestRouteDecisionCoordinatorDirectRecipientBypassesCombinedClassifier(t *testing.T) {
-	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"must not generate"}`}}
+	provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"must not generate"}}`}}
 	classifier := infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy")
 	taskManager := newRecordingTaskLifecycleManager()
 	mio := domainagent.NewMioAgent(provider, classifier, chatReplyRuleDictionary{}, nil, nil, &chatReplyConversationEngine{manager: taskManager}).
@@ -444,7 +500,7 @@ func TestRouteDecisionCoordinatorDirectRecipientBypassesCombinedClassifier(t *te
 
 func TestMessageOrchestrator_DoesNotAdoptCombinedReplyWhenTaskActivationFails(t *testing.T) {
 	provider := &sequentialChatReplyProvider{responses: []string{
-		`{"route":"CHAT","reply":"Mio combined answer"}`,
+		`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"Mio combined answer"}}`,
 		"unexpected second generation",
 	}}
 	classifier := infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy")
@@ -467,7 +523,7 @@ func TestMessageOrchestrator_DoesNotAdoptCombinedReplyWhenTaskActivationFails(t 
 		t.Fatalf("ProcessMessage() error = %v, want activation failure", err)
 	}
 	if got := len(provider.requests); got != 1 {
-		t.Fatalf("provider Generate calls = %d, want one route-and-reply generation before activation", got)
+		t.Fatalf("provider Generate calls = %d, want one route-and-answer generation before activation", got)
 	}
 	if engine.commitCalls != 0 {
 		t.Fatalf("conversation commits = %d, want no commit after failed activation", engine.commitCalls)
@@ -503,7 +559,7 @@ func (m *cancelingChatReplyTaskLifecycleManager) Start(_ context.Context, _ modu
 }
 
 func TestMessageOrchestratorReleasesCombinedDraftWhenActivationIsCanceled(t *testing.T) {
-	provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"Mio combined answer"}`}}
+	provider := &sequentialChatReplyProvider{responses: []string{`{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"Mio combined answer"}}`}}
 	taskManager := newRecordingTaskLifecycleManager()
 	engine := &chatReplyConversationEngine{manager: taskManager}
 	mio := domainagent.NewMioAgent(provider,

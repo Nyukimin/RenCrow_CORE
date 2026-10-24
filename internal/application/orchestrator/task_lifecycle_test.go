@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
@@ -48,6 +49,46 @@ func TestTaskLifecycleCreatesFixedRootAndBoundedUserIntent(t *testing.T) {
 	shared := manager.contexts[rootID]
 	if shared.TaskID != rootID || shared.UserIntent != strings.TrimSpace(req.UserMessage) {
 		t.Fatalf("root shared context = %#v", shared)
+	}
+}
+
+func TestTaskLifecyclePinsRootPublicationFromValidatedSessionBinding(t *testing.T) {
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	sessionID := modulecore.NewSessionID()
+	address, err := domainconversation.NewChannelAddress("viewer", "task-origin-chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnation := "0123456789abcdef0123456789abcdef"
+	binding, err := domainconversation.NewSessionBindingWithPublicationIncarnation(
+		sessionID, address, domainconversation.SessionAudiencePublic, "", 0, incarnation,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := domainconversation.WithSessionBinding(context.Background(), binding)
+	root, err := lifecycle.createRoot(ctx, ProcessMessageRequest{
+		RootTaskID: modulecore.NewTaskID().String(), SessionID: string(sessionID), UserMessage: "public request",
+	})
+	if err != nil {
+		t.Fatalf("createRoot: %v", err)
+	}
+	want, err := domaintask.NewOriginPublicationProvenance(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.OriginPublication == nil || *root.OriginPublication != want {
+		t.Fatalf("root origin publication = %#v, want immutable binding proof %#v", root.OriginPublication, want)
+	}
+
+	childID, err := lifecycle.createExecutionChild(ctx, root.TaskID, routing.RouteCODE2, modulecore.NewEventID(), "shiro")
+	if err != nil {
+		t.Fatalf("createExecutionChild: %v", err)
+	}
+	child := manager.tasks[childID]
+	if child.OriginSessionID != "" || child.OriginPublication != nil {
+		t.Fatalf("sessionless child acquired public origin proof: %#v", child)
 	}
 }
 

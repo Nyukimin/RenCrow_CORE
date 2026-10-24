@@ -226,14 +226,15 @@ INSERT INTO l1_user_memory_lifecycle_run_receipt (
 		}
 		return domainmemory.UserMemoryLifecycleRunResponse{}, rollbackL1Tx(tx, fmt.Errorf("%w: save lifecycle run receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.user_lifecycle_run_completed", "user:"+ownerID, "", "", 0, "", map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.user_lifecycle_run_completed", "user:"+ownerID, "", "", 0, "", map[string]interface{}{
 		"plan_request_id": planRequestID,
 		"request_id":      requestID,
 		"owner_id":        ownerID,
 		"actor_id":        actorID,
 		"cohort_hash":     cohortHash,
 		"action_count":    len(actions),
-	}, ownerMemorySourcePrefix+actorID); err != nil {
+	}, ownerMemorySourcePrefix+actorID)
+	if err != nil {
 		return domainmemory.UserMemoryLifecycleRunResponse{}, rollbackL1Tx(tx, fmt.Errorf("%w: save lifecycle run audit: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err))
 	}
 	result, err := tx.ExecContext(ctx, `
@@ -251,6 +252,13 @@ WHERE plan_request_id = ? AND owner_id = ? AND status = ?
 	}
 	if err := tx.Commit(); err != nil {
 		return domainmemory.UserMemoryLifecycleRunResponse{}, fmt.Errorf("%w: commit lifecycle run: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+	}
+	if len(actions) > 0 {
+		memoryIDs := make([]string, 0, len(actions))
+		for _, action := range actions {
+			memoryIDs = append(memoryIDs, action.MemoryID)
+		}
+		s.notifyUserMemoryMutation(ownerID, memoryIDs, string(auditEventID(auditEntry)))
 	}
 	return response, nil
 }

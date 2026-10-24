@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -25,6 +28,243 @@ import (
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
 type MessageErrorHandler func(ctx context.Context, req SendRequest, err error)
 type SessionIDResolver func(ctx context.Context) (modulecore.SessionID, error)
+
+const (
+	viewerCMDClient          = "RenCrow_CMD"
+	viewerCMDChatProfile     = "cmd-chat"
+	viewerSendMaxAuthBody    = 128 << 10
+	viewerSendOwnerAuthError = "viewer send authorization unavailable"
+)
+
+// WithCMDMioOwnerAuthentication validates the configured owner credential at
+// Viewer ingress. It protects Mio sends and the matching CMD chat event stream;
+// other clients continue with their existing public scope.
+func WithCMDMioOwnerAuthentication(next http.Handler, ownerID string, token []byte) http.HandlerFunc {
+	ownerID = strings.TrimSpace(ownerID)
+	token = append([]byte(nil), token...)
+	return func(w http.ResponseWriter, r *http.Request) {
+		authorization := r.Header.Values("Authorization")
+		if r.Method == http.MethodGet {
+			if len(authorization) == 0 && !viewerSendHasCMDMarker(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !security.IsDirectLoopbackRequest(r) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			client, clientOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Client")
+			profile, profileOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Interaction-Profile")
+			if !clientOK || !profileOK || client != viewerCMDClient || profile != viewerCMDChatProfile {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			recipient, recipientErr := viewerEventsRecipientForAuth(r)
+			if recipientErr != nil {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			if recipient != modulechat.ViewerRecipientMio {
+				if len(authorization) > 0 {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			if ownerID == "" || len(token) == 0 {
+				http.Error(w, viewerSendOwnerAuthError, http.StatusServiceUnavailable)
+				return
+			}
+			if len(authorization) != 1 || !memoryOwnerBearerAuthorized(r, token) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			r = withViewerAuthenticatedOwner(r, ownerID)
+			if r == nil {
+				http.Error(w, viewerSendOwnerAuthError, http.StatusServiceUnavailable)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if len(authorization) > 0 && !security.IsDirectLoopbackRequest(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodPost {
+			if len(authorization) > 0 {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		recipient, recipientErr := viewerSendRecipientForAuth(r)
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+		cmdMarker := viewerSendHasCMDMarker(r)
+		if recipientErr != nil {
+			if len(authorization) > 0 {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if cmdMarker {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		client, clientOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Client")
+		profile, profileOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Interaction-Profile")
+		cmdContract := clientOK && profileOK && client == viewerCMDClient && profile == viewerCMDChatProfile
+		requiresOwnerAuth := recipient == modulechat.ViewerRecipientMio && cmdMarker
+		if len(authorization) > 0 && (!cmdContract || recipient != modulechat.ViewerRecipientMio) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if requiresOwnerAuth && !cmdContract {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if !requiresOwnerAuth {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if ownerID == "" || len(token) == 0 {
+			http.Error(w, viewerSendOwnerAuthError, http.StatusServiceUnavailable)
+			return
+		}
+		if len(authorization) != 1 || !memoryOwnerBearerAuthorized(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		r = withViewerAuthenticatedOwner(r, ownerID)
+		if r == nil {
+			http.Error(w, viewerSendOwnerAuthError, http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
+func withViewerAuthenticatedOwner(r *http.Request, ownerID string) *http.Request {
+	scope, err := domaintool.NewToolExecutionScope(
+		string(modulecore.NewRequestID()), domaintool.ActorKindUser, ownerID, ownerID,
+		[]string{domaintool.DataScopePublic, domaintool.DataScopeUser}, domaintool.AuthenticationSourceHTTP,
+	)
+	if err != nil {
+		return nil
+	}
+	return r.WithContext(domaintool.WithToolExecutionScope(r.Context(), scope))
+}
+
+func viewerEventsRecipientForAuth(r *http.Request) (modulechat.ViewerRecipient, error) {
+	values, found := r.URL.Query()["to"]
+	if found && len(values) != 1 {
+		return "", errors.New("duplicate Viewer event recipient")
+	}
+	rawRecipient := ""
+	if len(values) == 1 {
+		rawRecipient = values[0]
+	}
+	return modulechat.NormalizeViewerRecipient(rawRecipient)
+}
+
+func viewerSendHasCMDMarker(r *http.Request) bool {
+	for _, value := range r.Header.Values("X-RenCrow-Client") {
+		if strings.TrimSpace(value) == viewerCMDClient {
+			return true
+		}
+	}
+	for _, value := range r.Header.Values("X-RenCrow-Interaction-Profile") {
+		if strings.TrimSpace(value) == viewerCMDChatProfile {
+			return true
+		}
+	}
+	return false
+}
+
+func viewerSendRecipientForAuth(r *http.Request) (modulechat.ViewerRecipient, error) {
+	contentType := ""
+	if rawContentType := strings.TrimSpace(r.Header.Get("Content-Type")); rawContentType != "" {
+		parsed, _, err := mime.ParseMediaType(rawContentType)
+		if err != nil {
+			return "", err
+		}
+		contentType = parsed
+	}
+	rawRecipient := ""
+	if contentType == "multipart/form-data" {
+		if r.Body == nil {
+			return "", errors.New("multipart body is required")
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			return "", err
+		}
+		if r.MultipartForm != nil {
+			values := r.MultipartForm.Value["to"]
+			if len(values) > 1 {
+				return "", errors.New("duplicate viewer recipient")
+			}
+			if len(values) == 1 {
+				rawRecipient = values[0]
+			}
+		}
+	} else {
+		var reader io.Reader = strings.NewReader("")
+		if r.Body != nil {
+			reader = r.Body
+		}
+		body, err := io.ReadAll(io.LimitReader(reader, viewerSendMaxAuthBody+1))
+		if err != nil {
+			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), reader))
+			return "", err
+		}
+		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), reader))
+		if len(body) > viewerSendMaxAuthBody {
+			return "", errViewerSendBodyTooLarge
+		}
+		if len(body) > 0 {
+			var request struct {
+				To string `json:"to"`
+			}
+			if err := json.Unmarshal(body, &request); err != nil {
+				return "", err
+			}
+			rawRecipient = request.To
+		}
+	}
+	return modulechat.NormalizeViewerRecipient(rawRecipient)
+}
+
+func validatedViewerOwnerScope(ctx context.Context) (domaintool.ToolExecutionScope, bool, error) {
+	scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
+	if !found || !scope.Allows(domaintool.DataScopeUser) {
+		return domaintool.ToolExecutionScope{}, false, nil
+	}
+	if err := scope.Validate(); err != nil ||
+		scope.ActorKind != domaintool.ActorKindUser ||
+		scope.AuthenticationSource != domaintool.AuthenticationSourceHTTP ||
+		scope.ActorID != scope.AuthenticatedUserID {
+		return domaintool.ToolExecutionScope{}, false, errors.New("viewer owner scope is invalid")
+	}
+	return scope, true, nil
+}
+
+// AuthenticatedViewerOwnerID returns only a previously validated HTTP owner
+// scope installed by the Viewer CMD authentication middleware.
+func AuthenticatedViewerOwnerID(ctx context.Context) (string, bool, error) {
+	scope, found, err := validatedViewerOwnerScope(ctx)
+	if err != nil || !found {
+		return "", found, err
+	}
+	return scope.AuthenticatedUserID, true, nil
+}
 
 // ForegroundPresenceReference carries only the lookup fields for an already
 // claimed foreground lease. It is not an authentication or authorization
@@ -153,6 +393,11 @@ func handleSendLegacyWithForegroundPin(handler MessageHandler, onError MessageEr
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		ownerScope, hasOwnerScope, scopeErr := validatedViewerOwnerScope(r.Context())
+		if scopeErr != nil {
+			http.Error(w, "owner scope unavailable", http.StatusServiceUnavailable)
+			return
+		}
 
 		req, attachments, foregroundPin, err := parseViewerSendRequestAndPin(r, saver, foregroundPinHook)
 		if err != nil {
@@ -246,6 +491,9 @@ func handleSendLegacyWithForegroundPin(handler MessageHandler, onError MessageEr
 			}
 			resolverContext = admissionContext
 			asyncBaseContext = admissionContext
+		}
+		if hasOwnerScope {
+			asyncBaseContext = domaintool.WithToolExecutionScope(asyncBaseContext, ownerScope)
 		}
 		sessionID := ""
 		if resolveSessionID != nil {

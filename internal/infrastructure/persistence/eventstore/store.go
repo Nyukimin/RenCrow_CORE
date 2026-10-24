@@ -44,6 +44,9 @@ type SQLiteStore struct {
 	waitingSyncSequenceWrites      int
 	chatLease                      *ChatLease
 	releaseWriter                  func() error
+	sessionProtocolProjectionMu    sync.RWMutex
+	sessionProtocolProjectionReady bool
+	sessionProtocolPins            map[modulecore.SessionID]sessionProtocolPin
 	closeOnce                      sync.Once
 	closeErr                       error
 }
@@ -130,6 +133,13 @@ func newSQLiteStore(path string, queue WriteQueue) (*SQLiteStore, error) {
 			_ = db.Close()
 			return nil, err
 		}
+	}
+	if err := store.hydrateSessionProtocolProjection(context.Background()); err != nil {
+		if store.sessionStateDB != nil {
+			_ = store.sessionStateDB.Close()
+		}
+		_ = db.Close()
+		return nil, fmt.Errorf("hydrate EventStore session protocol projection: %w", err)
 	}
 	store.checkpointWorker, err = persistence.NewSQLiteWALCheckpointWorker("event_store", path, sqliteBusyTimeoutMilliseconds)
 	if err != nil {
@@ -265,6 +275,10 @@ func (s *SQLiteStore) Close() error {
 		return nil
 	}
 	s.closeOnce.Do(func() {
+		s.sessionProtocolProjectionMu.Lock()
+		s.sessionProtocolProjectionReady = false
+		s.sessionProtocolPins = nil
+		s.sessionProtocolProjectionMu.Unlock()
 		defer func() {
 			if s.releaseWriter != nil {
 				s.closeErr = errors.Join(s.closeErr, s.releaseWriter())

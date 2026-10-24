@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,9 +10,25 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
-// HandleAudioRouterSSE streams only audio-router relevant tts.audio_chunk payloads.
+// AudioEventAccessFilter is supplied by the trusted runtime to check whether
+// the exact queued event still belongs to a current canonical Session. A
+// Session ID alone cannot prove that an event belongs to the current lifecycle.
+type AudioEventAccessFilter func(context.Context, orchestrator.OrchestratorEvent) (bool, error)
+
+// HandleAudioRouterSSE keeps the legacy entry point closed until its caller
+// supplies the trusted runtime session filter through HandleAudioRouterSSEWithFilter.
 func HandleAudioRouterSSE(h *EventHub) http.HandlerFunc {
+	return HandleAudioRouterSSEWithFilter(h, nil)
+}
+
+// HandleAudioRouterSSEWithFilter streams only audio-router relevant audio
+// chunks for sessions approved by the trusted runtime filter.
+func HandleAudioRouterSSEWithFilter(h *EventHub, filter AudioEventAccessFilter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if filter == nil || h == nil {
+			http.Error(w, "audio event access unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -36,6 +53,19 @@ func HandleAudioRouterSSE(h *EventHub) http.HandlerFunc {
 				}
 				var ev orchestrator.OrchestratorEvent
 				if err := json.Unmarshal(data, &ev); err != nil {
+					continue
+				}
+				if ev.Type != "tts.audio_chunk" {
+					continue
+				}
+				if strings.TrimSpace(string(ev.SessionID)) == "" {
+					continue
+				}
+				allowed, err := filter(r.Context(), ev)
+				if err != nil {
+					return
+				}
+				if !allowed {
 					continue
 				}
 				written, writeErr := writeAudioRouterEvent(w, ev)

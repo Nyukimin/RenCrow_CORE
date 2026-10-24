@@ -394,6 +394,111 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 	}
 }
 
+// PublishGuardedCanonicalEvent keeps the final Mio response on the canonical
+// EventStore sequence while joining owner qualification with RAM admission.
+// The relay order lock is acquired before admit so a blocked publisher never
+// holds Mio's turn/session guards. The qualification is retained by the Hub
+// for the live writer claim and is released on every path by the caller/Hub.
+func (l *idleAwareEventListener) PublishGuardedCanonicalEvent(
+	ev orchestrator.OrchestratorEvent,
+	ownerID string,
+	admit func(func() error) error,
+	qualification domconv.PreparedChatTurnPublicationGuard,
+) (orchestrator.OrchestratorEvent, error) {
+	if qualification == nil {
+		return orchestrator.OrchestratorEvent{}, errors.New("guarded Mio canonical publication qualification is required")
+	}
+	qualificationTransferred := false
+	defer func() {
+		// Once Hub accepts ownership, its deferred cleanup releases the producer
+		// and any dropped subscriber tickets after the guarded admission returns.
+		// Pre-Hub failures still release this producer qualification here, after
+		// the relay lock has been dropped.
+		if !qualificationTransferred {
+			qualification.Release()
+		}
+	}()
+	if l == nil || l.archive == nil || l.hub == nil {
+		return orchestrator.OrchestratorEvent{}, errors.New("guarded Mio canonical publication relay is unavailable")
+	}
+	if strings.TrimSpace(ownerID) == "" || ev.Type != "agent.response" || ev.From != "mio" || ev.To != "user" || ev.Route != "CHAT" ||
+		ev.Channel != "viewer" || ev.ChannelAddress != "cmd:"+ownerID || ev.Visibility != "private" || ev.EventSeq != 0 ||
+		strings.TrimSpace(ev.PublicationIncarnation) == "" || strings.TrimSpace(ev.PublicationIncarnation) != ev.PublicationIncarnation ||
+		ev.EventID.Validate() != nil || ev.TurnID.Validate() != nil || ev.TraceID.Validate() != nil || ev.SessionID.Validate() != nil ||
+		ev.MessageID.Validate() != nil || ev.TaskID.Validate() != nil || ev.RunID.Validate() != nil || admit == nil {
+		return orchestrator.OrchestratorEvent{}, errors.New("guarded Mio canonical event identity is invalid")
+	}
+
+	// This may wait for another canonical publisher. No owner/session guard is
+	// held until after the relay owns its FIFO order.
+	l.publicationMu.Lock()
+	l.mu.RLock()
+	binding := l.chatBinding
+	scope := l.chatTraceScopes[ev.TraceID]
+	l.mu.RUnlock()
+	if binding == nil || binding.traceID != ev.TraceID || scope != chatTraceScopeAdmitted {
+		l.publicationMu.Unlock()
+		return orchestrator.OrchestratorEvent{}, fmt.Errorf("%w: guarded Mio response has no active CHAT admission", errChatTraceIDNotBound)
+	}
+
+	var accepted orchestrator.OrchestratorEvent
+	var publicationCleanup viewer.PublicationCleanup
+	err := admit(func() error {
+		// publicationMu protects canonical sequencing and fanout order; the
+		// callback itself performs only the bounded EventStore RAM admission and
+		// EventHub RAM enqueue. It must never call OnEvent recursively.
+		l.mu.RLock()
+		active := l.chatBinding
+		activeScope := l.chatTraceScopes[ev.TraceID]
+		l.mu.RUnlock()
+		if active != binding || activeScope != chatTraceScopeAdmitted {
+			return fmt.Errorf("%w: guarded Mio CHAT admission was revoked", errChatTraceIDNotBound)
+		}
+		sequenced, _, err := l.archive.AdmitSequenced(binding.ctx, ev)
+		if err != nil {
+			return err
+		}
+		// C: EventStore accepted the canonical event into its bounded RAM writer
+		// queue. Preserve this identity even if the later live enqueue (W) fails;
+		// callers must not reissue the final under a replacement EventID.
+		accepted = sequenced
+		if sequenced.EventSeq <= l.livePublicationCursor {
+			return fmt.Errorf("accepted Mio final EventSeq %d does not follow relay live cursor %d", sequenced.EventSeq, l.livePublicationCursor)
+		}
+		published, cleanup, err := l.hub.PublishAcceptedWithClaim(sequenced, ownerID, qualification)
+		publicationCleanup = cleanup
+		qualificationTransferred = cleanup != nil
+		if err != nil {
+			return err
+		}
+		if !published {
+			return errors.New("EventHub rejected the guarded Mio final event")
+		}
+		l.livePublicationCursor = sequenced.EventSeq
+		return nil
+	})
+	l.publicationMu.Unlock()
+	if publicationCleanup != nil {
+		// Hub cleanup may release the last retained projection/session epoch
+		// reference. It must run outside Guard.Use, SessionRepo.UseBinding, and
+		// the relay FIFO lock because release can acquire lifecycle write locks.
+		publicationCleanup()
+	}
+	if err != nil {
+		if accepted.EventSeq > 0 {
+			return accepted, &orchestrator.GuardedCanonicalLiveDeliveryError{AcceptedEvent: accepted, Cause: err}
+		}
+		return orchestrator.OrchestratorEvent{}, err
+	}
+	// Secondary projections may consult runtime visibility policy. Run them
+	// only after the canonical RAM admission released owner guards and FIFO lock.
+	if l.monitor != nil {
+		l.monitor.OnEvent(accepted)
+	}
+	l.afterCanonicalPublication([]orchestrator.OrchestratorEvent{accepted}, "")
+	return accepted, nil
+}
+
 // PublishCommitted publishes already-persisted conversation events by draining
 // the canonical orchestrator projection. The bundle is only a recovery signal;
 // its events must never be appended a second time here.

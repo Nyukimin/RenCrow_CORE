@@ -208,6 +208,7 @@ func (s *SQLiteStore) CutoverSession(ctx context.Context, input CutoverSessionIn
 			return SessionState{}, err
 		}
 		committed = true
+		s.recordSessionProtocolPin(state.SessionID, state.OwnerID, state.RuntimeVersion)
 		return state, nil
 	}
 	if err := ensureNoUnfinishedLiveTurns(ctx, tx, input.Boundary.sessionID); err != nil {
@@ -282,6 +283,7 @@ func (s *SQLiteStore) CutoverSession(ctx context.Context, input CutoverSessionIn
 		return SessionState{}, err
 	}
 	committed = true
+	s.recordSessionProtocolPin(state.SessionID, state.OwnerID, state.RuntimeVersion)
 	return state, nil
 }
 

@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -57,11 +56,11 @@ func TestBuildGlossaryRuntimeUsesRealSelectedRPCOwnerWithoutLocalFallback(t *tes
 	if runtime.IndexedLookup != remote || runtime.CandidateStore != remote {
 		t.Fatalf("runtime owner selection = lookup:%T candidate:%T, want selected RPC client", runtime.IndexedLookup, runtime.CandidateStore)
 	}
-	if got, err := runtime.RecentContext(context.Background(), 5); err != nil || !strings.Contains(got, "rpc term") {
-		t.Fatalf("remote Mio RecentContext=%q err=%v", got, err)
+	if got, err := runtime.RecentContext(context.Background(), 5); err != nil || got != "" {
+		t.Fatalf("remote Mio RecentContext=%q err=%v, want empty without revocation proof", got, err)
 	}
-	if got, err := runtime.RecentTopics(context.Background(), 5); err != nil || len(got) != 1 || got[0] != "rpc term: typed remote explanation" {
-		t.Fatalf("remote Mio RecentTopics=%v err=%v", got, err)
+	if got, err := runtime.RecentTopics(context.Background(), 5); err != nil || len(got) != 0 {
+		t.Fatalf("remote Mio RecentTopics=%v err=%v, want empty without revocation proof", got, err)
 	}
 	lookup, err := runtime.IndexedLookup.Lookup(context.Background(), "define_term", "rpc term", "", 1)
 	if err != nil {

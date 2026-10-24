@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -265,12 +266,13 @@ type OrchestratorEvent struct {
 	PlaybackGeneration           uint64                `json:"playback_generation,omitempty"`
 	CausationEventID             modulecore.EventID    `json:"causation_event_id,omitempty"`
 	DependencyEventIDs           []modulecore.EventID  `json:"dependency_event_ids,omitempty"`
-	SessionID                    modulecore.SessionID  `json:"session_id,omitempty"`      // session identifier
-	ThreadID                     modulecore.ThreadID   `json:"thread_id,omitempty"`       // canonical conversation/work thread identifier
-	ThreadSeq                    modulecore.ThreadSeq  `json:"thread_seq,omitempty"`      // canonical thread sequence within the session
-	ThreadKind                   modulecore.ThreadKind `json:"thread_kind,omitempty"`     // canonical thread kind
-	Channel                      string                `json:"channel,omitempty"`         // channel identifier
-	ChannelAddress               string                `json:"channel_address,omitempty"` // external channel address (canonical replacement for legacy chat id)
+	SessionID                    modulecore.SessionID  `json:"session_id,omitempty"`              // session identifier
+	PublicationIncarnation       string                `json:"publication_incarnation,omitempty"` // immutable canonical Session lifecycle at issuance
+	ThreadID                     modulecore.ThreadID   `json:"thread_id,omitempty"`               // canonical conversation/work thread identifier
+	ThreadSeq                    modulecore.ThreadSeq  `json:"thread_seq,omitempty"`              // canonical thread sequence within the session
+	ThreadKind                   modulecore.ThreadKind `json:"thread_kind,omitempty"`             // canonical thread kind
+	Channel                      string                `json:"channel,omitempty"`                 // channel identifier
+	ChannelAddress               string                `json:"channel_address,omitempty"`         // external channel address (canonical replacement for legacy chat id)
 	Timestamp                    string                `json:"timestamp"`
 	Timing                       *turntiming.Snapshot  `json:"timing,omitempty"`
 }
@@ -305,9 +307,10 @@ type eventTraceBindings struct {
 }
 
 type eventConversationIdentity struct {
-	TurnID    modulecore.TurnID
-	TraceID   modulecore.TraceID
-	SessionID modulecore.SessionID
+	TurnID                 modulecore.TurnID
+	TraceID                modulecore.TraceID
+	SessionID              modulecore.SessionID
+	PublicationIncarnation string
 }
 
 func newEventTraceBindings() *eventTraceBindings {
@@ -342,11 +345,67 @@ func (b *eventTraceBindings) BindConversationIdentity(taskID string, turnID modu
 	}
 	b.mu.Lock()
 	identity := b.byTask[taskID]
+	if identity.SessionID != "" && identity.SessionID != sessionID {
+		identity.PublicationIncarnation = ""
+	}
 	identity.TurnID = turnID
 	identity.TraceID = traceID
 	identity.SessionID = sessionID
+	if identity.PublicationIncarnation == "" {
+		identity.PublicationIncarnation = b.publicationIncarnationForTurnLocked(traceID, sessionID)
+	}
 	b.byTask[taskID] = identity
 	b.mu.Unlock()
+}
+
+// BindConversationSessionBinding attaches the already-resolved immutable
+// Session lifecycle to one task's trace identity. It accepts no bare SessionID
+// lookup and refuses to replace a conflicting task binding.
+func (b *eventTraceBindings) BindConversationSessionBinding(taskID string, turnID modulecore.TurnID, traceID modulecore.TraceID, binding domainconversation.SessionBinding) error {
+	if b == nil {
+		return fmt.Errorf("event trace bindings are unavailable")
+	}
+	if strings.TrimSpace(taskID) == "" || turnID.Validate() != nil || traceID.Validate() != nil {
+		return fmt.Errorf("conversation event task, turn, and trace identities are required")
+	}
+	if err := binding.ValidateForPublication(); err != nil {
+		return fmt.Errorf("validated SessionBinding is required for event publication: %w", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.byTask == nil {
+		b.byTask = make(map[string]eventConversationIdentity)
+	}
+	identity := b.byTask[taskID]
+	if identity.TraceID.Validate() == nil && identity.TraceID != traceID {
+		return fmt.Errorf("event trace binding conflicts for task %s", taskID)
+	}
+	if identity.SessionID.Validate() == nil && (identity.SessionID != binding.SessionID() || identity.PublicationIncarnation != "" && identity.PublicationIncarnation != binding.PublicationIncarnation()) {
+		return fmt.Errorf("event Session publication binding conflicts for task %s", taskID)
+	}
+	identity.TurnID = turnID
+	identity.TraceID = traceID
+	identity.SessionID = binding.SessionID()
+	identity.PublicationIncarnation = binding.PublicationIncarnation()
+	b.byTask[taskID] = identity
+	return nil
+}
+
+// publicationIncarnationForTurnLocked inherits only an incarnation already
+// attached to the same validated trace and exact Session identity. This lets
+// child task events retain the root turn binding without resolving by ID.
+func (b *eventTraceBindings) publicationIncarnationForTurnLocked(traceID modulecore.TraceID, sessionID modulecore.SessionID) string {
+	var found string
+	for _, identity := range b.byTask {
+		if identity.TraceID != traceID || identity.SessionID != sessionID || identity.PublicationIncarnation == "" {
+			continue
+		}
+		if found != "" && found != identity.PublicationIncarnation {
+			return ""
+		}
+		found = identity.PublicationIncarnation
+	}
+	return found
 }
 
 func (b *eventTraceBindings) Release(taskID string) {
@@ -371,7 +430,12 @@ func (b *eventTraceBindings) Resolve(taskID string) modulecore.TraceID {
 }
 
 func (b *eventTraceBindings) Apply(ev *OrchestratorEvent) {
-	if b == nil || ev == nil || ev.TaskID.IsZero() {
+	if ev == nil {
+		return
+	}
+	originalSessionID := ev.SessionID
+	ev.PublicationIncarnation = ""
+	if b == nil || ev.TaskID.IsZero() {
 		return
 	}
 	b.mu.RLock()
@@ -383,6 +447,9 @@ func (b *eventTraceBindings) Apply(ev *OrchestratorEvent) {
 	ev.TurnID = identity.TurnID
 	ev.TraceID = identity.TraceID
 	ev.SessionID = identity.SessionID
+	if originalSessionID == identity.SessionID {
+		ev.PublicationIncarnation = identity.PublicationIncarnation
+	}
 }
 
 func isConversationMessageEvent(eventType string) bool {

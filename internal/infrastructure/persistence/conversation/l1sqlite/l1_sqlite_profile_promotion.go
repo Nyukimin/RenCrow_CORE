@@ -347,6 +347,7 @@ func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 		return 0, err
 	}
 	saved := 0
+	savedIDs := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		statement := candidate.Statement
 		memoryType := candidate.Type
@@ -380,6 +381,7 @@ INSERT INTO l1_memory_event (
 		affected, _ := result.RowsAffected()
 		if affected == 1 {
 			saved++
+			savedIDs = append(savedIDs, id)
 			if _, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind, map[string]interface{}{
 				"memory_id": id, "user_id": userID, "type": memoryType,
 				"memory_state": MemoryStateCandidate, "evidence_event_ids": evidenceIDs,
@@ -403,14 +405,18 @@ WHERE evidence_event_id = ? AND state = ? AND lease_token = ?
 			return 0, rollbackL1Tx(tx, errors.New("profile promotion lease lost before commit"))
 		}
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.profile_promotion_completed", "conv:profile-promotion", batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind, map[string]interface{}{
+	completionEntry, err := appendL1EventLog(ctx, tx, "memory.profile_promotion_completed", "conv:profile-promotion", batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind, map[string]interface{}{
 		"evidence_event_ids": evidenceIDs,
 		"candidate_count":    saved,
-	}, "profile_extractor"); err != nil {
+	}, "profile_extractor")
+	if err != nil {
 		return 0, rollbackL1Tx(tx, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, rollbackL1Tx(tx, err)
+	}
+	if len(savedIDs) > 0 {
+		s.notifyUserMemoryMutation(userID, savedIDs, string(auditEventID(completionEntry)))
 	}
 	return saved, nil
 }

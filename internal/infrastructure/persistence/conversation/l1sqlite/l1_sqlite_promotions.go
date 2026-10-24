@@ -97,17 +97,21 @@ INSERT INTO l1_memory_event (
 	if err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to promote l1 staging item to memory: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.promoted_from_staging", targetNamespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.promoted_from_staging", targetNamespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
 		"staging_id":         item.ID,
 		"promoted_memory_id": promoted.ID,
 		"promoted_by":        promotedBy,
 		"source_namespace":   item.Namespace,
 		"memory_state":       promoted.MemoryState,
-	}, "promoter"); err != nil {
+	}, "promoter")
+	if err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to append l1 staging promoted event log: %w", err))
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to commit l1 staging memory promotion transaction: %w", err))
+	}
+	if userMemory, strictErr := strictUserMemoryFromEvent(*promoted); strictErr == nil && userMemoryPromptEligibleAtDeclaredScope(*userMemory) {
+		s.notifyUserMemoryMutation(userMemory.UserID, []string{userMemory.ID}, string(auditEventID(auditEntry)))
 	}
 	if err := s.archivePromotedMemory(ctx, *promoted); err != nil {
 		return nil, err

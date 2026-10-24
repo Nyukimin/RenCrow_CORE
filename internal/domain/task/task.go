@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -67,45 +69,110 @@ const (
 	RouteCODE4      Route = "CODE4"
 )
 
+// OriginPublicationProvenance freezes the canonical Session publication
+// identity that authorized a root Task's public origin. Task.OwnerID remains
+// the CORE Agent owner and is intentionally not used as User ownership.
+// Legacy Tasks may omit this value; they remain executable but are not public.
+type OriginPublicationProvenance struct {
+	PublicationIncarnation string                       `json:"publication_incarnation"`
+	Channel                string                       `json:"channel"`
+	ChannelAddress         string                       `json:"channel_address"`
+	Audience               conversation.SessionAudience `json:"audience"`
+	OwnerID                string                       `json:"owner_id,omitempty"`
+}
+
+// NewOriginPublicationProvenance copies only a verified immutable turn
+// binding. The Task owner separately checks that this proof came from the
+// current request context before the Task's first save.
+func NewOriginPublicationProvenance(binding conversation.SessionBinding) (OriginPublicationProvenance, error) {
+	if err := binding.ValidateForPublication(); err != nil {
+		return OriginPublicationProvenance{}, fmt.Errorf("SessionBinding is not publishable: %w", err)
+	}
+	address := binding.ChannelAddress()
+	provenance := OriginPublicationProvenance{
+		PublicationIncarnation: binding.PublicationIncarnation(),
+		Channel:                address.ChannelType(),
+		ChannelAddress:         address.ExternalConversationID(),
+		Audience:               binding.Audience(),
+		OwnerID:                binding.OwnerID(),
+	}
+	if err := provenance.Validate(binding.SessionID()); err != nil {
+		return OriginPublicationProvenance{}, err
+	}
+	return provenance, nil
+}
+
+// Validate checks the durable publication proof against the Task's canonical
+// origin Session ID. It does not infer missing provenance for legacy records.
+func (p OriginPublicationProvenance) Validate(sessionID modulecore.SessionID) error {
+	if err := sessionID.Validate(); err != nil {
+		return fmt.Errorf("origin publication session_id is invalid: %w", err)
+	}
+	if err := domainsession.ValidatePublicationIncarnation(p.PublicationIncarnation); err != nil {
+		return fmt.Errorf("origin publication incarnation is invalid: %w", err)
+	}
+	address, err := conversation.NewChannelAddress(p.Channel, p.ChannelAddress)
+	if err != nil {
+		return fmt.Errorf("origin publication ChannelAddress is invalid: %w", err)
+	}
+	if address.ChannelType() != p.Channel || address.ExternalConversationID() != p.ChannelAddress {
+		return fmt.Errorf("origin publication ChannelAddress must be normalized")
+	}
+	switch p.Audience {
+	case conversation.SessionAudiencePublic:
+		if p.OwnerID != "" {
+			return fmt.Errorf("public origin publication must not include a User owner")
+		}
+	case conversation.SessionAudiencePrivate:
+		if err := domainsession.ValidateOwnerID(p.OwnerID); err != nil {
+			return fmt.Errorf("private origin publication owner is invalid: %w", err)
+		}
+	default:
+		return fmt.Errorf("origin publication audience is invalid: %q", p.Audience)
+	}
+	return nil
+}
+
 // Task is the durable executable work aggregate. The canonical TaskID and
 // origin identities are kept separate from runtime trace, run, and transport
 // identities owned by their respective boundaries.
 type Task struct {
-	TaskID                   modulecore.TaskID       `json:"task_id"`
-	Title                    string                  `json:"title"`
-	ModuleID                 string                  `json:"module_id,omitempty"`
-	ModuleRoot               string                  `json:"module_root,omitempty"`
-	Route                    Route                   `json:"route"`
-	RoutingEventID           modulecore.EventID      `json:"routing_event_id,omitempty"`
-	OwnerID                  string                  `json:"owner_id,omitempty"`
-	Assignee                 string                  `json:"assignee,omitempty"`
-	AssignmentEventID        modulecore.EventID      `json:"assignment_event_id,omitempty"`
-	CoderRoles               []string                `json:"coder_roles,omitempty"`
-	Status                   Status                  `json:"status"`
-	Priority                 Priority                `json:"priority"`
-	ParentTaskID             modulecore.TaskID       `json:"parent_task_id,omitempty"`
-	DependencyTaskIDs        []modulecore.TaskID     `json:"dependency_task_ids,omitempty"`
-	OriginSessionID          modulecore.SessionID    `json:"origin_session_id,omitempty"`
-	OriginThreadID           modulecore.ThreadID     `json:"origin_thread_id,omitempty"`
-	OriginTurnID             modulecore.TurnID       `json:"origin_turn_id,omitempty"`
-	OriginMessageID          modulecore.MessageID    `json:"origin_message_id,omitempty"`
-	AcceptedOPSClaim         *AcceptedOPSClaim       `json:"accepted_ops_claim,omitempty"`
-	ExpectedCriteriaRevision string                  `json:"expected_criteria_revision,omitempty"`
-	NativeResumeClaims       []NativeOPSResumeClaim  `json:"native_resume_claims,omitempty"`
-	WorkstreamID             modulecore.WorkstreamID `json:"workstream_id,omitempty"`
-	GoalID                   modulecore.GoalID       `json:"goal_id,omitempty"`
-	SupersedesTaskID         modulecore.TaskID       `json:"supersedes_task_id,omitempty"`
-	InterruptPolicy          InterruptPolicy         `json:"interrupt_policy"`
-	ReadOnly                 bool                    `json:"read_only"`
-	CreatedAt                time.Time               `json:"created_at"`
-	UpdatedAt                time.Time               `json:"updated_at"`
-	StartedAt                *time.Time              `json:"started_at,omitempty"`
-	FinishedAt               *time.Time              `json:"finished_at,omitempty"`
-	Summary                  string                  `json:"summary,omitempty"`
-	WaitingReason            string                  `json:"waiting_reason,omitempty"`
-	NextActions              []string                `json:"next_actions,omitempty"`
-	Evidence                 []string                `json:"evidence,omitempty"`
-	Artifacts                []string                `json:"artifacts,omitempty"`
+	TaskID                   modulecore.TaskID            `json:"task_id"`
+	Title                    string                       `json:"title"`
+	ModuleID                 string                       `json:"module_id,omitempty"`
+	ModuleRoot               string                       `json:"module_root,omitempty"`
+	Route                    Route                        `json:"route"`
+	RoutingEventID           modulecore.EventID           `json:"routing_event_id,omitempty"`
+	OwnerID                  string                       `json:"owner_id,omitempty"`
+	Assignee                 string                       `json:"assignee,omitempty"`
+	AssignmentEventID        modulecore.EventID           `json:"assignment_event_id,omitempty"`
+	CoderRoles               []string                     `json:"coder_roles,omitempty"`
+	Status                   Status                       `json:"status"`
+	Priority                 Priority                     `json:"priority"`
+	ParentTaskID             modulecore.TaskID            `json:"parent_task_id,omitempty"`
+	DependencyTaskIDs        []modulecore.TaskID          `json:"dependency_task_ids,omitempty"`
+	OriginSessionID          modulecore.SessionID         `json:"origin_session_id,omitempty"`
+	OriginThreadID           modulecore.ThreadID          `json:"origin_thread_id,omitempty"`
+	OriginTurnID             modulecore.TurnID            `json:"origin_turn_id,omitempty"`
+	OriginMessageID          modulecore.MessageID         `json:"origin_message_id,omitempty"`
+	OriginPublication        *OriginPublicationProvenance `json:"origin_publication,omitempty"`
+	AcceptedOPSClaim         *AcceptedOPSClaim            `json:"accepted_ops_claim,omitempty"`
+	ExpectedCriteriaRevision string                       `json:"expected_criteria_revision,omitempty"`
+	NativeResumeClaims       []NativeOPSResumeClaim       `json:"native_resume_claims,omitempty"`
+	WorkstreamID             modulecore.WorkstreamID      `json:"workstream_id,omitempty"`
+	GoalID                   modulecore.GoalID            `json:"goal_id,omitempty"`
+	SupersedesTaskID         modulecore.TaskID            `json:"supersedes_task_id,omitempty"`
+	InterruptPolicy          InterruptPolicy              `json:"interrupt_policy"`
+	ReadOnly                 bool                         `json:"read_only"`
+	CreatedAt                time.Time                    `json:"created_at"`
+	UpdatedAt                time.Time                    `json:"updated_at"`
+	StartedAt                *time.Time                   `json:"started_at,omitempty"`
+	FinishedAt               *time.Time                   `json:"finished_at,omitempty"`
+	Summary                  string                       `json:"summary,omitempty"`
+	WaitingReason            string                       `json:"waiting_reason,omitempty"`
+	NextActions              []string                     `json:"next_actions,omitempty"`
+	Evidence                 []string                     `json:"evidence,omitempty"`
+	Artifacts                []string                     `json:"artifacts,omitempty"`
 }
 
 type SharedRoleContext struct {
@@ -226,6 +293,11 @@ func (t Task) Validate() error {
 	}
 	if err := validateOptionalID(t.OriginMessageID); err != nil {
 		return fmt.Errorf("origin_message_id is invalid: %w", err)
+	}
+	if t.OriginPublication != nil {
+		if err := t.OriginPublication.Validate(t.OriginSessionID); err != nil {
+			return fmt.Errorf("origin_publication is invalid: %w", err)
+		}
 	}
 	if t.AcceptedOPSClaim != nil {
 		if err := t.AcceptedOPSClaim.Validate(t); err != nil {

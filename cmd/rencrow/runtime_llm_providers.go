@@ -44,29 +44,34 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		}
 	}
 	primaryProviders = primaryLLMProviders{
-		Chat:         trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
-		Worker:       trackLLMProvider("worker", primaryProviders.Worker, busyTracker),
-		ChatWorker:   trackLLMProvider("chatworker", primaryProviders.ChatWorker, busyTracker),
-		Heavy:        trackLLMProvider("heavy", primaryProviders.Heavy, busyTracker),
-		Wild:         trackLLMProvider("wild", primaryProviders.Wild, busyTracker),
-		Conversation: primaryProviders.Conversation,
-		Readback:     primaryProviders.Readback,
+		Chat:                    trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
+		Worker:                  trackLLMProvider("worker", primaryProviders.Worker, busyTracker),
+		ChatWorker:              trackLLMProvider("chatworker", primaryProviders.ChatWorker, busyTracker),
+		Heavy:                   trackLLMProvider("heavy", primaryProviders.Heavy, busyTracker),
+		Wild:                    trackLLMProvider("wild", primaryProviders.Wild, busyTracker),
+		Conversation:            primaryProviders.Conversation,
+		Readback:                primaryProviders.Readback,
+		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}
 	primaryProviders = primaryLLMProviders{
-		Chat:         requireActionOwnedLLMProvider("chat", primaryProviders.Chat, actions, tasks, transport),
-		Worker:       requireActionOwnedLLMProvider("worker", primaryProviders.Worker, actions, tasks, transport),
-		ChatWorker:   requireActionOwnedLLMProvider("chatworker", primaryProviders.ChatWorker, actions, tasks, transport),
-		Heavy:        requireActionOwnedLLMProvider("heavy", primaryProviders.Heavy, actions, tasks, transport),
-		Wild:         requireActionOwnedLLMProvider("wild", primaryProviders.Wild, actions, tasks, transport),
-		Conversation: primaryProviders.Conversation,
-		Readback:     primaryProviders.Readback,
+		Chat:                    requireActionOwnedLLMProvider("chat", primaryProviders.Chat, actions, tasks, transport),
+		Worker:                  requireActionOwnedLLMProvider("worker", primaryProviders.Worker, actions, tasks, transport),
+		ChatWorker:              requireActionOwnedLLMProvider("chatworker", primaryProviders.ChatWorker, actions, tasks, transport),
+		Heavy:                   requireActionOwnedLLMProvider("heavy", primaryProviders.Heavy, actions, tasks, transport),
+		Wild:                    requireActionOwnedLLMProvider("wild", primaryProviders.Wild, actions, tasks, transport),
+		Conversation:            primaryProviders.Conversation,
+		Readback:                primaryProviders.Readback,
+		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}
 	workerToolProvider, ok := primaryProviders.Worker.(llm.ToolCallingProvider)
 	if !ok {
 		log.Fatalf("worker provider %s does not support tool calling", primaryProviders.Worker.Name())
 	}
 	coder1Adapter, coder2Adapter, coder3Adapter, coder4Adapter := setupCoders(cfg, busyTracker, actions, tasks, transport)
-	moduleProviders := modulebridge.NewLLMRoleProviders(primaryProviders.Chat, primaryProviders.Worker, primaryProviders.Heavy, primaryProviders.Wild)
+	moduleProviders := modulebridge.NewLLMRoleProviders(
+		primaryProviders.Chat, primaryProviders.Worker, primaryProviders.Heavy, primaryProviders.Wild,
+		primaryProviders.GatewayWriteDiagnostics,
+	)
 	return llmRuntimeProviders{
 		Primary:            primaryProviders,
 		Conversation:       primaryProviders.Conversation,

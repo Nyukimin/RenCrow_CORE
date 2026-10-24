@@ -40,7 +40,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_CODE1(t *testing.T) {
 	orch.SetEventListener(rec)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "s1",
+		SessionID:   newMockCanonicalSessionID("line", "u1"),
 		Channel:     "line",
 		ChatID:      "u1",
 		UserMessage: "design this",
@@ -75,7 +75,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_CODE2(t *testing.T) {
 	orch.SetEventListener(rec)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "s2",
+		SessionID:   newMockCanonicalSessionID("line", "u2"),
 		Channel:     "line",
 		ChatID:      "u2",
 		UserMessage: "implement this",
@@ -110,7 +110,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_CODE4(t *testing.T) {
 	orch.SetEventListener(rec)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "s4",
+		SessionID:   newMockCanonicalSessionID("line", "u4"),
 		Channel:     "line",
 		ChatID:      "u4",
 		UserMessage: "prototype this",
@@ -145,7 +145,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_GenericCODE(t *testing.T) 
 	orch.SetEventListener(rec)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "s-code",
+		SessionID:   newMockCanonicalSessionID("line", "u-code"),
 		Channel:     "line",
 		ChatID:      "u-code",
 		UserMessage: "change this",
@@ -189,7 +189,7 @@ func TestMessageOrchestrator_CodeRoute_CODE3ProposalKeepsShiroEventOrder(t *test
 	orch.SetEventListener(rec)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "s-code3",
+		SessionID:   newMockCanonicalSessionID("line", "u-code3"),
 		Channel:     "line",
 		ChatID:      "u-code3",
 		UserMessage: "apply this",

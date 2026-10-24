@@ -160,7 +160,7 @@ func TestCoderLoopTerminalPersistsFailedTaskAndRun(t *testing.T) {
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{response: "unused"}, nil, nil, coder, nil, worker)
 	orch.SetTaskLifecycleManager(owner)
 	orch.SetCoderLoopPrompt("test loop")
-	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{SessionID: "loop-terminal", Channel: "viewer", ChatID: "user", UserMessage: "/code3 implement"})
+	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{SessionID: newMockCanonicalSessionID("viewer", "user"), Channel: "viewer", ChatID: "user", UserMessage: "/code3 implement"})
 	if err == nil {
 		t.Fatal("incomplete loop accepted as route success")
 	}

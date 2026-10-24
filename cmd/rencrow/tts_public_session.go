@@ -1,6 +1,12 @@
 package main
 
-import moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
+)
 
 var ttsPublicSessions = moduletts.NewPublicSessionStore()
 
@@ -28,6 +34,37 @@ func registerTTSPublicSessionForPlayback(internalSessionID, publicSessionID, pub
 		RuntimeEpoch:       runtimeEpoch,
 		PlaybackGeneration: playbackGeneration,
 	})
+}
+
+func currentTTSPublicSessionRouteProof(internalSessionID string) (moduletts.PublicSessionRouteProof, bool) {
+	return ttsPublicSessions.CurrentRouteProof(internalSessionID)
+}
+
+// registerTTSPublicAudioResource is the IdleChat producer's registration
+// boundary. It refuses a missing, timed out, reset, or retired public route.
+func registerTTSPublicAudioResource(owner *ttsAudioAccessOwner, internalSessionID, audioPath, audioURL string) error {
+	if owner == nil {
+		return fmt.Errorf("TTS audio access owner is unavailable")
+	}
+	proof, ok := currentTTSPublicSessionRouteProof(internalSessionID)
+	if !ok {
+		return errTTSAudioAccessRegistration
+	}
+	audioURL = strings.TrimSpace(audioURL)
+	if audioURL != "" {
+		parsed, err := url.Parse(audioURL)
+		if err != nil {
+			return fmt.Errorf("parse public TTS audio URL: %w", err)
+		}
+		if parsed.IsAbs() {
+			return owner.RegisterPublicURL(proof, audioURL)
+		}
+	}
+	audioPath = strings.TrimSpace(audioPath)
+	if audioPath == "" {
+		return fmt.Errorf("public TTS audio resource is unavailable")
+	}
+	return owner.RegisterPublicPath(proof, audioPath)
 }
 
 func resetTTSPublicSessionRoutesForIdleChat() {

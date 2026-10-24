@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
@@ -14,7 +15,9 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 func TestBuildGatewayPrimaryProvidersExposeReadbackProviders(t *testing.T) {
@@ -152,6 +155,71 @@ func TestBuildLLMRuntimeReadbackProvidersBypassActionOwnedLegacyProviders(t *tes
 	if calls != 3 {
 		t.Fatalf("direct readback Gateway requests = %d, want 3", calls)
 	}
+}
+
+func TestBuildLLMRuntimePrimaryChatWriteDiagnosticsReachLocalEndpoint(t *testing.T) {
+	requestIDs := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestIDs <- r.Header.Get("X-RenCrow-Request-ID")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"total_tokens":8}}`))
+	}))
+	defer server.Close()
+
+	actions := actionmanager.New(nil)
+	tasks := taskmanager.New(nil, taskmanager.DefaultParallelLimits())
+	transport := transportmanager.New(nil, actions)
+	runtime := buildLLMRuntimeProviders(&config.Config{
+		LLMGateway: config.LLMGatewayConfig{BaseURL: server.URL, TimeoutSec: 1},
+	}, nil, newLLMBusyTracker(), actions, tasks, transport)
+
+	if got := len(runtime.Primary.GatewayWriteDiagnostics); got != 1 {
+		t.Fatalf("raw diagnostic handles = %d, want only the canary Primary.Chat handle", got)
+	}
+	if _, ok := runtime.ModuleProviders["chat"].(modulellm.GatewayRequestWriteDiagnosticsProvider); !ok {
+		t.Fatal("module adapter did not retain the explicit Primary.Chat diagnostics capability")
+	}
+	// Call the captured raw Primary.Chat provider used beneath the production
+	// middleware stack, avoiding that stack's persistent RawLog/PromptReceipt sinks.
+	rawPrimaryChat, ok := runtime.Primary.GatewayWriteDiagnostics["chat"].(llm.LLMProvider)
+	if !ok {
+		t.Fatal("captured Primary.Chat diagnostics handle is not the Gateway provider")
+	}
+	timingCtx := turntiming.WithRecorder(context.Background(), turntiming.New(time.Now()))
+	if _, err := rawPrimaryChat.Generate(turntiming.WithBodyGenerationContext(timingCtx), llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Content: "canary request"}},
+	}); err != nil {
+		t.Fatalf("captured Primary.Chat Gateway Generate() error = %v", err)
+	}
+	receivedRequestID := <-requestIDs
+	if receivedRequestID == "" {
+		t.Fatal("Gateway did not receive the CORE request ID header")
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/viewer/modules/llm/diagnostics", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	handleModuleLLMDiagnostics(runtime.ModuleProviders)(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("diagnostics endpoint status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var snapshot modulellm.DiagnosticsSnapshot
+	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode diagnostics response: %v", err)
+	}
+	for _, role := range snapshot.Roles {
+		if role.Role != modulellm.RoleChat {
+			continue
+		}
+		if role.GatewayRequestWrite == nil || len(role.GatewayRequestWrite.Requests) != 1 {
+			t.Fatalf("Primary.Chat write diagnostic missing from endpoint response: %+v", role.GatewayRequestWrite)
+		}
+		if got := role.GatewayRequestWrite.Requests[0].RequestID; got != receivedRequestID {
+			t.Fatalf("endpoint request ID %q does not match Gateway header %q", got, receivedRequestID)
+		}
+		return
+	}
+	t.Fatalf("chat role missing from diagnostics response: %+v", snapshot.Roles)
 }
 
 func readbackProviderTestScope() conversation.ConversationScope {

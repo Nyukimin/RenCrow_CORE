@@ -33,7 +33,7 @@ func TestDurableStoreWorkflowPreemptsGeneralRouting(t *testing.T) {
 		Classification: domainstore.Classification{Class: domainstore.ClassNewStore, OwnerModule: "RenCrow_GAMES"},
 		CreatedAt:      time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}})
-	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{SessionID: "s1", Channel: "viewer", ChatID: "ren", UserMessage: "ゲームDBを実装して"})
+	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{SessionID: newMockCanonicalSessionID("viewer", "ren"), Channel: "viewer", ChatID: "ren", UserMessage: "ゲームDBを実装して"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,11 +31,14 @@ func TestBuildGlossaryRuntimeUsesSelectedRemoteOwnerWithoutLocalFallback(t *test
 		t.Fatalf("runtime owner selection = lookup:%T candidate:%T, want selected remote owner", runtime.IndexedLookup, runtime.CandidateStore)
 	}
 	ctx := context.Background()
-	if got, err := runtime.RecentContext(ctx, 5); err != nil || got == "" {
-		t.Fatalf("remote RecentContext=%q err=%v", got, err)
+	if got, err := runtime.RecentContext(ctx, 5); err != nil || got != "" {
+		t.Fatalf("remote RecentContext=%q err=%v, want empty without revocation proof", got, err)
 	}
-	if got, err := runtime.RecentTopics(ctx, 5); err != nil || len(got) != 1 || got[0] != "remote term: remote explanation" {
-		t.Fatalf("remote RecentTopics=%v err=%v", got, err)
+	if got, err := runtime.RecentTopics(ctx, 5); err != nil || len(got) != 0 {
+		t.Fatalf("remote RecentTopics=%v err=%v, want empty without revocation proof", got, err)
+	}
+	if owner.recentReads != 0 {
+		t.Fatalf("remote recent prompt made %d owner reads, want 0", owner.recentReads)
 	}
 	lookup, err := runtime.IndexedLookup.Lookup(ctx, "define_term", "remote term", "", 1)
 	if err != nil {
@@ -67,8 +70,9 @@ func TestBuildGlossaryRuntimeUsesSelectedRemoteOwnerWithoutLocalFallback(t *test
 }
 
 type runtimeGlossaryRemoteStub struct {
-	item       *domainglossary.GlossaryItem
-	candidates map[string]domainglossary.GlossaryCandidate
+	item        *domainglossary.GlossaryItem
+	candidates  map[string]domainglossary.GlossaryCandidate
+	recentReads int
 }
 
 func (stub *runtimeGlossaryRemoteStub) Save(_ context.Context, item *domainglossary.GlossaryItem) error {
@@ -84,6 +88,7 @@ func (stub *runtimeGlossaryRemoteStub) FindByTerm(_ context.Context, term string
 }
 
 func (stub *runtimeGlossaryRemoteStub) FindRecent(context.Context, int) ([]*domainglossary.GlossaryItem, error) {
+	stub.recentReads++
 	if stub.item == nil {
 		return []*domainglossary.GlossaryItem{}, nil
 	}

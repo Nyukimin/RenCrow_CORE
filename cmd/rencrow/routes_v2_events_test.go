@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -46,6 +47,8 @@ func TestViewerGlobalEventsFiltersPinnedV2SessionAndPreservesLegacy(t *testing.T
 	}); err != nil {
 		t.Fatalf("pin v1 session: %v", err)
 	}
+	v2Session := routeTestSessionWithID(t, sessionID, "", false)
+	legacySession := routeTestSessionWithID(t, legacySessionID, "", false)
 
 	hub := viewer.NewEventHub(10)
 	v2 := orchestrator.NewEvent("entry.stage", "mio", "system", "v2 event must stay scoped", "CHAT", "", string(sessionID), "viewer", "viewer-user")
@@ -55,10 +58,18 @@ func TestViewerGlobalEventsFiltersPinnedV2SessionAndPreservesLegacy(t *testing.T
 	legacyV1Response := orchestrator.NewEvent("agent.response", "mio", "user", "legacy v1 response remains", "CHAT", "", string(legacySessionID), "viewer", "viewer-user")
 	legacyV1Response.EventSeq = 3
 	legacyV1Response.SessionID, legacyV1Response.MessageID, legacyV1Response.TurnID = legacySessionID, modulecore.NewMessageID(), legacyTurnID
+	legacyV1Response.PublicationIncarnation = legacySession.PublicationIncarnation()
 	hub.OnEvent(v2)
 	hub.OnEvent(legacy)
 	hub.OnEvent(legacyV1Response)
-	deps := &Dependencies{eventHub: hub, canonicalEventStore: store}
+	deps := &Dependencies{
+		eventHub: hub,
+		sessionRepository: routeTestSessionRepository{sessions: map[string]*domainsession.Session{
+			string(sessionID):       v2Session,
+			string(legacySessionID): legacySession,
+		}},
+		canonicalEventStore: store,
+	}
 	cfg := &config.Config{}
 	cfg.LocalAgentOps.UserID = "ren"
 
@@ -71,8 +82,8 @@ func TestViewerGlobalEventsFiltersPinnedV2SessionAndPreservesLegacy(t *testing.T
 	if strings.Contains(body, "v2 event must stay scoped") {
 		t.Fatalf("global legacy route exposed an event from a pinned v2 session: %s", body)
 	}
-	if !strings.Contains(body, "legacy stream remains") {
-		t.Fatalf("global legacy route did not preserve legacy events: %s", body)
+	if strings.Contains(body, "legacy stream remains") {
+		t.Fatalf("global legacy route exposed an ambiguous session-less conversation event: %s", body)
 	}
 	if !strings.Contains(body, "legacy v1 response remains") {
 		t.Fatalf("global legacy route did not preserve a response from a v1-pinned session: %s", body)

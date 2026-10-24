@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	glossaryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/glossary"
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/domain/entity"
@@ -18,6 +19,46 @@ const MaxGlossaryViewerPageTotal int64 = 1<<31 - 1
 
 type SQLiteGlossaryRepository struct {
 	db *sql.DB
+
+	mutationHooksMu sync.RWMutex
+	mutationHooks   sqliteGlossaryMutationHooks
+}
+
+type sqliteGlossaryMutationHooks struct {
+	before func()
+	after  func(context.Context)
+}
+
+// SetGlossaryMutationHooks lets the application-owned prompt projection revoke
+// before owner writes and rebuild after the committed owner operation.
+func (r *SQLiteGlossaryRepository) SetGlossaryMutationHooks(before func(), after func(context.Context)) {
+	if r == nil {
+		return
+	}
+	r.mutationHooksMu.Lock()
+	r.mutationHooks = sqliteGlossaryMutationHooks{before: before, after: after}
+	r.mutationHooksMu.Unlock()
+}
+
+func (r *SQLiteGlossaryRepository) runGlossaryMutation(ctx context.Context, apply func() error) error {
+	if r == nil || r.db == nil {
+		return sql.ErrConnDone
+	}
+	r.mutationHooksMu.RLock()
+	hooks := r.mutationHooks
+	r.mutationHooksMu.RUnlock()
+	if hooks.before != nil {
+		hooks.before()
+	}
+	err := apply()
+	if hooks.after != nil {
+		refreshCtx := context.Background()
+		if ctx != nil {
+			refreshCtx = context.WithoutCancel(ctx)
+		}
+		hooks.after(refreshCtx)
+	}
+	return err
 }
 
 // GlossaryOperationIdentity binds one storage-host op_id to one exact owner
@@ -111,12 +152,14 @@ func (r *SQLiteGlossaryRepository) SaveForStorageHostOperation(ctx context.Conte
 	if item == nil {
 		return errors.New("glossary item is nil")
 	}
-	return r.applyStorageHostOperation(ctx, identity, func(tx *sql.Tx) (json.RawMessage, error) {
-		_, err := tx.ExecContext(ctx, `
-			INSERT OR REPLACE INTO glossary_items (id, term, explanation, source, category, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, item.ID, item.Term, item.Explanation, item.Source, item.Category, item.CreatedAt, item.UpdatedAt)
-		return json.RawMessage("null"), err
+	return r.runGlossaryMutation(ctx, func() error {
+		return r.applyStorageHostOperation(ctx, identity, func(tx *sql.Tx) (json.RawMessage, error) {
+			_, err := tx.ExecContext(ctx, `
+				INSERT OR REPLACE INTO glossary_items (id, term, explanation, source, category, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, item.ID, item.Term, item.Explanation, item.Source, item.Category, item.CreatedAt, item.UpdatedAt)
+			return json.RawMessage("null"), err
+		})
 	})
 }
 
@@ -124,9 +167,11 @@ func (r *SQLiteGlossaryRepository) DeleteForStorageHostOperation(ctx context.Con
 	if identity.Operation != "delete" {
 		return errors.New("glossary delete identity operation mismatch")
 	}
-	return r.applyStorageHostOperation(ctx, identity, func(tx *sql.Tx) (json.RawMessage, error) {
-		_, err := tx.ExecContext(ctx, `DELETE FROM glossary_items WHERE id = ?`, id)
-		return json.RawMessage("null"), err
+	return r.runGlossaryMutation(ctx, func() error {
+		return r.applyStorageHostOperation(ctx, identity, func(tx *sql.Tx) (json.RawMessage, error) {
+			_, err := tx.ExecContext(ctx, `DELETE FROM glossary_items WHERE id = ?`, id)
+			return json.RawMessage("null"), err
+		})
 	})
 }
 
@@ -281,16 +326,18 @@ func (r *SQLiteGlossaryRepository) Save(ctx context.Context, item *entity.Glossa
 	(id, term, explanation, source, category, created_at, updated_at)
 	VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := r.db.ExecContext(ctx, query,
-		item.ID,
-		item.Term,
-		item.Explanation,
-		item.Source,
-		item.Category,
-		item.CreatedAt,
-		item.UpdatedAt,
-	)
-	return err
+	return r.runGlossaryMutation(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query,
+			item.ID,
+			item.Term,
+			item.Explanation,
+			item.Source,
+			item.Category,
+			item.CreatedAt,
+			item.UpdatedAt,
+		)
+		return err
+	})
 }
 
 func (r *SQLiteGlossaryRepository) FindByTerm(ctx context.Context, term string) (*entity.GlossaryItem, error) {
@@ -367,8 +414,10 @@ func (r *SQLiteGlossaryRepository) FindByCategory(ctx context.Context, category 
 
 func (r *SQLiteGlossaryRepository) Delete(ctx context.Context, id string) error {
 	query := `DELETE FROM glossary_items WHERE id = ?`
-	_, err := r.db.ExecContext(ctx, query, id)
-	return err
+	return r.runGlossaryMutation(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, id)
+		return err
+	})
 }
 
 func (r *SQLiteGlossaryRepository) Close() error {

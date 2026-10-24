@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
@@ -48,6 +49,25 @@ func TestLLMClassifier_Classify_DisablesThinkingAndBoundsOutput(t *testing.T) {
 	kwargs, ok := captured.ProviderOptions["chat_template_kwargs"].(map[string]any)
 	if captured.ProviderOptions["think"] != false || !ok || kwargs["enable_thinking"] != false {
 		t.Fatalf("ProviderOptions = %#v, want chat_template_kwargs.enable_thinking=false", captured.ProviderOptions)
+	}
+}
+
+func TestLLMClassifierClassifyCarriesMioAdmissionToConstructedRequest(t *testing.T) {
+	var captured llm.GenerateRequest
+	provider := &mockLLMProvider{
+		response: "CHAT",
+		onGenerate: func(req llm.GenerateRequest) {
+			captured = req
+		},
+	}
+	classifier := NewLLMClassifier(provider, "test prompt")
+	capability := llm.NewGenerateRequestAdmission(func() error { return nil })
+	ctx := domainagent.ContextWithMioTurnGenerateRequestAdmission(context.Background(), capability)
+	if _, err := classifier.Classify(ctx, newRoutingTurnInput(t, "hello", "viewer", "ren")); err != nil {
+		t.Fatalf("Classify: %v", err)
+	}
+	if captured.RequestAdmission != capability {
+		t.Fatal("LLMClassifier did not carry the CORE request admission to its exact GenerateRequest")
 	}
 }
 

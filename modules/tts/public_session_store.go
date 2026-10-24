@@ -15,6 +15,18 @@ type PublicSessionStore struct {
 	generation                           uint64
 }
 
+// PublicSessionRouteProof is a read-only snapshot proving that an IdleChat
+// public playback route was current in one store generation. The owner must
+// validate it again before registration and every audio read.
+type PublicSessionRouteProof struct {
+	InternalSessionID  string
+	PublicSessionID    string
+	RuntimeEpoch       string
+	PlaybackGeneration uint64
+	StoreGeneration    uint64
+	Current            bool
+}
+
 func NewPublicSessionStore() *PublicSessionStore {
 	return &PublicSessionStore{
 		routes:                               map[string]*PublicSessionRoute{},
@@ -23,6 +35,48 @@ func NewPublicSessionStore() *PublicSessionStore {
 		nextPublicPlaybackRef:                map[string]int{},
 		cancelledPlaybackGenerationByRuntime: map[string]uint64{},
 	}
+}
+
+func (s *PublicSessionStore) CurrentRouteProof(internalSessionID string) (PublicSessionRouteProof, bool) {
+	if s == nil || internalSessionID == "" || strings.TrimSpace(internalSessionID) != internalSessionID {
+		return PublicSessionRouteProof{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	route := s.routes[internalSessionID]
+	if route == nil || !route.IsCurrent(s.generation) ||
+		!IsIdleChatPublicSession(route.PublicSessionID) || route.RuntimeEpoch == "" || route.PlaybackGeneration == 0 {
+		return PublicSessionRouteProof{}, false
+	}
+	return PublicSessionRouteProof{
+		InternalSessionID:  internalSessionID,
+		PublicSessionID:    route.PublicSessionID,
+		RuntimeEpoch:       route.RuntimeEpoch,
+		PlaybackGeneration: route.PlaybackGeneration,
+		StoreGeneration:    s.generation,
+		Current:            true,
+	}, true
+}
+
+func (s *PublicSessionStore) ValidateCurrentRouteProof(proof PublicSessionRouteProof) bool {
+	if s == nil || !proof.Current || proof.InternalSessionID == "" ||
+		strings.TrimSpace(proof.InternalSessionID) != proof.InternalSessionID ||
+		proof.PublicSessionID == "" || strings.TrimSpace(proof.PublicSessionID) != proof.PublicSessionID ||
+		!IsIdleChatPublicSession(proof.PublicSessionID) ||
+		proof.RuntimeEpoch == "" || strings.TrimSpace(proof.RuntimeEpoch) != proof.RuntimeEpoch ||
+		proof.PlaybackGeneration == 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proof.StoreGeneration != s.generation {
+		return false
+	}
+	route := s.routes[proof.InternalSessionID]
+	return route != nil && route.IsCurrent(s.generation) &&
+		route.PublicSessionID == proof.PublicSessionID &&
+		route.RuntimeEpoch == proof.RuntimeEpoch &&
+		route.PlaybackGeneration == proof.PlaybackGeneration
 }
 
 func (s *PublicSessionStore) ResetAll() {
@@ -36,7 +90,7 @@ func (s *PublicSessionStore) ResetAll() {
 	s.nextChunk = map[string]int{}
 	s.nextPublicPlaybackRef = map[string]int{}
 	s.cancelledPlaybackGenerationByRuntime = map[string]uint64{}
-	s.generation = 0
+	s.generation++
 }
 
 func (s *PublicSessionStore) Register(reg PublicSessionRouteRegistration) bool {

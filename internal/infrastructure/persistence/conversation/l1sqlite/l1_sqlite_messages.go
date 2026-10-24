@@ -3,7 +3,6 @@ package l1sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -89,13 +88,30 @@ ON CONFLICT(id) DO UPDATE SET
 	if err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to save l1 memory event: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
 		"memory_id":    id,
 		"speaker":      string(msg.Speaker),
 		"memory_state": memoryState,
 		"layer":        layer,
-	}, "conversation"); err != nil {
+	}, "conversation")
+	if err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to append l1 message event log: %w", err))
+	}
+	var changedUserMemory *domainmemory.UserMemory
+	if strings.HasPrefix(namespace, "user:") {
+		rows, readErr := scanL1EventRows(tx.QueryRowContext(ctx, `
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event
+WHERE id = ?
+`, id))
+		if readErr != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to read saved user memory: %w", readErr))
+		}
+		if len(rows) != 1 {
+			return rollbackL1Tx(tx, errors.New("saved user memory lookup returned an invalid row count"))
+		}
+		changedUserMemory, _ = strictUserMemoryFromEvent(rows[0])
 	}
 	if msg.Speaker == domconv.SpeakerUser && memoryState == MemoryStateObserved && strings.HasPrefix(namespace, "conv:") {
 		if _, err := execInsertProfilePromotionJob(ctx, tx, true, id, sessionID, threadID, threadSeq, threadKind, domainmemory.ProfilePromotionPending, createdAt, now); err != nil {
@@ -104,6 +120,9 @@ ON CONFLICT(id) DO UPDATE SET
 	}
 	if err := tx.Commit(); err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to commit l1 message transaction: %w", err))
+	}
+	if changedUserMemory != nil {
+		s.notifyUserMemoryMutation(changedUserMemory.UserID, []string{changedUserMemory.ID}, string(auditEventID(auditEntry)))
 	}
 	return nil
 }
@@ -115,66 +134,65 @@ func (s *L1SQLiteStore) UpdateMemoryState(ctx context.Context, id string, memory
 	if err := validateMemoryState(memoryState); err != nil {
 		return err
 	}
-	var namespace string
-	var sessionID string
-	var threadIDRaw string
-	var threadSeqRaw int64
-	var threadKindRaw string
-	var previousState string
-	if err := s.db.QueryRowContext(ctx, `
-SELECT namespace, session_id, thread_id, thread_seq, thread_kind, memory_state
-FROM l1_memory_event
-WHERE id = ?
-	`, id).Scan(&namespace, &sessionID, &threadIDRaw, &threadSeqRaw, &threadKindRaw, &previousState); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return sql.ErrNoRows
-		}
-		return fmt.Errorf("failed to load l1 memory event before state update: %w", err)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	threadID := modulecore.ThreadID(threadIDRaw)
-	threadSeq := modulecore.ThreadSeq(threadSeqRaw)
-	threadKind := modulecore.ThreadKind(threadKindRaw)
-	if err := validateL1SessionThreadTuple(sessionID, threadID, threadSeq, threadKind); err != nil {
-		return fmt.Errorf("failed to validate l1 memory event before state update: %w", err)
+	event, found, err := findL1MemoryEventByID(ctx, tx, id)
+	if err != nil {
+		return rollbackL1Tx(tx, fmt.Errorf("failed to load l1 memory event before state update: %w", err))
 	}
-	result, err := s.db.ExecContext(ctx, `
+	if !found {
+		return rollbackL1Tx(tx, sql.ErrNoRows)
+	}
+	if err := validateL1SessionThreadTuple(event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind); err != nil {
+		return rollbackL1Tx(tx, fmt.Errorf("failed to validate l1 memory event before state update: %w", err))
+	}
+	previousState := event.MemoryState
+	now := time.Now().UTC()
+	result, err := tx.ExecContext(ctx, `
 UPDATE l1_memory_event
 SET memory_state = ?, updated_at = ?
 WHERE id = ?
-`, memoryState, time.Now().UTC(), id)
+`, memoryState, now, id)
 	if err != nil {
-		return fmt.Errorf("failed to update l1 memory state: %w", err)
+		return rollbackL1Tx(tx, fmt.Errorf("failed to update l1 memory state: %w", err))
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to inspect l1 memory state update: %w", err)
+		return rollbackL1Tx(tx, fmt.Errorf("failed to inspect l1 memory state update: %w", err))
 	}
 	if affected == 0 {
-		return sql.ErrNoRows
+		return rollbackL1Tx(tx, sql.ErrNoRows)
 	}
-	entry, err := s.AppendEvent(ctx, "memory.state_updated", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
+	event.Meta = cloneMeta(event.Meta)
+	event.MemoryState = memoryState
+	event.UpdatedAt = now
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.state_updated", event.Namespace, event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
 		"memory_id":      id,
 		"previous_state": previousState,
 		"memory_state":   memoryState,
 	}, "memory")
 	if err != nil {
-		return fmt.Errorf("failed to append l1 memory state event log: %w", err)
+		return rollbackL1Tx(tx, fmt.Errorf("failed to append l1 memory state event log: %w", err))
 	}
-	if strings.HasPrefix(namespace, "user:") {
-		var metaJSON string
-		if err := s.db.QueryRowContext(ctx, `SELECT meta_json FROM l1_memory_event WHERE id = ?`, id).Scan(&metaJSON); err != nil {
-			return fmt.Errorf("failed to load user memory meta for event link update: %w", err)
+	var changedUserMemory *domainmemory.UserMemory
+	if strings.HasPrefix(event.Namespace, "user:") {
+		writeUserMemoryEventLinkMeta(event.Meta, "", auditEventID(auditEntry))
+		metaJSON, marshalErr := marshalL1MetaJSON(event.Meta, "failed to marshal user memory state metadata")
+		if marshalErr != nil {
+			return rollbackL1Tx(tx, marshalErr)
 		}
-		meta := map[string]interface{}{}
-		if strings.TrimSpace(metaJSON) != "" {
-			if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
-				return fmt.Errorf("failed to decode user memory meta for event link update: %w", err)
-			}
+		if _, err := tx.ExecContext(ctx, `UPDATE l1_memory_event SET meta_json = ? WHERE id = ?`, metaJSON, id); err != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to persist user memory updated_by_event_id: %w", err))
 		}
-		writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
-		if err := s.updateMemoryMeta(ctx, id, meta); err != nil {
-			return fmt.Errorf("failed to persist user memory updated_by_event_id: %w", err)
-		}
+		changedUserMemory, _ = strictUserMemoryFromEvent(event)
+	}
+	if err := tx.Commit(); err != nil {
+		return rollbackL1Tx(tx, fmt.Errorf("failed to commit l1 memory state update: %w", err))
+	}
+	if changedUserMemory != nil {
+		s.notifyUserMemoryMutation(changedUserMemory.UserID, []string{changedUserMemory.ID}, string(auditEventID(auditEntry)))
 	}
 	return nil
 }
@@ -186,10 +204,23 @@ func (s *L1SQLiteStore) PromoteMemoryToNamespace(ctx context.Context, id string,
 	if err := ValidateL1Namespace(targetNamespace); err != nil {
 		return nil, err
 	}
-	source, err := s.memoryByID(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+	sourceRows, err := scanL1EventRows(tx.QueryRowContext(ctx, `
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event
+WHERE id = ?
+`, id))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, rollbackL1Tx(tx, sql.ErrNoRows)
+		}
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to load l1 memory before promotion: %w", err))
+	}
+	source := sourceRows[0]
 	now := time.Now().UTC()
 	meta := map[string]interface{}{}
 	for k, v := range source.Meta {
@@ -199,7 +230,7 @@ func (s *L1SQLiteStore) PromoteMemoryToNamespace(ctx context.Context, id string,
 	meta["promoted_by"] = promotedBy
 	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal promoted l1 memory meta")
 	if err != nil {
-		return nil, err
+		return nil, rollbackL1Tx(tx, err)
 	}
 	promoted := &L1MemoryEvent{
 		ID:          fmt.Sprintf("%s:%s:%d:%d", targetNamespace, source.ID, now.UnixNano(), l1IDSequence.Add(1)),
@@ -218,25 +249,32 @@ func (s *L1SQLiteStore) PromoteMemoryToNamespace(ctx context.Context, id string,
 		UpdatedAt:   now,
 	}
 	if err := validateL1MemoryEvent(*promoted); err != nil {
-		return nil, err
+		return nil, rollbackL1Tx(tx, err)
 	}
-	_, err = s.db.ExecContext(ctx, `
+	if _, err = tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
 	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, promoted.ID, promoted.Namespace, promoted.SessionID, string(promoted.ThreadID), promoted.ThreadSeq, promoted.ThreadKind, string(promoted.Speaker), promoted.Message, metaJSON,
-		promoted.MemoryState, promoted.Layer, promoted.Source, promoted.CreatedAt, promoted.UpdatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to promote l1 memory: %w", err)
+		promoted.MemoryState, promoted.Layer, promoted.Source, promoted.CreatedAt, promoted.UpdatedAt); err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to promote l1 memory: %w", err))
 	}
-	if _, err := s.AppendEvent(ctx, "memory.promoted", targetNamespace, source.SessionID, source.ThreadID, source.ThreadSeq, source.ThreadKind, map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.promoted", targetNamespace, source.SessionID, source.ThreadID, source.ThreadSeq, source.ThreadKind, map[string]interface{}{
 		"source_memory_id":   source.ID,
 		"promoted_memory_id": promoted.ID,
 		"promoted_by":        promotedBy,
 		"memory_state":       promoted.MemoryState,
-	}, "promoter"); err != nil {
-		return nil, fmt.Errorf("failed to append l1 memory promoted event log: %w", err)
+	}, "promoter")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to append l1 memory promoted event log: %w", err))
+	}
+	changedUserMemory, _ := strictUserMemoryFromEvent(*promoted)
+	if err := tx.Commit(); err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to commit l1 memory promotion: %w", err))
+	}
+	if changedUserMemory != nil {
+		s.notifyUserMemoryMutation(changedUserMemory.UserID, []string{changedUserMemory.ID}, string(auditEventID(auditEntry)))
 	}
 	if err := s.archivePromotedMemory(ctx, *promoted); err != nil {
 		return nil, err

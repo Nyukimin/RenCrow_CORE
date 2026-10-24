@@ -16,8 +16,81 @@ import (
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestWithCMDMioOwnerAuthenticationEnforcesTheIngressContract(t *testing.T) {
+	const token = "viewer-send-owner-token-0123456789"
+	for _, tt := range []struct {
+		name       string
+		body       string
+		client     string
+		profile    string
+		authority  []string
+		remoteAddr string
+		ownerID    string
+		wantStatus int
+		wantOwner  bool
+	}{
+		{name: "missing bearer defaults to mio", body: `{"message":"hello"}`, client: "RenCrow_CMD", profile: "cmd-chat", remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusUnauthorized},
+		{name: "invalid bearer", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CMD", profile: "cmd-chat", authority: []string{"Bearer wrong-token"}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusUnauthorized},
+		{name: "duplicate bearer", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CMD", profile: "cmd-chat", authority: []string{"Bearer " + token, "Bearer " + token}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusUnauthorized},
+		{name: "valid bearer from remote host", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CMD", profile: "cmd-chat", authority: []string{"Bearer " + token}, remoteAddr: "192.0.2.10:1234", ownerID: "ren", wantStatus: http.StatusForbidden},
+		{name: "credential outside cmd mio contract", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_PORTAL", profile: "portal-chat", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusForbidden},
+		{name: "cmd profile mismatch", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CMD", profile: "cmd-control", remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusForbidden},
+		{name: "owner credential unavailable", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CMD", profile: "cmd-chat", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusServiceUnavailable},
+		{name: "valid owner bearer uses configured identity", body: `{"message":"hello","user_id":"attacker"}`, client: "RenCrow_CMD", profile: "cmd-chat", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusNoContent, wantOwner: true},
+		{name: "portal mio stays public", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_PORTAL", profile: "portal-chat", remoteAddr: "192.0.2.10:1234", ownerID: "ren", wantStatus: http.StatusNoContent},
+		{name: "cmd non mio stays public", body: `{"message":"hello","to":"shiro"}`, client: "RenCrow_CMD", profile: "cmd-chat", remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusNoContent},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var nextCalls int
+			var gotScope domaintool.ToolExecutionScope
+			var scopeFound bool
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalls++
+				gotScope, scopeFound = domaintool.ToolExecutionScopeFromContext(r.Context())
+				w.WriteHeader(http.StatusNoContent)
+			})
+			handler := WithCMDMioOwnerAuthentication(next, tt.ownerID, []byte(token))
+			request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", "application/json")
+			if tt.client != "" {
+				request.Header.Set("X-RenCrow-Client", tt.client)
+			}
+			if tt.profile != "" {
+				request.Header.Set("X-RenCrow-Interaction-Profile", tt.profile)
+			}
+			for _, value := range tt.authority {
+				request.Header.Add("Authorization", value)
+			}
+			request.RemoteAddr = tt.remoteAddr
+			if strings.HasPrefix(tt.remoteAddr, "127.0.0.1:") {
+				request.Host = "127.0.0.1:18790"
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != tt.wantStatus {
+				t.Fatalf("status=%d body=%s want=%d", response.Code, response.Body.String(), tt.wantStatus)
+			}
+			if tt.wantStatus == http.StatusNoContent && nextCalls != 1 {
+				t.Fatalf("next calls=%d, want 1", nextCalls)
+			}
+			if tt.wantStatus != http.StatusNoContent && nextCalls != 0 {
+				t.Fatalf("rejected request reached next handler %d times", nextCalls)
+			}
+			if tt.wantOwner {
+				if !scopeFound || gotScope.Validate() != nil || gotScope.ActorKind != domaintool.ActorKindUser || gotScope.AuthenticationSource != domaintool.AuthenticationSourceHTTP || gotScope.AuthenticatedUserID != "ren" || !gotScope.Allows(domaintool.DataScopeUser) {
+					t.Fatalf("scope=%+v found=%t, want configured authenticated owner", gotScope, scopeFound)
+				}
+			} else if scopeFound && gotScope.Allows(domaintool.DataScopeUser) {
+				t.Fatalf("unexpected user scope for public request: %+v", gotScope)
+			}
+		})
+	}
+}
 
 func TestHandleSendPreservesAudioOutputIntent(t *testing.T) {
 	for _, tt := range []struct {

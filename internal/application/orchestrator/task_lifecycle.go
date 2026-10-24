@@ -477,6 +477,14 @@ func (l *taskLifecycle) createRootForAssignee(ctx context.Context, req ProcessMe
 		Priority: domaintask.PriorityNormal,
 	}
 	setValidTaskOrigins(&draft, req)
+	if binding, ok := domainconversation.SessionBindingFromContext(ctx); ok &&
+		binding.ValidateForPublication() == nil && binding.SessionID() == draft.OriginSessionID {
+		provenance, err := domaintask.NewOriginPublicationProvenance(binding)
+		if err != nil {
+			return domaintask.Task{}, fmt.Errorf("bind root Task to resolved Session publication: %w", err)
+		}
+		draft.OriginPublication = &provenance
+	}
 	shared := domaintask.SharedRoleContext{
 		TaskID:     rootTaskID,
 		UserIntent: userIntent,

@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -88,6 +90,104 @@ func TestTTSStreamForwarderFinalizeSplitsUnemittedFinalText(t *testing.T) {
 	if len(bridge.texts) != 2 {
 		t.Fatalf("expected 2 pushed chunks, got %d: %#v", len(bridge.texts), bridge.texts)
 	}
+}
+
+func TestTTSFinalizeRevalidatesEachChunkAndDropsRevokedSuffix(t *testing.T) {
+	revoked := errors.New("owner binding revoked")
+	var mu sync.Mutex
+	guardHeld := false
+	validateCalls := 0
+	bridge := &qualificationCheckingTTSBridge{isGuardHeld: func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return guardHeld
+	}}
+	forwarder := newTTSStreamForwarder(bridge, "s1", routing.RouteCHAT, "mio", "agent.response", "tts:", context.Background())
+	if forwarder == nil {
+		t.Fatal("expected TTS forwarder")
+	}
+	validate := func(admit func() error) error {
+		mu.Lock()
+		guardHeld = true
+		validateCalls++
+		call := validateCalls
+		var err error
+		if call == 1 {
+			err = admit()
+		}
+		guardHeld = false
+		mu.Unlock()
+		if call > 1 {
+			return revoked
+		}
+		return err
+	}
+	forwarder.FinalizeWithAdmission(context.Background(), "First sentence. Second sentence.", validate)
+
+	if got := bridge.snapshot(); len(got) != 1 || got[0] != "First sentence." {
+		t.Fatalf("revoked suffix was handed to TTS: %#v", got)
+	}
+	if validateCalls != 2 {
+		t.Fatalf("validator calls = %d, want one per queued chunk (2)", validateCalls)
+	}
+	if err := forwarder.Err(); !errors.Is(err, revoked) {
+		t.Fatalf("forwarder Err() = %v, want revocation error", err)
+	}
+	if bridge.sawGuardHeld() {
+		t.Fatal("TTS bridge was called while owner guard was held")
+	}
+}
+
+func TestStreamBundleReportsRevokedVTuberFinalQualification(t *testing.T) {
+	wantErr := errors.New("Session binding revoked before VTuber handoff")
+	bridge := &recordingAbortVTuberBridge{}
+	bundle := &streamBundle{vtuber: newVTuberStreamForwarder(bridge, "s1", routing.RouteCHAT, "mio", "agent.response", "vtuber:")}
+	bundle.FinalizeWithAdmission(context.Background(), "final answer", func(func() error) error {
+		return wantErr
+	})
+	if err := bundle.Err(); !errors.Is(err, wantErr) {
+		t.Fatalf("stream bundle Err()=%v, want qualification error %v", err, wantErr)
+	}
+	if got := bridge.snapshot(); len(got) != 0 {
+		t.Fatalf("revoked VTuber final text was handed off: %#v", got)
+	}
+}
+
+type qualificationCheckingTTSBridge struct {
+	mu          sync.Mutex
+	texts       []string
+	isGuardHeld func() bool
+	sawGuard    bool
+}
+
+func (*qualificationCheckingTTSBridge) StartSession(context.Context, TTSSessionStart) error {
+	return nil
+}
+
+func (b *qualificationCheckingTTSBridge) PushText(_ context.Context, _ string, text string, _ *moduletts.EmotionState) error {
+	if b.isGuardHeld != nil && b.isGuardHeld() {
+		b.mu.Lock()
+		b.sawGuard = true
+		b.mu.Unlock()
+	}
+	b.mu.Lock()
+	b.texts = append(b.texts, text)
+	b.mu.Unlock()
+	return nil
+}
+
+func (*qualificationCheckingTTSBridge) EndSession(context.Context, string) error { return nil }
+
+func (b *qualificationCheckingTTSBridge) snapshot() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.texts...)
+}
+
+func (b *qualificationCheckingTTSBridge) sawGuardHeld() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sawGuard
 }
 
 type recordingTTSBridge struct {

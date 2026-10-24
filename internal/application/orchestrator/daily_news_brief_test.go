@@ -54,7 +54,7 @@ func TestMessageOrchestratorDailyNewsBriefBypassesGenericRouting(t *testing.T) {
 	}))
 
 	response, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "daily-news-test",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer"),
 		Channel:     "viewer",
 		ChatID:      "viewer",
 		UserMessage: "今朝のニュースを教えて",
@@ -93,7 +93,7 @@ func TestMessageOrchestratorDailyNewsBriefFallbackEmitsRoleplayAndUsesCollector(
 	orch.SetEventListener(listener)
 
 	response, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "daily-news-fallback-test",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer"),
 		Channel:     "viewer",
 		ChatID:      "viewer",
 		UserMessage: "今朝のニュースを教えて",

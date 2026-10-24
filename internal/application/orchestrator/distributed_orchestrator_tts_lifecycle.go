@@ -63,6 +63,7 @@ func (l *distributedTTSLifecycle) StartSessionForResponder(ctx context.Context, 
 	}
 	startReq := TTSSessionStart{
 		SessionID:             plan.SessionID,
+		CanonicalSessionID:    req.SessionID,
 		PublicPlaybackRef:     plan.PublicPlaybackRef,
 		TraceID:               req.TraceID,
 		CharacterID:           plan.CharacterID,

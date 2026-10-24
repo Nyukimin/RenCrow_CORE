@@ -154,6 +154,45 @@ func TestDeriveAgentToolExecutionScopeCarriesOnlyValidatedDelegatedScopes(t *tes
 	if !derived.Allows(DataScopePublic) || !derived.Allows(DataScopeUser) || !derived.Allows(DataScopeInternal) || len(derived.AllowedDataScopes) != 3 {
 		t.Fatalf("derived data scopes = %#v", derived.AllowedDataScopes)
 	}
+	proof, ok := AuthenticatedHTTPUserScopeFromContext(derivedCtx)
+	if !ok || proof.ActorKind != ActorKindUser || proof.ActorID != "user-a" || proof.AuthenticationSource != AuthenticationSourceHTTP {
+		t.Fatalf("derived HTTP User proof=%+v found=%t, want preserved original user proof", proof, ok)
+	}
+}
+
+func TestAuthenticatedHTTPUserScopeFromContextRejectsBareOrMismatchedAgentScope(t *testing.T) {
+	bareAgent, err := NewToolExecutionScope(
+		"bare-agent", ActorKindAgent, "mio", "user-a",
+		[]string{DataScopePublic, DataScopeUser}, AuthenticationSourceAgentOrchestrator,
+	)
+	if err != nil {
+		t.Fatalf("NewToolExecutionScope bare agent: %v", err)
+	}
+	if _, ok := AuthenticatedHTTPUserScopeFromContext(WithToolExecutionScope(context.Background(), bareAgent)); ok {
+		t.Fatal("bare Agent scope produced an HTTP User proof")
+	}
+
+	parent, err := NewToolExecutionScope(
+		"http-user", ActorKindUser, "user-a", "user-a",
+		[]string{DataScopePublic, DataScopeUser}, AuthenticationSourceHTTP,
+	)
+	if err != nil {
+		t.Fatalf("NewToolExecutionScope HTTP user: %v", err)
+	}
+	derivedCtx, err := DeriveAgentToolExecutionScope(WithToolExecutionScope(context.Background(), parent), "derived", "mio", "chat", "", false)
+	if err != nil {
+		t.Fatalf("DeriveAgentToolExecutionScope: %v", err)
+	}
+	mismatchedAgent, err := NewToolExecutionScope(
+		"mismatched-agent", ActorKindAgent, "mio", "user-b",
+		[]string{DataScopePublic, DataScopeUser}, AuthenticationSourceAgentOrchestrator,
+	)
+	if err != nil {
+		t.Fatalf("NewToolExecutionScope mismatched agent: %v", err)
+	}
+	if _, ok := AuthenticatedHTTPUserScopeFromContext(WithToolExecutionScope(derivedCtx, mismatchedAgent)); ok {
+		t.Fatal("Agent scope for a different user retained the original HTTP User proof")
+	}
 }
 
 func TestDeriveAgentToolExecutionScopeDoesNotInheritInternalWithoutGrant(t *testing.T) {

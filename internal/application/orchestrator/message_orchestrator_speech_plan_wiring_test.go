@@ -78,7 +78,7 @@ func TestMessageOrchestratorStartsSpeechPlanWithCanonicalExecutionIdentity(t *te
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		RootTaskID:  rootTaskID.String(),
 		TraceID:     string(traceID),
-		SessionID:   string(modulecore.NewSessionID()),
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		To:          "mio",
@@ -121,7 +121,7 @@ func TestMessageOrchestratorRejectsPreboundForeignIdentityBeforeTTSStart(t *test
 	_, err = orch.ProcessMessage(foreignCtx, ProcessMessageRequest{
 		RootTaskID:  rootTaskID.String(),
 		TraceID:     string(traceID),
-		SessionID:   string(modulecore.NewSessionID()),
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		To:          "mio",

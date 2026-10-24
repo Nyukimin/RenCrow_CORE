@@ -86,11 +86,15 @@ func (e *preparationCapabilityConversationEngine) SupportsConversationTurnPrepar
 }
 
 type routeReplyClassifierStub struct {
-	classifyCalls int
-	combinedCalls int
-	decision      routing.Decision
-	combinedErr   error
-	onCombined    func()
+	classifyCalls   int
+	combinedCalls   int
+	outcomeCalls    int
+	decision        routing.Decision
+	combinedErr     error
+	outcomeErr      error
+	outcome         MioTurnOutcome
+	fixedRouteCalls []*routing.Route
+	onCombined      func()
 }
 
 func (c *routeReplyClassifierStub) Classify(context.Context, conversation.TurnInput) (routing.Decision, error) {
@@ -104,6 +108,137 @@ func (c *routeReplyClassifierStub) ClassifyWithChatReply(context.Context, llm.Ge
 		c.onCombined()
 	}
 	return RouteReplyClassification{Decision: c.decision, Reply: "unused", ReplyValid: true}, c.combinedErr
+}
+
+func (c *routeReplyClassifierStub) ClassifyWithMioTurnOutcome(_ context.Context, _ llm.GenerateRequest, fixedRoute *routing.Route) (MioTurnClassification, error) {
+	c.outcomeCalls++
+	c.fixedRouteCalls = append(c.fixedRouteCalls, fixedRoute)
+	if c.onCombined != nil {
+		c.onCombined()
+	}
+	outcome := c.outcome
+	if outcome.Kind == "" {
+		outcome = MioTurnOutcome{Kind: MioTurnOutcomeAnswer, Text: "unused"}
+	}
+	return MioTurnClassification{Decision: c.decision, Outcome: outcome, Generation: llm.GenerateResponse{Content: "typed outcome"}}, c.outcomeErr
+}
+
+func TestMioAgentCombinedDraftUsesMioTurnOutcomeClassifier(t *testing.T) {
+	engine := &mockConversationEngine{}
+	classifier := &routeReplyClassifierStub{
+		decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"),
+		outcome:  MioTurnOutcome{Kind: MioTurnOutcomeAnswer, Text: "typed direct answer"},
+	}
+	mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+	input := newAgentTurnInput(t, "ordinary chat", "viewer", "user")
+
+	decision, draft, err := mio.DecideActionWithChatDraft(context.Background(), input, true)
+	if err != nil {
+		t.Fatalf("DecideActionWithChatDraft() error = %v", err)
+	}
+	if classifier.outcomeCalls != 1 || classifier.combinedCalls != 0 || classifier.classifyCalls != 0 {
+		t.Fatalf("classifier calls = v2:%d v1-combined:%d route-only:%d, want v2 only", classifier.outcomeCalls, classifier.combinedCalls, classifier.classifyCalls)
+	}
+	if len(classifier.fixedRouteCalls) != 1 || classifier.fixedRouteCalls[0] != nil {
+		t.Fatalf("fixed route calls = %#v, want one initial classification with no fixed route", classifier.fixedRouteCalls)
+	}
+	if decision.Route != routing.RouteCHAT || draft == nil {
+		t.Fatalf("decision=%+v draft=%#v, want CHAT with an adoptable draft", decision, draft)
+	}
+	answer, err := mio.ChatWithDraft(context.Background(), input, draft)
+	if err != nil || answer != "typed direct answer" {
+		t.Fatalf("ChatWithDraft() = %q, %v; want typed answer", answer, err)
+	}
+}
+
+func TestMioAgentCombinedDraftReturnsRetrieveOnlyForOrchestrator(t *testing.T) {
+	engine := &mockConversationEngine{}
+	classifier := &routeReplyClassifierStub{
+		decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat needs recall"),
+		outcome: MioTurnOutcome{Kind: MioTurnOutcomeRetrieve, Requests: []MioRetrievalRequest{{
+			SourceKind:        MioRetrievalSourceUserMemory,
+			Query:             "出発時刻",
+			References:        []string{"memory-17"},
+			InformationNeeded: "確定した時刻",
+		}}},
+	}
+	mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+	input := newAgentTurnInput(t, "何時に出発するんだっけ", "viewer", "user")
+
+	decision, draft, err := mio.DecideActionWithChatDraft(context.Background(), input, true)
+	if err != nil || decision.Route != routing.RouteCHAT || draft == nil || draft.Failed() {
+		t.Fatalf("decision=%+v draft=%#v err=%v, want valid CHAT retrieve draft", decision, draft, err)
+	}
+	outcome, ok := draft.Outcome()
+	if !ok || outcome.Kind != MioTurnOutcomeRetrieve || len(outcome.Requests) != 1 {
+		t.Fatalf("Outcome() = %#v, %v; want one retrieve request", outcome, ok)
+	}
+	if classifier.outcomeCalls != 1 || classifier.combinedCalls != 0 || classifier.classifyCalls != 0 {
+		t.Fatalf("classifier calls = v2:%d v1-combined:%d route-only:%d, want one v2 generation", classifier.outcomeCalls, classifier.combinedCalls, classifier.classifyCalls)
+	}
+
+	// The accessor returns an independent value so the orchestrator cannot
+	// mutate the turn-local draft before handing the request to its owner.
+	outcome.Requests[0].References[0] = "mutated"
+	secondRead, ok := draft.Outcome()
+	if !ok || secondRead.Requests[0].References[0] != "memory-17" {
+		t.Fatalf("second Outcome() = %#v, %v; want immutable draft request", secondRead, ok)
+	}
+
+	if answer, err := mio.ChatWithDraft(context.Background(), input, draft); err == nil || answer != "" {
+		t.Fatalf("ChatWithDraft() = %q, %v; retrieve must not become published or committed text", answer, err)
+	}
+	if len(engine.commitRequests) != 0 {
+		t.Fatalf("conversation commits=%d, want zero for retrieve", len(engine.commitRequests))
+	}
+}
+
+func TestMioAgentCombinedNonChatHandoffReturnsNoChatDraft(t *testing.T) {
+	releases := 0
+	engine := &mockConversationEngine{releaseTurnFunc: func(context.Context, *conversation.ConversationTurnPreparation) error {
+		releases++
+		return nil
+	}}
+	classifier := &routeReplyClassifierStub{
+		decision: routing.NewDecision(routing.RoutePLAN, 0.95, "plan"),
+		outcome:  MioTurnOutcome{Kind: MioTurnOutcomeHandoff},
+	}
+	mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+
+	decision, draft, err := mio.DecideActionWithChatDraft(context.Background(), newAgentTurnInput(t, "作業計画を立てて", "viewer", "user"), true)
+	if err != nil || decision.Route != routing.RoutePLAN || draft != nil {
+		t.Fatalf("decision=%+v draft=%#v err=%v, want non-CHAT handoff without draft", decision, draft, err)
+	}
+	if classifier.outcomeCalls != 1 || classifier.combinedCalls != 0 || classifier.classifyCalls != 0 {
+		t.Fatalf("classifier calls = v2:%d v1-combined:%d route-only:%d, want one v2 generation", classifier.outcomeCalls, classifier.combinedCalls, classifier.classifyCalls)
+	}
+	if releases != 1 || len(engine.commitRequests) != 0 {
+		t.Fatalf("preparation releases=%d commits=%d, want release once and no chat commit", releases, len(engine.commitRequests))
+	}
+}
+
+func TestMioAgentCombinedInvalidOutcomeIsTerminalWithoutFallbackGeneration(t *testing.T) {
+	engine := &mockConversationEngine{}
+	classifier := &routeReplyClassifierStub{
+		decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"),
+		outcome:  MioTurnOutcome{Kind: MioTurnOutcomeHandoff},
+	}
+	mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+	input := newAgentTurnInput(t, "ordinary chat", "viewer", "user")
+
+	decision, draft, err := mio.DecideActionWithChatDraft(context.Background(), input, true)
+	if err != nil || decision.Route != routing.RouteCHAT || draft == nil || !draft.Failed() {
+		t.Fatalf("decision=%+v draft=%#v err=%v, want terminal failed draft", decision, draft, err)
+	}
+	if classifier.outcomeCalls != 1 || classifier.combinedCalls != 0 || classifier.classifyCalls != 0 {
+		t.Fatalf("classifier calls = v2:%d v1-combined:%d route-only:%d, want one v2 attempt and no hidden fallback", classifier.outcomeCalls, classifier.combinedCalls, classifier.classifyCalls)
+	}
+	if answer, err := mio.ChatWithDraft(context.Background(), input, draft); err == nil || answer != "" {
+		t.Fatalf("ChatWithDraft() = %q, %v; invalid outcome must fail closed", answer, err)
+	}
+	if len(engine.commitRequests) != 0 {
+		t.Fatalf("conversation commits=%d, want zero after invalid outcome", len(engine.commitRequests))
+	}
 }
 
 func TestMioAgentPreparesConversationHeadBeforeCombinedGenerationAndPassesLeaseToCommit(t *testing.T) {
@@ -156,20 +291,21 @@ func TestMioAgentDoesNotGenerateWhenConversationHeadPreparationFails(t *testing.
 	if err != nil || decision.Route != routing.RouteCHAT || draft == nil || !draft.Failed() {
 		t.Fatalf("decision=%+v draft=%#v err=%v, want failed closed CHAT draft", decision, draft, err)
 	}
-	if classifier.combinedCalls != 0 {
-		t.Fatalf("provider calls=%d, want zero after head preparation failure", classifier.combinedCalls)
+	if classifier.outcomeCalls != 0 {
+		t.Fatalf("provider calls=%d, want zero after head preparation failure", classifier.outcomeCalls)
 	}
 }
 
 func TestMioAgentReleasesPreparedHeadWhenCombinedRouteIsNotChatOrFails(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		decision    routing.Decision
-		combinedErr error
+		name       string
+		decision   routing.Decision
+		outcome    MioTurnOutcome
+		outcomeErr error
 	}{
-		{name: "non-chat route", decision: routing.NewDecision(routing.RoutePLAN, 0.95, "plan")},
-		{name: "generation failure", decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"), combinedErr: errors.New("provider unavailable")},
-		{name: "generation cancellation", decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"), combinedErr: context.Canceled},
+		{name: "non-chat route", decision: routing.NewDecision(routing.RoutePLAN, 0.95, "plan"), outcome: MioTurnOutcome{Kind: MioTurnOutcomeHandoff}},
+		{name: "generation failure", decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"), outcomeErr: errors.New("provider unavailable")},
+		{name: "generation cancellation", decision: routing.NewDecision(routing.RouteCHAT, 0.95, "chat"), outcomeErr: context.Canceled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			releases := 0
@@ -177,7 +313,7 @@ func TestMioAgentReleasesPreparedHeadWhenCombinedRouteIsNotChatOrFails(t *testin
 				releases++
 				return nil
 			}}
-			classifier := &routeReplyClassifierStub{decision: tc.decision, combinedErr: tc.combinedErr}
+			classifier := &routeReplyClassifierStub{decision: tc.decision, outcome: tc.outcome, outcomeErr: tc.outcomeErr}
 			mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
 			_, _, err := mio.DecideActionWithChatDraft(context.Background(), newAgentTurnInput(t, "ordinary chat", "viewer", "user"), true)
 			if err != nil {
@@ -249,8 +385,12 @@ func TestMioAgentExactRecallDraftTimesLegacyClassifier(t *testing.T) {
 	if decision.Route != routing.RouteCHAT || draft == nil || !draft.ready {
 		t.Fatalf("decision=%+v draft=%#v, want ready exact-recall CHAT draft", decision, draft)
 	}
-	if classifier.classifyCalls != 1 || classifier.combinedCalls != 0 {
-		t.Fatalf("classifier calls = legacy:%d combined:%d, want exactly one legacy call", classifier.classifyCalls, classifier.combinedCalls)
+	outcome, ok := draft.Outcome()
+	if !ok || outcome.Kind != MioTurnOutcomeAnswer || outcome.Text != token {
+		t.Fatalf("Outcome() = %#v, %v; want deterministic exact-recall answer", outcome, ok)
+	}
+	if classifier.classifyCalls != 1 || classifier.combinedCalls != 0 || classifier.outcomeCalls != 0 {
+		t.Fatalf("classifier calls = route-only:%d v1-combined:%d v2:%d, want exact-recall route-only once", classifier.classifyCalls, classifier.combinedCalls, classifier.outcomeCalls)
 	}
 	points := recorder.Snapshot().PointsMS
 	for _, point := range []turntiming.Point{turntiming.PointClassificationStarted, turntiming.PointClassificationEnded} {
@@ -262,16 +402,16 @@ func TestMioAgentExactRecallDraftTimesLegacyClassifier(t *testing.T) {
 
 func TestMioAgentCombinedClassifierRecordsClassificationBoundariesIncludingErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		combinedErr error
+		name       string
+		outcomeErr error
 	}{
 		{name: "success"},
-		{name: "error", combinedErr: errors.New("combined classifier unavailable")},
+		{name: "error", outcomeErr: errors.New("combined classifier unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			classifier := &routeReplyClassifierStub{
-				decision:    routing.NewDecision(routing.RouteCHAT, 0.95, "chat"),
-				combinedErr: tc.combinedErr,
+				decision:   routing.NewDecision(routing.RouteCHAT, 0.95, "chat"),
+				outcomeErr: tc.outcomeErr,
 			}
 			mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, &mockConversationEngine{})
 			recorder := turntiming.New(time.Now())
@@ -281,13 +421,13 @@ func TestMioAgentCombinedClassifierRecordsClassificationBoundariesIncludingError
 			if err != nil {
 				t.Fatalf("DecideActionWithChatDraft() error=%v", err)
 			}
-			if classifier.classifyCalls != 0 || classifier.combinedCalls != 1 {
-				t.Fatalf("classifier calls = legacy:%d combined:%d, want combined only", classifier.classifyCalls, classifier.combinedCalls)
+			if classifier.classifyCalls != 0 || classifier.combinedCalls != 0 || classifier.outcomeCalls != 1 {
+				t.Fatalf("classifier calls = route-only:%d v1-combined:%d v2:%d, want v2 only", classifier.classifyCalls, classifier.combinedCalls, classifier.outcomeCalls)
 			}
 			if decision.Route != routing.RouteCHAT || draft == nil {
 				t.Fatalf("decision=%+v draft=%#v, want CHAT decision and draft", decision, draft)
 			}
-			if tc.combinedErr != nil && !draft.Failed() {
+			if tc.outcomeErr != nil && !draft.Failed() {
 				t.Fatal("failed combined classifier did not leave a failed draft")
 			}
 

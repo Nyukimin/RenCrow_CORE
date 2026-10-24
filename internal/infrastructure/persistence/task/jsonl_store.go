@@ -456,11 +456,8 @@ func foldTaskRecords(items []domaintask.Task) ([]domaintask.Task, error) {
 			return nil, fmt.Errorf("task record %d is invalid: %w", index, err)
 		}
 		if previous, ok := latest[item.TaskID]; ok {
-			if previous.ExpectedCriteriaRevision != item.ExpectedCriteriaRevision {
-				return nil, fmt.Errorf("task record %d changes its first-save criteria revision: %w", index, ErrExpectedCriteriaRevisionImmutable)
-			}
-			if !domaintask.NativeOPSResumeClaimsExtend(previous.NativeResumeClaims, item.NativeResumeClaims) {
-				return nil, fmt.Errorf("task record %d rewrites native OPS Resume claims: %w", index, ErrNativeOPSResumeClaimImmutable)
+			if err := checkTaskPinTransition(pinOfTask(previous), item); err != nil {
+				return nil, fmt.Errorf("task record %d changes immutable first-save Task provenance: %w", index, err)
 			}
 		}
 		latest[item.TaskID] = item

@@ -136,7 +136,7 @@ func TestProcessMessageRemovesAgentLabelsFromEventsAndSpeech(t *testing.T) {
 			orch.SetEventListener(listener)
 
 			_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-				SessionID:   "label-invariant",
+				SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 				Channel:     "viewer",
 				ChatID:      "viewer-user",
 				UserMessage: "こんにちは",
@@ -174,7 +174,7 @@ func TestProcessMessageOPSRemovesAgentLabelsFromSpeech(t *testing.T) {
 	orch.SetEventListener(listener)
 
 	if _, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "label-invariant-ops",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "状態を確認して",

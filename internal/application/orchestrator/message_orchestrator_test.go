@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,8 @@ type mockSessionRepository struct {
 	loadErr  error // non-nil ならLoad時にこのエラーを返す
 	saveErr  error // non-nil ならSave時にこのエラーを返す
 }
+
+var mockCanonicalSessionAddresses sync.Map
 
 type mockSkillBootstrapRecorder struct {
 	tasks []domainskill.TaskContext
@@ -123,6 +126,37 @@ func newCanonicalOrchestratorTestSession(channel, address string) *session.Sessi
 	return value
 }
 
+func newMockCanonicalSessionID(channel, address string) string {
+	channelAddress, err := domainconversation.NewChannelAddress(channel, address)
+	if err != nil {
+		panic(err)
+	}
+	id := modulecore.NewSessionID()
+	mockCanonicalSessionAddresses.Store(string(id), channelAddress)
+	return string(id)
+}
+
+func newMockCanonicalSession(id string) (*session.Session, error) {
+	addressValue, registered := mockCanonicalSessionAddresses.Load(id)
+	if !registered {
+		return nil, fmt.Errorf("no canonical test Session fixture registered for %q", id)
+	}
+	channelAddress, ok := addressValue.(domainconversation.ChannelAddress)
+	if !ok {
+		return nil, fmt.Errorf("canonical test Session fixture for %q has invalid ChannelAddress", id)
+	}
+	value, err := session.NewCanonicalSession(
+		modulecore.SessionID(id),
+		"2026-03-02",
+		channelAddress,
+		time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create canonical test Session %q: %w", id, err)
+	}
+	return value, nil
+}
+
 func (m *mockSessionRepository) Save(ctx context.Context, sess *session.Session) error {
 	if m.saveErr != nil {
 		return m.saveErr
@@ -137,7 +171,11 @@ func (m *mockSessionRepository) Load(ctx context.Context, id string) (*session.S
 	}
 	sess, exists := m.sessions[id]
 	if !exists {
-		sess = newCanonicalOrchestratorTestSession("test", "test")
+		var err error
+		sess, err = newMockCanonicalSession(id)
+		if err != nil {
+			return nil, err
+		}
 		m.sessions[id] = sess
 	}
 	return sess, nil
@@ -523,7 +561,7 @@ func TestMessageOrchestrator_ProcessMessage_NewSession(t *testing.T) {
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "こんにちは",
@@ -543,7 +581,7 @@ func TestMessageOrchestrator_ProcessMessage_NewSession(t *testing.T) {
 	}
 
 	// セッションが保存されているか確認
-	exists, _ := repo.Exists(context.Background(), "20260302-line-U123")
+	exists, _ := repo.Exists(context.Background(), resp.SessionID)
 	if !exists {
 		t.Error("Session should be saved")
 	}
@@ -560,7 +598,7 @@ func TestMessageOrchestrator_CanonicalEventFailureStopsBeforeLLM(t *testing.T) {
 	orch.SetEventListener(&failingEventListener{err: wantErr})
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID: "event-failure", Channel: "viewer", ChatID: "viewer-user", UserMessage: "must not reach LLM",
+		SessionID: newMockCanonicalSessionID("viewer", "viewer-user"), Channel: "viewer", ChatID: "viewer-user", UserMessage: "must not reach LLM",
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("ProcessMessage() error=%v, want %v", err, wantErr)
@@ -588,7 +626,7 @@ func TestMessageOrchestrator_LaterCanonicalEventFailureSuppressesResponse(t *tes
 	orch.SetSessionTurnLogger(turns)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID: "later-event-failure", Channel: "viewer", ChatID: "viewer-user", UserMessage: "run chat first",
+		SessionID: newMockCanonicalSessionID("viewer", "viewer-user"), Channel: "viewer", ChatID: "viewer-user", UserMessage: "run chat first",
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("ProcessMessage() error=%v, want %v", err, wantErr)
@@ -622,7 +660,7 @@ func TestMessageOrchestrator_RecordsPersonaRuntimeObservation(t *testing.T) {
 	}})
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "session-1",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "今日は疲れた",
@@ -653,7 +691,7 @@ func TestMessageOrchestrator_CreatesPendingMetaUpdateCandidateFromUserStatement(
 	orch.SetPersonaRuntimeRecorder(recorder, nil)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "session-1",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "私は映画の話題をよくアイデア源にします",
@@ -705,7 +743,7 @@ func TestMessageOrchestrator_AppliesPersonaCanonicalResponse(t *testing.T) {
 
 	personaMessageID := string(modulecore.NewMessageID())
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "session-1",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		MessageID:   personaMessageID,
 		Channel:     "line",
 		ChatID:      "U123",
@@ -761,7 +799,7 @@ func TestMessageOrchestrator_CanonicalResponseHonorsCooldown(t *testing.T) {
 	}})
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "session-1",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "このファイルを削除して",
@@ -779,6 +817,7 @@ func TestMessageOrchestrator_CanonicalResponseHonorsCooldown(t *testing.T) {
 
 func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testing.T) {
 	repo := newMockSessionRepository()
+	sessionID := newMockCanonicalSessionID("line", "U123")
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1.0, "Chat route"),
 		response: "これは2014年公開です。",
@@ -790,7 +829,7 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 			ArtifactID:   modulecore.NewArtifactID(),
 			Kind:         modulecore.ArtifactKindReport,
 			TaskID:       modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000003"),
-			SessionID:    "20260302-line-U123",
+			SessionID:    sessionID,
 			Route:        "CHAT",
 			Status:       domainverification.StatusWeaklySupported,
 			TriggerLevel: domainverification.TriggerMedium,
@@ -803,7 +842,7 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 	orchestrator.SetVerificationPipeline(verifier)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   sessionID,
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "作品情報を教えて",
@@ -879,7 +918,7 @@ func TestMessageOrchestrator_ProcessMessage_OPSRoute(t *testing.T) {
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "ls -la",
@@ -912,7 +951,7 @@ func TestMessageOrchestrator_ProcessMessage_OPSRoute_StartsMaleTTSVoice(t *testi
 	orchestrator.SetTTSBridge(ttsBridge)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "ls -la",
@@ -953,7 +992,7 @@ func TestMessageOrchestrator_TTSBridge_StreamAndEnd(t *testing.T) {
 	o.SetTTSBridge(bridge)
 
 	_, err := o.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-1",
+		SessionID:   newMockCanonicalSessionID("viewer", "u1"),
 		Channel:     "viewer",
 		ChatID:      "u1",
 		UserMessage: "hello",
@@ -995,7 +1034,7 @@ func TestMessageOrchestrator_TTSBridge_StreamsSentenceChunks(t *testing.T) {
 	o.SetTTSBridge(bridge)
 
 	_, err := o.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-stream",
+		SessionID:   newMockCanonicalSessionID("viewer", "u1"),
 		Channel:     "viewer",
 		ChatID:      "u1",
 		UserMessage: "hello",
@@ -1031,7 +1070,7 @@ func TestMessageOrchestrator_TTSBridge_DegradedOnStartError(t *testing.T) {
 	o.SetTTSBridge(bridge)
 
 	resp, err := o.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-2",
+		SessionID:   newMockCanonicalSessionID("viewer", "u1"),
 		Channel:     "viewer",
 		ChatID:      "u1",
 		UserMessage: "hello",
@@ -1057,7 +1096,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERoute(t *testing.T) {
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "main関数を実装して",
@@ -1088,7 +1127,7 @@ func TestMessageOrchestrator_ProcessMessage_CodeRouteRecordsSkillBootstrap(t *te
 	orch.SetSkillBootstrapRecorder(recorder)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-code",
+		SessionID:   newMockCanonicalSessionID("viewer", "chat"),
 		Channel:     "viewer",
 		ChatID:      "chat",
 		UserMessage: "実装して",
@@ -1119,7 +1158,7 @@ func TestMessageOrchestrator_ProcessMessage_SkillBootstrapFailureStopsRoute(t *t
 	orch.SetSkillBootstrapRecorder(&mockSkillBootstrapRecorder{err: fmt.Errorf("skill store failed")})
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-code",
+		SessionID:   newMockCanonicalSessionID("viewer", "chat"),
 		Channel:     "viewer",
 		ChatID:      "chat",
 		UserMessage: "実装して",
@@ -1144,7 +1183,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, coder1, coder2, nil, nil, nil)
 		attachCanonicalTestTaskOwner(t, orch)
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
+			SessionID: newMockCanonicalSessionID("line", "U1"), Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1164,7 +1203,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, coder2, nil, nil, nil)
 		attachCanonicalTestTaskOwner(t, orch)
 		_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
+			SessionID: newMockCanonicalSessionID("line", "U1"), Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
 		if err == nil {
 			t.Fatal("expected CODE route to fail when coder1 is unavailable")
@@ -1184,7 +1223,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, coder3, nil, nil)
 		attachCanonicalTestTaskOwner(t, orch)
 		_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
+			SessionID: newMockCanonicalSessionID("line", "U1"), Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
 		if err == nil {
 			t.Fatal("expected CODE route to fail when coder1 is unavailable")
@@ -1203,7 +1242,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 		attachCanonicalTestTaskOwner(t, orch)
 		_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
+			SessionID: newMockCanonicalSessionID("line", "U1"), Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
 		if err == nil {
 			t.Error("expected error when all coders are unavailable")
@@ -1224,7 +1263,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitCommand(t *testing.T) {
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "/code3 このコードをレビューして",
@@ -1256,7 +1295,7 @@ func TestMessageOrchestrator_ProcessMessage_TaskAddedToHistory(t *testing.T) {
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "テスト",
@@ -1268,7 +1307,7 @@ func TestMessageOrchestrator_ProcessMessage_TaskAddedToHistory(t *testing.T) {
 	}
 
 	// セッションをロードして履歴確認
-	sess, _ := repo.Load(context.Background(), "20260302-line-U123")
+	sess, _ := repo.Load(context.Background(), req.SessionID)
 	if sess.HistoryCount() != 1 {
 		t.Errorf("Expected 1 task in history, got %d", sess.HistoryCount())
 	}
@@ -1287,7 +1326,7 @@ func TestMessageOrchestrator_ProcessMessage_TaskAddedToHistory(t *testing.T) {
 
 func defaultReq() ProcessMessageRequest {
 	return ProcessMessageRequest{
-		SessionID:   "test-session",
+		SessionID:   newMockCanonicalSessionID("line", "U123"),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "test message",
@@ -1742,7 +1781,7 @@ func TestProcessMessage_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *testing.T)
 	orch.SetCanonicalEventRecorder(canonicalEvents)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "deep-session",
+		SessionID:   newMockCanonicalSessionID("viewer", "viewer-user"),
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "この件を深掘りして",
@@ -1806,7 +1845,7 @@ func TestProcessMessage_RegisteredSlashCommandExpandsRuntimePrompt(t *testing.T)
 	orch.SetCommandRegistry(commands)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-command",
+		SessionID:   newMockCanonicalSessionID("viewer", "chat-command"),
 		Channel:     "viewer",
 		ChatID:      "chat-command",
 		UserMessage: "/review-architecture docs/10_新仕様/31_未実装項目実装仕様.md を確認",
@@ -1846,7 +1885,7 @@ func TestProcessMessage_RegisteredSlashCommandMissingFileFails(t *testing.T) {
 	}}})
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		SessionID:   "sess-command-missing",
+		SessionID:   newMockCanonicalSessionID("viewer", "chat-command-missing"),
 		Channel:     "viewer",
 		ChatID:      "chat-command-missing",
 		UserMessage: "/review-architecture target",
