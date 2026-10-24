@@ -27,7 +27,7 @@ type JSONSessionRepository struct {
 	writeMu   sync.Mutex
 	overlay   map[string]*pendingSessionWrite
 
-	canonicalIndex            map[canonicalSessionKey]string
+	canonicalIndex            map[canonicalSessionKey]map[string]struct{}
 	canonicalIndexBySessionID map[string]canonicalSessionKey
 	canonicalIndexWarmed      bool
 	readCanonicalDirectory    func(string) ([]os.DirEntry, error)
@@ -326,7 +326,17 @@ func (r *JSONSessionRepository) findCanonicalSessionID(ctx context.Context, logi
 	}
 	key := canonicalSessionKeyFor(logicalDate, address)
 	if r.canonicalIndexWarmed {
-		return r.canonicalIndex[key], nil
+		ids := r.canonicalIndex[key]
+		switch len(ids) {
+		case 0:
+			return "", nil
+		case 1:
+			for id := range ids {
+				return id, nil
+			}
+		default:
+			return "", fmt.Errorf("multiple canonical sessions match lookup attributes")
+		}
 	}
 	return r.scanCanonicalSessionID(ctx, logicalDate, address)
 }
@@ -405,16 +415,16 @@ func (r *JSONSessionRepository) WarmCanonicalIndex(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read session directory while warming canonical index: %w", err)
 	}
-	index := make(map[canonicalSessionKey]string)
+	index := make(map[canonicalSessionKey]map[string]struct{})
 	byID := make(map[string]canonicalSessionKey)
 	add := func(id string, key canonicalSessionKey) error {
-		if existingID, exists := index[key]; exists && existingID != id {
-			return fmt.Errorf("multiple canonical sessions match lookup attributes")
-		}
 		if existingKey, exists := byID[id]; exists && existingKey != key {
 			return fmt.Errorf("canonical session %q has conflicting identities", id)
 		}
-		index[key] = id
+		if index[key] == nil {
+			index[key] = make(map[string]struct{})
+		}
+		index[key][id] = struct{}{}
 		byID[id] = key
 		return nil
 	}
@@ -459,8 +469,7 @@ func (r *JSONSessionRepository) WarmCanonicalIndex(ctx context.Context) error {
 			return fmt.Errorf("pending session %q has no matching canonical identity", id)
 		}
 		if oldKey, exists := byID[id]; exists && oldKey != key {
-			delete(index, oldKey)
-			delete(byID, id)
+			removeCanonicalSessionIndexID(index, byID, id)
 		}
 		if err := add(id, key); err != nil {
 			return err
@@ -537,7 +546,10 @@ func (r *JSONSessionRepository) validateCanonicalIndexUpdate(id string, key cano
 	if !r.canonicalIndexWarmed {
 		return nil
 	}
-	if existingID, exists := r.canonicalIndex[key]; exists && existingID != id {
+	if existingIDs := r.canonicalIndex[key]; len(existingIDs) > 0 {
+		if _, updatingExisting := existingIDs[id]; updatingExisting {
+			return nil
+		}
 		return fmt.Errorf("multiple canonical sessions match lookup attributes")
 	}
 	return nil
@@ -545,25 +557,35 @@ func (r *JSONSessionRepository) validateCanonicalIndexUpdate(id string, key cano
 
 func (r *JSONSessionRepository) updateCanonicalIndex(id string, key canonicalSessionKey) {
 	if r.canonicalIndex == nil {
-		r.canonicalIndex = make(map[canonicalSessionKey]string)
+		r.canonicalIndex = make(map[canonicalSessionKey]map[string]struct{})
 	}
 	if r.canonicalIndexBySessionID == nil {
 		r.canonicalIndexBySessionID = make(map[string]canonicalSessionKey)
 	}
 	if oldKey, exists := r.canonicalIndexBySessionID[id]; exists && oldKey != key {
-		delete(r.canonicalIndex, oldKey)
+		removeCanonicalSessionIndexID(r.canonicalIndex, r.canonicalIndexBySessionID, id)
 	}
-	r.canonicalIndex[key] = id
+	if r.canonicalIndex[key] == nil {
+		r.canonicalIndex[key] = make(map[string]struct{})
+	}
+	r.canonicalIndex[key][id] = struct{}{}
 	r.canonicalIndexBySessionID[id] = key
 }
 
 func (r *JSONSessionRepository) removeCanonicalIndexEntry(id string) {
-	if key, exists := r.canonicalIndexBySessionID[id]; exists {
-		if r.canonicalIndex[key] == id {
-			delete(r.canonicalIndex, key)
-		}
-		delete(r.canonicalIndexBySessionID, id)
+	removeCanonicalSessionIndexID(r.canonicalIndex, r.canonicalIndexBySessionID, id)
+}
+
+func removeCanonicalSessionIndexID(index map[canonicalSessionKey]map[string]struct{}, byID map[string]canonicalSessionKey, id string) {
+	key, exists := byID[id]
+	if !exists {
+		return
 	}
+	delete(index[key], id)
+	if len(index[key]) == 0 {
+		delete(index, key)
+	}
+	delete(byID, id)
 }
 
 // NewJSONSessionRepository は新しいJSONSessionRepositoryを作成
@@ -571,7 +593,7 @@ func NewJSONSessionRepository(baseDir string) *JSONSessionRepository {
 	return &JSONSessionRepository{
 		baseDir:                   baseDir,
 		overlay:                   make(map[string]*pendingSessionWrite),
-		canonicalIndex:            make(map[canonicalSessionKey]string),
+		canonicalIndex:            make(map[canonicalSessionKey]map[string]struct{}),
 		canonicalIndexBySessionID: make(map[string]canonicalSessionKey),
 	}
 }

@@ -1613,6 +1613,16 @@ Test:
 - **Tests:** source drift、fresh output、receipt path containment、legacy/canonical/non-session counts、
   history再構築、date boundary、concurrent creation、production E2Eを検査する。
 
+#### Step 04 Failure Knowledge: valid duplicate natural Session keyがstartupを停止した
+
+- **Failure:** `WarmCanonicalIndex`が、同じ`logical_date + ChannelAddress`を持つ有効な複数Sessionを検出すると失敗し、CORE全体のstartupを停止した。
+- **Problem:** 一つの自然keyの曖昧さが無関係なSessionの利用まで妨げ、既存Sessionを削除して衝突を隠す誘因にもなった。
+- **Cause:** warming時に自然keyの一意性を全体制約として扱い、keyごとのSessionID集合を保持していなかった。
+- **Lesson:** 曖昧さは該当keyのresolveに限定し、有効なSessionと無関係なkeyの利用を維持する。衝突を解消するために保存dataを削除・選択しない。
+- **Invariant:** 有効な重複keyを含んでもindex warmingは成功し、そのkeyのresolveだけがfail closedとなる。不完全・破損identityや読取errorはfail closedのままにする。rekey／deleteは対象SessionIDだけをindexから除く。
+- **Enforcement:** Canonical indexは自然keyからSessionID集合への対応を保持し、resolve時に一件だけ一致することを要求する。valid recordの自動削除・任意選択を行わない。
+- **Tests:** `TestJSONSessionRepositoryWarmCanonicalIndexAllowsDuplicateAndRejectsCorruptIdentity`でwarming、重複keyだけの拒否、無関係keyのresolve、rekey／delete後の残存ID、破損identityと読取errorの拒否を検査する。
+
 #### Step 04 Failure Knowledge: 短いreadiness期限をstartup failureと誤認した
 
 - **Failure:** restart後30秒の最初のpollでは`:18790`がまだlistenせずreadinessを得られなかった。

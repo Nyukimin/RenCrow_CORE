@@ -1109,22 +1109,108 @@ func TestJSONSessionRepositoryWarmCanonicalIndexTracksSyncSaveAndV2Reservation(t
 	}
 }
 
-func TestJSONSessionRepositoryWarmCanonicalIndexRejectsDuplicateOrCorruptIdentity(t *testing.T) {
+func TestJSONSessionRepositoryWarmCanonicalIndexAllowsDuplicateAndRejectsCorruptIdentity(t *testing.T) {
 	t.Run("duplicate natural key", func(t *testing.T) {
 		repo := NewJSONSessionRepository(t.TempDir())
 		first := newCanonicalRepositoryTestSession(t)
 		second := newCanonicalRepositoryTestSession(t)
+		newSession := func(externalID string) *session.Session {
+			address, err := conversation.NewChannelAddress("line", externalID)
+			if err != nil {
+				t.Fatalf("NewChannelAddress(%q): %v", externalID, err)
+			}
+			value, err := session.NewCanonicalSession(modulecore.NewSessionID(), "2026-03-01", address, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatalf("NewCanonicalSession(%q): %v", externalID, err)
+			}
+			return value
+		}
+		rekeySyncOriginal := newSession("U456")
+		rekeySyncRemaining := newSession("U456")
+		deleteOriginal := newSession("U789")
+		deleteRemaining := newSession("U789")
+		unrelated := newSession("U999")
+		for _, value := range []*session.Session{first, second, rekeySyncOriginal, rekeySyncRemaining, deleteOriginal, deleteRemaining, unrelated} {
+			if err := repo.Save(context.Background(), value); err != nil {
+				t.Fatalf("seed duplicate session %q: %v", value.ID(), err)
+			}
+		}
+		if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+			t.Fatalf("WarmCanonicalIndex with valid duplicate keys: %v", err)
+		}
+		if !repo.CanonicalIndexWarmed() {
+			t.Fatal("valid duplicate keys left canonical index unwarmed")
+		}
+		lookupID := func(logicalDate string, address conversation.ChannelAddress) (string, bool, error) {
+			value, found, err := repo.LoadCanonical(context.Background(), logicalDate, address)
+			if err != nil || !found {
+				return "", found, err
+			}
+			return value.ID(), true, nil
+		}
+		if _, _, err := lookupID(first.LogicalDate(), first.ChannelAddress()); err == nil || err.Error() != "multiple canonical sessions match lookup attributes" {
+			t.Fatalf("duplicate canonical lookup error = %v, want the existing duplicate-key error", err)
+		}
+		for _, duplicate := range []*session.Session{rekeySyncOriginal, deleteOriginal} {
+			if _, _, err := lookupID(duplicate.LogicalDate(), duplicate.ChannelAddress()); err == nil || err.Error() != "multiple canonical sessions match lookup attributes" {
+				t.Fatalf("duplicate canonical lookup for %q error = %v, want the existing duplicate-key error", duplicate.ChannelAddress().ExternalConversationID(), err)
+			}
+		}
+		if id, found, err := lookupID(unrelated.LogicalDate(), unrelated.ChannelAddress()); err != nil || !found || id != unrelated.ID() {
+			t.Fatalf("unrelated canonical lookup=(%q,%t,%v), want %q", id, found, err, unrelated.ID())
+		}
 		if err := repo.Save(context.Background(), first); err != nil {
-			t.Fatalf("first Save: %v", err)
+			t.Fatalf("synchronous Save for existing duplicate member: %v", err)
 		}
-		if err := repo.Save(context.Background(), second); err != nil {
-			t.Fatalf("second Save before warm: %v", err)
+		syncThirdID := newSession(first.ChannelAddress().ExternalConversationID())
+		if err := repo.Save(context.Background(), syncThirdID); err == nil || err.Error() != "multiple canonical sessions match lookup attributes" {
+			t.Fatalf("synchronous Save for third duplicate ID error = %v, want the existing duplicate-key error", err)
 		}
-		if err := repo.WarmCanonicalIndex(context.Background()); err == nil {
-			t.Fatal("WarmCanonicalIndex accepted duplicate natural keys")
+
+		queue, unblock := newBlockedPersistenceQueue(t, 4, 4<<20)
+		ctx, admission := admitSessionWrites(t, queue, 2, 2<<20)
+		t.Cleanup(func() { _ = admission.Release() })
+		if err := repo.Save(ctx, second); err != nil {
+			t.Fatalf("admitted Save for existing duplicate member: %v", err)
 		}
-		if repo.CanonicalIndexWarmed() {
-			t.Fatal("duplicate natural key left canonical index marked warm")
+		admittedThirdID := newSession(first.ChannelAddress().ExternalConversationID())
+		if err := repo.Save(ctx, admittedThirdID); err == nil || err.Error() != "multiple canonical sessions match lookup attributes" {
+			t.Fatalf("admitted Save for third duplicate ID error = %v, want the existing duplicate-key error", err)
+		}
+
+		rekeyedOverlay, err := session.NewCanonicalSession(modulecore.SessionID(first.ID()), "2026-03-02", first.ChannelAddress(), first.CreatedAt())
+		if err != nil {
+			t.Fatalf("NewCanonicalSession for overlay rekey: %v", err)
+		}
+		if err := repo.Save(ctx, rekeyedOverlay); err != nil {
+			t.Fatalf("admitted Save for overlay rekey: %v", err)
+		}
+		if id, found, err := lookupID(first.LogicalDate(), first.ChannelAddress()); err != nil || !found || id != second.ID() {
+			t.Fatalf("canonical lookup after overlay rekey=(%q,%t,%v), want remaining session %q", id, found, err, second.ID())
+		}
+		if id, found, err := lookupID(rekeyedOverlay.LogicalDate(), rekeyedOverlay.ChannelAddress()); err != nil || !found || id != first.ID() {
+			t.Fatalf("new canonical lookup after overlay rekey=(%q,%t,%v), want %q", id, found, err, first.ID())
+		}
+		unblock()
+		if err := admission.Barrier(context.Background()); err != nil {
+			t.Fatalf("Barrier after overlay rekey: %v", err)
+		}
+
+		rekeyedSync, err := session.NewCanonicalSession(modulecore.SessionID(rekeySyncOriginal.ID()), "2026-03-02", rekeySyncOriginal.ChannelAddress(), rekeySyncOriginal.CreatedAt())
+		if err != nil {
+			t.Fatalf("NewCanonicalSession for synchronous rekey: %v", err)
+		}
+		if err := repo.Save(context.Background(), rekeyedSync); err != nil {
+			t.Fatalf("synchronous Save for rekey: %v", err)
+		}
+		if id, found, err := lookupID(rekeySyncOriginal.LogicalDate(), rekeySyncOriginal.ChannelAddress()); err != nil || !found || id != rekeySyncRemaining.ID() {
+			t.Fatalf("canonical lookup after synchronous rekey=(%q,%t,%v), want remaining session %q", id, found, err, rekeySyncRemaining.ID())
+		}
+		if err := repo.Delete(context.Background(), deleteOriginal.ID()); err != nil {
+			t.Fatalf("Delete one duplicate-key session: %v", err)
+		}
+		if id, found, err := lookupID(deleteOriginal.LogicalDate(), deleteOriginal.ChannelAddress()); err != nil || !found || id != deleteRemaining.ID() {
+			t.Fatalf("canonical lookup after Delete=(%q,%t,%v), want remaining session %q", id, found, err, deleteRemaining.ID())
 		}
 	})
 
