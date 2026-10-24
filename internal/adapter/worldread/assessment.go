@@ -57,6 +57,10 @@ type assessmentDTO struct {
 	NewActivityAllowed    bool                 `json:"new_activity_allowed"`
 	BlockedReason         string               `json:"blocked_reason"`
 	WorkSuccess           bool                 `json:"work_success"`
+	// StopPlanning is present only when the caller named a running activity on
+	// the stop_planning_activity_id query. It is a decision for that activity,
+	// never an executed stop (D-11).
+	StopPlanning *stopPlanningDTO `json:"stop_planning,omitempty"`
 }
 
 type workPresentationDTO struct {
@@ -79,30 +83,27 @@ type workPresentationDTO struct {
 // contract, so an undefined state or a contradictory presentation is never read
 // as a life fact (D-07, D-09, D-10, D-13).
 func (c *Client) Assessment(ctx context.Context, actorID string) (Assessment, error) {
-	if c == nil || c.httpClient == nil || c.base == nil {
-		return Assessment{}, &ReadError{Op: "assessment", Err: ErrInvalidConfig}
-	}
 	if ctx == nil {
 		return Assessment{}, &ReadError{Op: "assessment", Err: ErrInvalidConfig}
 	}
-	if !validID(actorID) {
-		return Assessment{}, &ReadError{Op: "assessment", Err: fmt.Errorf("%w: actor ID is invalid", ErrInvalidConfig)}
-	}
-	if _, allowed := c.actors[actorID]; !allowed {
-		return Assessment{}, &ReadError{Op: "assessment", Err: fmt.Errorf("%w: actor %q is outside the configured view scope", ErrForbidden, actorID)}
-	}
-	actorTransport, err := encodeTransportID(actorID)
+	resource, err := c.actorAssessmentResource(actorID)
 	if err != nil {
-		return Assessment{}, &ReadError{Op: "assessment", Err: fmt.Errorf("%w: actor transport ID: %v", ErrInvalidConfig, err)}
+		return Assessment{}, &ReadError{Op: "assessment", Err: err}
 	}
 
 	var dto assessmentDTO
-	resource := "actors/" + actorTransport + "/assessment"
 	if err := c.get(ctx, c.urlFor(resource, nil), &dto, "assessment"); err != nil {
 		return Assessment{}, err
 	}
 	if err := validateAssessment(actorID, c, &dto); err != nil {
 		return Assessment{}, &ReadError{Op: "assessment", Err: err}
+	}
+	// WORLD publishes a stop planning decision only for a named activity. One
+	// that arrives on a plain assessment would be a decision nobody asked for and
+	// nothing reads, so it fails closed instead of being dropped silently.
+	if dto.StopPlanning != nil {
+		return Assessment{}, &ReadError{Op: "assessment", Err: fmt.Errorf(
+			"%w: an assessment published stop planning without an activity ID", ErrContract)}
 	}
 	return Assessment{
 		SchemaVersion:         dto.SchemaVersion,
@@ -120,6 +121,28 @@ func (c *Client) Assessment(ctx context.Context, actorID string) (Assessment, er
 		BlockedReason:         dto.BlockedReason,
 		WorkSuccess:           dto.WorkSuccess,
 	}, nil
+}
+
+// actorAssessmentResource checks the configured client, the Actor ID, and
+// CORE's configured view scope, then returns the assessment resource path for
+// exactly one Actor. The assessment route serves both the plain assessment and
+// its stop planning decision, so both read the same identity boundary before any
+// request is sent (D-11, D-12).
+func (c *Client) actorAssessmentResource(actorID string) (string, error) {
+	if c == nil || c.httpClient == nil || c.base == nil {
+		return "", ErrInvalidConfig
+	}
+	if !validID(actorID) {
+		return "", fmt.Errorf("%w: actor ID is invalid", ErrInvalidConfig)
+	}
+	if _, allowed := c.actors[actorID]; !allowed {
+		return "", fmt.Errorf("%w: actor %q is outside the configured view scope", ErrForbidden, actorID)
+	}
+	actorTransport, err := encodeTransportID(actorID)
+	if err != nil {
+		return "", fmt.Errorf("%w: actor transport ID: %v", ErrInvalidConfig, err)
+	}
+	return "actors/" + actorTransport + "/assessment", nil
 }
 
 func validateAssessment(actorID string, c *Client, dto *assessmentDTO) error {
