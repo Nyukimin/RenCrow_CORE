@@ -71,6 +71,91 @@ func TestViewerBridgeResolvesProductionCanonicalSessionBeforeAcceptance(t *testi
 	}
 }
 
+func TestViewerBridgeKeepsLegacyRouteWhenCombinedChatProcessorIsIneligible(t *testing.T) {
+	cfg := &config.Config{TTS: config.TTSConfig{SpeechPlanEnabled: true}}
+	processorEligible := runtimeCombinedChatAdmissionEnabled(
+		cfg,
+		runtimeRouteReplyClassifierStub{},
+		runtimeCombinedTurnEngineStub{},
+		true,
+		false,
+	)
+	if processorEligible {
+		t.Fatal("speech-plan configuration unexpectedly allowed combined CHAT admission")
+	}
+	processor := &viewerBridgeCountProcessor{done: make(chan struct{})}
+	deps := &Dependencies{
+		canonicalEventStore:           openViewerBridgeAdmissionStore(t),
+		combinedChatProcessorEligible: processorEligible,
+	}
+	factories := buildViewerBridgeHandlers(
+		cfg,
+		deps,
+		"",
+		ttsEntryRuntime{},
+		sessionpersistence.NewJSONSessionRepository(t.TempDir()),
+	)
+	handler := factories.ViewerSendFromOrch(processor)
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want legacy route to remain available when combined CHAT is ineligible", response.Code, response.Body.String())
+	}
+	select {
+	case <-processor.done:
+	case <-time.After(time.Second):
+		t.Fatal("legacy processor did not receive the request")
+	}
+	if processor.calls != 1 {
+		t.Fatalf("legacy processor calls=%d, want 1", processor.calls)
+	}
+}
+
+func TestViewerBridgeFailsClosedBeforeProcessorWhenEligibleOwnerQueueIsUnavailable(t *testing.T) {
+	cfg := &config.Config{
+		TaskStore:   config.TaskStoreConfig{Index: config.TaskStoreIndexConfig{Enabled: true}},
+		ActionStore: config.ActionStoreConfig{Index: config.ActionStoreIndexConfig{Enabled: true}},
+	}
+	processorEligible := runtimeCombinedChatAdmissionEnabled(
+		cfg,
+		runtimeRouteReplyClassifierStub{},
+		runtimeCombinedTurnEngineStub{},
+		true,
+		false,
+	)
+	if !processorEligible {
+		t.Fatal("test fixture does not satisfy combined CHAT processor eligibility")
+	}
+	processor := &viewerBridgeCountProcessor{}
+	deps := &Dependencies{
+		combinedChatProcessorEligible: processorEligible,
+		combinedChatAdmissionEnabled:  false,
+	}
+	handler := buildViewerBridgeHandlers(
+		cfg,
+		deps,
+		"",
+		ttsEntryRuntime{},
+		sessionpersistence.NewJSONSessionRepository(t.TempDir()),
+	).ViewerSendFromOrch(processor)
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s, want fail-closed admission when a configured owner is not queue-bound", response.Code, response.Body.String())
+	}
+	if processor.calls != 0 {
+		t.Fatalf("processor calls=%d, want 0 after pre-LLM admission rejection", processor.calls)
+	}
+}
+
 type viewerBridgeSpeechGateProcessor struct {
 	start  chan struct{}
 	result chan error

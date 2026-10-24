@@ -46,6 +46,17 @@ func (m *MioAgent) HandleChatCommand(ctx context.Context, sessionID string, mess
 	}
 }
 
+// IsChatCommandCandidate reports whether message matches the command syntax
+// handled before Mio routing. It performs only deterministic parsing and has
+// no storage or runtime side effects.
+func IsChatCommandCandidate(message string) bool {
+	if command, _ := parseChatCommand(message); command != "" {
+		return true
+	}
+	action, _ := parseUserMemoryCommand(message)
+	return action != ""
+}
+
 // parseChatCommand はメッセージからチャットコマンドを抽出する
 // 戻り値: (コマンド名, 残りのテキスト)
 func parseChatCommand(message string) (string, string) {

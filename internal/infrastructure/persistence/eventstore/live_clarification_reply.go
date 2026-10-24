@@ -382,10 +382,17 @@ func (s *SQLiteStore) CommitClarificationReplyContinuation(ctx context.Context, 
 	if err != nil {
 		return ClarificationReplyContinuationCommit{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		return enqueueOrderedWriteResult(s, ctx, 3, queuedInput, func(commandCtx context.Context) (ClarificationReplyContinuationCommit, error) {
+			return s.CommitClarificationReplyContinuation(commandCtx, queuedInput)
+		})
+	}
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return ClarificationReplyContinuationCommit{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {

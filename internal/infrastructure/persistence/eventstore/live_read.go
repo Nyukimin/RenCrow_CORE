@@ -175,10 +175,17 @@ func (s *SQLiteStore) CutoverSession(ctx context.Context, input CutoverSessionIn
 	if strings.TrimSpace(input.RuntimeVersion) == "" || input.RuntimeVersion != strings.TrimSpace(input.RuntimeVersion) || input.GenerationEpoch <= 0 {
 		return SessionState{}, errors.New("runtime_version and positive generation_epoch are required")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		return enqueueOrderedWriteResult(s, ctx, 1, queuedInput, func(commandCtx context.Context) (SessionState, error) {
+			return s.CutoverSession(commandCtx, queuedInput)
+		})
+	}
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return SessionState{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -234,7 +241,7 @@ func (s *SQLiteStore) CutoverSession(ctx context.Context, input CutoverSessionIn
 		"source_runtime_version": "v1",
 	})
 	marker.SessionID = input.Boundary.sessionID
-	marker.EventSeq, err = nextEventSeq(ctx, tx)
+	marker.EventSeq, err = s.nextSequence(ctx)
 	if err != nil {
 		return SessionState{}, err
 	}
@@ -293,7 +300,13 @@ func (s *SQLiteStore) ReadSessionState(ctx context.Context, sessionID modulecore
 	if strings.TrimSpace(ownerID) == "" || ownerID != strings.TrimSpace(ownerID) {
 		return SessionState{}, false, errors.New("owner_id is required")
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	db := s.sessionStateDB
+	if db == nil {
+		// Private in-memory stores cannot be shared with a second SQLite
+		// connection, so retain their existing single-connection behavior.
+		db = s.db
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return SessionState{}, false, err
 	}

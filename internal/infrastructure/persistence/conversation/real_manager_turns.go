@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -36,10 +37,16 @@ func (r *RealConversationManager) ConversationTurnTargets() []domconv.Conversati
 	}
 }
 
-// LoadActiveConversationThread returns the authoritative active projection
-// from L1. Redis is deliberately not consulted for canonical EndTurn
-// boundary decisions.
+// LoadActiveConversationThread returns the active typed projection. An
+// explicitly admitted request sees its pending RAM head before L1 catches up.
+// Redis is deliberately not consulted for canonical EndTurn boundary decisions.
 func (r *RealConversationManager) LoadActiveConversationThread(ctx context.Context, sessionID string) (*domconv.Thread, error) {
+	if r == nil {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	if active, _ := r.conversationTurnOverlayForRead(ctx, sessionID); active != nil {
+		return active, nil
+	}
 	if r == nil || r.l1Store == nil {
 		return nil, domconv.ErrConversationTurnUnavailable
 	}
@@ -72,6 +79,21 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 		base.ErrorCode = domconv.ConversationTurnErrorInvalid
 		return base, err
 	}
+	if admission, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		return r.acceptConversationTurn(ctx, store, admission, normalized)
+	}
+	r.turnOverlayMu.RLock()
+	_, hasOverlay := r.turnOverlays[normalized.SessionID]
+	r.turnOverlayMu.RUnlock()
+	if hasOverlay {
+		base.ErrorCode = domconv.ConversationTurnErrorConflict
+		return base, domconv.ErrConversationTurnConflict
+	}
+	return r.commitConversationTurnSynchronously(ctx, store, normalized)
+}
+
+func (r *RealConversationManager) commitConversationTurnSynchronously(ctx context.Context, store conversationTurnL1Store, normalized domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	base := failedConversationTurnManagerResult(normalized, domconv.ConversationTurnErrorUnavailable)
 	// The background recovery worker may replay legacy Redis projection rows.
 	// Keep this acquisition cancellation-aware so a caller can leave while a
 	// recovery pass owns the required projection boundary.
@@ -142,6 +164,313 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 		return result, domconv.ErrConversationTurnUnavailable
 	}
 	return result, nil
+}
+
+func (r *RealConversationManager) acceptConversationTurn(
+	ctx context.Context,
+	store conversationTurnL1Store,
+	admission *persistencequeue.Admission,
+	request domconv.ConversationTurnRequest,
+) (domconv.ConversationTurnResult, error) {
+	base := failedConversationTurnManagerResult(request, domconv.ConversationTurnErrorUnavailable)
+	if !conversationTurnTargetRequested(request.Targets, domconv.ConversationTurnTargetRedisProjection) {
+		base.ErrorCode = domconv.ConversationTurnErrorInvalid
+		return base, domconv.ErrConversationTurnInvalid
+	}
+	request = cloneConversationTurnRequest(request)
+	request.ThreadPlan = nil
+	payloadSHA, err := domconv.ConversationTurnPayloadSHA256(request)
+	if err != nil {
+		base.ErrorCode = domconv.ConversationTurnErrorInvalid
+		return base, err
+	}
+
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	if r.turnOverlays == nil {
+		r.turnOverlays = make(map[string]*conversationTurnOverlay)
+	}
+	previous, hadPrevious := r.turnOverlays[request.SessionID]
+	if hadPrevious {
+		if previous.ownerID != request.OwnerID {
+			base.ErrorCode = domconv.ConversationTurnErrorConflict
+			return base, domconv.ErrConversationTurnConflict
+		}
+		if previous.headFailure != nil {
+			base.ErrorCode = domconv.ConversationTurnErrorUnavailable
+			return base, domconv.ErrConversationTurnUnavailable
+		}
+		for _, pending := range previous.pending {
+			if pending.request.TurnID != request.TurnID {
+				continue
+			}
+			if pending.payloadSHA != payloadSHA {
+				base.ErrorCode = domconv.ConversationTurnErrorConflict
+				return base, domconv.ErrConversationTurnConflict
+			}
+			replay := cloneConversationTurnResult(pending.result)
+			replay.IdempotentReplay = true
+			return replay, nil
+		}
+	}
+
+	var active *domconv.Thread
+	if hadPrevious && previous.head != nil {
+		active = cloneThreadForStore(previous.head)
+	} else {
+		events, loadErr := store.LoadActiveConversationThreadProjection(ctx, request.SessionID)
+		if loadErr != nil && !errors.Is(loadErr, domconv.ErrThreadNotFound) {
+			return base, loadErr
+		}
+		if loadErr == nil {
+			active, loadErr = conversationThreadFromL1Projection(events, domconv.ThreadActive)
+			if loadErr != nil {
+				return base, loadErr
+			}
+		}
+	}
+	var activeState *domconv.ConversationTurnActiveThreadState
+	if active != nil {
+		activeState = &domconv.ConversationTurnActiveThreadState{
+			Thread: domconv.ConversationTurnThreadIdentity{ID: active.ID, Seq: active.ThreadSeq, Kind: active.ThreadKind},
+			Domain: active.Domain, MessageCount: int64(len(active.Turns)),
+		}
+	}
+	plan, err := domconv.PlanConversationTurnThread(domconv.ConversationTurnThreadPlanInput{
+		Active: activeState, Boundary: request.Boundary, Domain: request.Domain, NewThreadID: modulecore.NewThreadID(),
+	})
+	if err != nil {
+		base.ErrorCode = domconv.ConversationTurnErrorInvalid
+		return base, err
+	}
+	request.ThreadPlan = &domconv.ConversationTurnThreadPlanBinding{
+		SessionID: request.SessionID, OwnerID: request.OwnerID, Plan: plan,
+	}
+	head, closed, err := acceptedConversationThread(request, plan, active)
+	if err != nil {
+		base.ErrorCode = domconv.ConversationTurnErrorInternal
+		return base, err
+	}
+	accepted := acceptedConversationTurnResult(request, plan, payloadSHA)
+	commandBytes, err := json.Marshal(request)
+	if err != nil {
+		base.ErrorCode = domconv.ConversationTurnErrorInternal
+		return base, domconv.ErrConversationTurnInternal
+	}
+	commandRequest := cloneConversationTurnRequest(request)
+	next := cloneConversationTurnOverlay(previous)
+	if !hadPrevious {
+		next = &conversationTurnOverlay{ownerID: request.OwnerID}
+	}
+	next.head = head
+	if closed != nil {
+		next.closed = closed
+		next.closedByTurnID = string(request.TurnID)
+	}
+	next.pending = append(next.pending, acceptedConversationTurn{
+		request: commandRequest, payloadSHA: payloadSHA, result: cloneConversationTurnResult(accepted),
+	})
+	r.turnOverlays[request.SessionID] = next
+	_, err = admission.Enqueue(persistencequeue.PersistenceCommand{
+		Owner:     persistencequeue.OwnerConversation,
+		Kind:      "conversation_turn",
+		SizeBytes: int64(len(commandBytes)),
+		Apply: func(workerCtx context.Context) error {
+			return r.applyAcceptedConversationTurn(workerCtx, commandRequest)
+		},
+	})
+	if err != nil {
+		if hadPrevious {
+			r.turnOverlays[request.SessionID] = previous
+		} else {
+			delete(r.turnOverlays, request.SessionID)
+		}
+		base.ErrorCode = domconv.ConversationTurnErrorUnavailable
+		return base, err
+	}
+	return accepted, nil
+}
+
+func (r *RealConversationManager) applyAcceptedConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) error {
+	store, ok := r.l1Store.(conversationTurnL1Store)
+	if !ok {
+		r.failAcceptedConversationTurn(request.SessionID, request.TurnID, domconv.ErrConversationTurnUnavailable)
+		return domconv.ErrConversationTurnUnavailable
+	}
+	result, err := r.commitConversationTurnSynchronously(ctx, store, request)
+	if err == nil && (!conversationTurnResultHasTarget(result.CompletedTargets, string(domconv.ConversationTurnTargetRedisProjection)) ||
+		conversationTurnResultHasTarget(result.PendingTargets, string(domconv.ConversationTurnTargetRedisProjection))) {
+		err = domconv.ErrConversationTurnUnavailable
+	}
+	if err != nil {
+		r.failAcceptedConversationTurn(request.SessionID, request.TurnID, err)
+		return err
+	}
+	r.completeAcceptedConversationTurn(request.SessionID, request.TurnID)
+	return nil
+}
+
+func acceptedConversationThread(
+	request domconv.ConversationTurnRequest,
+	plan domconv.ConversationTurnThreadPlan,
+	active *domconv.Thread,
+) (*domconv.Thread, *domconv.Thread, error) {
+	var thread *domconv.Thread
+	var closed *domconv.Thread
+	if active != nil && active.ID == plan.Thread.ID {
+		thread = cloneThreadForStore(active)
+	} else {
+		var err error
+		thread, err = domconv.NewThread(request.SessionID, plan.Domain, plan.Thread.Kind, plan.Thread.Seq)
+		if err != nil {
+			return nil, nil, domconv.ErrConversationTurnInvalid
+		}
+		thread.ID = plan.Thread.ID
+		if active != nil {
+			if plan.ClosedThread.ID != active.ID || plan.ClosedThread.Seq != active.ThreadSeq || plan.ClosedThread.Kind != active.ThreadKind {
+				return nil, nil, domconv.ErrConversationTurnConflict
+			}
+			closed = cloneThreadForStore(active)
+			if err := closed.Close(); err != nil {
+				return nil, nil, domconv.ErrConversationTurnInvalid
+			}
+		}
+	}
+	thread.Domain = plan.Domain
+	now := time.Now().UTC()
+	userMeta := conversationTurnOverlayMessageMeta(request, domconv.SpeakerUser)
+	agentMeta := conversationTurnOverlayMessageMeta(request, request.AgentSpeaker)
+	userMessage := domconv.NewMessage(domconv.SpeakerUser, request.UserMessage, userMeta)
+	userMessage.Timestamp = now
+	agentMessage := domconv.NewMessage(request.AgentSpeaker, request.AgentMessage, agentMeta)
+	agentMessage.Timestamp = now.Add(time.Nanosecond)
+	if err := thread.AddMessage(userMessage); err != nil {
+		return nil, nil, domconv.ErrConversationTurnInvalid
+	}
+	if err := thread.AddMessage(agentMessage); err != nil || int64(len(thread.Turns)) != plan.MessageCount {
+		return nil, nil, domconv.ErrConversationTurnInvalid
+	}
+	return thread, closed, nil
+}
+
+func conversationTurnOverlayMessageMeta(request domconv.ConversationTurnRequest, speaker domconv.Speaker) map[string]interface{} {
+	messageID := request.UserMessageID
+	from := string(speaker)
+	to := string(request.AgentSpeaker)
+	if speaker == request.AgentSpeaker {
+		messageID = request.AgentMessageID
+		to = string(domconv.SpeakerUser)
+	}
+	return map[string]interface{}{
+		"domain": string(request.Domain), "message_id": string(messageID), "turn_id": string(request.TurnID),
+		"speaker": string(speaker), "from": from, "to": to,
+	}
+}
+
+func acceptedConversationTurnResult(request domconv.ConversationTurnRequest, plan domconv.ConversationTurnThreadPlan, payloadSHA string) domconv.ConversationTurnResult {
+	requested := make([]string, 0, len(request.Targets))
+	for _, target := range request.Targets {
+		requested = append(requested, string(target))
+	}
+	result := domconv.ConversationTurnResult{
+		TurnID: request.TurnID, TraceID: request.TraceID, RootTaskID: request.RootTaskID, SessionID: request.SessionID,
+		ThreadID: plan.Thread.ID, ThreadSeq: plan.Thread.Seq, ThreadKind: plan.Thread.Kind,
+		ClosedThreadID: plan.ClosedThread.ID, ClosedThreadSeq: plan.ClosedThread.Seq, ClosedThreadKind: plan.ClosedThread.Kind,
+		UserMessageID: request.UserMessageID, AgentMessageID: request.AgentMessageID,
+		MessageIDs: []string{string(request.UserMessageID), string(request.AgentMessageID)}, PayloadSHA256: payloadSHA,
+		Status: domconv.ConversationTurnAccepted, RequestedTargets: requested, PendingTargets: append([]string(nil), requested...),
+	}
+	return result
+}
+
+func cloneConversationTurnRequest(request domconv.ConversationTurnRequest) domconv.ConversationTurnRequest {
+	request.Targets = append([]domconv.ConversationTurnTarget(nil), request.Targets...)
+	request.RecallTraceItems = append([]domconv.RecallTraceItem(nil), request.RecallTraceItems...)
+	for index := range request.RecallTraceItems {
+		request.RecallTraceItems[index].SourceURLs = append([]string(nil), request.RecallTraceItems[index].SourceURLs...)
+	}
+	if request.ThreadPlan != nil {
+		plan := *request.ThreadPlan
+		request.ThreadPlan = &plan
+	}
+	return request
+}
+
+func cloneConversationTurnResult(result domconv.ConversationTurnResult) domconv.ConversationTurnResult {
+	result.MessageIDs = append([]string(nil), result.MessageIDs...)
+	result.RequestedTargets = append([]string(nil), result.RequestedTargets...)
+	result.PendingTargets = append([]string(nil), result.PendingTargets...)
+	result.CompletedTargets = append([]string(nil), result.CompletedTargets...)
+	return result
+}
+
+func cloneConversationTurnOverlay(overlay *conversationTurnOverlay) *conversationTurnOverlay {
+	if overlay == nil {
+		return nil
+	}
+	copyOverlay := *overlay
+	copyOverlay.head = cloneThreadForStore(overlay.head)
+	copyOverlay.closed = cloneThreadForStore(overlay.closed)
+	copyOverlay.pending = make([]acceptedConversationTurn, len(overlay.pending))
+	for index, pending := range overlay.pending {
+		copyOverlay.pending[index] = acceptedConversationTurn{
+			request: cloneConversationTurnRequest(pending.request), payloadSHA: pending.payloadSHA,
+			result: cloneConversationTurnResult(pending.result),
+		}
+	}
+	return &copyOverlay
+}
+
+func (r *RealConversationManager) conversationTurnOverlayForRead(ctx context.Context, sessionID string) (*domconv.Thread, *domconv.Thread) {
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
+		return nil, nil
+	}
+	r.turnOverlayMu.RLock()
+	overlay := r.turnOverlays[sessionID]
+	if overlay == nil {
+		r.turnOverlayMu.RUnlock()
+		return nil, nil
+	}
+	head := cloneThreadForStore(overlay.head)
+	closed := cloneThreadForStore(overlay.closed)
+	r.turnOverlayMu.RUnlock()
+	return head, closed
+}
+
+func (r *RealConversationManager) failAcceptedConversationTurn(sessionID string, turnID modulecore.TurnID, err error) {
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	if overlay := r.turnOverlays[sessionID]; overlay != nil {
+		for _, pending := range overlay.pending {
+			if pending.request.TurnID == turnID {
+				overlay.headFailure = err
+				return
+			}
+		}
+	}
+}
+
+func (r *RealConversationManager) completeAcceptedConversationTurn(sessionID string, turnID modulecore.TurnID) {
+	r.turnOverlayMu.Lock()
+	defer r.turnOverlayMu.Unlock()
+	overlay := r.turnOverlays[sessionID]
+	if overlay == nil {
+		return
+	}
+	for index, pending := range overlay.pending {
+		if pending.request.TurnID != turnID {
+			continue
+		}
+		overlay.pending = append(overlay.pending[:index], overlay.pending[index+1:]...)
+		if overlay.closedByTurnID == string(turnID) {
+			overlay.closed = nil
+			overlay.closedByTurnID = ""
+		}
+		if len(overlay.pending) == 0 {
+			delete(r.turnOverlays, sessionID)
+		}
+		return
+	}
 }
 
 func conversationTurnWorkDeadline(started time.Time, timeout time.Duration, leaseExpiresAt, now time.Time) (time.Time, bool) {

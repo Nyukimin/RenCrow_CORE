@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -80,6 +81,18 @@ func (s *JSONLStore) IndexStats() (IndexStats, bool) {
 // produced so a record the index would refuse never reaches the log, and records
 // a write that ended without a known commit boundary.
 func (s *JSONLStore) writeBatch(ctx context.Context, callback func() (map[string][]byte, error)) error {
+	release, err := s.taskPersistence.beginSynchronous(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.writeBatchNow(ctx, callback)
+}
+
+// writeBatchNow persists one validated batch without waiting for accepted
+// queue entries. It is reserved for the shared persistence queue's own writer;
+// ordinary Task writes must pass through writeBatch so they cannot overtake it.
+func (s *JSONLStore) writeBatchNow(ctx context.Context, callback func() (map[string][]byte, error)) error {
 	wrote := false
 	if s.idx == nil {
 		err := s.batch.Write(ctx, func() (map[string][]byte, error) {
@@ -161,6 +174,28 @@ func (s *JSONLStore) beginIndexRead(ctx context.Context) (func(), error) {
 func (s *JSONLStore) indexReadTransaction(ctx context.Context, fn func(domaintask.Store) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		if s.idx == nil {
+			return ErrTaskAdmissionRequiresIndex
+		}
+		releaseAdmission, err := s.taskPersistence.beginAdmitted(ctx)
+		if err != nil {
+			return err
+		}
+		defer releaseAdmission()
+		pending, releaseView, err := s.taskPersistence.lockAdmissionIndexView(s.idx)
+		if err != nil {
+			return err
+		}
+		defer releaseView()
+		tx := newTaskTransaction(s, true, "", nil)
+		tx.idxLocked = true
+		defer tx.end()
+		if err := tx.setAdmissionOverlay(pending); err != nil {
+			return err
+		}
+		return fn(tx)
 	}
 	if err := s.syncIfDirty(ctx); err != nil {
 		return err

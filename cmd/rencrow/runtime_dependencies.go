@@ -33,6 +33,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	otelexportapp "github.com/Nyukimin/RenCrow_CORE/internal/application/otelexport"
 	packagevalidationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/packagevalidation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
 	sandboxapp "github.com/Nyukimin/RenCrow_CORE/internal/application/sandbox"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
@@ -93,6 +94,10 @@ type runtimeCanonicalEventStore interface {
 }
 
 type Dependencies struct {
+	persistenceQueue               *persistencequeue.Queue[persistencequeue.PersistenceCommand]
+	transportPersistenceQueue      *persistencequeue.Queue[persistencequeue.PersistenceCommand]
+	combinedChatProcessorEligible  bool
+	combinedChatAdmissionEnabled   bool
 	redisHealthCheck               func(context.Context) error
 	dataCapabilityCatalog          *runtimeDataCapabilityCatalog
 	lineHandler                    http.Handler
@@ -278,6 +283,7 @@ type Dependencies struct {
 	superAgentRunResume            http.HandlerFunc                            // viewer superagent run resume API
 	superAgentMessageChannel       http.HandlerFunc                            // viewer message channel API
 	superAgentStore                viewer.SuperAgentStore                      // SuperAgent runtime telemetry store
+	superAgentStateCloser          interface{ Close() error }                  // queued SuperAgent state owner
 	superAgentRunController        *superagentapp.RunController                // SuperAgent runtime pause/resume controller
 	aiWorkflowStatus               http.HandlerFunc                            // viewer AI workflow status API
 	aiWorkflowProjectMemory        http.HandlerFunc                            // viewer project memory index API
@@ -373,6 +379,7 @@ func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Run
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	queueOwnersSafeToClose := true
 	if d.classifierShadow != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		closeErr := d.classifierShadow.Close(ctx)
@@ -455,6 +462,14 @@ func (d *Dependencies) Shutdown() {
 	if d.conversationBackgroundStop != nil {
 		d.conversationBackgroundStop()
 	}
+	if d.persistenceQueue != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if err := d.persistenceQueue.Shutdown(ctx); err != nil {
+			log.Printf("Persistence queue shutdown did not fully drain: %v", err)
+			queueOwnersSafeToClose = errors.Is(err, persistencequeue.ErrFailed)
+		}
+		cancel()
+	}
 	if d.advisorCloser != nil {
 		if err := d.advisorCloser.Close(); err != nil {
 			log.Printf("Failed to close advisor store: %v", err)
@@ -465,12 +480,12 @@ func (d *Dependencies) Shutdown() {
 			log.Printf("Failed to close durable store workflow registry: %v", err)
 		}
 	}
-	if d.conversationArchiveCloser != nil {
+	if queueOwnersSafeToClose && d.conversationArchiveCloser != nil {
 		if err := d.conversationArchiveCloser.Close(); err != nil {
 			log.Printf("Failed to close Conversation Archive store: %v", err)
 		}
 	}
-	if d.conversationCloser != nil {
+	if queueOwnersSafeToClose && d.conversationCloser != nil {
 		if err := d.conversationCloser.Close(); err != nil {
 			log.Printf("Failed to close Conversation runtime: %v", err)
 		}
@@ -503,26 +518,35 @@ func (d *Dependencies) Shutdown() {
 			log.Printf("Failed to close ToolRegistry: %v", err)
 		}
 	}
-	if _, ok := d.personaRuntimeStore.(infrahealth.SQLiteCheckpointStatusReporter); ok {
-		if closer, ok := d.personaRuntimeStore.(interface{ Close() error }); ok {
+	if queueOwnersSafeToClose {
+		if closer, ok := d.superAgentStateCloser.(interface{ Close() error }); ok {
 			if err := closer.Close(); err != nil {
-				log.Printf("Failed to close Persona Architecture SQLite store: %v", err)
+				log.Printf("Failed to close SuperAgent Harness state store: %v", err)
 			}
 		}
 	}
-	if _, ok := d.aiWorkflowStateStore.(infrahealth.SQLiteCheckpointStatusReporter); ok {
-		if closer, ok := d.aiWorkflowStateStore.(interface{ Close() error }); ok {
-			if err := closer.Close(); err != nil {
-				log.Printf("Failed to close AI Workflow SQLite store: %v", err)
+	if queueOwnersSafeToClose {
+		if _, ok := d.personaRuntimeStore.(infrahealth.SQLiteCheckpointStatusReporter); ok {
+			if closer, ok := d.personaRuntimeStore.(interface{ Close() error }); ok {
+				if err := closer.Close(); err != nil {
+					log.Printf("Failed to close Persona Architecture SQLite store: %v", err)
+				}
+			}
+		}
+		if _, ok := d.aiWorkflowStateStore.(infrahealth.SQLiteCheckpointStatusReporter); ok {
+			if closer, ok := d.aiWorkflowStateStore.(interface{ Close() error }); ok {
+				if err := closer.Close(); err != nil {
+					log.Printf("Failed to close AI Workflow SQLite store: %v", err)
+				}
 			}
 		}
 	}
-	if d.canonicalEventStore != nil {
+	if queueOwnersSafeToClose && d.canonicalEventStore != nil {
 		if err := d.canonicalEventStore.Close(); err != nil {
 			log.Printf("Failed to close Canonical Event Store: %v", err)
 		}
 	}
-	if d.taskManager != nil {
+	if queueOwnersSafeToClose && d.taskManager != nil {
 		if err := d.taskManager.Close(); err != nil {
 			log.Printf("Failed to close Task store: %v", err)
 		}
@@ -561,6 +585,11 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		taskStoreIndex: cfg.TaskStore.Index.Enabled, taskStorePersist: cfg.TaskStore.Index.Persist,
 		taskStoreRotation: cfg.TaskStore.Rotation.Enabled, taskStoreSizeValve: cfg.TaskStore.Rotation.SizeValveBytes,
 	}
+	var err error
+	deps.persistenceQueue, err = newRuntimePersistenceQueue()
+	if err != nil {
+		log.Fatalf("Failed to initialize RAM persistence queue: %v", err)
+	}
 	storageOwners, err := newRuntimeStorageOwnerBundle(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize storage host owner bundle: %v", err)
@@ -578,17 +607,18 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
 		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)
 	}
-	runtimeActionOwner, err := newRuntimeActionOwner(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore))
+	runtimeActionOwner, err := newRuntimeActionOwner(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore), deps.persistenceQueue)
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical Action lifecycle owner: %v", err)
 	}
 	runtimeActionManager := runtimeActionOwner.manager
 	deps.actionManager = runtimeActionManager
 	deps.actionStoreHealth = runtimeActionOwner.store
-	deps.transportManager, err = newRuntimeTransportManager(cfg.WorkspaceDir, runtimeActionManager)
+	deps.transportManager, err = newRuntimeTransportManager(cfg.WorkspaceDir, runtimeActionManager, deps.persistenceQueue)
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical transport receipt owner: %v", err)
 	}
+	deps.transportPersistenceQueue = deps.persistenceQueue
 	if cfg.ActionStore.VerifyRunReferencesAtStart {
 		// Opt-in: every Action's Run must be owned by a Task. The restart recovery
 		// below checks only the Actions it acts on.
@@ -633,11 +663,16 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	}
 	runtimeToolRegistry := buildRuntimeToolRegistry(cfg, selectedToolRegistry)
 	nodeCaps := buildCapabilityRuntime(cfg, runtimeToolRegistry)
-	canonicalEventStore, err := openRuntimeCanonicalEventStore(cfg.Storage.Databases.EventStore)
+	canonicalEventStore, err := openRuntimeCanonicalEventStore(cfg.Storage.Databases.EventStore, deps.persistenceQueue)
 	if err != nil {
 		log.Fatalf("Failed to initialize Canonical Event Store: %v", err)
 	}
 	aiWorkflowStateStore := buildAIWorkflowStateStore(cfg)
+	if cfg.AIWorkflow.IsEnabled() {
+		if err := bindRuntimeOwnerPersistenceQueue(aiWorkflowStateStore, deps.persistenceQueue); err != nil {
+			log.Printf("AI Workflow RAM persistence admission unavailable: %v", err)
+		}
+	}
 	aiWorkflowStore := composeRuntimeAIWorkflowStore(aiWorkflowStateStore, canonicalEventStore)
 	llmBusyTracker := newLLMBusyTracker()
 	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker, runtimeActionManager, deps.taskManager, deps.transportManager)
@@ -688,8 +723,9 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		serenaRuntime.catalog,
 		canonicalEventStore,
 		runtimeSelectedCatalogOwners{
-			MovieCatalog: storageOwners.MovieCatalog,
-			HobbyGraph:   storageOwners.HobbyGraph,
+			MovieCatalog:     storageOwners.MovieCatalog,
+			HobbyGraph:       storageOwners.HobbyGraph,
+			PersistenceQueue: deps.persistenceQueue,
 		},
 	)
 	advisorRuntime, err := buildAdvisorRuntime(cfg, toolRuntime.WorkerRuntimeRunnerV2)
@@ -699,6 +735,12 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	mcpClient := mcp.NewMCPClient()
 	log.Printf("MCPClient initialized with %d servers", len(mcpClient.ListServers()))
 	conversationRuntime := buildConversationRuntime(cfg, llmRuntime.Primary, toolRuntime.ChatRunnerV2, toolRuntime.WorkerRunnerV2, storageOwners)
+	deps.combinedChatProcessorEligible = runtimeCombinedChatAdmissionEnabled(
+		cfg, classifier, conversationRuntime.Engine, llmRuntime.Chat != nil, cfg.Distributed.Enabled,
+	)
+	deps.combinedChatAdmissionEnabled = deps.combinedChatProcessorEligible &&
+		deps.transportPersistenceQueue == deps.persistenceQueue &&
+		runtimeConfiguredOwnerMatchesQueue(cfg.AIWorkflow.IsEnabled(), aiWorkflowStateStore, deps.persistenceQueue)
 	var selectedGlossaryOwner runtimeGlossaryRemoteOwner
 	if storageOwners.GlossaryStore != nil {
 		selectedGlossaryOwner = storageOwners.GlossaryStore
@@ -1372,6 +1414,12 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			log.Fatalf("Failed to load Persona Architecture characters: %v", err)
 		}
 		deps.personaRuntimeStore = personaStore
+		if err := bindRuntimeOwnerPersistenceQueue(personaStore, deps.persistenceQueue); err != nil {
+			log.Printf("Persona RAM persistence admission unavailable: %v", err)
+		}
+		if deps.combinedChatAdmissionEnabled && !runtimeConfiguredOwnerMatchesQueue(true, personaStore, deps.persistenceQueue) {
+			deps.combinedChatAdmissionEnabled = false
+		}
 		if err := registerRuntimeDataRecallPersonaArchitecture(dataRecallRegistry, personaStore); err != nil {
 			log.Fatalf("Failed to register Persona Architecture data recall: %v", err)
 		}
@@ -1513,13 +1561,20 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if cfg.SuperAgentHarness.IsEnabled() {
 		var superAgentStateStore viewer.SuperAgentStateStore
 		if cfg.SuperAgentHarness.Storage == "sqlite" {
-			store, err := superagentpersistence.NewSQLiteStore(cfg.SuperAgentHarness.SQLitePath, cfg.SuperAgentHarness.MaxContextPackTokens)
+			store, err := superagentpersistence.NewSQLiteStoreWithWriteQueue(cfg.SuperAgentHarness.SQLitePath, cfg.SuperAgentHarness.MaxContextPackTokens, deps.persistenceQueue)
 			if err != nil {
 				log.Fatalf("Failed to initialize SuperAgent Harness SQLite store: %v", err)
 			}
 			superAgentStateStore = store
 		} else {
-			superAgentStateStore = superagentpersistence.NewJSONLStore(cfg.SuperAgentHarness.LogPath, cfg.SuperAgentHarness.MaxContextPackTokens)
+			store, err := superagentpersistence.NewJSONLStoreWithWriteQueue(cfg.SuperAgentHarness.LogPath, cfg.SuperAgentHarness.MaxContextPackTokens, deps.persistenceQueue)
+			if err != nil {
+				log.Fatalf("Failed to initialize SuperAgent Harness JSONL store: %v", err)
+			}
+			superAgentStateStore = store
+		}
+		if closer, ok := superAgentStateStore.(interface{ Close() error }); ok {
+			deps.superAgentStateCloser = closer
 		}
 		superAgentStore := composeRuntimeSuperAgentStore(superAgentStateStore, canonicalEventStore)
 		deps.superAgentStore = superAgentStore

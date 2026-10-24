@@ -112,6 +112,17 @@ func TestCommitConversationTurnPropagatesRequiredFollowerFailure(t *testing.T) {
 	}
 }
 
+func TestCommitConversationTurnAcceptsCanonicalQueuedOutcome(t *testing.T) {
+	engine := &mockConversationEngine{
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnAccepted}, nil
+		},
+	}
+	if err := commitConversationTurn(context.Background(), engine, newAgentTurnInput(t, "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); err != nil {
+		t.Fatalf("accepted queued turn returned error: %v", err)
+	}
+}
+
 func TestCommitConversationTurnFailedReturnsTypedError(t *testing.T) {
 	engine := &mockConversationEngine{
 		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {

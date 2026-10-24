@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
@@ -51,8 +52,9 @@ type toolRuntime struct {
 }
 
 type runtimeSelectedCatalogOwners struct {
-	MovieCatalog *storagehost.MovieCatalogClient
-	HobbyGraph   *storagehost.HobbyGraphClient
+	MovieCatalog     *storagehost.MovieCatalogClient
+	HobbyGraph       *storagehost.HobbyGraphClient
+	PersistenceQueue *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 }
 
 func buildToolRuntimeWithCapabilities(
@@ -68,9 +70,11 @@ func buildToolRuntimeWithCapabilities(
 ) toolRuntime {
 	var selectedMovieCatalog *storagehost.MovieCatalogClient
 	var selectedHobbyGraph *storagehost.HobbyGraphClient
+	var persistenceQueue *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 	if len(selectedCatalogOwners) > 0 {
 		selectedMovieCatalog = selectedCatalogOwners[0].MovieCatalog
 		selectedHobbyGraph = selectedCatalogOwners[0].HobbyGraph
+		persistenceQueue = selectedCatalogOwners[0].PersistenceQueue
 	}
 	dataRecallRegistry := newRuntimeDataRecallRegistry()
 	dataWriteRegistry := newRuntimeDataWriteRegistry()
@@ -309,7 +313,11 @@ func buildToolRuntimeWithCapabilities(
 
 	var actionManager *actionmanager.Manager
 	if cfg.Security.Enabled || cfg.Subagent.Enabled {
-		manager, err := newRuntimeActionManager(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore))
+		var queueArgs []*persistencequeue.Queue[persistencequeue.PersistenceCommand]
+		if persistenceQueue != nil {
+			queueArgs = append(queueArgs, persistenceQueue)
+		}
+		manager, err := newRuntimeActionManager(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore), queueArgs...)
 		if err != nil {
 			log.Fatalf("Failed to initialize action store: %v", err)
 		}

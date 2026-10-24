@@ -92,10 +92,10 @@ func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErr
 }
 
 func handleSendLegacyWithSpeechCancellation(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry) http.HandlerFunc {
-	return handleSendLegacyWithSpeechCancellationAndAdmission(handler, onError, saver, resolveSessionID, cancellations, nil)
+	return handleSendLegacyWithSpeechCancellationAndAdmission(handler, onError, saver, resolveSessionID, cancellations, nil, nil)
 }
 
-func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission) http.HandlerFunc {
+func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission, preSessionAdmission LegacyPreSessionAdmissionHook) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		handlerReceivedAt := time.Now()
 		if r.Method != http.MethodPost {
@@ -151,12 +151,47 @@ func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, 
 		}
 		endHandlerValidation()
 		rootTaskID := string(modulecore.NewTaskID())
+		turnID := ""
+		traceID := ""
+		useRAMAdmission := len(attachments) == 0 &&
+			preSessionAdmission != nil &&
+			legacyRAMAdmissionScope(recipient, provenance.OperationSource)
+		if useRAMAdmission {
+			turnID = string(modulecore.NewTurnID())
+			traceID = string(modulecore.NewTraceID())
+		}
+		resolverContext := r.Context()
+		asyncBaseContext := context.Background()
+		var releasePreSessionAdmission func()
+		if useRAMAdmission {
+			identity := LegacyPreSessionAdmissionIdentity{
+				TraceID:         modulecore.TraceID(traceID),
+				TurnID:          modulecore.TurnID(turnID),
+				RootTaskID:      modulecore.TaskID(rootTaskID),
+				Recipient:       recipient,
+				OperationSource: provenance.OperationSource,
+			}
+			admissionContext, release, admissionErr := admitLegacyPreSession(r.Context(), identity, preSessionAdmission)
+			releasePreSessionAdmission = release
+			defer func() {
+				if releasePreSessionAdmission != nil {
+					releasePreSessionAdmission()
+				}
+			}()
+			if admissionErr != nil {
+				log.Printf("[Viewer] HandleSend: pre-session admission unavailable error_type=%T", admissionErr)
+				http.Error(w, "message admission unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			resolverContext = admissionContext
+			asyncBaseContext = admissionContext
+		}
 		sessionID := ""
 		if resolveSessionID != nil {
 			if timing != nil {
 				timing.Mark(turntiming.PointHandlerSessionStarted)
 			}
-			resolved, err := resolveSessionID(r.Context())
+			resolved, err := resolveSessionID(resolverContext)
 			if err != nil {
 				if timing != nil {
 					timing.Mark(turntiming.PointHandlerSessionEnded)
@@ -185,8 +220,10 @@ func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, 
 		}
 		messageID := string(modulecore.NewMessageID())
 		agentMessageID := string(modulecore.NewMessageID())
-		turnID := string(modulecore.NewTurnID())
-		traceID := string(modulecore.NewTraceID())
+		if turnID == "" {
+			turnID = string(modulecore.NewTurnID())
+			traceID = string(modulecore.NewTraceID())
+		}
 		var speechCancellation *orchestrator.SpeechTurnCancellation
 		speechCancelToken := ""
 		var releaseSpeechCancellation func()
@@ -220,7 +257,7 @@ func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, 
 		sendReq.Message = effectiveMessage
 		var releaseAdmission func()
 		if admission != nil {
-			releaseAdmission, err = admission.AdmitLegacy(r.Context(), modulecore.SessionID(sessionID))
+			releaseAdmission, err = admission.AdmitLegacy(resolverContext, modulecore.SessionID(sessionID))
 			if err != nil {
 				if releaseSpeechCancellation != nil {
 					releaseSpeechCancellation()
@@ -241,14 +278,19 @@ func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, 
 		}
 
 		// Process asynchronously — events flow back via SSE.
+		asyncReleasePreSessionAdmission := releasePreSessionAdmission
+		releasePreSessionAdmission = nil
 		go func() {
+			if asyncReleasePreSessionAdmission != nil {
+				defer asyncReleasePreSessionAdmission()
+			}
 			if releaseAdmission != nil {
 				defer releaseAdmission()
 			}
 			if releaseSpeechCancellation != nil {
 				defer releaseSpeechCancellation()
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			ctx, cancel := context.WithTimeout(asyncBaseContext, 5*time.Minute)
 			defer cancel()
 			ctx = orchestrator.WithSpeechTurnCancellation(ctx, speechCancellation)
 			if timing != nil {

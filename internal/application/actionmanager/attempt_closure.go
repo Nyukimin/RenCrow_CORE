@@ -68,6 +68,8 @@ func (m *Manager) CloseAttempt(ctx context.Context, actionID modulecore.ActionID
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// WithoutCancel keeps context values such as an explicit RAM persistence
+	// Admission while detaching the terminal write from request cancellation.
 	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), AttemptTerminalWriteTimeout)
 	defer cancel()
 	if _, _, writeErr := m.CompleteAttempt(closeCtx, actionID, attemptID, outcome.Attempt, outcome.Action, outcome.Summary); writeErr != nil {

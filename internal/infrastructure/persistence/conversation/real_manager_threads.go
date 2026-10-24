@@ -223,6 +223,11 @@ func (r *RealConversationManager) IsNovelInformation(ctx context.Context, msg do
 
 // GetActiveThread は SessionID に紐づく ActiveThread を取得
 func (r *RealConversationManager) GetActiveThread(ctx context.Context, sessionID string) (*domconv.Thread, error) {
+	if r != nil {
+		if active, _ := r.conversationTurnOverlayForRead(ctx, sessionID); active != nil {
+			return active, nil
+		}
+	}
 	sess, err := r.redisStore.GetSession(ctx, sessionID)
 	if err == domconv.ErrSessionNotFound {
 		return nil, domconv.ErrThreadNotFound

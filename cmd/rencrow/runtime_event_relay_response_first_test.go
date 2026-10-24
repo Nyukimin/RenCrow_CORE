@@ -94,7 +94,7 @@ func TestEventRelaySerializesLegacyAndCommittedPublicationByEventSeq(t *testing.
 	hub := viewer.NewEventHub(8)
 	relay := responseFirstRelay(t, store, hub, nil)
 
-	legacy := orchestrator.NewEvent("message.received", "user", "mio", "legacy input", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
+	legacy := orchestrator.NewEvent("message.received", "user", "mio", "legacy input", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
 	legacyDone := make(chan error, 1)
 	go func() { legacyDone <- relay.OnEvent(legacy) }()
 	select {

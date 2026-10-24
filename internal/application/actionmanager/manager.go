@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -16,6 +17,7 @@ import (
 var (
 	ErrNotFound        = domainaction.ErrNotFound
 	ErrAttemptConflict = errors.New("attempt state conflict")
+	ErrAdmissionBusy   = errors.New("Action manager admission is blocked by an active operation")
 )
 
 // AttemptTerminalWriteTimeout is the budget of one terminal write of an Attempt
@@ -65,7 +67,9 @@ func (m *Manager) CreateAction(ctx context.Context, input CreateInput) (domainac
 	if !domainaction.ValidKind(input.Kind) {
 		return domainaction.Action{}, domainaction.Attempt{}, fmt.Errorf("invalid action kind: %s", input.Kind)
 	}
-	m.mu.Lock()
+	if err := m.lockForContext(ctx); err != nil {
+		return domainaction.Action{}, domainaction.Attempt{}, err
+	}
 	defer m.mu.Unlock()
 	if err := validateContext(ctx); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
@@ -139,7 +143,9 @@ func (m *Manager) StartAttempt(ctx context.Context, actionID modulecore.ActionID
 	if !domainaction.ValidAttemptStartReason(reason) {
 		return domainaction.Action{}, domainaction.Attempt{}, fmt.Errorf("invalid attempt start reason: %s", reason)
 	}
-	m.mu.Lock()
+	if err := m.lockForContext(ctx); err != nil {
+		return domainaction.Action{}, domainaction.Attempt{}, err
+	}
 	defer m.mu.Unlock()
 	if err := validateContext(ctx); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
@@ -209,7 +215,9 @@ func (m *Manager) CompleteAttempt(ctx context.Context, actionID modulecore.Actio
 	if err := expectedAttemptID.Validate(); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, fmt.Errorf("attempt_id is invalid: %w", err)
 	}
-	m.mu.Lock()
+	if err := m.lockForContext(ctx); err != nil {
+		return domainaction.Action{}, domainaction.Attempt{}, err
+	}
 	defer m.mu.Unlock()
 	if err := validateContext(ctx); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
@@ -282,7 +290,9 @@ func (m *Manager) ValidateToolAttempt(ctx context.Context, actionID modulecore.A
 	if domainaction.NormalizeName(toolName) == "" {
 		return fmt.Errorf("%w: tool name is required", ErrAttemptConflict)
 	}
-	m.mu.RLock()
+	if err := m.readLockForContext(ctx); err != nil {
+		return err
+	}
 	defer m.mu.RUnlock()
 	return m.store.ReadTransaction(ctx, func(tx Store) error {
 		if err := validateContext(ctx); err != nil {
@@ -329,7 +339,9 @@ func (m *Manager) ValidateAttemptLineage(ctx context.Context, actionID modulecor
 	if err := runID.Validate(); err != nil {
 		return fmt.Errorf("run_id is invalid: %w", err)
 	}
-	m.mu.RLock()
+	if err := m.readLockForContext(ctx); err != nil {
+		return err
+	}
 	defer m.mu.RUnlock()
 	return m.store.ReadTransaction(ctx, func(tx Store) error {
 		action, _, err := m.currentPair(tx, ctx, actionID, attemptID)
@@ -385,7 +397,9 @@ func (m *Manager) GetAction(ctx context.Context, actionID modulecore.ActionID) (
 	if err := actionID.Validate(); err != nil {
 		return domainaction.Action{}, fmt.Errorf("action_id is invalid: %w", err)
 	}
-	m.mu.RLock()
+	if err := m.readLockForContext(ctx); err != nil {
+		return domainaction.Action{}, err
+	}
 	defer m.mu.RUnlock()
 	if err := validateContext(ctx); err != nil {
 		return domainaction.Action{}, err
@@ -397,7 +411,9 @@ func (m *Manager) ListActions(ctx context.Context, filter domainaction.Filter) (
 	if err := validateContext(ctx); err != nil {
 		return nil, err
 	}
-	m.mu.RLock()
+	if err := m.readLockForContext(ctx); err != nil {
+		return nil, err
+	}
 	defer m.mu.RUnlock()
 	if err := validateContext(ctx); err != nil {
 		return nil, err
@@ -418,7 +434,9 @@ func (m *Manager) ReadTransaction(ctx context.Context, fn func(Store) error) err
 	if fn == nil {
 		return errors.New("action read transaction callback is nil")
 	}
-	m.mu.RLock()
+	if err := m.readLockForContext(ctx); err != nil {
+		return err
+	}
 	defer m.mu.RUnlock()
 	if err := validateContext(ctx); err != nil {
 		return err
@@ -430,7 +448,9 @@ func (m *Manager) ListAttempts(ctx context.Context, filter domainaction.AttemptF
 	if err := validateContext(ctx); err != nil {
 		return nil, err
 	}
-	m.mu.RLock()
+	if err := m.readLockForContext(ctx); err != nil {
+		return nil, err
+	}
 	defer m.mu.RUnlock()
 	if err := validateContext(ctx); err != nil {
 		return nil, err
@@ -443,6 +463,28 @@ func validateContext(ctx context.Context) error {
 		return errors.New("context is required")
 	}
 	return ctx.Err()
+}
+
+func (m *Manager) lockForContext(ctx context.Context) error {
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		if !m.mu.TryLock() {
+			return ErrAdmissionBusy
+		}
+		return nil
+	}
+	m.mu.Lock()
+	return nil
+}
+
+func (m *Manager) readLockForContext(ctx context.Context) error {
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		if !m.mu.TryRLock() {
+			return ErrAdmissionBusy
+		}
+		return nil
+	}
+	m.mu.RLock()
+	return nil
 }
 
 // currentPair reads and verifies the active current pair using the transaction

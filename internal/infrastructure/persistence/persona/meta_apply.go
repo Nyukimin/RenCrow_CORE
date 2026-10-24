@@ -10,11 +10,27 @@ import (
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 )
 
-func (s *JSONLStore) ApplyMetaProfileUpdate(_ context.Context, item domainpersona.MetaProfileUpdate) (string, error) {
+func (s *JSONLStore) ApplyMetaProfileUpdate(ctx context.Context, item domainpersona.MetaProfileUpdate) (string, error) {
+	if s == nil {
+		return "", ErrPersonaAdmissionUnavailable
+	}
+	release, err := s.admissionWrites.beginDirectOperation(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	return applyMetaProfileUpdate(s.metaRoot, item)
 }
 
-func (s *SQLiteStore) ApplyMetaProfileUpdate(_ context.Context, item domainpersona.MetaProfileUpdate) (string, error) {
+func (s *SQLiteStore) ApplyMetaProfileUpdate(ctx context.Context, item domainpersona.MetaProfileUpdate) (string, error) {
+	if s == nil {
+		return "", ErrPersonaAdmissionUnavailable
+	}
+	release, err := s.admissionWrites.beginDirectOperation(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	return applyMetaProfileUpdate(s.metaRoot, item)
 }
 

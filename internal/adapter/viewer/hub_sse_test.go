@@ -797,6 +797,84 @@ func TestEventHubReplayRejectsMissingFinalPageAndCancelledContext(t *testing.T) 
 	}
 }
 
+func TestEventHubReplayMergesCapturedMemorySuffixAfterDurablePrefix(t *testing.T) {
+	durable, memoryOnly := replayTestEvents(2)[0], replayTestEvents(2)[1]
+	durable.EventSeq = 1
+	memoryOnly.EventSeq = 2
+	hub := NewEventHub(8)
+	hub.SetReplayReader(&replayPageReader{events: []orchestrator.OrchestratorEvent{durable}})
+	if _, err := hub.PublishLive(durable); err != nil {
+		t.Fatalf("PublishLive(durable): %v", err)
+	}
+	if _, err := hub.PublishAccepted(memoryOnly); err != nil {
+		t.Fatalf("PublishAccepted(memory suffix): %v", err)
+	}
+
+	client, snapshot := hub.SubscribeForReplay()
+	defer hub.Unsubscribe(client)
+	var replayed []orchestrator.OrchestratorEvent
+	cursor, err := hub.ReplayCaptured(context.Background(), 1, snapshot, func(event orchestrator.OrchestratorEvent) error {
+		replayed = append(replayed, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(replayed) != 1 || replayed[0].EventSeq != 2 || replayed[0].EventID != memoryOnly.EventID {
+		t.Fatalf("replayed suffix = %+v, want only captured in-memory event %s at seq 2", replayed, memoryOnly.EventID)
+	}
+	if cursor != 2 {
+		t.Fatalf("replay cursor = %d, want merged RAM suffix cursor 2", cursor)
+	}
+}
+
+func TestEventHubReplayReportsCoverageLossForEvictedUndurableAcceptedEvent(t *testing.T) {
+	events := replayTestEvents(2)
+	hub := NewEventHub(1)
+	for _, event := range events {
+		if _, err := hub.PublishAccepted(event); err != nil {
+			t.Fatalf("PublishAccepted(%d): %v", event.EventSeq, err)
+		}
+	}
+	client, snapshot := hub.SubscribeForReplay()
+	defer hub.Unsubscribe(client)
+
+	_, err := hub.ReplayCaptured(context.Background(), 0, snapshot, func(orchestrator.OrchestratorEvent) error { return nil })
+	var coverageErr *ReplayCoverageError
+	if !errors.As(err, &coverageErr) {
+		t.Fatalf("ReplayCaptured() error = %v, want typed accepted-tail coverage error", err)
+	}
+	if coverageErr.Missing.EventID != events[0].EventID || coverageErr.Missing.EventSeq != events[0].EventSeq {
+		t.Fatalf("coverage gap = %+v, want evicted EventID=%s EventSeq=%d", coverageErr.Missing, events[0].EventID, events[0].EventSeq)
+	}
+}
+
+func TestHandleSSEResetsWhenAcceptedReplayCoverageIsLost(t *testing.T) {
+	events := replayTestEvents(2)
+	hub := NewEventHub(1)
+	for _, event := range events {
+		if _, err := hub.PublishAccepted(event); err != nil {
+			t.Fatalf("PublishAccepted(%d): %v", event.EventSeq, err)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	response := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSSE(response, request.WithContext(ctx))
+
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "event: reset\n") || !strings.Contains(body, "replay_coverage_lost") {
+		t.Fatalf("SSE status=%d body=%q, want explicit replay coverage reset", response.Code, body)
+	}
+	for _, event := range events {
+		if strings.Contains(body, "id: "+string(event.EventID)+"\n") {
+			t.Fatalf("SSE emitted event %s despite an unproven replay gap: %q", event.EventID, body)
+		}
+	}
+}
+
 func TestEventHubReplayDoesNotAdvanceCursorOnEmitError(t *testing.T) {
 	hub := NewEventHub(2)
 	events := replayTestEvents(2)

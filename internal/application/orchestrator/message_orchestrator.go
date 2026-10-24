@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	moduleapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moduleregistry"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	appsubagent "github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	appverification "github.com/Nyukimin/RenCrow_CORE/internal/application/verification"
@@ -232,6 +234,27 @@ type MessageOrchestrator struct {
 	turnInputs              *messageTurnInputBuilder
 	visionRequests          *visionRequestProcessor
 	durableStoreWorkflow    DurableStoreWorkflow
+}
+
+func synchronousPersistenceBeforeEffect(ctx context.Context, effect string) (context.Context, error) {
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
+		return ctx, nil
+	}
+	fallback, ok := persistencequeue.SynchronousFallbackFromContext(ctx)
+	if !ok {
+		return ctx, fmt.Errorf("synchronous persistence fallback before %s: context has RAM admission but no synchronous fallback capability", effect)
+	}
+	fallbackCtx, err := fallback(ctx)
+	if err != nil {
+		return ctx, fmt.Errorf("synchronous persistence fallback before %s: %w", effect, err)
+	}
+	if fallbackCtx == nil {
+		return ctx, fmt.Errorf("synchronous persistence fallback before %s returned a nil context", effect)
+	}
+	if _, ok := persistencequeue.AdmissionFromContext(fallbackCtx); ok {
+		return ctx, fmt.Errorf("synchronous persistence fallback before %s returned a context with RAM admission", effect)
+	}
+	return fallbackCtx, nil
 }
 
 // SetMaxRepair は自律実行のリペア上限を設定する（デフォルト: 1）
@@ -640,9 +663,12 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 	turntiming.Mark(ctx, turntiming.PointServerReceivedMetricPublished)
-	writeUserSessionTurn(o.sessionTurnLogger, req)
+	sessionLogErr := writeUserSessionTurn(ctx, o.sessionTurnLogger, req)
 	turntiming.Mark(ctx, turntiming.PointSessionTurnLogAttemptEnded)
 	turntiming.Mark(ctx, turntiming.PointInitialEventsEnded)
+	if sessionLogErr != nil {
+		return ProcessMessageResponse{}, sessionLogErr
+	}
 	turntiming.Mark(ctx, turntiming.PointPersonaObservationStarted)
 	if err := o.recordPersonaRuntimeObservation(ctx, req); err != nil {
 		turntiming.Mark(ctx, turntiming.PointPersonaObservationEnded)
@@ -658,6 +684,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		turntiming.Mark(ctx, turntiming.PointPreRouteChecksEnded)
 		preRouteChecksEnded = true
 	}
+	if agent.IsChatCommandCandidate(req.UserMessage) {
+		ctx, err = synchronousPersistenceBeforeEffect(ctx, "pre-routing Mio command")
+		if err != nil {
+			endPreRouteChecks()
+			return ProcessMessageResponse{}, err
+		}
+	}
 	commandResp, commandHandled, commandErr := o.preRoutingCommands.Handle(ctx, req)
 	if commandHandled {
 		endPreRouteChecks()
@@ -672,12 +705,21 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			return ProcessMessageResponse{}, err
 		}
 		resp = ensureProcessResponseIdentity(commandResp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
-		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+		if err := writeAssistantSessionTurn(ctx, o.sessionTurnLogger, req, resp); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		return resp, nil
 	}
 	if commandErr != nil {
 		endPreRouteChecks()
 		return ProcessMessageResponse{}, commandErr
+	}
+	if _, _, slashCommandCandidate := parseSlashCommandInvocation(req.UserMessage); slashCommandCandidate {
+		ctx, err = synchronousPersistenceBeforeEffect(ctx, "slash command expansion")
+		if err != nil {
+			endPreRouteChecks()
+			return ProcessMessageResponse{}, err
+		}
 	}
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {
 		endPreRouteChecks()
@@ -706,6 +748,11 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	turntiming.Mark(ctx, turntiming.PointTurnInputBuilt)
 	dailyBriefRequested := isDailyNewsBriefRequest(req.UserMessage)
 	if dailyBriefRequested {
+		ctx, err = synchronousPersistenceBeforeEffect(ctx, "daily news brief")
+		if err != nil {
+			endPreRouteChecks()
+			return ProcessMessageResponse{}, err
+		}
 		endPreRouteChecks()
 		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=daily news brief intent"); err != nil {
@@ -737,11 +784,18 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			return ProcessMessageResponse{}, err
 		}
 		resp = ensureProcessResponseIdentity(resp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
-		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+		if err := writeAssistantSessionTurn(ctx, o.sessionTurnLogger, req, resp); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		return resp, nil
 	}
 	explicitDCI := shouldHandleExplicitDCI(o.dciSearcher, req.UserMessage)
 	if explicitDCI {
+		ctx, err = synchronousPersistenceBeforeEffect(ctx, "explicit DCI search")
+		if err != nil {
+			endPreRouteChecks()
+			return ProcessMessageResponse{}, err
+		}
 		endPreRouteChecks()
 		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteRESEARCH, taskLifecycleShiro, "confidence 100% evidence=explicit DCI trigger"); err != nil {
@@ -760,10 +814,28 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			return ProcessMessageResponse{}, err
 		}
 		resp = ensureProcessResponseIdentity(resp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
-		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+		if err := writeAssistantSessionTurn(ctx, o.sessionTurnLogger, req, resp); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		return resp, nil
 	}
-	durableResult, durableHandled, durableErr := evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
+	durableStoreCandidate := o.durableStoreWorkflow != nil && !strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/")
+	if matcher, ok := o.durableStoreWorkflow.(durableStoreIntentMatcher); ok {
+		durableStoreCandidate = durableStoreCandidate && matcher.CanHandle(durableStoreInput(req))
+	}
+	if durableStoreCandidate {
+		ctx, err = synchronousPersistenceBeforeEffect(ctx, "durable store workflow")
+		if err != nil {
+			endPreRouteChecks()
+			return ProcessMessageResponse{}, err
+		}
+	}
+	var durableResult domaindurablestore.WorkflowResult
+	var durableHandled bool
+	var durableErr error
+	if durableStoreCandidate {
+		durableResult, durableHandled, durableErr = evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
+	}
 	if durableHandled {
 		endPreRouteChecks()
 		turntiming.Mark(ctx, turntiming.PointRouteDecided)
@@ -782,7 +854,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			return ProcessMessageResponse{}, err
 		}
 		resp = ensureProcessResponseIdentity(resp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
-		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+		if err := writeAssistantSessionTurn(ctx, o.sessionTurnLogger, req, resp); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		return resp, nil
 	}
 	if durableErr != nil {
@@ -797,7 +871,20 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	if routeResult.Context != nil {
+		ctx = routeResult.Context
+	}
 	decision := routeResult.Decision
+	if decision.Route != routing.RouteCHAT || routeResult.ChatDraft == nil {
+		effect := "non-CHAT route execution"
+		if decision.Route == routing.RouteCHAT {
+			effect = "CHAT route execution without a combined draft"
+		}
+		ctx, err = synchronousPersistenceBeforeEffect(ctx, effect)
+		if err != nil {
+			return ProcessMessageResponse{}, err
+		}
+	}
 	turntiming.Mark(ctx, turntiming.PointRouteDecided)
 	actor, err := actualCoreActorForRequest(decision.Route, req)
 	if err != nil {
@@ -964,6 +1051,8 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	)
 	log.Printf("[MessageOrch] ProcessMessage COMPLETE: taskID=%s traceID=%s messageID=%s route=%s response_len=%d",
 		taskID.String(), resp.TraceID, resp.MessageID, decision.Route, len(response))
-	writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+	if err := writeAssistantSessionTurn(ctx, o.sessionTurnLogger, req, resp); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	return resp, nil
 }

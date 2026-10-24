@@ -19,6 +19,10 @@ func (r *RealConversationManager) Recall(ctx context.Context, sessionID string, 
 	thread, err := r.GetActiveThread(ctx, sessionID)
 	if err == nil && thread != nil && len(thread.Turns) > 0 {
 		messages := append([]domconv.Message(nil), thread.Turns...)
+		_, closedOverlay := r.conversationTurnOverlayForRead(ctx, sessionID)
+		if closedOverlay != nil {
+			messages = append(messages, closedOverlay.Turns...)
+		}
 		if store, ok := r.l1Store.(conversationTurnL1Store); ok {
 			// Prompt Recall has a one-closed-thread raw fallback window. The L1
 			// query orders by closed-thread sequence descending, so the immediately
@@ -40,7 +44,7 @@ func (r *RealConversationManager) Recall(ctx context.Context, sessionID string, 
 				}
 				messages = append(messages, l1ProjectionEventsToMessages(events)...)
 			}
-			if len(seenThreads) > 0 {
+			if len(seenThreads) > 0 || closedOverlay != nil {
 				messages = dedupeAndOrderConversationRecall(messages)
 			}
 		}

@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
@@ -29,13 +31,41 @@ type idleAwareEventListener struct {
 	responseMarker interface {
 		MarkConversationTurnResponsePublished(context.Context, modulecore.TurnID, modulecore.TraceID, modulecore.SessionID, time.Time) error
 	}
-	mu                sync.RWMutex
-	publicationMu     sync.Mutex
-	publicationCursor modulecore.EventSeq
-	idleChat          *idlechat.IdleChatOrchestrator
+	mu                    sync.RWMutex
+	publicationMu         sync.Mutex
+	publicationCursor     modulecore.EventSeq
+	livePublicationCursor modulecore.EventSeq
+	durableCursorAtomic   atomic.Int64
+	chatBinding           *chatPublicationBinding
+	chatTraceScopes       map[modulecore.TraceID]chatTracePublicationScope
+	idleChat              *idlechat.IdleChatOrchestrator
 }
 
+type chatPublicationBinding struct {
+	traceID modulecore.TraceID
+	ctx     context.Context
+	end     func() error
+	done    chan struct{}
+}
+
+type chatTracePublicationScope uint8
+
+const (
+	chatTraceScopeUnbound chatTracePublicationScope = iota
+	chatTraceScopeAdmitted
+	chatTraceScopeSynchronous
+)
+
 var errCanonicalEventArchiveRequired = errors.New("canonical event archive is required")
+
+var (
+	errChatTraceIDInvalid         = errors.New("CHAT TraceID is invalid")
+	errChatBindingActive          = errors.New("an EventStore CHAT admission is already bound")
+	errChatTraceIDAlreadyBound    = errors.New("CHAT TraceID is already bound")
+	errChatPublicationBusy        = errors.New("canonical event publication is busy")
+	errChatTraceIDNotBound        = errors.New("CHAT event has no matching active admission binding")
+	errChatPredecessorUnpublished = errors.New("committed orchestrator predecessor is not yet published")
+)
 
 func (l *idleAwareEventListener) SetIdleChat(idle *idlechat.IdleChatOrchestrator) {
 	l.mu.Lock()
@@ -43,24 +73,207 @@ func (l *idleAwareEventListener) SetIdleChat(idle *idlechat.IdleChatOrchestrator
 	l.idleChat = idle
 }
 
+// BindChat activates the EventStore RAM admission lease for one explicitly
+// reserved CHAT trace. It compares the lease's acquisition-time committed
+// orchestrator watermark with the relay's live cursor using RAM only. If a
+// durable predecessor is not already live, the call fails closed before the
+// runtime starts its session or LLM work.
+func (l *idleAwareEventListener) BindChat(traceID modulecore.TraceID, ctx context.Context) (func(), error) {
+	if l == nil || l.archive == nil {
+		return nil, errCanonicalEventArchiveRequired
+	}
+	if ctx == nil {
+		return nil, errors.New("CHAT admission context is required")
+	}
+	if err := traceID.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", errChatTraceIDInvalid, err)
+	}
+
+	l.mu.RLock()
+	active := l.chatBinding
+	scope := l.chatTraceScopes[traceID]
+	l.mu.RUnlock()
+	if active != nil && active.traceID == traceID || scope != chatTraceScopeUnbound {
+		return nil, errChatTraceIDAlreadyBound
+	}
+	if active != nil {
+		return nil, fmt.Errorf("%w: active trace %s", errChatBindingActive, active.traceID)
+	}
+	if !l.publicationMu.TryLock() {
+		return nil, errChatPublicationBusy
+	}
+	defer l.publicationMu.Unlock()
+	l.mu.RLock()
+	active = l.chatBinding
+	scope = l.chatTraceScopes[traceID]
+	l.mu.RUnlock()
+	if active != nil && active.traceID == traceID || scope != chatTraceScopeUnbound {
+		return nil, errChatTraceIDAlreadyBound
+	}
+	if active != nil {
+		return nil, fmt.Errorf("%w: active trace %s", errChatBindingActive, active.traceID)
+	}
+
+	endLease, committedHighWater, err := l.archive.BeginChat(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if committedHighWater > l.livePublicationCursor {
+		_ = endLease()
+		return nil, fmt.Errorf("%w: committed=%d live=%d durable=%d", errChatPredecessorUnpublished, committedHighWater, l.livePublicationCursor, l.publicationCursor)
+	}
+	binding := &chatPublicationBinding{traceID: traceID, ctx: ctx, end: endLease, done: make(chan struct{})}
+	l.mu.Lock()
+	if l.chatTraceScopes == nil {
+		l.chatTraceScopes = make(map[modulecore.TraceID]chatTracePublicationScope)
+	}
+	l.chatBinding = binding
+	l.chatTraceScopes[traceID] = chatTraceScopeAdmitted
+	l.mu.Unlock()
+
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			l.publicationMu.Lock()
+			defer l.publicationMu.Unlock()
+			l.mu.Lock()
+			if l.chatBinding == binding {
+				l.chatBinding = nil
+			}
+			delete(l.chatTraceScopes, traceID)
+			l.mu.Unlock()
+			if endErr := binding.end(); endErr != nil {
+				log.Printf("[EventRelay] release CHAT admission trace_id=%s failed: %v", traceID, endErr)
+			}
+			close(binding.done)
+		})
+	}
+	return release, nil
+}
+
+// MarkChatSynchronous closes the RAM publication portion of a bound request
+// after its queue barrier. The binding remains active until release so any
+// late event for this trace waits, then follows the durable compatibility path.
+func (l *idleAwareEventListener) MarkChatSynchronous(traceID modulecore.TraceID) error {
+	if l == nil || l.archive == nil {
+		return errCanonicalEventArchiveRequired
+	}
+	if err := traceID.Validate(); err != nil {
+		return fmt.Errorf("invalid CHAT synchronous trace scope: %w", err)
+	}
+	l.publicationMu.Lock()
+	defer l.publicationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.chatBinding == nil || l.chatBinding.traceID != traceID || l.chatTraceScopes[traceID] != chatTraceScopeAdmitted {
+		return fmt.Errorf("CHAT trace %s has no active admitted publication scope", traceID)
+	}
+	l.chatTraceScopes[traceID] = chatTraceScopeSynchronous
+	return nil
+}
+
+// DurableEventSeq reports the latest canonical orchestrator EventSeq that the
+// relay reconciled from durable replay. It is a RAM-only read for health paths.
+func (l *idleAwareEventListener) DurableEventSeq() modulecore.EventSeq {
+	if l == nil {
+		return 0
+	}
+	return modulecore.EventSeq(l.durableCursorAtomic.Load())
+}
+
 func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) error {
 	if l == nil || l.archive == nil {
 		return errCanonicalEventArchiveRequired
 	}
+	for {
+		l.mu.RLock()
+		binding := l.chatBinding
+		scope := l.chatTraceScopes[ev.TraceID]
+		l.mu.RUnlock()
+		if binding != nil {
+			if ev.TraceID == binding.traceID {
+				if scope == chatTraceScopeSynchronous {
+					<-binding.done
+					continue
+				}
+				if scope != chatTraceScopeAdmitted {
+					return fmt.Errorf("%w: active trace %s lost its publication scope", errChatTraceIDNotBound, ev.TraceID)
+				}
+				l.publicationMu.Lock()
+				l.mu.RLock()
+				current := l.chatBinding
+				currentScope := l.chatTraceScopes[ev.TraceID]
+				l.mu.RUnlock()
+				if current != binding {
+					l.publicationMu.Unlock()
+					continue
+				}
+				if currentScope == chatTraceScopeSynchronous {
+					l.publicationMu.Unlock()
+					<-binding.done
+					continue
+				}
+				if currentScope != chatTraceScopeAdmitted {
+					l.publicationMu.Unlock()
+					return fmt.Errorf("%w: admitted trace %s lost its publication scope", errChatTraceIDNotBound, ev.TraceID)
+				}
+				accepted, _, err := l.archive.AdmitSequenced(binding.ctx, ev)
+				if err != nil {
+					l.publicationMu.Unlock()
+					return err
+				}
+				if accepted.EventSeq <= l.livePublicationCursor {
+					l.publicationMu.Unlock()
+					return fmt.Errorf("accepted CHAT EventSeq %d does not follow relay live cursor %d", accepted.EventSeq, l.livePublicationCursor)
+				}
+				if l.hub != nil {
+					if _, err := l.hub.PublishAccepted(accepted); err != nil {
+						l.publicationMu.Unlock()
+						return err
+					}
+				}
+				if l.monitor != nil {
+					l.monitor.OnEvent(accepted)
+				}
+				l.livePublicationCursor = accepted.EventSeq
+				l.publicationMu.Unlock()
+				l.afterCanonicalPublication([]orchestrator.OrchestratorEvent{accepted}, "")
+				return nil
+			}
+			// Non-admitted and foreign traces wait outside the publication mutex,
+			// then use the legacy durable path after the active lease is released.
+			<-binding.done
+			continue
+		}
+		if scope == chatTraceScopeAdmitted {
+			return fmt.Errorf("%w: admitted trace %s has no active relay binding", errChatTraceIDNotBound, ev.TraceID)
+		}
 
-	// Canonical persistence is the single publication gate. Legacy events are
-	// appended once, then both legacy and committed events use the same ordered
-	// canonical drain for downstream projections.
-	l.publicationMu.Lock()
-	persisted, err := l.archive.AppendSequenced(ev)
-	if err != nil {
+		// Legacy non-CHAT events keep their synchronous durable path. The second
+		// binding check closes the race with a concurrent lease acquisition.
+		l.publicationMu.Lock()
+		l.mu.RLock()
+		binding = l.chatBinding
+		scope = l.chatTraceScopes[ev.TraceID]
+		l.mu.RUnlock()
+		if binding != nil {
+			l.publicationMu.Unlock()
+			continue
+		}
+		if scope == chatTraceScopeAdmitted {
+			l.publicationMu.Unlock()
+			return fmt.Errorf("%w: admitted trace %s has no active relay binding", errChatTraceIDNotBound, ev.TraceID)
+		}
+		persisted, err := l.archive.AppendSequenced(ev)
+		if err != nil {
+			l.publicationMu.Unlock()
+			return err
+		}
+		published, err := l.drainCanonicalEvents(context.Background(), persisted.EventID)
 		l.publicationMu.Unlock()
+		l.afterCanonicalPublication(published, persisted.EventID)
 		return err
 	}
-	published, err := l.drainCanonicalEvents(context.Background(), persisted.EventID)
-	l.publicationMu.Unlock()
-	l.afterCanonicalPublication(published, persisted.EventID)
-	return err
 }
 
 // PublishCommitted publishes already-persisted conversation events by draining
@@ -74,7 +287,9 @@ func (l *idleAwareEventListener) PublishCommitted(ctx context.Context, _ convers
 		return errors.New("committed event publication context is required")
 	}
 
-	l.publicationMu.Lock()
+	if err := l.lockCanonicalDrain(ctx); err != nil {
+		return err
+	}
 	published, err := l.drainCanonicalEvents(ctx, "")
 	l.publicationMu.Unlock()
 	l.afterCanonicalPublication(published, "")
@@ -98,7 +313,9 @@ func (l *idleAwareEventListener) PublishAcceptedInput(ctx context.Context, event
 		return errors.New("accepted input event must be a persisted orchestrator envelope")
 	}
 
-	l.publicationMu.Lock()
+	if err := l.lockCanonicalDrain(ctx); err != nil {
+		return err
+	}
 	published, err := l.drainCanonicalEvents(ctx, "")
 	l.publicationMu.Unlock()
 	l.afterCanonicalPublication(published, "")
@@ -116,10 +333,50 @@ func (l *idleAwareEventListener) RestoreCanonicalProjection(ctx context.Context)
 		return errors.New("canonical event projection restore context is required")
 	}
 
-	l.publicationMu.Lock()
+	if err := l.lockCanonicalDrain(ctx); err != nil {
+		return err
+	}
 	_, err := l.drainCanonicalEvents(ctx, "")
 	l.publicationMu.Unlock()
 	return err
+}
+
+// lockCanonicalDrain waits for any active CHAT lease before taking the
+// publication mutex. It rechecks after acquiring the mutex because BindChat
+// may have installed a lease between the first check and Lock. A CHAT lease
+// and a durable replay can therefore never hold the mutex across one another's
+// request work or database I/O.
+func (l *idleAwareEventListener) lockCanonicalDrain(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		l.mu.RLock()
+		binding := l.chatBinding
+		l.mu.RUnlock()
+		if binding != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-binding.done:
+				continue
+			}
+		}
+
+		l.publicationMu.Lock()
+		l.mu.RLock()
+		binding = l.chatBinding
+		l.mu.RUnlock()
+		if binding == nil {
+			return nil
+		}
+		l.publicationMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-binding.done:
+		}
+	}
 }
 
 // drainCanonicalEvents is called with publicationMu held. Its RAM cursor only
@@ -159,7 +416,7 @@ func (l *idleAwareEventListener) drainCanonicalEvents(ctx context.Context, allow
 			if index > 0 && event.EventSeq <= page[index-1].EventSeq {
 				return published, errors.New("canonical event replay is not in ascending EventSeq order")
 			}
-			if !viewer.IsTransientReplayEvent(event) || event.EventID == allowLiveTransientID {
+			if event.EventSeq > l.livePublicationCursor && (!viewer.IsTransientReplayEvent(event) || event.EventID == allowLiveTransientID) {
 				projected := true
 				if l.hub != nil {
 					var hubErr error
@@ -175,8 +432,17 @@ func (l *idleAwareEventListener) drainCanonicalEvents(ctx context.Context, allow
 					published = append(published, event)
 				}
 			}
+			if event.EventSeq > l.livePublicationCursor {
+				l.livePublicationCursor = event.EventSeq
+			}
+			if l.hub != nil {
+				if err := l.hub.MarkDurable(event); err != nil {
+					return published, err
+				}
+			}
 			cursor = event.EventSeq
 			l.publicationCursor = cursor
+			l.durableCursorAtomic.Store(int64(cursor))
 		}
 		if cursor >= through {
 			return published, nil

@@ -45,6 +45,48 @@ func assertConversationTurnIdentity(t *testing.T, request domconv.ConversationTu
 	}
 }
 
+func planConversationTurnForL1Test(t *testing.T, request domconv.ConversationTurnRequest, active *domconv.ConversationTurnActiveThreadState) domconv.ConversationTurnRequest {
+	t.Helper()
+	normalized, err := domconv.NormalizeConversationTurnRequest(request)
+	if err != nil {
+		t.Fatalf("NormalizeConversationTurnRequest: %v", err)
+	}
+	plan, err := domconv.PlanConversationTurnThread(domconv.ConversationTurnThreadPlanInput{
+		Active:      active,
+		Boundary:    normalized.Boundary,
+		Domain:      normalized.Domain,
+		NewThreadID: modulecore.NewThreadID(),
+	})
+	if err != nil {
+		t.Fatalf("PlanConversationTurnThread: %v", err)
+	}
+	request.ThreadPlan = &domconv.ConversationTurnThreadPlanBinding{
+		SessionID: normalized.SessionID,
+		OwnerID:   normalized.OwnerID,
+		Plan:      plan,
+	}
+	return request
+}
+
+func loadConversationTurnActiveThreadForL1Test(t *testing.T, store *L1SQLiteStore, sessionID string) domconv.ConversationTurnActiveThreadState {
+	t.Helper()
+	var threadID, threadKind, domain string
+	var threadSeq int64
+	var messageCount int64
+	if err := store.db.QueryRow(`
+SELECT thread_id, thread_seq, thread_kind, domain, message_count
+FROM conversation_active_thread WHERE session_id = ?`, sessionID).
+		Scan(&threadID, &threadSeq, &threadKind, &domain, &messageCount); err != nil {
+		t.Fatalf("load active thread: %v", err)
+	}
+	return domconv.ConversationTurnActiveThreadState{
+		Thread: domconv.ConversationTurnThreadIdentity{
+			ID: modulecore.ThreadID(threadID), Seq: modulecore.ThreadSeq(threadSeq), Kind: modulecore.ThreadKind(threadKind),
+		},
+		Domain: domain, MessageCount: messageCount,
+	}
+}
+
 func canonicalConversationTurnSessionIDForTest(source string) string {
 	if id := modulecore.SessionID(source); id.Validate() == nil {
 		return source
@@ -91,6 +133,157 @@ func TestConversationTurnCommitPersistsTypedResult(t *testing.T) {
 	}
 	if recallTraceID != string(request.TraceID) || recallTurnID != string(request.TurnID) || recallRootTaskID != string(request.RootTaskID) {
 		t.Fatalf("recall identity=%q/%q/%q", recallTraceID, recallTurnID, recallRootTaskID)
+	}
+}
+
+func TestConversationTurnCommitUsesPlannedInitialThread(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "planned-initial.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	request := conversationTurnStoreTestRequest("turn-planned-initial", "session-planned-initial")
+	request.Domain = "planned-domain"
+	request = planConversationTurnForL1Test(t, request, nil)
+	wantPlan := request.ThreadPlan.Plan
+	result, err := store.CommitConversationTurn(context.Background(), request)
+	if err != nil {
+		t.Fatalf("CommitConversationTurn: %v", err)
+	}
+	if result.ThreadID != wantPlan.Thread.ID || result.ThreadSeq != wantPlan.Thread.Seq || result.ThreadKind != wantPlan.Thread.Kind ||
+		result.ClosedThreadID != wantPlan.ClosedThread.ID || result.ClosedThreadSeq != wantPlan.ClosedThread.Seq || result.ClosedThreadKind != wantPlan.ClosedThread.Kind {
+		t.Fatalf("result thread tuple=%s/%d/%s closed=%s/%d/%s, want plan %+v", result.ThreadID, result.ThreadSeq, result.ThreadKind, result.ClosedThreadID, result.ClosedThreadSeq, result.ClosedThreadKind, wantPlan)
+	}
+	active := loadConversationTurnActiveThreadForL1Test(t, store, request.SessionID)
+	if active.Thread != wantPlan.Thread || active.MessageCount != wantPlan.MessageCount || active.Domain != wantPlan.Domain {
+		t.Fatalf("active state=%+v, want plan %+v", active, wantPlan)
+	}
+}
+
+func TestConversationTurnCommitUsesPlannedThreadReuseAndBoundary(t *testing.T) {
+	t.Run("reuse", func(t *testing.T) {
+		store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "planned-reuse.db"))
+		if err != nil {
+			t.Fatalf("NewL1SQLiteStore: %v", err)
+		}
+		defer store.Close()
+
+		firstRequest := conversationTurnStoreTestRequest("turn-planned-reuse-first", "session-planned-reuse")
+		first, err := store.CommitConversationTurn(context.Background(), firstRequest)
+		if err != nil {
+			t.Fatalf("first commit: %v", err)
+		}
+		active := loadConversationTurnActiveThreadForL1Test(t, store, firstRequest.SessionID)
+		request := conversationTurnStoreTestRequest("turn-planned-reuse-second", firstRequest.SessionID)
+		request = planConversationTurnForL1Test(t, request, &active)
+		wantPlan := request.ThreadPlan.Plan
+		result, err := store.CommitConversationTurn(context.Background(), request)
+		if err != nil {
+			t.Fatalf("planned reuse commit: %v", err)
+		}
+		if result.ThreadID != first.ThreadID || result.ThreadSeq != first.ThreadSeq || result.ThreadKind != first.ThreadKind ||
+			result.ClosedThreadID != "" || wantPlan.Thread.ID != first.ThreadID || wantPlan.MessageCount != 4 {
+			t.Fatalf("result=%+v plan=%+v first=%+v, want reuse", result, wantPlan, first)
+		}
+	})
+
+	t.Run("boundary", func(t *testing.T) {
+		store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "planned-boundary.db"))
+		if err != nil {
+			t.Fatalf("NewL1SQLiteStore: %v", err)
+		}
+		defer store.Close()
+
+		firstRequest := conversationTurnStoreTestRequest("turn-planned-boundary-first", "session-planned-boundary")
+		first, err := store.CommitConversationTurn(context.Background(), firstRequest)
+		if err != nil {
+			t.Fatalf("first commit: %v", err)
+		}
+		active := loadConversationTurnActiveThreadForL1Test(t, store, firstRequest.SessionID)
+		request := conversationTurnStoreTestRequest("turn-planned-boundary-second", firstRequest.SessionID)
+		request.Boundary = true
+		request.BoundaryReason = "new subject"
+		request = planConversationTurnForL1Test(t, request, &active)
+		wantPlan := request.ThreadPlan.Plan
+		result, err := store.CommitConversationTurn(context.Background(), request)
+		if err != nil {
+			t.Fatalf("planned boundary commit: %v", err)
+		}
+		if result.ThreadID != wantPlan.Thread.ID || result.ThreadSeq != wantPlan.Thread.Seq || result.ThreadKind != wantPlan.Thread.Kind ||
+			result.ClosedThreadID != first.ThreadID || result.ClosedThreadSeq != first.ThreadSeq || result.ClosedThreadKind != first.ThreadKind ||
+			wantPlan.ClosedThread != active.Thread || wantPlan.MessageCount != 2 {
+			t.Fatalf("result=%+v plan=%+v first=%+v active=%+v, want boundary plan", result, wantPlan, first, active)
+		}
+	})
+}
+
+func TestConversationTurnCommitRejectsStaleThreadPlan(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "planned-stale.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	firstRequest := conversationTurnStoreTestRequest("turn-planned-stale-first", "session-planned-stale")
+	if _, err := store.CommitConversationTurn(ctx, firstRequest); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	active := loadConversationTurnActiveThreadForL1Test(t, store, firstRequest.SessionID)
+	staleRequest := conversationTurnStoreTestRequest("turn-planned-stale-third", firstRequest.SessionID)
+	staleRequest = planConversationTurnForL1Test(t, staleRequest, &active)
+
+	interveningRequest := conversationTurnStoreTestRequest("turn-planned-stale-second", firstRequest.SessionID)
+	if _, err := store.CommitConversationTurn(ctx, interveningRequest); err != nil {
+		t.Fatalf("intervening commit: %v", err)
+	}
+	result, err := store.CommitConversationTurn(ctx, staleRequest)
+	if !errors.Is(err, domconv.ErrConversationTurnConflict) || result.ErrorCode != domconv.ConversationTurnErrorConflict {
+		t.Fatalf("stale plan result=%+v err=%v, want conflict", result, err)
+	}
+	var receiptCount int
+	if err := store.db.QueryRow(`SELECT count(*) FROM conversation_turn_receipt WHERE turn_id = ?`, staleRequest.TurnID).Scan(&receiptCount); err != nil {
+		t.Fatalf("stale receipt count: %v", err)
+	}
+	current := loadConversationTurnActiveThreadForL1Test(t, store, firstRequest.SessionID)
+	if receiptCount != 0 || current.MessageCount != 4 {
+		t.Fatalf("stale plan changed state: receipts=%d active=%+v", receiptCount, current)
+	}
+}
+
+func TestConversationTurnPlannedRetryPreservesIdempotentReplay(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "planned-replay.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	request := conversationTurnStoreTestRequest("turn-planned-replay", "session-planned-replay")
+	request = planConversationTurnForL1Test(t, request, nil)
+	first, err := store.CommitConversationTurn(ctx, request)
+	if err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	firstHash, err := domconv.ConversationTurnPayloadSHA256(request)
+	if err != nil {
+		t.Fatalf("first payload hash: %v", err)
+	}
+	request.ThreadPlan.Plan.Thread.ID = modulecore.NewThreadID()
+	retryHash, err := domconv.ConversationTurnPayloadSHA256(request)
+	if err != nil {
+		t.Fatalf("retry payload hash: %v", err)
+	}
+	if retryHash != firstHash {
+		t.Fatalf("planned retry hash=%s, want original %s", retryHash, firstHash)
+	}
+	replay, err := store.CommitConversationTurn(ctx, request)
+	if err != nil || !replay.IdempotentReplay {
+		t.Fatalf("planned replay=%+v err=%v, want idempotent replay", replay, err)
+	}
+	if replay.ThreadID != first.ThreadID || replay.ThreadSeq != first.ThreadSeq || replay.ThreadKind != first.ThreadKind || replay.PayloadSHA256 != first.PayloadSHA256 {
+		t.Fatalf("replay=%+v, want first result %+v", replay, first)
 	}
 }
 

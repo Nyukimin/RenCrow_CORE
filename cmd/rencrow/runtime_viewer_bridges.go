@@ -225,7 +225,23 @@ func buildViewerBridgeHandlers(
 			timing = deps.responseFirst.processing.timing
 			processing = deps.responseFirst.processing.lifecycle
 		}
-		v2Options = &viewer.V2SendOptions{Admission: sessionProtocolAdmission}
+		var legacyPreSessionAdmission viewer.LegacyPreSessionAdmissionHook
+		if deps != nil && deps.combinedChatProcessorEligible {
+			legacyPreSessionAdmission = func(requestContext context.Context, identity viewer.LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+				return admitRuntimeLegacyViewerChat(
+					requestContext,
+					deps.persistenceQueue,
+					deps.taskStore,
+					deps.combinedChatAdmissionEnabled,
+					deps.eventRelay,
+					identity,
+				)
+			}
+		}
+		v2Options = &viewer.V2SendOptions{
+			Admission:                 sessionProtocolAdmission,
+			LegacyPreSessionAdmission: legacyPreSessionAdmission,
+		}
 		if cfg != nil && strings.EqualFold(strings.TrimSpace(cfg.ConversationRuntime.Version), "v2") && deps.responseFirst != nil {
 			v2Options.Enabled = true
 			v2Options.ActorID = responseFirstActorID

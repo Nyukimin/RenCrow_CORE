@@ -231,6 +231,11 @@ func (s *SQLiteStore) savePersonaStorageHostMutation(ctx context.Context, identi
 	if len(args) == 0 {
 		return nil, errors.New("persona storage-host save requires canonical row arguments")
 	}
+	release, err := s.admissionWrites.beginDirectOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	resultJSON, err := json.Marshal(item)
 	if err != nil {
 		return nil, err
@@ -259,6 +264,7 @@ func (s *SQLiteStore) savePersonaStorageHostMutation(ctx context.Context, identi
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.admissionWrites.recordSynchronous(table, effectID, string(resultJSON))
 	return resultJSON, nil
 }
 
@@ -303,6 +309,11 @@ func (s *SQLiteStore) lookupPersonaStorageHostMutation(ctx context.Context, iden
 	if s == nil || s.db == nil {
 		return nil, false, errors.New("persona sqlite store is closed")
 	}
+	release, err := s.admissionWrites.beginDirectOperation(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer release()
 	expectedJSON, err := json.Marshal(expected)
 	if err != nil {
 		return nil, false, err

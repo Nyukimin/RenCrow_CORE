@@ -33,12 +33,46 @@ type EventHub struct {
 	mu                  sync.RWMutex
 	clients             map[chan []byte]struct{}
 	history             []orchestrator.OrchestratorEvent
+	acceptedTail        []orchestrator.OrchestratorEvent
+	acceptedGap         *EventReplayGap
 	maxHist             int
 	replayReader        EventReplayReader
 	sessionReplayReader SessionPublicEventReplayReader
 	clientCountListener func(int)
 	lastLiveEventSeq    modulecore.EventSeq
 	lastLiveEventID     modulecore.EventID
+}
+
+// EventReplaySnapshot is captured atomically with subscription. Events holds
+// the bounded live history plus any admitted events retained until durable
+// replay confirms their commit. AcceptedGap identifies the most recent
+// admitted event evicted from that retained tail.
+type EventReplaySnapshot struct {
+	Events      []orchestrator.OrchestratorEvent
+	AcceptedGap *EventReplayGap
+}
+
+// EventReplayGap describes accepted RAM-only history that was evicted before
+// a durable replay confirmed its commit.
+type EventReplayGap struct {
+	EventID  modulecore.EventID
+	EventSeq modulecore.EventSeq
+}
+
+// ReplayCoverageError means a captured RAM suffix cannot be proven complete
+// from the durable prefix. SSE callers must send an explicit reset instead of
+// silently continuing from a partial replay.
+type ReplayCoverageError struct {
+	After          modulecore.EventSeq
+	Missing        EventReplayGap
+	DurableThrough modulecore.EventSeq
+}
+
+func (e *ReplayCoverageError) Error() string {
+	if e == nil {
+		return "event replay coverage is unavailable"
+	}
+	return fmt.Sprintf("event replay after %d cannot cover admitted event %s at EventSeq %d (durable through %d)", e.After, e.Missing.EventID, e.Missing.EventSeq, e.DurableThrough)
 }
 
 var errEventHubLiveSequenceNotIncreasing = errors.New("live EventSeq is not increasing")
@@ -76,6 +110,16 @@ func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
 // its sequence advances. An exact retry of the latest event is a successful
 // no-op so recovery cannot enqueue it twice.
 func (h *EventHub) PublishLive(ev orchestrator.OrchestratorEvent) (bool, error) {
+	return h.publishLive(ev, false)
+}
+
+// PublishAccepted publishes an EventStore event after RAM admission and keeps
+// it in a bounded tail until a later durable replay confirms the commit.
+func (h *EventHub) PublishAccepted(ev orchestrator.OrchestratorEvent) (bool, error) {
+	return h.publishLive(ev, true)
+}
+
+func (h *EventHub) publishLive(ev orchestrator.OrchestratorEvent, accepted bool) (bool, error) {
 	if h == nil {
 		return false, errors.New("event hub is required")
 	}
@@ -103,11 +147,63 @@ func (h *EventHub) PublishLive(ev orchestrator.OrchestratorEvent) (bool, error) 
 	}
 	h.lastLiveEventSeq = ev.EventSeq
 	h.lastLiveEventID = ev.EventID
+	if accepted {
+		h.retainAcceptedLocked(ev)
+	}
 	clientDropped := h.appendEventLocked(ev, data)
 	clientCount := len(h.clients)
 	h.mu.Unlock()
 	h.logPublishedEvent(ev, clientDropped, clientCount)
 	return true, nil
+}
+
+func (h *EventHub) retainAcceptedLocked(ev orchestrator.OrchestratorEvent) {
+	if h.maxHist <= 0 {
+		h.acceptedGap = &EventReplayGap{EventID: ev.EventID, EventSeq: ev.EventSeq}
+		h.acceptedTail = nil
+		return
+	}
+	h.acceptedTail = append(h.acceptedTail, ev)
+	if len(h.acceptedTail) > h.maxHist {
+		evicted := h.acceptedTail[0]
+		h.acceptedTail = h.acceptedTail[1:]
+		h.acceptedGap = &EventReplayGap{EventID: evicted.EventID, EventSeq: evicted.EventSeq}
+	}
+}
+
+// MarkDurable retires accepted RAM tail entries through the matching durable
+// EventSeq. FIFO EventStore commit order proves all earlier accepted entries
+// have also committed. A reused sequence with a different identity fails
+// closed.
+func (h *EventHub) MarkDurable(ev orchestrator.OrchestratorEvent) error {
+	if h == nil {
+		return nil
+	}
+	if ev.EventSeq <= 0 || ev.EventID.Validate() != nil {
+		return errors.New("durable event identity is invalid")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, accepted := range h.acceptedTail {
+		if accepted.EventSeq == ev.EventSeq && accepted.EventID != ev.EventID {
+			return fmt.Errorf("durable EventSeq %d belongs to %s, accepted tail has %s", ev.EventSeq, ev.EventID, accepted.EventID)
+		}
+	}
+	if h.acceptedGap != nil && h.acceptedGap.EventSeq == ev.EventSeq && h.acceptedGap.EventID != ev.EventID {
+		return fmt.Errorf("durable EventSeq %d belongs to %s, evicted accepted event has %s", ev.EventSeq, ev.EventID, h.acceptedGap.EventID)
+	}
+	firstRetained := 0
+	for firstRetained < len(h.acceptedTail) && h.acceptedTail[firstRetained].EventSeq <= ev.EventSeq {
+		firstRetained++
+	}
+	if firstRetained > 0 {
+		copy(h.acceptedTail, h.acceptedTail[firstRetained:])
+		h.acceptedTail = h.acceptedTail[:len(h.acceptedTail)-firstRetained]
+	}
+	if h.acceptedGap != nil && h.acceptedGap.EventSeq <= ev.EventSeq {
+		h.acceptedGap = nil
+	}
+	return nil
 }
 
 func (h *EventHub) appendEventLocked(ev orchestrator.OrchestratorEvent, data []byte) bool {
@@ -180,16 +276,41 @@ func (h *EventHub) notifyClientCountChanged(count int) {
 // Subscribe registers a new SSE client and returns its event channel and a
 // consistent history snapshot captured at registration time.
 func (h *EventHub) Subscribe() (chan []byte, []orchestrator.OrchestratorEvent) {
+	ch, snapshot := h.SubscribeForReplay()
+	return ch, snapshot.Events
+}
+
+// SubscribeForReplay atomically registers the subscriber and captures the
+// bounded durable/live history plus retained admitted suffix metadata.
+func (h *EventHub) SubscribeForReplay() (chan []byte, EventReplaySnapshot) {
 	ch := make(chan []byte, 64)
 	h.mu.Lock()
 	h.clients[ch] = struct{}{}
 	clientCount := len(h.clients)
-	history := make([]orchestrator.OrchestratorEvent, len(h.history))
-	copy(history, h.history)
+	events := make([]orchestrator.OrchestratorEvent, 0, len(h.history)+len(h.acceptedTail))
+	events = append(events, h.history...)
+	seen := make(map[modulecore.EventSeq]struct{}, len(events)+len(h.acceptedTail))
+	for _, event := range events {
+		if event.EventSeq > 0 {
+			seen[event.EventSeq] = struct{}{}
+		}
+	}
+	for _, event := range h.acceptedTail {
+		if _, exists := seen[event.EventSeq]; exists {
+			continue
+		}
+		events = append(events, event)
+		seen[event.EventSeq] = struct{}{}
+	}
+	snapshot := EventReplaySnapshot{Events: events}
+	if h.acceptedGap != nil {
+		gap := *h.acceptedGap
+		snapshot.AcceptedGap = &gap
+	}
 	h.mu.Unlock()
 	log.Printf("[EventHub] Subscribe: new client connected (total clients=%d)", clientCount)
 	h.notifyClientCountChanged(clientCount)
-	return ch, history
+	return ch, snapshot
 }
 
 // Unsubscribe removes a client and closes its channel.
@@ -222,6 +343,14 @@ func (h *EventHub) History() []orchestrator.OrchestratorEvent {
 // configured; cursor zero intentionally preserves the existing in-memory
 // initial snapshot behavior.
 func (h *EventHub) Replay(ctx context.Context, after modulecore.EventSeq, snapshot []orchestrator.OrchestratorEvent, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {
+	return h.ReplayCaptured(ctx, after, EventReplaySnapshot{Events: snapshot}, emit)
+}
+
+// ReplayCaptured merges a durable prefix with the suffix atomically captured
+// when the subscriber registered. Accepted RAM-only events are included after
+// the fixed durable watermark, preventing a reconnect from missing events
+// published before subscription.
+func (h *EventHub) ReplayCaptured(ctx context.Context, after modulecore.EventSeq, snapshot EventReplaySnapshot, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {
 	if ctx == nil {
 		return after, fmt.Errorf("event replay context is required")
 	}
@@ -233,16 +362,10 @@ func (h *EventHub) Replay(ctx context.Context, after modulecore.EventSeq, snapsh
 	}
 	boundedContext, cancel := context.WithTimeout(ctx, replayTimeout)
 	defer cancel()
-	if after == 0 {
-		return replaySnapshot(boundedContext, snapshot, after, emit, false)
-	}
 	h.mu.RLock()
 	reader := h.replayReader
 	h.mu.RUnlock()
-	if reader != nil {
-		return replayDurable(boundedContext, reader, after, emit)
-	}
-	return replaySnapshot(boundedContext, snapshot, after, emit, true)
+	return replayCaptured(boundedContext, reader, after, snapshot, emit, false)
 }
 
 // ReplayAvailable emits the retained canonical window when a durable reader is
@@ -250,6 +373,13 @@ func (h *EventHub) Replay(ctx context.Context, after modulecore.EventSeq, snapsh
 // reconnect cursor can no longer be resolved, when replaying after its old
 // EventSeq could silently skip a replacement event that reused that sequence.
 func (h *EventHub) ReplayAvailable(ctx context.Context, snapshot []orchestrator.OrchestratorEvent, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {
+	return h.ReplayAvailableCaptured(ctx, EventReplaySnapshot{Events: snapshot}, emit)
+}
+
+// ReplayAvailableCaptured replays the available durable history and captured
+// RAM suffix after a reset cursor. A missing accepted tail is reported as a
+// typed coverage error if the durable prefix cannot prove it committed.
+func (h *EventHub) ReplayAvailableCaptured(ctx context.Context, snapshot EventReplaySnapshot, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {
 	if ctx == nil {
 		return 0, fmt.Errorf("event replay context is required")
 	}
@@ -261,10 +391,103 @@ func (h *EventHub) ReplayAvailable(ctx context.Context, snapshot []orchestrator.
 	h.mu.RLock()
 	reader := h.replayReader
 	h.mu.RUnlock()
-	if reader != nil {
-		return replayDurable(boundedContext, reader, 0, emit)
+	return replayCaptured(boundedContext, reader, 0, snapshot, emit, true)
+}
+
+func replayCaptured(ctx context.Context, reader EventReplayReader, after modulecore.EventSeq, snapshot EventReplaySnapshot, emit func(orchestrator.OrchestratorEvent) error, forceDurable bool) (modulecore.EventSeq, error) {
+	if snapshot.AcceptedGap != nil && snapshot.AcceptedGap.EventSeq > after {
+		if reader == nil {
+			return after, &ReplayCoverageError{After: after, Missing: *snapshot.AcceptedGap}
+		}
+		proven, through, err := proveAcceptedGap(ctx, reader, *snapshot.AcceptedGap)
+		if err != nil {
+			return after, &ReplayCoverageError{After: after, Missing: *snapshot.AcceptedGap, DurableThrough: through}
+		}
+		if proven.EventSeq != snapshot.AcceptedGap.EventSeq || proven.EventID != snapshot.AcceptedGap.EventID {
+			return after, errors.New("durable accepted gap proof identity does not match the captured gap")
+		}
 	}
-	return replaySnapshot(boundedContext, snapshot, 0, emit, false)
+	if reader == nil {
+		return replaySnapshot(ctx, snapshot.Events, after, emit, after > 0)
+	}
+	if after == 0 && !forceDurable && snapshot.AcceptedGap == nil {
+		return replaySnapshot(ctx, snapshot.Events, after, emit, false)
+	}
+
+	idsBySeq := make(map[modulecore.EventSeq]modulecore.EventID, len(snapshot.Events))
+	for _, event := range snapshot.Events {
+		if event.EventSeq <= 0 {
+			continue
+		}
+		if prior, exists := idsBySeq[event.EventSeq]; exists && prior != event.EventID {
+			return after, fmt.Errorf("captured replay EventSeq %d has conflicting EventIDs %s and %s", event.EventSeq, prior, event.EventID)
+		}
+		idsBySeq[event.EventSeq] = event.EventID
+	}
+	cursor, err := replayDurable(ctx, reader, after, func(event orchestrator.OrchestratorEvent) error {
+		if capturedID, exists := idsBySeq[event.EventSeq]; exists && capturedID != event.EventID {
+			return fmt.Errorf("durable EventSeq %d belongs to %s, captured live event has %s", event.EventSeq, event.EventID, capturedID)
+		}
+		return emit(event)
+	})
+	if err != nil {
+		return cursor, err
+	}
+	suffix, err := orderedReplaySuffix(snapshot.Events, cursor)
+	if err != nil {
+		return cursor, err
+	}
+	for index, event := range suffix {
+		if err := replayContextError(ctx); err != nil {
+			return cursor, err
+		}
+		if event.EventSeq <= cursor {
+			return cursor, fmt.Errorf("captured replay suffix %d has non-advancing EventSeq %d", index, event.EventSeq)
+		}
+		if err := emit(event); err != nil {
+			return cursor, err
+		}
+		cursor = event.EventSeq
+	}
+	return cursor, nil
+}
+
+func proveAcceptedGap(ctx context.Context, reader EventReplayReader, gap EventReplayGap) (orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {
+	if gap.EventSeq <= 0 || gap.EventID.Validate() != nil {
+		return orchestrator.OrchestratorEvent{}, 0, errors.New("accepted replay gap identity is invalid")
+	}
+	if err := replayContextError(ctx); err != nil {
+		return orchestrator.OrchestratorEvent{}, 0, err
+	}
+	page, through, err := reader.ReplayPage(ctx, gap.EventSeq-1, 0, 1)
+	if err != nil {
+		return orchestrator.OrchestratorEvent{}, through, err
+	}
+	if through < gap.EventSeq || len(page) != 1 || page[0].EventSeq != gap.EventSeq || page[0].EventID != gap.EventID {
+		return orchestrator.OrchestratorEvent{}, through, fmt.Errorf("durable replay does not prove evicted accepted event %s at EventSeq %d", gap.EventID, gap.EventSeq)
+	}
+	return page[0], through, nil
+}
+
+func orderedReplaySuffix(events []orchestrator.OrchestratorEvent, after modulecore.EventSeq) ([]orchestrator.OrchestratorEvent, error) {
+	ordered := make([]orchestrator.OrchestratorEvent, 0, len(events))
+	for _, event := range events {
+		if event.EventSeq > after {
+			ordered = append(ordered, event)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].EventSeq < ordered[j].EventSeq })
+	suffix := ordered[:0]
+	for _, event := range ordered {
+		if len(suffix) > 0 && suffix[len(suffix)-1].EventSeq == event.EventSeq {
+			if suffix[len(suffix)-1].EventID != event.EventID {
+				return nil, fmt.Errorf("captured replay EventSeq %d has conflicting EventIDs", event.EventSeq)
+			}
+			continue
+		}
+		suffix = append(suffix, event)
+	}
+	return suffix, nil
 }
 
 func replayDurable(ctx context.Context, reader EventReplayReader, after modulecore.EventSeq, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {

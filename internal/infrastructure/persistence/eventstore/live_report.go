@@ -81,11 +81,18 @@ func (s *SQLiteStore) AcceptReport(ctx context.Context, input ReportInput) (Acce
 	}
 	operationID := reportAcceptanceOperationID(input.Report.ReportID)
 	submissionID := reportSubmissionID(input.Report.ReportID)
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		return enqueueOrderedWriteResult(s, ctx, 1, queuedInput, func(commandCtx context.Context) (AcceptedTurn, error) {
+			return s.AcceptReport(commandCtx, queuedInput)
+		})
+	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return AcceptedTurn{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -178,7 +185,7 @@ func (s *SQLiteStore) AcceptReport(ctx context.Context, input ReportInput) (Acce
 		return AcceptedTurn{}, ErrConversationSessionConflict
 	}
 
-	event.EventSeq, err = nextEventSeq(ctx, tx)
+	event.EventSeq, err = s.nextSequence(ctx)
 	if err != nil {
 		return AcceptedTurn{}, err
 	}
@@ -267,6 +274,7 @@ func (s *SQLiteStore) AcceptReport(ctx context.Context, input ReportInput) (Acce
 		return AcceptedTurn{}, err
 	}
 	committed = true
+	s.observeCommittedOrchestratorEvent(accepted.InputEvent)
 	return accepted, nil
 }
 

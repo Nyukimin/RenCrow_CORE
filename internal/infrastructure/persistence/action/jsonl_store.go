@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -44,8 +45,12 @@ var (
 // rotation while mu is held for writing and, for the readers that do not take mu,
 // while the snapshot's segMu is.
 type JSONLStore struct {
-	mu   sync.RWMutex
-	root string
+	mu sync.RWMutex
+	// admissionMu orders indexed RAM admissions, their FIFO worker commits, and
+	// legacy synchronous calls that fence behind this store's accepted writes.
+	// It is never held while waiting for the persistence queue.
+	admissionMu sync.Mutex
+	root        string
 	// actionPath and attemptPath are the logs in the root: all of the store on the
 	// plain layout, segment 0 on layout v2.
 	actionPath  string
@@ -62,6 +67,13 @@ type JSONLStore struct {
 	// without OpenOptions.Index, in which case every transaction reads the logs
 	// in full.
 	idx *snapshot
+
+	writeQueue      *persistencequeue.Queue[persistencequeue.PersistenceCommand]
+	admissionTicket persistencequeue.Ticket
+	admissionErr    error
+	admissionGen    uint64
+	pendingActions  map[modulecore.ActionID]pendingActionValue
+	pendingAttempts map[modulecore.AttemptID]pendingAttemptValue
 }
 
 // OpenOptions selects optional behavior of the Action store. The zero value is
@@ -212,6 +224,15 @@ func (s *JSONLStore) transaction(ctx context.Context, op string, callback func(d
 	if callback == nil {
 		return fmt.Errorf("action transaction callback is nil")
 	}
+	if admission, ok := persistencequeue.AdmissionFromContext(ctx); ok {
+		return s.admittedTransaction(ctx, op, callback, admission)
+	}
+	return s.withAdmissionFence(ctx, func() error {
+		return s.directTransaction(ctx, op, callback)
+	})
+}
+
+func (s *JSONLStore) directTransaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.idx != nil {
@@ -283,6 +304,15 @@ func (s *JSONLStore) readTransaction(ctx context.Context, op string, callback fu
 	if callback == nil {
 		return fmt.Errorf("action read transaction callback is nil")
 	}
+	if admission, ok := persistencequeue.AdmissionFromContext(ctx); ok {
+		return s.admittedReadTransaction(ctx, callback, admission)
+	}
+	return s.withAdmissionFence(ctx, func() error {
+		return s.directReadTransaction(ctx, op, callback)
+	})
+}
+
+func (s *JSONLStore) directReadTransaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
 	if s.idx != nil {
 		return s.snapshotReadTransaction(ctx, op, callback)
 	}
@@ -420,11 +450,15 @@ func (s *JSONLStore) ListAttempts(ctx context.Context, filter domainaction.Attem
 // changes while the transaction runs. Both shapes answer the same questions the
 // same way; the second never copies the store.
 type transactionStore struct {
-	lifecycle       sync.RWMutex
-	dataMu          sync.Mutex
-	active          bool
-	readOnly        bool
-	base            *snapState
+	lifecycle sync.RWMutex
+	dataMu    sync.Mutex
+	active    bool
+	readOnly  bool
+	base      *snapState
+	// overlay holds accepted Action/Attempt values that are not yet durable.
+	// It is consulted after base and before this transaction's writes.
+	overlayActions  map[modulecore.ActionID]domainaction.Action
+	overlayAttempts map[modulecore.AttemptID]domainaction.Attempt
 	actions         map[modulecore.ActionID]domainaction.Action
 	attempts        map[modulecore.AttemptID]domainaction.Attempt
 	pendingActions  []domainaction.Action
@@ -466,6 +500,9 @@ func (tx *transactionStore) lookupAction(id modulecore.ActionID) (domainaction.A
 	if item, ok := tx.actions[id]; ok {
 		return item, true
 	}
+	if item, ok := tx.overlayActions[id]; ok {
+		return item, true
+	}
 	if tx.base != nil {
 		return tx.base.action(id)
 	}
@@ -475,6 +512,9 @@ func (tx *transactionStore) lookupAction(id modulecore.ActionID) (domainaction.A
 // lookupAttempt is lookupAction for Attempts.
 func (tx *transactionStore) lookupAttempt(id modulecore.AttemptID) (domainaction.Attempt, bool) {
 	if item, ok := tx.attempts[id]; ok {
+		return item, true
+	}
+	if item, ok := tx.overlayAttempts[id]; ok {
 		return item, true
 	}
 	if tx.base != nil {

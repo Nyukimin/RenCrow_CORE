@@ -110,6 +110,29 @@ func TestParseChatCommand(t *testing.T) {
 	}
 }
 
+func TestIsChatCommandCandidateUsesThePreRoutingCommandParsers(t *testing.T) {
+	tests := []struct {
+		message string
+		want    bool
+	}{
+		{message: "/stop", want: true},
+		{message: "  /status  ", want: true},
+		{message: "覚えて: 短く論理的な説明を好む", want: true},
+		{message: "短く答えるを覚えて", want: true},
+		{message: "/code fix the bug", want: false},
+		{message: "/unknown", want: false},
+		{message: "今日は覚えていることについて質問です", want: false},
+		{message: "", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.message, func(t *testing.T) {
+			if got := IsChatCommandCandidate(test.message); got != test.want {
+				t.Fatalf("IsChatCommandCandidate(%q) = %t, want %t", test.message, got, test.want)
+			}
+		})
+	}
+}
+
 func TestHandleChatCommand_NoEngine(t *testing.T) {
 	// conversationEngine が nil の場合
 	m := &MioAgent{}

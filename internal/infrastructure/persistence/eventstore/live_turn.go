@@ -485,10 +485,17 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 	if err != nil {
 		return AcceptedTurn{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		return enqueueOrderedWriteResult(s, ctx, 1, queuedInput, func(commandCtx context.Context) (AcceptedTurn, error) {
+			return s.AcceptTurn(commandCtx, queuedInput)
+		})
+	}
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return AcceptedTurn{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -585,7 +592,7 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 	}
 
 	event := input.InputEvent
-	event.EventSeq, err = nextEventSeq(ctx, tx)
+	event.EventSeq, err = s.nextSequence(ctx)
 	if err != nil {
 		return AcceptedTurn{}, err
 	}
@@ -660,12 +667,61 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 		return AcceptedTurn{}, err
 	}
 	committed = true
+	s.observeCommittedOrchestratorEvent(accepted.InputEvent)
 	return accepted, nil
 }
 
 // CommitTurnBundle persists one output unit and returns only after the full
 // event/index/state/outbox/receipt transaction commits.
 func (s *SQLiteStore) CommitTurnBundle(ctx context.Context, input CommitInput) (CommittedBatch, error) {
+	if s.shouldQueueWrite(ctx) {
+		if err := s.ensureOpen(); err != nil {
+			return CommittedBatch{}, err
+		}
+		if ctx == nil {
+			return CommittedBatch{}, errors.New("commit turn context is required")
+		}
+		if err := validateCommitInput(input); err != nil {
+			return CommittedBatch{}, err
+		}
+		if _, err := commitInputHash(input); err != nil {
+			return CommittedBatch{}, err
+		}
+		queuedInput := cloneCommitInput(input)
+		sizeBytes, err := queuedWriteSize(queuedInput)
+		if err != nil {
+			return CommittedBatch{}, fmt.Errorf("size queued turn bundle: %w", err)
+		}
+		var committed CommittedBatch
+		err = s.enqueueOrderedWrite(ctx, len(queuedInput.Events), sizeBytes, func(commandCtx context.Context) error {
+			var commitErr error
+			committed, commitErr = s.commitTurnBundleInline(commandCtx, queuedInput)
+			return commitErr
+		})
+		if err != nil {
+			return CommittedBatch{}, err
+		}
+		return committed, nil
+	}
+	return s.commitTurnBundleInline(ctx, input)
+}
+
+func cloneCommitInput(input CommitInput) CommitInput {
+	input.Events = append([]modulecore.EventEnvelope(nil), input.Events...)
+	for index := range input.Events {
+		input.Events[index].DependencyEventIDs = append([]modulecore.EventID(nil), input.Events[index].DependencyEventIDs...)
+		input.Events[index].Payload = cloneMutablePayload(input.Events[index].Payload)
+	}
+	input.MessageIndexes = append([]MessageIndex(nil), input.MessageIndexes...)
+	input.Outbox = append([]WorkItem(nil), input.Outbox...)
+	if input.Delegation != nil {
+		delegation := *input.Delegation
+		input.Delegation = &delegation
+	}
+	return input
+}
+
+func (s *SQLiteStore) commitTurnBundleInline(ctx context.Context, input CommitInput) (CommittedBatch, error) {
 	if err := s.ensureOpen(); err != nil {
 		return CommittedBatch{}, err
 	}
@@ -679,10 +735,11 @@ func (s *SQLiteStore) CommitTurnBundle(ctx context.Context, input CommitInput) (
 	if err != nil {
 		return CommittedBatch{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return CommittedBatch{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -748,7 +805,7 @@ func (s *SQLiteStore) CommitTurnBundle(ctx context.Context, input CommitInput) (
 	batchEvents := make([]modulecore.EventEnvelope, 0, len(input.Events))
 	for _, unsequenced := range input.Events {
 		event := unsequenced
-		event.EventSeq, err = nextEventSeq(ctx, tx)
+		event.EventSeq, err = s.nextSequence(ctx)
 		if err != nil {
 			return CommittedBatch{}, err
 		}
@@ -854,6 +911,7 @@ func (s *SQLiteStore) CommitTurnBundle(ctx context.Context, input CommitInput) (
 		return CommittedBatch{}, err
 	}
 	committed = true
+	s.observeCommittedOrchestratorEvents(batchEvents)
 	return batch, nil
 }
 

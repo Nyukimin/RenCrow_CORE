@@ -180,10 +180,6 @@ type conversationThreadIdentity struct {
 	Kind modulecore.ThreadKind
 }
 
-func emptyConversationThreadIdentity() conversationThreadIdentity {
-	return conversationThreadIdentity{}
-}
-
 func (identity conversationThreadIdentity) validate(bound bool) error {
 	if bound {
 		return validateL1BoundThreadTuple(identity.ID, identity.Seq, identity.Kind)
@@ -403,6 +399,9 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingTraceID, &ex
 	now := time.Now().UTC()
 	thread, closedThread, messageCount, threadDomain, err := selectConversationTurnThread(ctx, tx, normalized, now)
 	if err != nil {
+		if errors.Is(err, domconv.ErrConversationTurnConflict) {
+			return rollback(domconv.ConversationTurnErrorConflict, err)
+		}
 		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 	base.ThreadID = thread.ID
@@ -1379,31 +1378,40 @@ func selectConversationTurnThread(ctx context.Context, tx *sql.Tx, request domco
 SELECT thread_id, thread_seq, thread_kind, domain, message_count
 FROM conversation_active_thread
 WHERE session_id = ?`, request.SessionID).Scan(&currentID, &currentSeq, &currentKind, &currentDomain, &currentCount)
-	hasCurrent := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", err
 	}
-	if hasCurrent {
-		thread = conversationThreadIdentity{ID: modulecore.ThreadID(currentID), Seq: modulecore.ThreadSeq(currentSeq), Kind: modulecore.ThreadKind(currentKind)}
-		if err := thread.validate(true); err != nil || currentCount < 0 || currentCount > 12 {
-			return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", errors.New("invalid active thread")
+	var active *domconv.ConversationTurnActiveThreadState
+	if err == nil {
+		active = &domconv.ConversationTurnActiveThreadState{
+			Thread: domconv.ConversationTurnThreadIdentity{
+				ID:   modulecore.ThreadID(currentID),
+				Seq:  modulecore.ThreadSeq(currentSeq),
+				Kind: modulecore.ThreadKind(currentKind),
+			},
+			Domain:       currentDomain,
+			MessageCount: int64(currentCount),
 		}
 	}
-	domain = request.Domain
-	if domain == "" {
-		domain = currentDomain
+	newThreadID := modulecore.NewThreadID()
+	if request.ThreadPlan != nil {
+		newThreadID = request.ThreadPlan.Plan.Thread.ID
 	}
-	if !hasCurrent {
-		thread = conversationThreadIdentity{ID: modulecore.NewThreadID(), Seq: 1, Kind: modulecore.ThreadKindUserConversation}
-		return thread, emptyConversationThreadIdentity(), 2, domain, nil
+	plan, err := domconv.PlanConversationTurnThread(domconv.ConversationTurnThreadPlanInput{
+		Active:      active,
+		Boundary:    request.Boundary,
+		Domain:      request.Domain,
+		NewThreadID: newThreadID,
+	})
+	if err != nil {
+		return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", err
 	}
-	if request.Boundary || currentCount+2 > 12 {
-		if thread.Seq >= modulecore.ThreadSeq(1<<63-1) {
-			return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", errors.New("thread sequence overflow")
-		}
-		return conversationThreadIdentity{ID: modulecore.NewThreadID(), Seq: thread.Seq + 1, Kind: thread.Kind}, thread, 2, domain, nil
+	if request.ThreadPlan != nil && plan != request.ThreadPlan.Plan {
+		return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", domconv.ErrConversationTurnConflict
 	}
-	return thread, emptyConversationThreadIdentity(), int64(currentCount + 2), domain, nil
+	thread = conversationThreadIdentity{ID: plan.Thread.ID, Seq: plan.Thread.Seq, Kind: plan.Thread.Kind}
+	closed = conversationThreadIdentity{ID: plan.ClosedThread.ID, Seq: plan.ClosedThread.Seq, Kind: plan.ClosedThread.Kind}
+	return thread, closed, plan.MessageCount, plan.Domain, nil
 }
 
 func upsertConversationActiveThread(ctx context.Context, tx *sql.Tx, sessionID string, thread conversationThreadIdentity, domain string, count int64, now time.Time) error {

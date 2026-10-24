@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -23,6 +24,243 @@ type turnTestArchiveStore struct {
 	getCalls  int
 	saveCalls int
 	saveErr   error
+}
+
+type admittedTurnCommitGateStore struct {
+	*l1sqlite.L1SQLiteStore
+	mu       sync.Mutex
+	calls    int
+	started  chan domconv.ConversationTurnRequest
+	release  chan struct{}
+	release1 sync.Once
+	fail     error
+}
+
+func (s *admittedTurnCommitGateStore) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	s.mu.Lock()
+	s.calls++
+	call := s.calls
+	s.mu.Unlock()
+	s.started <- request
+	if call == 1 && request.ThreadPlan != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnFailed}, ctx.Err()
+		}
+		if s.fail != nil {
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnFailed}, s.fail
+		}
+	}
+	return s.L1SQLiteStore.CommitConversationTurn(ctx, request)
+}
+
+func (s *admittedTurnCommitGateStore) unblock() {
+	s.release1.Do(func() { close(s.release) })
+}
+
+func newConversationTurnAdmission(t *testing.T, commandCount int) (*persistencequeue.Queue[persistencequeue.PersistenceCommand], *persistencequeue.Admission, context.Context) {
+	t.Helper()
+	queue, err := persistencequeue.NewPersistenceQueue(8, 4<<20)
+	if err != nil {
+		t.Fatalf("NewPersistenceQueue: %v", err)
+	}
+	admission, err := persistencequeue.Admit(queue, commandCount, 4<<20)
+	if err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = admission.Release()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = queue.Shutdown(ctx)
+	})
+	return queue, admission, persistencequeue.WithAdmission(context.Background(), admission)
+}
+
+func TestRealConversationManagerAdmittedTurnIsVisibleBeforeBlockedWriter(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "admitted-blocked.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	baselineRequest := managerTurnTestRequest("turn-admitted-baseline", "session-admitted-blocked")
+	baseline, err := l1.CommitConversationTurn(context.Background(), baselineRequest)
+	if err != nil {
+		t.Fatalf("seed stale L1 active thread: %v", err)
+	}
+	gate := &admittedTurnCommitGateStore{L1SQLiteStore: l1, started: make(chan domconv.ConversationTurnRequest, 2), release: make(chan struct{})}
+	redis := newMockRedisStore()
+	manager := &RealConversationManager{redisStore: redis, l1Store: gate}
+	queue, admission, ctx := newConversationTurnAdmission(t, 2)
+	defer gate.unblock()
+
+	firstRequest := managerTurnTestRequest("turn-admitted-first", "session-admitted-blocked")
+	firstRequest.Targets = manager.ConversationTurnTargets()
+	staleThread, err := domconv.NewThread(firstRequest.SessionID, "legacy", domconv.ThreadKindUserConversation, 1)
+	if err != nil {
+		t.Fatalf("NewThread stale Redis fixture: %v", err)
+	}
+	for _, message := range []domconv.Message{
+		domconv.NewMessage(domconv.SpeakerUser, "stale Redis user", nil),
+		domconv.NewMessage(domconv.SpeakerMio, "stale Redis agent", nil),
+	} {
+		if err := staleThread.AddMessage(message); err != nil {
+			t.Fatalf("AddMessage stale Redis fixture: %v", err)
+		}
+	}
+	staleSession := domconv.NewSessionConversation(firstRequest.SessionID, "owner-manager")
+	staleSession.LastThreadID = staleThread.ID
+	staleSession.LastThreadSeq = staleThread.ThreadSeq
+	staleSession.LastThreadKind = staleThread.ThreadKind
+	if err := redis.SaveThread(context.Background(), staleThread); err != nil {
+		t.Fatalf("SaveThread stale Redis fixture: %v", err)
+	}
+	if err := redis.SaveSession(context.Background(), staleSession); err != nil {
+		t.Fatalf("SaveSession stale Redis fixture: %v", err)
+	}
+	first, err := manager.CommitConversationTurn(ctx, firstRequest)
+	if err != nil || string(first.Status) != "accepted" {
+		t.Fatalf("first=%+v err=%v, want accepted while writer is blocked", first, err)
+	}
+	if first.ThreadID != baseline.ThreadID || first.ThreadSeq != baseline.ThreadSeq {
+		t.Fatalf("first accepted thread=%s/%d, baseline L1 thread=%s/%d", first.ThreadID, first.ThreadSeq, baseline.ThreadID, baseline.ThreadSeq)
+	}
+	select {
+	case written := <-gate.started:
+		if written.ThreadPlan == nil || written.ThreadPlan.Plan.Thread.ID != first.ThreadID {
+			t.Fatalf("worker request plan=%+v, want accepted thread %s", written.ThreadPlan, first.ThreadID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("persistence worker did not reach the blocked writer")
+	}
+	unadmittedThread, err := manager.GetActiveThread(context.Background(), firstRequest.SessionID)
+	if err != nil || unadmittedThread == nil || unadmittedThread.ID != staleThread.ID {
+		t.Fatalf("unadmitted Redis thread=%+v err=%v, want scoped stale thread %s", unadmittedThread, err, staleThread.ID)
+	}
+	unadmittedL1, err := manager.LoadActiveConversationThread(context.Background(), firstRequest.SessionID)
+	if err != nil || unadmittedL1 == nil || unadmittedL1.ID != baseline.ThreadID || len(unadmittedL1.Turns) != 2 {
+		t.Fatalf("unadmitted L1 thread=%+v err=%v, want only the two durable baseline messages", unadmittedL1, err)
+	}
+
+	secondRequest := managerTurnTestRequest("turn-admitted-second", firstRequest.SessionID)
+	secondRequest.Targets = manager.ConversationTurnTargets()
+	second, err := manager.CommitConversationTurn(ctx, secondRequest)
+	if err != nil || string(second.Status) != "accepted" {
+		t.Fatalf("second=%+v err=%v, want accepted", second, err)
+	}
+	if second.ThreadID != first.ThreadID || second.ThreadSeq != first.ThreadSeq || second.ThreadKind != first.ThreadKind {
+		t.Fatalf("second thread=%s/%d/%s, first=%s/%d/%s", second.ThreadID, second.ThreadSeq, second.ThreadKind, first.ThreadID, first.ThreadSeq, first.ThreadKind)
+	}
+
+	thread, err := manager.GetActiveThread(ctx, firstRequest.SessionID)
+	if err != nil || thread == nil || len(thread.Turns) != 6 || thread.Turns[4].Msg != secondRequest.UserMessage || thread.Turns[5].Msg != secondRequest.AgentMessage {
+		t.Fatalf("overlay active thread=%+v err=%v, want stale L1 plus both accepted turns", thread, err)
+	}
+	active, err := manager.LoadActiveConversationThread(ctx, firstRequest.SessionID)
+	if err != nil || active == nil || active.ID != first.ThreadID || len(active.Turns) != 6 {
+		t.Fatalf("overlay L1 active thread=%+v err=%v, want six messages", active, err)
+	}
+	recalled, err := manager.Recall(ctx, firstRequest.SessionID, "", 3)
+	if err != nil || len(recalled) != 6 || recalled[4].Msg != secondRequest.UserMessage || recalled[5].Msg != secondRequest.AgentMessage {
+		t.Fatalf("overlay recall=%+v err=%v, want stale L1 plus both accepted turns", recalled, err)
+	}
+
+	gate.unblock()
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("admission barrier: %v", err)
+	}
+	if status := queue.Status(); status.Failure != nil || status.Pending != 0 {
+		t.Fatalf("queue status after successful persistence=%+v", status)
+	}
+	thread, err = manager.GetActiveThread(context.Background(), firstRequest.SessionID)
+	if err != nil || thread == nil || len(thread.Turns) != 6 {
+		t.Fatalf("durable active thread=%+v err=%v, want six messages", thread, err)
+	}
+}
+
+func TestRealConversationManagerAdmittedTurnConflictAndIdempotentReplay(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "admitted-replay.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	gate := &admittedTurnCommitGateStore{L1SQLiteStore: l1, started: make(chan domconv.ConversationTurnRequest, 2), release: make(chan struct{})}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: gate}
+	queue, admission, ctx := newConversationTurnAdmission(t, 2)
+	defer gate.unblock()
+
+	request := managerTurnTestRequest("turn-admitted-replay", "session-admitted-replay")
+	request.Targets = manager.ConversationTurnTargets()
+	first, err := manager.CommitConversationTurn(ctx, request)
+	if err != nil || string(first.Status) != "accepted" {
+		t.Fatalf("first=%+v err=%v, want accepted", first, err)
+	}
+	select {
+	case <-gate.started:
+	case <-time.After(time.Second):
+		t.Fatal("persistence worker did not reach the blocked writer")
+	}
+
+	replay, err := manager.CommitConversationTurn(ctx, request)
+	if err != nil || string(replay.Status) != "accepted" || !replay.IdempotentReplay {
+		t.Fatalf("replay=%+v err=%v, want accepted idempotent replay", replay, err)
+	}
+	conflicting := request
+	conflicting.AgentMessage = "different payload"
+	if _, err := manager.CommitConversationTurn(ctx, conflicting); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("conflicting accepted replay err=%v, want conflict", err)
+	}
+	differentOwner := managerTurnTestRequest("turn-admitted-other-owner", request.SessionID)
+	differentOwner.OwnerID = "owner-other"
+	differentOwner.Targets = manager.ConversationTurnTargets()
+	if _, err := manager.CommitConversationTurn(ctx, differentOwner); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+		t.Fatalf("different owner err=%v, want conflict for an active session overlay", err)
+	}
+	if status := queue.Status(); status.Pending != 1 {
+		t.Fatalf("pending commands=%d, want exactly one accepted turn", status.Pending)
+	}
+
+	gate.unblock()
+	if err := admission.Barrier(context.Background()); err != nil {
+		t.Fatalf("admission barrier: %v", err)
+	}
+}
+
+func TestRealConversationManagerAdmittedWriterFailureRetainsReadOverlay(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "admitted-failure.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer l1.Close()
+	writerErr := errors.New("blocked L1 writer failure")
+	gate := &admittedTurnCommitGateStore{L1SQLiteStore: l1, started: make(chan domconv.ConversationTurnRequest, 1), release: make(chan struct{}), fail: writerErr}
+	manager := &RealConversationManager{redisStore: newMockRedisStore(), l1Store: gate}
+	queue, admission, ctx := newConversationTurnAdmission(t, 1)
+	defer gate.unblock()
+
+	request := managerTurnTestRequest("turn-admitted-failure", "session-admitted-failure")
+	request.Targets = manager.ConversationTurnTargets()
+	accepted, err := manager.CommitConversationTurn(ctx, request)
+	if err != nil || string(accepted.Status) != "accepted" {
+		t.Fatalf("accepted=%+v err=%v, want accepted", accepted, err)
+	}
+	select {
+	case <-gate.started:
+	case <-time.After(time.Second):
+		t.Fatal("persistence worker did not reach the blocked writer")
+	}
+	gate.unblock()
+	if err := admission.Barrier(context.Background()); !errors.Is(err, persistencequeue.ErrFailed) || !errors.Is(err, writerErr) {
+		t.Fatalf("admission barrier err=%v, want queue failure wrapping writer error", err)
+	}
+	if status := queue.Status(); status.Failure == nil {
+		t.Fatal("queue failure did not preserve its failed head")
+	}
+	thread, err := manager.GetActiveThread(ctx, request.SessionID)
+	if err != nil || thread == nil || len(thread.Turns) != 2 || thread.Turns[0].Msg != request.UserMessage {
+		t.Fatalf("failed head overlay=%+v err=%v, want accepted messages retained", thread, err)
+	}
 }
 
 type countingTurnSummarizer struct {

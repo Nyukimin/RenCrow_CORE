@@ -261,10 +261,21 @@ func (s *SQLiteStore) CommitClarificationDecision(ctx context.Context, input Cla
 	if err != nil {
 		return ClarificationDecisionCommit{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		sequenceCount := 2
+		if queuedInput.Decision.Kind != conversation.ClarificationDecisionAskUser {
+			sequenceCount = 3
+		}
+		return enqueueOrderedWriteResult(s, ctx, sequenceCount, queuedInput, func(commandCtx context.Context) (ClarificationDecisionCommit, error) {
+			return s.CommitClarificationDecision(commandCtx, queuedInput)
+		})
+	}
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return ClarificationDecisionCommit{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -317,6 +328,7 @@ func (s *SQLiteStore) CommitClarificationDecision(ctx context.Context, input Cla
 		return ClarificationDecisionCommit{}, err
 	}
 	committed = true
+	s.observeCommittedOrchestratorEvents(result.Events)
 	return result, nil
 }
 
@@ -471,7 +483,7 @@ func (s *SQLiteStore) insertClarificationEvents(ctx context.Context, tx *sql.Tx,
 	seenIDs := make(map[modulecore.EventID]struct{}, len(events))
 	for i := range events {
 		event := events[i]
-		seq, err := nextEventSeq(ctx, tx)
+		seq, err := s.nextSequence(ctx)
 		if err != nil {
 			return err
 		}

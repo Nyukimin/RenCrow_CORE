@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence"
@@ -29,27 +32,71 @@ var errStep09MigrationRequired = errors.New("Step09 migration required: existing
 // SQLiteStore is the append-only SQLite implementation of the canonical event
 // envelope store.
 type SQLiteStore struct {
-	db               *sql.DB
-	checkpointWorker *persistence.SQLiteWALCheckpointWorker
+	db                             *sql.DB
+	sessionStateDB                 *sql.DB
+	checkpointWorker               *persistence.SQLiteWALCheckpointWorker
+	sequence                       *eventSeqAllocator
+	sequenceWriteMu                *sync.Mutex
+	sequenceAdmissionMu            *sync.Mutex
+	writeQueue                     WriteQueue
+	committedOrchestratorHighWater atomic.Int64
+	pendingSyncSequenceWrites      int
+	waitingSyncSequenceWrites      int
+	chatLease                      *ChatLease
+	releaseWriter                  func() error
+	closeOnce                      sync.Once
+	closeErr                       error
 }
 
 // NewSQLiteStore opens a SQLite canonical event store at the configured path.
 // It never falls back to a repository or runtime-home location.
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
+	return newSQLiteStore(path, nil)
+}
+
+// NewSQLiteStoreWithWriteQueue opens a canonical event store whose EventSeq
+// writing commands are admitted to the injected shared persistence queue.
+func NewSQLiteStoreWithWriteQueue(path string, queue WriteQueue) (*SQLiteStore, error) {
+	if queue == nil {
+		return nil, errors.New("event store write queue is required")
+	}
+	return newSQLiteStore(path, queue)
+}
+
+func newSQLiteStore(path string, queue WriteQueue) (*SQLiteStore, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("canonical event store path is required")
 	}
-	if !isSQLiteURI(path) {
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			return nil, err
-		}
+	if err := ensureEventStorePath(path); err != nil {
+		return nil, err
 	}
+	_, pathState, releaseWriter, err := acquireEventStoreWriter(path)
+	if err != nil {
+		return nil, err
+	}
+	locked := true
+	defer func() {
+		if locked {
+			_ = releaseWriter()
+		}
+	}()
 
 	db, _, err := persistence.OpenSQLiteWALWriter(path, sqliteBusyTimeoutMilliseconds, "foreign_keys(ON)")
 	if err != nil {
 		return nil, err
 	}
-	store := &SQLiteStore{db: db}
+	if pathState.databasePath != "" {
+		if err := rejectHardlinkedEventStoreFile(pathState.databasePath); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
+	store := &SQLiteStore{
+		db: db, sequence: &pathState.sequence, sequenceWriteMu: &pathState.sequenceWriteMu,
+		sequenceAdmissionMu: &pathState.sequenceAdmissionMu,
+		writeQueue:          queue,
+		releaseWriter:       releaseWriter,
+	}
 	if err := store.enableForeignKeys(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -58,17 +105,157 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	maxSequence, err := currentMaxEventSeq(context.Background(), db)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("seed event_seq allocator after SQLite recovery: %w", err)
+	}
+	if err := store.sequence.seed(maxSequence); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	var orchestratorHighWater int64
+	if err := db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(event_seq), 0) FROM event_envelope WHERE component_id = ?`, canonicalOrchestratorComponent).Scan(&orchestratorHighWater); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("seed committed orchestrator high-water after SQLite recovery: %w", err)
+	}
+	if orchestratorHighWater < 0 {
+		_ = db.Close()
+		return nil, errors.New("orchestrator event_seq contains a negative persisted value")
+	}
+	store.committedOrchestratorHighWater.Store(orchestratorHighWater)
+	if pathState.databasePath != "" {
+		store.sessionStateDB, err = openSessionStateReadPool(pathState.databasePath)
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
 	store.checkpointWorker, err = persistence.NewSQLiteWALCheckpointWorker("event_store", path, sqliteBusyTimeoutMilliseconds)
 	if err != nil {
+		if store.sessionStateDB != nil {
+			_ = store.sessionStateDB.Close()
+		}
 		_ = db.Close()
 		return nil, err
 	}
 	if err := store.checkpointWorker.Start(); err != nil {
 		_ = store.checkpointWorker.Close()
+		if store.sessionStateDB != nil {
+			_ = store.sessionStateDB.Close()
+		}
 		_ = db.Close()
 		return nil, err
 	}
+	locked = false
 	return store, nil
+}
+
+func openSessionStateReadPool(path string) (*sql.DB, error) {
+	fileURI, err := sqliteFileURI(path)
+	if err != nil {
+		return nil, fmt.Errorf("build event store session-state reader URI: %w", err)
+	}
+	query := url.Values{}
+	query.Set("mode", "ro")
+	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", sqliteBusyTimeoutMilliseconds))
+	query.Add("_pragma", "query_only(1)")
+	query.Set("_time_format", "sqlite")
+	db, err := sql.Open("sqlite", fileURI+"?"+query.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("open event store session-state reader: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.PingContext(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize event store session-state reader: %w", err)
+	}
+	var queryOnly int
+	if err := db.QueryRowContext(context.Background(), `PRAGMA query_only`).Scan(&queryOnly); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify event store session-state reader is query-only: %w", err)
+	}
+	if queryOnly != 1 {
+		_ = db.Close()
+		return nil, fmt.Errorf("event store session-state reader query_only = %d, want 1", queryOnly)
+	}
+	return db, nil
+}
+
+func sqliteFileURI(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("sqlite file path is required")
+	}
+	uriPath := filepath.ToSlash(path)
+	fileURL := url.URL{Scheme: "file"}
+	if runtime.GOOS == "windows" {
+		if strings.HasPrefix(uriPath, "//") {
+			uncPath := strings.TrimPrefix(uriPath, "//")
+			host, sharePath, found := strings.Cut(uncPath, "/")
+			if !found || host == "" || sharePath == "" {
+				return "", errors.New("invalid absolute Windows UNC sqlite path")
+			}
+			fileURL.Host = host
+			fileURL.Path = "/" + sharePath
+		} else {
+			if len(uriPath) >= 2 && uriPath[1] == ':' {
+				uriPath = "/" + uriPath
+			}
+			fileURL.Path = uriPath
+		}
+	} else {
+		fileURL.Path = uriPath
+	}
+	return fileURL.String(), nil
+}
+
+const canonicalOrchestratorComponent = "orchestrator"
+
+// OrchestratorCommittedHighWater returns the latest committed canonical
+// orchestrator EventSeq from RAM. It is updated only after transaction commit.
+func (s *SQLiteStore) OrchestratorCommittedHighWater() modulecore.EventSeq {
+	if s == nil {
+		return 0
+	}
+	return modulecore.EventSeq(s.committedOrchestratorHighWater.Load())
+}
+
+func (s *SQLiteStore) observeCommittedOrchestratorEvent(event modulecore.EventEnvelope) {
+	if s == nil || event.ComponentID != canonicalOrchestratorComponent || event.EventSeq <= 0 {
+		return
+	}
+	sequence := int64(event.EventSeq)
+	for {
+		current := s.committedOrchestratorHighWater.Load()
+		if current >= sequence || s.committedOrchestratorHighWater.CompareAndSwap(current, sequence) {
+			return
+		}
+	}
+}
+
+func (s *SQLiteStore) observeCommittedOrchestratorEvents(events []modulecore.EventEnvelope) {
+	for _, event := range events {
+		s.observeCommittedOrchestratorEvent(event)
+	}
+}
+
+// beginSequenceTx serializes sequence reservation and its transaction commit
+// against every other sequence-writing path for this database.
+func (s *SQLiteStore) beginSequenceTx(ctx context.Context) (*sql.Tx, func(), error) {
+	if s == nil || s.sequenceWriteMu == nil {
+		return nil, func() {}, errors.New("event store sequence writer is unavailable")
+	}
+	if s.writeQueue != nil && !s.isQueueWorkerContext(ctx) {
+		return nil, func() {}, errors.New("event store sequence writes must use the ordered write queue")
+	}
+	s.sequenceWriteMu.Lock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		s.sequenceWriteMu.Unlock()
+		return nil, func() {}, err
+	}
+	return tx, s.sequenceWriteMu.Unlock, nil
 }
 
 // Close releases the underlying SQLite connection. It is safe to call on a
@@ -77,20 +264,28 @@ func (s *SQLiteStore) Close() error {
 	if s == nil {
 		return nil
 	}
-	var writerErr error
-	if s.db == nil {
-		if s.checkpointWorker != nil {
-			return s.checkpointWorker.Close()
+	s.closeOnce.Do(func() {
+		defer func() {
+			if s.releaseWriter != nil {
+				s.closeErr = errors.Join(s.closeErr, s.releaseWriter())
+			}
+		}()
+		var sessionStateErr error
+		if s.sessionStateDB != nil {
+			sessionStateErr = s.sessionStateDB.Close()
 		}
-		return nil
-	}
-	// Close and drain the writer pool before the final checkpoint.
-	writerErr = persistence.CloseSQLiteWALWriter(s.db)
-	var checkpointErr error
-	if s.checkpointWorker != nil {
-		checkpointErr = s.checkpointWorker.Close()
-	}
-	return errors.Join(writerErr, checkpointErr)
+		var writerErr error
+		if s.db != nil {
+			// Close and drain the writer pool before the final checkpoint.
+			writerErr = persistence.CloseSQLiteWALWriter(s.db)
+		}
+		var checkpointErr error
+		if s.checkpointWorker != nil {
+			checkpointErr = s.checkpointWorker.Close()
+		}
+		s.closeErr = errors.Join(sessionStateErr, writerErr, checkpointErr)
+	})
+	return s.closeErr
 }
 
 // CheckpointStatus reports the latest checkpoint and its effective WAL settings.
@@ -113,20 +308,51 @@ func (s *SQLiteStore) Append(ctx context.Context, event modulecore.EventEnvelope
 // envelope and returns the envelope exactly as persisted. Positive sequences
 // are reserved for the explicit migration batch path.
 func (s *SQLiteStore) AppendSequenced(ctx context.Context, event modulecore.EventEnvelope) (modulecore.EventEnvelope, error) {
+	if s.shouldQueueWrite(ctx) {
+		if err := s.ensureOpen(); err != nil {
+			return modulecore.EventEnvelope{}, err
+		}
+		if err := modulecore.ValidateEventEnvelope(event); err != nil {
+			return modulecore.EventEnvelope{}, fmt.Errorf("validate event envelope: %w", err)
+		}
+		if event.EventSeq != 0 {
+			return modulecore.EventEnvelope{}, errors.New("event_seq must be zero for live append; positive sequences are reserved for AppendBatch")
+		}
+		queuedEvent := cloneEventEnvelope(event)
+		sizeBytes, err := queuedWriteSize(queuedEvent)
+		if err != nil {
+			return modulecore.EventEnvelope{}, fmt.Errorf("size queued event envelope: %w", err)
+		}
+		var stored modulecore.EventEnvelope
+		err = s.enqueueOrderedWrite(ctx, 1, sizeBytes, func(commandCtx context.Context) error {
+			var appendErr error
+			stored, appendErr = s.appendSequencedInline(commandCtx, queuedEvent)
+			return appendErr
+		})
+		if err != nil {
+			return modulecore.EventEnvelope{}, err
+		}
+		return stored, nil
+	}
+	return s.appendSequencedInline(ctx, event)
+}
+
+func (s *SQLiteStore) appendSequencedInline(ctx context.Context, event modulecore.EventEnvelope) (modulecore.EventEnvelope, error) {
 	if err := s.ensureOpen(); err != nil {
 		return modulecore.EventEnvelope{}, err
 	}
 	if err := modulecore.ValidateEventEnvelope(event); err != nil {
 		return modulecore.EventEnvelope{}, fmt.Errorf("validate event envelope: %w", err)
 	}
-	if event.EventSeq != 0 {
+	if event.EventSeq != 0 && !s.isQueueWorkerContext(ctx) {
 		return modulecore.EventEnvelope{}, errors.New("event_seq must be zero for live append; positive sequences are reserved for AppendBatch")
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return modulecore.EventEnvelope{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -134,10 +360,14 @@ func (s *SQLiteStore) AppendSequenced(ctx context.Context, event modulecore.Even
 		}
 	}()
 
-	event.EventSeq, err = nextEventSeq(ctx, tx)
+	sequence, err := s.nextSequence(ctx)
 	if err != nil {
 		return modulecore.EventEnvelope{}, err
 	}
+	if event.EventSeq != 0 && event.EventSeq != sequence {
+		return modulecore.EventEnvelope{}, fmt.Errorf("admitted event_seq %d does not match its reserved sequence %d", event.EventSeq, sequence)
+	}
+	event.EventSeq = sequence
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return modulecore.EventEnvelope{}, fmt.Errorf("marshal event envelope: %w", err)
@@ -188,6 +418,7 @@ func (s *SQLiteStore) AppendSequenced(ctx context.Context, event modulecore.Even
 		return modulecore.EventEnvelope{}, err
 	}
 	committed = true
+	s.observeCommittedOrchestratorEvent(event)
 	return event, nil
 }
 
@@ -203,10 +434,21 @@ func (s *SQLiteStore) AppendBatch(ctx context.Context, events []modulecore.Event
 	if err := modulecore.ValidateEventEnvelopeGraph(events); err != nil {
 		return fmt.Errorf("validate event envelope graph: %w", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.shouldQueueWrite(ctx) {
+		queuedEvents := cloneQueuedValue(events)
+		sizeBytes, err := queuedWriteSize(queuedEvents)
+		if err != nil {
+			return fmt.Errorf("size queued event batch: %w", err)
+		}
+		return s.enqueueOrderedBatchWrite(ctx, queuedEvents, sizeBytes, func(commandCtx context.Context) error {
+			return s.AppendBatch(commandCtx, queuedEvents)
+		})
+	}
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -214,13 +456,10 @@ func (s *SQLiteStore) AppendBatch(ctx context.Context, events []modulecore.Event
 		}
 	}()
 
-	maxSequence, err := currentMaxEventSeq(ctx, tx)
-	if err != nil {
-		return err
-	}
 	assigned := append([]modulecore.EventEnvelope(nil), events...)
 	payloads := make([][]byte, len(assigned))
 	seenSequences := make(map[modulecore.EventSeq]struct{}, len(assigned))
+	sequenceFloor := s.sequenceFloor(ctx)
 	for index := range assigned {
 		event := &assigned[index]
 		if event.EventSeq == 0 {
@@ -235,17 +474,20 @@ func (s *SQLiteStore) AppendBatch(ctx context.Context, events []modulecore.Event
 		if err := ensureEventSeqAvailable(ctx, tx, event.EventSeq); err != nil {
 			return err
 		}
+		if int64(event.EventSeq) <= sequenceFloor {
+			return fmt.Errorf("event_seq %d is not greater than current event_seq allocator %d", event.EventSeq, sequenceFloor)
+		}
 		seenSequences[event.EventSeq] = struct{}{}
 	}
 	for index := range assigned {
 		event := &assigned[index]
 		if event.EventSeq == 0 {
 			for {
-				if maxSequence == maxEventSeqValue {
-					return errors.New("event_seq exhausted")
+				sequence, err := s.nextSequence(ctx)
+				if err != nil {
+					return err
 				}
-				maxSequence++
-				candidate := modulecore.EventSeq(maxSequence)
+				candidate := sequence
 				if _, reserved := seenSequences[candidate]; reserved {
 					continue
 				}
@@ -296,10 +538,18 @@ func (s *SQLiteStore) AppendBatch(ctx context.Context, events []modulecore.Event
 			}
 		}
 	}
+	maxAssignedSequence := int64(0)
+	for sequence := range seenSequences {
+		if int64(sequence) > maxAssignedSequence {
+			maxAssignedSequence = int64(sequence)
+		}
+	}
+	s.sequence.advanceTo(maxAssignedSequence)
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	committed = true
+	s.observeCommittedOrchestratorEvents(assigned)
 	return nil
 }
 
@@ -677,26 +927,19 @@ func (s *SQLiteStore) indexColumns(name string) ([]string, error) {
 	return columns, nil
 }
 
-func currentMaxEventSeq(ctx context.Context, tx *sql.Tx) (int64, error) {
+type eventSeqQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func currentMaxEventSeq(ctx context.Context, queryer eventSeqQueryer) (int64, error) {
 	var maxSequence int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(event_seq), 0) FROM event_envelope`).Scan(&maxSequence); err != nil {
+	if err := queryer.QueryRowContext(ctx, `SELECT COALESCE(MAX(event_seq), 0) FROM event_envelope`).Scan(&maxSequence); err != nil {
 		return 0, err
 	}
 	if maxSequence < 0 {
 		return 0, errors.New("event_seq contains a negative persisted value")
 	}
 	return maxSequence, nil
-}
-
-func nextEventSeq(ctx context.Context, tx *sql.Tx) (modulecore.EventSeq, error) {
-	maxSequence, err := currentMaxEventSeq(ctx, tx)
-	if err != nil {
-		return 0, err
-	}
-	if maxSequence >= maxEventSeqValue {
-		return 0, errors.New("event_seq exhausted")
-	}
-	return modulecore.EventSeq(maxSequence + 1), nil
 }
 
 func ensureEventSeqAvailable(ctx context.Context, tx *sql.Tx, eventSeq modulecore.EventSeq) error {

@@ -226,7 +226,7 @@ func TestEventRelayRestoresCanonicalProjectionBeforeLiveSubscription(t *testing.
 	default:
 	}
 
-	newFinal := orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "agent.response", "mio", "user", "new live response", "CHAT", taskID, string(sessionID), "viewer", "chat-1")
+	newFinal := orchestrator.NewEventWithTraceID(modulecore.NewTraceID(), "agent.response", "mio", "user", "new live response", "WEB", taskID, string(sessionID), "viewer", "chat-1")
 	newFinal.TurnID = modulecore.NewTurnID()
 	if err := relay.OnEvent(newFinal); err != nil {
 		t.Fatalf("OnEvent() after restore: %v", err)
@@ -346,7 +346,7 @@ func TestEventRelayPersistsBeforeProjection(t *testing.T) {
 
 	taskID := modulecore.NewTaskID().String()
 	sessionID := string(modulecore.NewSessionID())
-	if err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", taskID, sessionID, "viewer", "chat-1")); err != nil {
+	if err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "WEB", taskID, sessionID, "viewer", "chat-1")); err != nil {
 		t.Fatalf("OnEvent() error = %v", err)
 	}
 
@@ -371,7 +371,7 @@ func TestEventRelayMarksOnlyDurablyAppendedPublicFinalResponse(t *testing.T) {
 	sessionID := modulecore.NewSessionID()
 	messageID := modulecore.NewMessageID()
 	newFinal := func() orchestrator.OrchestratorEvent {
-		event := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "the complete reply", "CHAT", modulecore.NewTaskID().String(), string(sessionID), "viewer", "chat-1")
+		event := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "the complete reply", "WEB", modulecore.NewTaskID().String(), string(sessionID), "viewer", "chat-1")
 		event.TurnID = turnID
 		event.MessageID = messageID
 		return event
@@ -445,7 +445,7 @@ func TestEventRelayAppendFailureReturnsErrorAndDoesNotProject(t *testing.T) {
 	}
 	relay := &idleAwareEventListener{hub: hub, archive: archive}
 
-	err = relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
+	err = relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
 	if !errors.Is(err, errRecordTest) {
 		t.Fatalf("OnEvent() error = %v, want %v", err, errRecordTest)
 	}
@@ -515,8 +515,8 @@ func TestEventRelaySerializesPublicationAndPreservesCanonicalOrder(t *testing.T)
 				t.Fatalf("NewCanonicalEventLog() error = %v", err)
 			}
 			relay := &idleAwareEventListener{hub: hub, archive: archive}
-			first := orchestrator.NewEvent("message.received", "user", "mio", "first", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
-			second := orchestrator.NewEvent("routing.decision", "mio", "shiro", "second", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
+			first := orchestrator.NewEvent("message.received", "user", "mio", "first", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
+			second := orchestrator.NewEvent("routing.decision", "mio", "shiro", "second", "WEB", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1")
 
 			firstDone := make(chan error, 1)
 			go func() {

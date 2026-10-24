@@ -51,6 +51,82 @@ func TestConversationTurnCanonicalHashBindsSemanticFieldsNotRetryClock(t *testin
 	}
 }
 
+func TestConversationTurnThreadPlanBindingDoesNotChangeCanonicalPayload(t *testing.T) {
+	request := conversationTurnTestRequest()
+	request.Domain = "writing"
+	withoutPlanPayload, err := CanonicalConversationTurnPayload(request)
+	if err != nil {
+		t.Fatalf("payload without plan: %v", err)
+	}
+	withoutPlanHash, err := ConversationTurnPayloadSHA256(request)
+	if err != nil {
+		t.Fatalf("hash without plan: %v", err)
+	}
+
+	planned, err := PlanConversationTurnThread(ConversationTurnThreadPlanInput{
+		Domain:      request.Domain,
+		NewThreadID: modulecore.NewThreadID(),
+	})
+	if err != nil {
+		t.Fatalf("PlanConversationTurnThread: %v", err)
+	}
+	request.ThreadPlan = &ConversationTurnThreadPlanBinding{
+		SessionID: request.SessionID,
+		OwnerID:   request.OwnerID,
+		Plan:      planned,
+	}
+
+	withPlanPayload, err := CanonicalConversationTurnPayload(request)
+	if err != nil {
+		t.Fatalf("payload with plan: %v", err)
+	}
+	withPlanHash, err := ConversationTurnPayloadSHA256(request)
+	if err != nil {
+		t.Fatalf("hash with plan: %v", err)
+	}
+	if string(withPlanPayload) != string(withoutPlanPayload) || withPlanHash != withoutPlanHash {
+		t.Fatalf("thread plan changed canonical identity: payload=%t hash=%t", string(withPlanPayload) != string(withoutPlanPayload), withPlanHash != withoutPlanHash)
+	}
+
+	normalized, err := NormalizeConversationTurnRequest(request)
+	if err != nil {
+		t.Fatalf("NormalizeConversationTurnRequest: %v", err)
+	}
+	if normalized.ThreadPlan == nil || normalized.ThreadPlan == request.ThreadPlan || *normalized.ThreadPlan != *request.ThreadPlan {
+		t.Fatalf("normalized thread plan=%+v, want independent copy of %+v", normalized.ThreadPlan, request.ThreadPlan)
+	}
+}
+
+func TestConversationTurnThreadPlanBindingMustMatchRequestScope(t *testing.T) {
+	request := conversationTurnTestRequest()
+	plan, err := PlanConversationTurnThread(ConversationTurnThreadPlanInput{
+		Domain:      "general",
+		NewThreadID: modulecore.NewThreadID(),
+	})
+	if err != nil {
+		t.Fatalf("PlanConversationTurnThread: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*ConversationTurnThreadPlanBinding)
+	}{
+		{name: "session", change: func(binding *ConversationTurnThreadPlanBinding) {
+			binding.SessionID = string(modulecore.NewSessionID())
+		}},
+		{name: "owner", change: func(binding *ConversationTurnThreadPlanBinding) { binding.OwnerID = "other-owner" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := request
+			binding := ConversationTurnThreadPlanBinding{SessionID: request.SessionID, OwnerID: request.OwnerID, Plan: plan}
+			test.change(&binding)
+			invalid.ThreadPlan = &binding
+			if !errors.Is(invalid.Validate(), ErrConversationTurnInvalid) {
+				t.Fatalf("Validate accepted a plan bound to another %s", test.name)
+			}
+		})
+	}
+}
+
 func TestConversationTurnValidation(t *testing.T) {
 	request := conversationTurnTestRequest()
 	normalized, err := NormalizeConversationTurnRequest(request)

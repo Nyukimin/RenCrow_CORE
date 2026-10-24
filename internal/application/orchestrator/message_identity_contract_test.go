@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"testing"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	infrarouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -55,6 +57,36 @@ func TestProcessMessageRejectsMalformedIdentityBeforeSessionState(t *testing.T) 
 	}
 }
 
+func TestProcessMessageKeepsSynchronousSessionLogErrorsBestEffort(t *testing.T) {
+	logger := &contextAwareRecordingTurnLogger{
+		userErr:      errors.New("ignored synchronous user log error"),
+		assistantErr: errors.New("ignored synchronous assistant log error"),
+	}
+	orch := NewMessageOrchestrator(
+		newMockSessionRepository(),
+		&mockMioAgent{
+			decision: routing.NewDecision(routing.RouteCHAT, 1, "chat"),
+			response: "hello back",
+		},
+		&mockShiroAgent{},
+		nil, nil, nil, nil, nil,
+	)
+	attachCanonicalTestTaskOwner(t, orch)
+	orch.SetSessionTurnLogger(logger)
+
+	if _, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		SessionID: "session-1", Channel: "cmd", ChatID: "cmd-user", UserMessage: "hello",
+	}); err != nil {
+		t.Fatalf("ProcessMessage() error = %v, want synchronous log errors to stay best effort", err)
+	}
+	if len(logger.contexts) != 0 {
+		t.Fatalf("context-aware session logger calls = %d, want none without RAM admission", len(logger.contexts))
+	}
+	if len(logger.turns) != 2 || logger.turns[0].role != "user" || logger.turns[1].role != "assistant" {
+		t.Fatalf("synchronous session turns = %#v, want user + assistant legacy writes", logger.turns)
+	}
+}
+
 type recordedCorrelatedTurn struct {
 	role      string
 	messageID string
@@ -85,6 +117,100 @@ func (l *recordingCorrelatedTurnLogger) WriteAssistantWithIdentity(sessionID, ch
 	l.turns = append(l.turns, recordedCorrelatedTurn{
 		role: "assistant", messageID: messageID, traceID: traceID, taskID: taskID, content: content,
 	})
+}
+
+type sessionLogContextKey struct{}
+
+type contextAwareRecordingTurnLogger struct {
+	recordingCorrelatedTurnLogger
+	userErr      error
+	assistantErr error
+	contexts     []any
+}
+
+func (l *contextAwareRecordingTurnLogger) WriteUserWithIdentityContext(ctx context.Context, sessionID, channel, messageID, traceID, content string) error {
+	l.contexts = append(l.contexts, ctx.Value(sessionLogContextKey{}))
+	l.WriteUserWithIdentity(sessionID, channel, messageID, traceID, content)
+	return l.userErr
+}
+
+func (l *contextAwareRecordingTurnLogger) WriteAssistantWithIdentityContext(ctx context.Context, sessionID, channel, route, taskID, messageID, traceID, content string) error {
+	l.contexts = append(l.contexts, ctx.Value(sessionLogContextKey{}))
+	l.WriteAssistantWithIdentity(sessionID, channel, route, taskID, messageID, traceID, content)
+	return l.assistantErr
+}
+
+func TestProcessMessagePropagatesContextAwareSessionLogErrors(t *testing.T) {
+	userLogErr := errors.New("user session log admission failed")
+	assistantLogErr := errors.New("assistant session log admission failed")
+	marker := "request admission context"
+	tests := []struct {
+		name       string
+		logger     *contextAwareRecordingTurnLogger
+		wantErr    error
+		wantRoles  []string
+		wantValues int
+	}{
+		{
+			name:       "user admission error stops processing",
+			logger:     &contextAwareRecordingTurnLogger{userErr: userLogErr},
+			wantErr:    userLogErr,
+			wantRoles:  []string{"user"},
+			wantValues: 1,
+		},
+		{
+			name:       "assistant admission error reaches caller",
+			logger:     &contextAwareRecordingTurnLogger{assistantErr: assistantLogErr},
+			wantErr:    assistantLogErr,
+			wantRoles:  []string{"user", "assistant"},
+			wantValues: 2,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &sequentialChatReplyProvider{responses: []string{`{"route":"CHAT","reply":"hello back"}`}}
+			manager := newRecordingTaskLifecycleManager()
+			engine := &chatReplyConversationEngine{manager: manager}
+			mio := domainagent.NewMioAgent(
+				provider,
+				infrarouting.NewLLMClassifier(provider, "current Mio classifier route policy"),
+				chatReplyRuleDictionary{}, nil, nil, engine,
+			).WithSystemPrompt("canonical Mio persona")
+			orch := NewMessageOrchestrator(
+				newMockSessionRepository(),
+				mio,
+				&mockShiroAgent{},
+				nil, nil, nil, nil, nil,
+			)
+			orch.SetTaskLifecycleManager(manager)
+			orch.SetSessionTurnLogger(tc.logger)
+
+			ctx, _, _, _ := newEmptyFallbackContext(t)
+			ctx = context.WithValue(ctx, sessionLogContextKey{}, marker)
+			_, err := orch.ProcessMessage(ctx, ProcessMessageRequest{
+				SessionID: "session-1", Channel: "cmd", ChatID: "cmd-user", UserMessage: "hello",
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ProcessMessage error = %v, want %v", err, tc.wantErr)
+			}
+			if len(tc.logger.contexts) != tc.wantValues {
+				t.Fatalf("context-aware logger calls = %d, want %d; contexts=%#v", len(tc.logger.contexts), tc.wantValues, tc.logger.contexts)
+			}
+			for _, value := range tc.logger.contexts {
+				if value != marker {
+					t.Fatalf("session logger context value = %#v, want %#v", value, marker)
+				}
+			}
+			if len(tc.logger.turns) != len(tc.wantRoles) {
+				t.Fatalf("session turns = %#v, want roles %v", tc.logger.turns, tc.wantRoles)
+			}
+			for i, role := range tc.wantRoles {
+				if tc.logger.turns[i].role != role {
+					t.Fatalf("session turn %d role = %q, want %q", i, tc.logger.turns[i].role, role)
+				}
+			}
+		})
+	}
 }
 
 func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *testing.T) {

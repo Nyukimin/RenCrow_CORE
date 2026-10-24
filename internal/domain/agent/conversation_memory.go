@@ -92,11 +92,9 @@ type typedConversationTurnEngine interface {
 // legacy EndTurn/EndTurnAs API, which cannot carry the exact filtered RecallPack
 // or the durable outbox transaction.
 //
-// The conversation response and follower persistence are separate typed
-// outcomes: a partial result means the turn is committed in L1 with its
-// receipt while one or more followers stay in the durable outbox. Partial is
-// neither rounded to completed nor escalated into a turn failure here; the
-// receipt keeps the pending targets and the outbox replays them.
+// Accepted means the canonical manager admitted the immutable turn to the
+// shared persistence queue. Partial means the turn is committed in L1 with its
+// receipt while one or more followers stay in the durable outbox.
 func commitConversationTurn(ctx context.Context, engine conversation.ConversationEngine, t conversation.TurnInput, sessionID, userMessage, response string, speaker conversation.Speaker, pack *conversation.RecallPack) error {
 	committer, ok := engine.(typedConversationTurnEngine)
 	if !ok {
@@ -118,6 +116,9 @@ func commitConversationTurn(ctx context.Context, engine conversation.Conversatio
 	turntiming.Mark(ctx, turntiming.PointConversationCommitEnded)
 	if err != nil {
 		return err
+	}
+	if result.Status == conversation.ConversationTurnAccepted {
+		return nil
 	}
 	if result.Status == conversation.ConversationTurnPartial {
 		log.Printf("[ConversationTurn] partial outcome turn_id=%s pending_targets=%v error_code=%s",

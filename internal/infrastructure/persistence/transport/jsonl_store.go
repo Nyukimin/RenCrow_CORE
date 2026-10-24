@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -28,6 +29,18 @@ type JSONLStore struct {
 	requestPath  string
 	responsePath string
 	batch        *jsonlbatch.Store
+	// syncAccess distinguishes short admitted RAM transactions from legacy
+	// store operations that may wait on the JSONL OS lock. Admitted callers use
+	// TryRLock and fail closed while any synchronous access owns the gate.
+	syncAccess sync.RWMutex
+	// admissionMu protects the volatile read-your-writes view and queue ticket.
+	// The queue worker never holds this mutex while it performs filesystem I/O.
+	admissionMu  sync.Mutex
+	writeQueue   *persistencequeue.Queue[persistencequeue.PersistenceCommand]
+	lastTicket   persistencequeue.Ticket
+	admissionErr error
+	requests     map[modulecore.RequestID]domaintransport.Request
+	responses    map[modulecore.ResponseID]domaintransport.Response
 }
 
 func NewJSONLStore(root string) (*JSONLStore, error) {
@@ -49,18 +62,20 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 		requestPath:  filepath.Join(absRoot, requestFilename),
 		responsePath: filepath.Join(absRoot, responseFilename),
 		batch:        batch,
+		requests:     make(map[modulecore.RequestID]domaintransport.Request),
+		responses:    make(map[modulecore.ResponseID]domaintransport.Response),
 	}
 	if err := batch.Read(context.Background(), func() error {
-		if _, err := loadRecords[domaintransport.Request](store.requestPath, func(value domaintransport.Request) (string, error) {
-			return string(value.RequestID), value.Validate()
-		}); err != nil {
+		requests, err := store.loadRequests()
+		if err != nil {
 			return fmt.Errorf("validate transport requests: %w", err)
 		}
-		if _, err := loadRecords[domaintransport.Response](store.responsePath, func(value domaintransport.Response) (string, error) {
-			return string(value.ResponseID), value.Validate()
-		}); err != nil {
+		responses, err := store.loadResponses()
+		if err != nil {
 			return fmt.Errorf("validate transport responses: %w", err)
 		}
+		store.requests = cloneRequests(requests)
+		store.responses = cloneResponses(responses)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -72,39 +87,50 @@ func (s *JSONLStore) Transaction(ctx context.Context, callback func(domaintransp
 	if callback == nil {
 		return errors.New("transport transaction callback is nil")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.batch.Write(ctx, func() (map[string][]byte, error) {
-		requests, err := s.loadRequests()
-		if err != nil {
-			return nil, err
-		}
-		responses, err := s.loadResponses()
-		if err != nil {
-			return nil, err
-		}
-		tx := &memoryStore{
-			requests: requests, responses: responses,
-			changedRequests:  map[modulecore.RequestID]domaintransport.Request{},
-			changedResponses: map[modulecore.ResponseID]domaintransport.Response{},
-		}
-		if err := callback(tx); err != nil {
-			return nil, err
-		}
-		payloads := map[string][]byte{}
-		if len(tx.changedRequests) > 0 {
-			payloads[requestFilename], err = encodeRecords(tx.changedRequests)
+	if admission, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		return s.admittedTransaction(ctx, callback, admission)
+	}
+	return s.withSynchronousFence(ctx, func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		var committed *memoryStore
+		var preparationErr error
+		err := s.batch.Write(ctx, func() (map[string][]byte, error) {
+			requests, err := s.loadRequests()
 			if err != nil {
 				return nil, err
 			}
-		}
-		if len(tx.changedResponses) > 0 {
-			payloads[responseFilename], err = encodeRecords(tx.changedResponses)
+			responses, err := s.loadResponses()
 			if err != nil {
 				return nil, err
 			}
+			tx := &memoryStore{
+				requests: requests, responses: responses,
+				changedRequests:  map[modulecore.RequestID]domaintransport.Request{},
+				changedResponses: map[modulecore.ResponseID]domaintransport.Response{},
+			}
+			if err := callback(tx); err != nil {
+				preparationErr = err
+				return nil, err
+			}
+			payloads, err := tx.payloads()
+			if err != nil {
+				preparationErr = err
+				return nil, err
+			}
+			committed = tx
+			return payloads, nil
+		})
+		if err == nil && committed != nil {
+			s.requests = cloneRequests(committed.requests)
+			s.responses = cloneResponses(committed.responses)
+		} else if err != nil && preparationErr == nil {
+			uncertain := errors.Is(err, jsonlbatch.ErrCommitUncertain) || errors.Is(err, jsonlbatch.ErrRecoveryRequired)
+			if uncertain || (!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)) {
+				s.admissionErr = err
+			}
 		}
-		return payloads, nil
+		return err
 	})
 }
 
@@ -112,18 +138,25 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, callback func(domaintr
 	if callback == nil {
 		return errors.New("transport read callback is nil")
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.batch.Read(ctx, func() error {
-		requests, err := s.loadRequests()
-		if err != nil {
-			return err
-		}
-		responses, err := s.loadResponses()
-		if err != nil {
-			return err
-		}
-		return callback(&memoryStore{requests: requests, responses: responses, readOnly: true})
+	if admission, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		return s.admittedReadTransaction(ctx, callback, admission)
+	}
+	return s.withSynchronousFence(ctx, func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.batch.Read(ctx, func() error {
+			requests, err := s.loadRequests()
+			if err != nil {
+				return err
+			}
+			responses, err := s.loadResponses()
+			if err != nil {
+				return err
+			}
+			s.requests = cloneRequests(requests)
+			s.responses = cloneResponses(responses)
+			return callback(&memoryStore{requests: requests, responses: responses, readOnly: true})
+		})
 	})
 }
 
@@ -209,6 +242,24 @@ type memoryStore struct {
 	changedRequests  map[modulecore.RequestID]domaintransport.Request
 	changedResponses map[modulecore.ResponseID]domaintransport.Response
 	readOnly         bool
+}
+
+func (s *memoryStore) payloads() (map[string][]byte, error) {
+	payloads := map[string][]byte{}
+	var err error
+	if len(s.changedRequests) > 0 {
+		payloads[requestFilename], err = encodeRecords(s.changedRequests)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(s.changedResponses) > 0 {
+		payloads[responseFilename], err = encodeRecords(s.changedResponses)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return payloads, nil
 }
 
 func (s *memoryStore) Transaction(ctx context.Context, callback func(domaintransport.Store) error) error {

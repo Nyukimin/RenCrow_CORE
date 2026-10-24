@@ -203,6 +203,13 @@ func (s *JSONLStore) rotateIfDue(ctx context.Context) {
 	if r == nil || !r.enabled || s.idx == nil || !s.idx.isLayoutV2() {
 		return
 	}
+	if _, applyingAcceptedWrite := ctx.Value(taskAdmissionWriteContextKey{}).(*taskAdmissionWrite); !applyingAcceptedWrite {
+		release, err := s.taskPersistence.beginSynchronous(ctx)
+		if err != nil {
+			return
+		}
+		defer release()
+	}
 	r.waitGate(ctx)
 	if r.backingOff() {
 		return
@@ -361,7 +368,7 @@ func (s *JSONLStore) installSegment(next *jsonlbatch.Store, ref segmentRef) erro
 		return fmt.Errorf("close the current segment in the index: %w", err)
 	}
 	next.SetTxObserver(s.txObserver.Observe)
-	next.SetPostCommitHook(s.idx.onCommitFor(ref.ord))
+	next.SetPostCommitHook(s.taskPersistencePostCommitHook(ref.ord))
 	s.batch.SetPostCommitHook(nil)
 	s.batch = next
 	s.statePath = filepath.Join(ref.dir, stateFilename)

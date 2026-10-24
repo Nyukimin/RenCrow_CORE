@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
@@ -33,6 +34,7 @@ var ErrV2SubmissionConflict = errors.New("viewer v2 client submission conflict")
 var (
 	ErrSessionProtocolConflict    = errors.New("viewer session is pinned to another protocol")
 	ErrSessionProtocolUnavailable = errors.New("viewer session protocol state is unavailable")
+	errLegacyPreSessionAdmission  = errors.New("viewer legacy RAM admission capability is unavailable")
 )
 
 const (
@@ -326,28 +328,99 @@ func (l *V2ProcessingLifecycle) Shutdown(ctx context.Context) error {
 }
 
 // V2SendOptions enables the v2 request path when all durable and processing
-// dependencies are supplied. An incomplete or disabled configuration fails
-// closed for explicit protocol_version=2 requests.
+// dependencies are supplied. LegacyPreSessionAdmission optionally adds a
+// legacy/v1 RAM admission step on the same route.
 type V2SendOptions struct {
-	Enabled          bool
-	ActorID          string
-	ResolveSessionID SessionIDResolver
-	Admission        *SessionProtocolAdmission
-	Accept           V2TurnAcceptor
-	Process          V2TurnProcessor
-	OnError          V2ProcessingErrorHandler
-	Timing           *turntiming.BatchRecorder
-	Processing       *V2ProcessingLifecycle
+	Enabled                   bool
+	ActorID                   string
+	ResolveSessionID          SessionIDResolver
+	Admission                 *SessionProtocolAdmission
+	LegacyPreSessionAdmission LegacyPreSessionAdmissionHook
+	Accept                    V2TurnAcceptor
+	Process                   V2TurnProcessor
+	OnError                   V2ProcessingErrorHandler
+	Timing                    *turntiming.BatchRecorder
+	Processing                *V2ProcessingLifecycle
+}
+
+// LegacyPreSessionAdmissionIdentity contains the canonical correlation IDs
+// allocated once before legacy/v1 admission and session resolution.
+type LegacyPreSessionAdmissionIdentity struct {
+	TraceID         modulecore.TraceID
+	TurnID          modulecore.TurnID
+	RootTaskID      modulecore.TaskID
+	Recipient       modulechat.ViewerRecipient
+	OperationSource string
+}
+
+// legacyRAMAdmissionScope selects only the combined RenCrow_CMD -> Mio CHAT
+// surface. OperationSource is observation metadata, never an authentication or
+// authorization claim; the canonical upper route still owns those checks.
+func legacyRAMAdmissionScope(recipient modulechat.ViewerRecipient, operationSource string) bool {
+	return recipient == modulechat.ViewerRecipient("mio") && operationSource == "RenCrow_CMD"
+}
+
+// LegacyPreSessionAdmissionHook admits one legacy/v1 Viewer turn before its
+// canonical session is resolved. The returned context is inspected only for
+// the trusted RAM persistence admission capability; request cancellation and
+// all other context values are discarded before downstream processing.
+type LegacyPreSessionAdmissionHook func(context.Context, LegacyPreSessionAdmissionIdentity) (context.Context, func(), error)
+
+func admitLegacyPreSession(requestContext context.Context, identity LegacyPreSessionAdmissionIdentity, hook LegacyPreSessionAdmissionHook) (context.Context, func(), error) {
+	returnedContext, release, err := hook(requestContext, identity)
+	var admission *persistencequeue.Admission
+	if returnedContext != nil {
+		admission, _ = persistencequeue.AdmissionFromContext(returnedContext)
+	}
+	releaseAdmission := releaseLegacyRAMAdmission(release, admission)
+	if err != nil {
+		return nil, releaseAdmission, err
+	}
+	if admission == nil {
+		return nil, releaseAdmission, errLegacyPreSessionAdmission
+	}
+
+	// Keep the worker independent of request cancellation and copy only the
+	// explicit persistence capabilities supplied by the trusted runtime hook.
+	// Arbitrary request and hook context values stay on the synchronous ingress.
+	detachedContext := persistencequeue.WithAdmission(context.Background(), admission)
+	if fallback, ok := persistencequeue.SynchronousFallbackFromContext(returnedContext); ok {
+		detachedContext = persistencequeue.WithSynchronousFallback(detachedContext, fallback)
+	}
+	return detachedContext, releaseAdmission, nil
+}
+
+func releaseLegacyRAMAdmission(release func(), admission *persistencequeue.Admission) func() {
+	if release == nil && admission == nil {
+		return nil
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if admission != nil {
+				defer func() {
+					if err := admission.Release(); err != nil {
+						log.Printf("[Viewer] HandleSend: RAM admission release failed error_type=%T", err)
+					}
+				}()
+			}
+			if release != nil {
+				release()
+			}
+		})
+	}
 }
 
 // HandleSendWithProtocolV2 keeps the legacy handler for unversioned and v1
 // requests while adding an optional durable v2 ingress on the same route.
 func HandleSendWithProtocolV2(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, options *V2SendOptions) http.HandlerFunc {
 	var admission *SessionProtocolAdmission
+	var preSessionAdmission LegacyPreSessionAdmissionHook
 	if options != nil {
 		admission = options.Admission
+		preSessionAdmission = options.LegacyPreSessionAdmission
 	}
-	legacy := handleSendLegacyWithSpeechCancellationAndAdmission(handler, onError, saver, resolveSessionID, cancellations, admission)
+	legacy := handleSendLegacyWithSpeechCancellationAndAdmission(handler, onError, saver, resolveSessionID, cancellations, admission, preSessionAdmission)
 	return dispatchViewerSendProtocol(legacy, options)
 }
 

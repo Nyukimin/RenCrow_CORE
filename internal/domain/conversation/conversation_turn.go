@@ -36,6 +36,7 @@ type ConversationTurnStatus string
 const (
 	ConversationTurnCompleted ConversationTurnStatus = "completed"
 	ConversationTurnPartial   ConversationTurnStatus = "partial"
+	ConversationTurnAccepted  ConversationTurnStatus = "accepted"
 	ConversationTurnFailed    ConversationTurnStatus = "failed"
 )
 
@@ -93,6 +94,14 @@ const (
 	ConversationTurnOutboxFailed    ConversationTurnOutboxStatus = "failed"
 )
 
+// ConversationTurnThreadPlanBinding binds a precomputed thread assignment to
+// the session and owner whose turn admission produced it.
+type ConversationTurnThreadPlanBinding struct {
+	SessionID string
+	OwnerID   string
+	Plan      ConversationTurnThreadPlan
+}
+
 // ConversationTurnRequest is the one canonical EndTurn input shape. Every
 // identity is assigned once by the CORE ingress boundary and remains distinct.
 type ConversationTurnRequest struct {
@@ -111,6 +120,7 @@ type ConversationTurnRequest struct {
 	Boundary         bool
 	BoundaryReason   string
 	Targets          []ConversationTurnTarget
+	ThreadPlan       *ConversationTurnThreadPlanBinding
 }
 
 type ConversationTurnResult struct {
@@ -261,12 +271,20 @@ func NormalizeConversationTurnRequest(request ConversationTurnRequest) (Conversa
 	} else if strings.TrimSpace(reason) != "" {
 		return ConversationTurnRequest{}, invalidConversationTurn("boundary_reason requires boundary")
 	}
+	var threadPlan *ConversationTurnThreadPlanBinding
+	if request.ThreadPlan != nil {
+		if request.ThreadPlan.SessionID != sessionID || request.ThreadPlan.OwnerID != ownerID {
+			return ConversationTurnRequest{}, invalidConversationTurn("thread plan scope does not match request")
+		}
+		planCopy := *request.ThreadPlan
+		threadPlan = &planCopy
+	}
 	return ConversationTurnRequest{
 		TurnID: canonicalTurnID, TraceID: canonicalTraceID, RootTaskID: canonicalRootTaskID,
 		UserMessageID: canonicalUserMessageID, AgentMessageID: canonicalAgentMessageID,
 		SessionID: sessionID, OwnerID: ownerID, Domain: domain,
 		UserMessage: request.UserMessage, AgentMessage: request.AgentMessage, AgentSpeaker: request.AgentSpeaker,
-		RecallTraceItems: items, Boundary: request.Boundary, BoundaryReason: reason, Targets: targets,
+		RecallTraceItems: items, Boundary: request.Boundary, BoundaryReason: reason, Targets: targets, ThreadPlan: threadPlan,
 	}, nil
 }
 

@@ -40,7 +40,7 @@ path、Config、secret、validator内部errorを開示しない。
 | --- | --- |
 | `GET /health/live` | COREのHTTPイベントループ自身のliveness。外部依存を確認しない |
 | `GET /health/ready` | CORE capabilityのreadiness。未ready時は503と`status=unavailable`を返す |
-| `GET /health` | COREと設定済み依存serviceの総合health。`checks[]`のcheckは任意の`details`（件数・名前・フラグ。IDや本文を含まない）を持てる。Action storeを開いたprocessは名前`action_store`のcheckを返す（`status`は常に`ok`で`/health/ready`を落とさない。[設定リファレンス](05_設定リファレンス.md#action-storeのsnapshotaction_store)）。Event、Persona、AI Workflow storeを開いたprocessは、各storeのcheckpoint状態を`ok`／`degraded`で返す（[SQLite WAL durability](05_設定リファレンス.md#event-persona-and-ai-workflow-sqlite-durability)） |
+| `GET /health` | COREと設定済み依存serviceの総合health。`checks[]`のcheckは任意の`details`（件数・名前・フラグ・経過時間・内部sequence・固定error code。IDや本文を含まない）を持てる。Action storeを開いたprocessは名前`action_store`のcheckを返す（`status`は常に`ok`で`/health/ready`を落とさない。[設定リファレンス](05_設定リファレンス.md#action-storeのsnapshotaction_store)）。Event、Persona、AI Workflow storeを開いたprocessは、各storeのcheckpoint状態を`ok`／`degraded`で返す（[SQLite WAL durability](05_設定リファレンス.md#event-persona-and-ai-workflow-sqlite-durability)）。CMD→CORE Mio combined CHATと共有Event writerのhealthは`checks[]`内の`persistence_writer` checkで`ok`／`degraded`を示し、同じprojectionのdetailsに`pending_count`、`oldest_pending_age_ms`、`last_durable_event_seq`、`last_error_code`を表示します。 |
 | `GET /ready` | request受付可否 |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読。購読開始位置は「Viewer event streamの購読開始位置」に従う（`?from=now`は接続時点以降のliveだけ） |
 | `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを実行、または同じnative OPS Taskの明示Resumeを要求 |
@@ -653,25 +653,25 @@ ThreadSummarizerは一threadにつき一回のLLM requestとし、64KiB以下の
 3〜5個のunique keyword（各1〜64 rune）をCOREが検証します。CORE由来のevidence SHA-256、roles、provider、
 `llm | deterministic_fallback | legacy_unverified`のgeneration modeと固定failure codeをarchive receiptへ保存し、
 raw provider error、invalid LLM output、物理pathをAPI responseやreceiptへ含めません。
-Canonical AgentのEndTurnは独立した`turn_id`、`trace_id`、`root_task_id`、User／actual Agentの`message_id`を維持するtyped internal requestであり、L1 SQLiteの同一transactionへ
-Recall trace、User／Agent 2 message、ProfilePromotion job、event log、turn receipt、required follower outboxを保存します。
-resultは`status=completed | partial | failed`、turn／trace／2 message／receipt ID、follower status、固定error codeだけを
-返します。同一turn＋同一payload hashはidempotent replay、異なるhashは`conflict`です。Redis active-thread projectionは
-L1 commit後に同期適用するrequired followerで、L1またはRedis投影失敗時は利用者向けresponseを成功公開しません。
-thread境界のThreadSummarizer／archive／VectorDB／Redis cleanup followerは、Ingressの`turn_id`、`trace_id`、`session_id`を明示伝播した
-public final eventがcanonical EventStoreへappendされた後にだけbackground workerがclaimします。照合条件は`component_id=orchestrator`、
-`event_type=agent.response`、`payload.to=user`、およびこの3 IDの完全一致です。child `task_id`とpublic `message_id`はreceiptのroot Taskや
-actual Agent message IDと異なってよく、traceだけのfallbackはありません。このappendが公開境界で、client表示ACKは必要ありません。
-relayのmarker書込みはbest-effortで、欠落時はworkerがbounded keyset pageとcanonical EventStoreのexact tuple lookupで回復します。
-TurnIDを持たない旧public eventはexact recoveryできず、対応する旧pending thread rowを自動解放しません。receiptは`partial`のまま保持し、明示移行対象とします。
-L1本文からresponse eventを再発行しません。Redis targetのclaim＋applyは合計5秒以内、Redis bookkeepingはlock内で最大2秒です。foregroundのlock待機はrequest
-contextで取消でき、workerはlock使用中ならRedis targetをskipしてthread followerを続けます。thread followerのclaim＋applyはclaim開始から最大45秒、
-完了／失敗bookkeepingは別途最大10秒でlease期限の10秒reserve内に収めます。同follower内のRedis cleanupはapply予算内で5秒以内です。作業期限は
-`min(claim開始 + target上限, lease期限 - 10秒reserve)`、残り100ms未満では
-外部I/Oを始めず失敗を記録します。RecallはRedis active threadを使い、Redis key miss／TTL等で取得できない場合はL1のauthoritative active
-projectionへfallbackします。いずれもpending closed thread raw messageは最新一件だけを加えます。older pending raw dataはL1に保持し、
-summary完了後に通常のarchive recallへ移します。旧`conversation_turn_receipt`が一件もないsessionに限り従来のlegacy L1 fallbackを使います。
-外部follower failureは会話responseのcanonical publication後に`partial`として保持します。
+`POST /viewer/send`のうち、`X-RenCrow-Client: RenCrow_CMD`、解決済み`recipient=mio`、既存combined `CHAT` processorが一致する
+routeは、認証／policy／validation後のbounded RAM FIFO admissionを受け付け境界とします。同期受付responseの既存fieldsは維持し、
+その成功はRAM受理を意味します。最初のbodyと完成した利用者向け`agent.response`もdurable DB／file commitを待たずに既存SSE routeから
+公開できます。このrouteの`agent.response`はbody publicationを示し、EventStore durable completionのreceiptではありません。EndTurnのconversation response、memory persistence、trace、archive followerは別typed outcomeであり、
+RAM acceptance／publicationをdurable `completed`へ丸めません。
+他client、recipient、mode、および外部effect routeのAPI status／durability semanticsは変更しません。
+
+受付時に独立した`turn_id`、`trace_id`、`root_task_id`、User／actual Agentの`message_id`をUUIDv7で一度発行します。
+同じID＋payload hashの重複は同じRAM turnとして扱い、hash違いは`conflict`です。conversation write-setとCanonical Eventは
+process-local FIFOへRAM-onlyで渡され、single workerがowner DB／filesへ順番に保存します。DB-backed queue、queue log、新しいroute、
+`conversation.persistence_status`eventは追加しません。turn単位のdurable status APIはありません。既存`GET /health`はwriter queueの
+pending count、oldest pending age、最後にdurableなEventSeq cursor、固定error codeをhealth projectionに示します。process crashで
+未保存tailが失われた場合、durable receiptで確定できないturnのstatusは`unknown`です。
+
+next-turn RecallはRAM overlayからaccepted turnを読むため、Redis lag／failureでも未保存の直前turnを欠落させません。
+Redis active-thread projectionは派生read modelとして後追いで更新し、CHAT publicationを拒否するrequired synchronous followerではありません。
+thread境界のThreadSummarizer／archive／VectorDB／Redis cleanupは、各owner条件とCanonical Eventのdurable commit後にだけworkerがclaimします。
+Ingressの`turn_id`、`trace_id`、`session_id`はpublic final eventへ明示伝播し、EventStore append前にworkerへ渡されます。
+
 新規作成は`candidate`固定で、`confirmed`／`pinned`はexact-ID state APIだけが同一transactionのaudit receiptとともに
 設定します。Agent readもauthenticated userと`DataScopeUser`、active、`confirmed | pinned`、non-sensitiveをserver側で
 検証し、source failureを空の200へ変換せずRecall traceへ記録します。
@@ -1196,7 +1196,7 @@ timing pointは`handler_received`、`request_parsed`、`handler_validation_ended
 
 Task activation pointはtiming snapshot内の最初の`Activate`呼出しだけを記録します。`task_activation_started`／`task_activation_ended`はその呼出し全体を囲み、エラー時もreturned時点でendedを記録します。`task_routing_event_published`、`task_execution_prepared`、`task_assignment_event_published`、`task_assignment_recorded`、`task_root_run_started`、`task_execution_run_started`、`task_identity_bound`は、その最初の呼出しで実際に成功した内部checkpointです。後続のagent handoffはこれらcheckpointを追加しません。`task_execution_run_started`は最初の呼出しがchild Taskを開始した場合だけ記録します。`lead_run_resolution_started`／`lead_run_resolution_ended`、`skill_bootstrap_started`／`skill_bootstrap_ended`、`tts_session_setup_started`／`tts_session_setup_ended`および既存の`lead_run_persistence_started`／`lead_run_persistence_ended`はそれぞれのoperation呼出しを囲みます。`lead_agent_run_saved`、`lead_agent_start_event_appended`、`lead_context_pack_saved`は`RecordLeadAgentRunStarted`内で各保存／追加が成功した直後にだけ記録し、Finished処理では記録しません。`classification_started`／`classification_ended`は、分類器が実際に呼ばれた場合にその呼出しを囲み、エラー返却後もendedを記録します。通常のcombined経路では`ClassifyWithChatReply`の呼出し全体（分類と返信生成）を囲み、`generation_provider_started`／`generation_provider_ended`と時間が重なるため、分類LLM単独の時間とは解釈しません。`route_metric_published`と`dispatch_metric_published`は既存metric eventのpublication error checkが通った後、`agent_start_publication_started`／`agent_start_publication_ended`は既存`agent.start` publicationの前後、`agent_invocation_started`は`Mio.Chat` entryです。`lead_run_context_ready`は非空のlead run IDに対してruntime contextを設定した後だけ記録します。`dispatch_started`はroute dispatcher呼出し直前です。
 
-`begin_turn_started`／`begin_turn_ended`は`ConversationEngine.BeginTurn`の前後、`user_memory_started`／`user_memory_ended`、`recall_started`／`recall_ended`、`category_started`／`category_ended`は各source呼出しの前後です。`recall_projection_started`／`recall_projection_ended`は`RecallPack`のrole filteringとprompt message変換、`active_domain_started`／`active_domain_ended`はactive threadからのdomain解決を囲みます。`prompt_preparation_started`はprompt材料準備の開始、`prompt_assembly_started`は`assemblePromptContext`直前、`prompt_preparation_ended`はassembly後、`generation_request_ready`は最終generation requestの選択後です。`generation_provider_started`／`generation_provider_ended`はprovider呼出しphase（既存の帰属確認retryを含む）の境界です。`gateway_request_started`は本文生成contextを付けた`Mio CHAT`のprovider呼出しが`RenCrow_LLM` HTTP clientのDo直前へ到達した時点、`gateway_response_headers`は応答headerを受信した直後です。これらgateway pointはHTTP境界を示し、先行routing等のprovider呼出しは対象外です。transport errorで応答headerが無い場合は`gateway_response_headers`を省略します。`first_text_callback`は空文字・空白のみのchunkを除いた最初の非空白テキストcallbackです。値はfloat millisecondsで小数msを保持します。`conversation_commit_started`／`conversation_commit_ended`は`CommitConversationTurn`呼出し全体の前後を示し、L1への保存と同期requiredなactive Redis projectionを含みます。closed-thread summary／archive／VectorDB／cleanup followerはこの呼出しの完了後にcanonical final responseのappendを待ってbackground workerが処理するため、計測区間に含みません。`response_publication_started`は既存のevent publication listenerへの引き渡し開始（試行）時点を表し、listener呼び出しが失敗した場合も試行時刻として残り、成功完了を示しません。各境界pointは実際に通った場合だけ含み、適用されない／到達しないpointは省略します（0を代入しません）。ended pointは呼出しが`error`を返した場合もその返却時点で記録し、成功を意味しません。計測は本文、credential、追加IDを含まず、checkpointごとのeventを新設しません。timing付きeventも既存のcanonical eventとSSE投影を通ります。
+`begin_turn_started`／`begin_turn_ended`は`ConversationEngine.BeginTurn`の前後、`user_memory_started`／`user_memory_ended`、`recall_started`／`recall_ended`、`category_started`／`category_ended`は各source呼出しの前後です。`recall_projection_started`／`recall_projection_ended`は`RecallPack`のrole filteringとprompt message変換、`active_domain_started`／`active_domain_ended`はactive threadからのdomain解決を囲みます。`prompt_preparation_started`はprompt材料準備の開始、`prompt_assembly_started`は`assemblePromptContext`直前、`prompt_preparation_ended`はassembly後、`generation_request_ready`は最終generation requestの選択後です。`generation_provider_started`／`generation_provider_ended`はprovider呼出しphase（既存の帰属確認retryを含む）の境界です。`gateway_request_started`は本文生成contextを付けた`Mio CHAT`のprovider呼出しが`RenCrow_LLM` HTTP clientのDo直前へ到達した時点、`gateway_response_headers`は応答headerを受信した直後です。これらgateway pointはHTTP境界を示し、先行routing等のprovider呼出しは対象外です。transport errorで応答headerが無い場合は`gateway_response_headers`を省略します。`first_text_callback`は空文字・空白のみのchunkを除いた最初の非空白テキストcallbackです。値はfloat millisecondsで小数msを保持します。`conversation_commit_started`／`conversation_commit_ended`は`CommitConversationTurn`呼出し全体の前後を示します。CMD→CORE Mio combined CHATではRAM FIFO admissionとRAM overlay更新を囲み、durable L1／EventStore writeやRedis projectionの完了を計測せず、待ちません。他routeでは従来どおりL1保存と同期requiredなactive Redis projectionを含みます。closed-thread summary／archive／VectorDB／cleanup followerはowner条件を満たし、canonical final Eventがdurableになった後にbackground workerが処理するため、計測区間に含みません。`response_publication_started`は既存のevent publication listenerへの引き渡し開始（試行）時点を表し、listener呼び出しが失敗した場合も試行時刻として残り、成功完了を示しません。各境界pointは実際に通った場合だけ含み、適用されない／到達しないpointは省略します（0を代入しません）。ended pointは呼出しが`error`を返した場合もその返却時点で記録し、成功を意味しません。計測は本文、credential、追加IDを含まず、checkpointごとのeventを新設しません。timing付きeventも既存のcanonical eventとSSE投影を通ります。
 
 画像・動画を送る場合、`POST /viewer/send`は`multipart/form-data`を使い、
 `attachments`または`attachments[]`にfileを入れます。clientはRenCrow_VisionやWildのURLを
@@ -1273,7 +1273,7 @@ upstreamへforwardしません。`image.video_browser.actor_id`（production `us
 Chat吹き出し内のPNGとして表示します。Chat経路で新しい画像配信APIを増やさず、既存の
 `GET /viewer/image/result`を再利用します。
 
-COREは受付時に`turn_id`、root `trace_id`、`root_task_id`、利用者発話の`message_id`、actual Agent発話の`agent_message_id`をUUIDv7で一度だけ発行します。`POST /viewer/send`の受付responseはこれらと`viewer_client_id`、`recipient`を返します。`turn_id`、`trace_id`、`root_task_id`はそれぞれ`turn_`、`trc_`、`tsk_` prefixを持つ独立IDであり、相互代用しません。同じ処理から発行する`message.received`、`routing.decision`、`agent.assignment`、`agent.response`、TTS event、error eventは受付responseの`trace_id`を保持し、会話のpublic finalには受付responseの`turn_id`と解決済み`session_id`も明示伝播します。`message.received.message_id`は受付responseの`message_id`と一致します。最初のactual Agent `agent.response`は`agent_message_id`を使用します。multi-Actor routeで別Actorが利用者向け発話を行う場合、その別発話は新しいcanonical `message_id`を持ちます。public finalがchild Taskから出る場合もroot TaskのTurn／Trace／Session bindingを保持し、child `task_id`または中継後の`message_id`からbindingを推測しません。
+COREは受付時に`turn_id`、root `trace_id`、`root_task_id`、利用者発話の`message_id`、actual Agent発話の`agent_message_id`をUUIDv7で一度だけ発行します。`POST /viewer/send`の受付responseはこれらと`viewer_client_id`、`recipient`を返します。`turn_id`、`trace_id`、`root_task_id`はそれぞれ`turn_`、`trc_`、`tsk_` prefixを持つ独立IDであり、相互代用しません。同じ処理から発行する`message.received`、`routing.decision`、`agent.assignment`、`agent.response`、TTS event、error eventは受付responseの`trace_id`を保持し、会話のpublic finalには受付responseの`turn_id`と解決済み`session_id`も明示伝播します。`message.received.message_id`は受付responseの`message_id`と一致します。最初のactual Agent `agent.response`は`agent_message_id`を使用します。multi-Actor routeで別Actorが利用者向け発話を行う場合、その別発話は新しいcanonical `message_id`を持ちます。public finalがchild Taskから出る場合もroot TaskのTurn／Trace／Session bindingを保持し、child `task_id`または中継後の`message_id`からbindingを推測しません。 CMD→COREのMio combined CHAT routeでは、受付responseはbounded RAM FIFOへのadmissionを示し、durable saveを示しません。
 
 `message_id`は`msg_` prefix付きUUIDのopaque値です。clientは形式を解析せず、SSE再接続・再送時の重複排除と、同じ発話に由来する表示・保存の対応付けに使用します。`turn_index`は表示順の補助であり、IDの代替にしません。受付・開始・完了・errorログには同じ`trace_id`と該当Taskの`task_id`を、会話本文を持つlogには対応する`message_id`を記録します。TTS eventはmessage確定後なら同じ`message_id`を持ち、stream開始時に未確定なら従来どおり`response_id`で応答へ対応付けます。
 
@@ -1283,7 +1283,7 @@ COREは受付時に`turn_id`、root `trace_id`、`root_task_id`、利用者発�
 
 `X-RenCrow-Client: RenCrow_CMD`で送られたterminal text chatは音声を消費しないため、COREはTTS sessionを開始しません。PORTAL／Debug Viewerなど音声再生能力を持つclientのTTS契約は維持します。client provenanceは観測と出力能力の選択に使う情報であり、認証・認可の代替にはしません。
 
-streaming生成では、COREはRenCrow_LLMの本文deltaを既存stream callback、初回本文到達計測、TTS／VTuberへ渡しますが、deltaをdurableな`agent.thinking`として公開しません。生成完了後は完成した本文を`agent.response`で一度公開し、`agent.start`は進行表示に使います。永続化と完了判定には`agent.response`を使用します。backendが最終SSE chunkに`usage.completion_tokens`と`timings.predicted_per_second`を返す場合、COREは同じ`task_id`の`metrics.latency` eventを`kind=llm`、`point=throughput`、`completion_tokens`、`tokens_per_second`付きで発行します。clientはこの値がある場合だけ実token throughputとして表示し、本文delta数をtoken数として扱いません。
+streaming生成では、COREはRenCrow_LLMの本文deltaを既存stream callback、初回本文到達計測、TTS／VTuberへ渡しますが、deltaをdurableな`agent.thinking`として公開しません。生成完了後は完成した本文を`agent.response`で一度公開し、`agent.start`は進行表示に使います。CMD→COREのMio combined CHAT routeに限り、`agent.response`の公開はRAM FIFO admission後でよく、durable persistence完了の証拠ではありません。その他のrouteでは既存のdurability gateを維持します。backendが最終SSE chunkに`usage.completion_tokens`と`timings.predicted_per_second`を返す場合、COREは同じ`task_id`の`metrics.latency` eventを`kind=llm`、`point=throughput`、`completion_tokens`、`tokens_per_second`付きで発行します。clientはこの値がある場合だけ実token throughputとして表示し、本文delta数をtoken数として扱いません。
 
 各生成区間の`agent.start`と完了した`agent.response`は、同じ応答Agentを示します。`agent.start.to`が`user`なら`from`、委譲先Agentなら`to`が生成Agentです。CHATのAgentは送信時のrecipient（mio／shiro／midori／kuro）、PLAN／RESEARCHはMio、WILDはMidori、ANALYZEはKuroです。`agent.response.from`はその本文を生成したAgentであり、固定のAgent名を発行してはいけません。ANALYZEなどでMioが委譲先の結果を利用者へ中継する後続の`agent.response`（`from=mio`、`to=user`）は別の発話です。
 

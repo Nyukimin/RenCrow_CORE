@@ -31,9 +31,26 @@ type RealConversationManager struct {
 	publicationReconcileMu      sync.Mutex
 	publicationCursor           string
 	threadMu                    sync.Mutex
+	turnOverlayMu               sync.RWMutex
+	turnOverlays                map[string]*conversationTurnOverlay
 	backgroundWG                sync.WaitGroup
 	backgroundClosed            bool
 	backgroundFlushTimeout      time.Duration
+}
+
+type acceptedConversationTurn struct {
+	request    domconv.ConversationTurnRequest
+	payloadSHA string
+	result     domconv.ConversationTurnResult
+}
+
+type conversationTurnOverlay struct {
+	ownerID        string
+	head           *domconv.Thread
+	closed         *domconv.Thread
+	closedByTurnID string
+	pending        []acceptedConversationTurn
+	headFailure    error
 }
 
 // turnProjectionLock serializes the required active Redis projection with

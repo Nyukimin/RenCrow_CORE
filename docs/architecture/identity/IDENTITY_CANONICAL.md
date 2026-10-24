@@ -1093,14 +1093,21 @@ Test:
 #### Step 02配備契約
 
 - 発生済み事実の唯一の永続正本は`storage.databases.event_store`が指す
-  SQLite Canonical Event Storeとする。
-- ownerがEventを発行する正規経路は、Canonical Event Storeへの同期appendを先に完了し、
-  成功したEventだけをViewer／monitorへ投影する。正本appendを非同期queueへ委ねたり、
-  投影後のappend失敗をlogだけで終端したりしてはならない。
-- request処理中に一件でもCanonical Event appendが失敗した場合、そのrequest contextをcancelし、
-  利用主体へ成功応答を返さない。既に成功したEventはappend-onlyのまま保持し、失敗Eventを
-  投影または成功扱いしない。同期callerを持たないbackground producerは失敗をowner jobの
-  failureとして返すか、少なくともerrorを明示して成功通知を発行しない。
+  SQLite Canonical Event Storeとする。同じpathを同時にopenするlive ownerは一つだけとし、
+  COREと`rencrow storage-host serve`の同時ownershipを禁止します。起動時にprocess間のexclusive
+  lease／fenceで単独ownershipを証明し、二つ目のownerまたはownership不明時はfail closedします。
+- Canonical Eventを発行する全writer（既存writerと`v2 live_*` methodsを含む）は同一ownerの
+  process-local RAM FIFO／sequencerへ登録し、EventStoreを直接書くbypassを作りません。
+  FIFO順に一つのworkerが順次appendし、受付順とEventSeq順を一致させます。DB-backed queueやqueue logは作りません。
+- 同期durabilityが必要な既存callerは、自分のFIFO ticketがSQLite transactionへcommitするまで待ち、
+  commit成功後にだけeffect／successへ進みます。唯一の緩和はRenCrow_CMD→CORE Mio combined CHAT routeで、
+  bounded RAM admission後のresponse publicationはEventStore commitを待ちません。そこでのpublication／受付成功は
+  volatile RAM acceptanceだけを意味し、durable append／receiptの成功と表現しません。
+- durable ticketのappend失敗はcallerへ返し、request／owner jobを成功扱いしません。CHAT workerのwrite failureはFIFO headで
+  停止し、後続Eventを越えず、既に公開されたbodyをdurable successへ読み替えません。失敗は既存`/health` projectionで観測可能にし、
+  同期callerが無いCHAT requestでもerror／pendingをhealthへ出します。
+- Remote storage topologyでは、CHAT requestと他Event writerが同じlive ownerのsequencer／FIFOを使えるまで、このasync CHAT routeを
+  `blocked`／unavailableにします。processごとのRAM sequencerを並行してEventStore pathへ接続しません。
 - AI WorkflowとSuperAgentのDomain Storeは現在状態だけを所有し、Eventの独立table、
   JSONL writer、dual writeを残さない。
 - Event Storeはappend-onlyとし、同一EventIDの再保存、存在しないCausation、
@@ -1128,10 +1135,11 @@ Test:
 - 三storeはSQLite WAL modeを使い、writer connectionごとに`PRAGMA synchronous=NORMAL`と
   `PRAGMA wal_autocheckpoint=0`を設定します。DB fileとWALは同じstoreの一体の回復単位であり、WALを別の正本や
   別writerとして扱いません。
-- 通常appendはownerのSQLite transactionをcommitしてからprojectionへ進みます。呼出元へappend成功を返す条件は
-  transaction commitの成功です。通常requestは媒体fsyncやcheckpointの完了を待ちません。commit errorはprojectionより前に
-  呼出元へ伝播し、request／owner jobを成功扱いにしません。従来どおり非同期queue、dual write、失敗を隠すvoid callbackは
-  使用しません。
+- Canonical EventStoreの全appendはownerの共有RAM FIFOにEventSeqを割り当ててから単一workerがSQLite transactionへ保存します。
+  EventStoreのdurable ticketが成功する条件はtransaction commitです。通常のdurable callerは媒体fsyncやcheckpointを待たず、
+  commit errorを受け取ってsuccess／effectへ進みません。RenCrow_CMD→CORE Mio combined CHATだけはRAM queue admission後に
+  response／eventを公開でき、その公開はdurable appendではありません。queueはprocess-memory onlyで、DB-backed queue、queue log、
+  queue用dual write、失敗を隠すvoid callbackを使いません。
 - processだけが異常終了しOSが稼働を続けた場合、SQLiteは残存WALからcommit済みtransactionを再生します。OS crashや電源断では、
   最後に完了したcheckpointより後のWAL tailが失われる可能性があります。このtail損失を許容します。約60秒ごとのcheckpointは
   損失範囲を小さくする目標であり、最大損失時間の保証ではありません。目標を越えた場合、tail損失は約60秒を越える可能性があります。
@@ -1139,8 +1147,9 @@ Test:
   なりません。再開・重複抑止は該当するTask／Action／外部作用ownerの既存receipt、idempotency、policyを通し、Event Storeの再生だけで
   「外部作用は起きていない」と推定しません。
 - 各store ownerはwriterと共有しない専用checkpoint connectionを一つ持ち、約60秒を目標に`PASSIVE` checkpointを実行します。
-  起動時はstore open後にworkerを開始します。正常停止時は新しいwriteを止め、in-flight transactionをdrainしてから最終checkpointを
-  試み、その結果を記録してconnectionを閉じます。自動checkpointには依存しません。
+  EventStore pathは唯一のlive ownerだけがopenし、共有FIFO writerをstore open後に開始します。正常停止時は新しいwrite admissionを止め、
+  in-flight transactionとaccepted FIFOをdrainしてから最終checkpointを試み、その結果を記録してconnectionを閉じます。
+  writer failureでdrainできなければshutdownを成功drainと報告しません。自動checkpointには依存しません。
 - ownerはcheckpoint結果と最後に全frameをcheckpointできた時刻を追跡します。checkpoint error、`PASSIVE`が未完了frameを残した状態、
   または最後の成功から約60秒を越えた状態は`degraded`として運用healthに見せます。これは厳密な60秒上限や新規受付拒否を
   意味しません。checkpointが正常に再開したら状態を解消します。`PASSIVE`の部分進捗だけで成功時刻を更新しません。
@@ -1155,14 +1164,15 @@ Test:
 実装順と受入条件:
 
 1. 各storeの全writer connectionにWAL mode、`synchronous=NORMAL`、`wal_autocheckpoint=0`を設定し、PRAGMA readbackを検査します。
-2. transaction commitの後だけprojectionを行う既存owner経路を保ち、commit failureが呼出元へ戻りprojection／成功応答が発生しないことを確認します。
+2. non-CHATのdurable callerはticket commit後だけprojection／effect／successへ進み、commit failureがcallerへ戻ることを確認します。
+   CMD→CORE Mio combined CHATはRAM admission後のpublicationを許し、後続durable failureをhealthへ出してsuccess receiptを捏造しないことを確認します。
 3. 各storeに専用connectionのperiodic `PASSIVE` workerを接続し、約60秒の実行目標、完全成功判定、最終停止checkpoint、失敗時のclose処理を検査します。
 4. 初回結果前の`pending`／null age、checkpoint失敗・未完了・目標期限超過の`degraded`、成功checkpoint後の`ok`を`/health`のstore別checkで検査します。
    このcheckは本仕様だけではreadinessやrequest admissionを変更しません。
 5. transaction commit後・checkpoint前のprocess crash後に、実SQLite fileを再openしてWAL replayされたEventIDとEventSeqを検査します。
    OS crash／電源断時の未checkpoint tail損失は許容範囲として扱い、ソフトウェア試験から媒体fsync保証を主張しません。
-6. 認証済userまたはMio／Shiro／Kuro／Midoriの実Actorによる通常routeで、append成功後のprojectionとSSEを照合し、保存error時に成功receiptが出ないこと、EventIDによる再接続、
-   backup／scratch restore後のSQLite整合性を検査します。
+6. 認証済み実Actorのdurable routeはcommit後のprojection／SSEと保存error時の成功拒否を検査します。Mio combined CHATはRAM admissionとdurable cursorを別に観測し、
+   DB遅延中のbody publication、crashによるunsaved tail loss、missing EventIDのSSE resetを検査します。backup／scratch restore後のSQLite整合性も確認します。
 
 #### Step 02 Failure Knowledge: 再起動後の初回公開が履歴全件をliveへ流した
 
@@ -1189,13 +1199,13 @@ Test:
 #### Step 02 Failure Knowledge: 非同期Event記録による偽成功
 
 - **Failure:** Orchestrator EventをViewerへ先に配信し、Canonical Event Store appendを非同期queueへ渡していた。
-- **Problem:** append失敗が呼出元へ戻らず、利用者には成功結果が見えても発生済み事実の正本が欠落し得た。
-- **Cause:** 低遅延が必要なSSE配信と、欠落禁止の正本記録を同じ`EventListener` lifecycleへ混在させ、失敗契約をvoid callbackにしていた。
-- **Lesson:** 記録と配信の分離は、正本記録をbest-effort化することではない。同期append成功が投影と成功応答の前提である。
-- **Invariant:** 一つのowner Event発行は`canonical append -> projection`の一方向だけを通り、append失敗はrequest error／cancelへ伝播する。別writer、dual write、非同期canonical queueを作らない。
-- **Enforcement:** Event発行境界をerror-returningにし、request Trace単位で最初の失敗を保持する。最初の受付Event失敗時はLLM／Tool／外部処理へ進まず、途中失敗時も最終成功応答を拒否する。
-- **Tests:** appendが成功したEventだけが一度だけ投影されること、最初／途中／最終append失敗で成功応答が返らないこと、失敗EventがViewerへ出ないことをMessage／Distributed経路で検査する。
-- **現行契約:** このFailure Knowledgeは引き続き有効です。新しいWAL契約が緩和するのは通常commit時の媒体fsync待ちだけであり、transaction commit前の投影、append errorの握り潰し、非同期canonical appendは引き続き禁止します。
+- **Problem:** append失敗が呼出元へ戻らず、利用者にはdurable successと見える結果が出ても発生済み事実の正本が欠落し得た。
+- **Cause:** 低遅延が必要なSSE配信と欠落禁止の正本記録を同じ`EventListener` lifecycleへ混在させ、失敗契約をvoid callbackにしていた。
+- **Lesson:** 記録と配信は分離し、durable successを返すcallerはcommit済みEventだけを成功条件にする。volatile response publicationを許すrouteは、RAM acceptanceとdurable persistenceを別の意味として明示する。
+- **Invariant:** durable callerは`canonical append commit -> projection／effect／success`の順を守る。CMD→CORE Mio combined CHATだけは`bounded RAM admission -> response publication -> eventual canonical append`を許すが、publicationをdurable receiptやEventStore commitと主張しない。その他のrouteはこの例外を使わない。
+- **Enforcement:** 全Event writerをsingle-owner shared FIFO／sequencerへ集約し、durable callerへticket commitを返す。CHAT write failureはheadで停止し、/healthへpending／age／durable cursor／errorを出す。queue admissionは同期auth／policy／validation後、LLM／effect前に行う。
+- **Tests:** durable callerで最初／途中／最終append failureがsuccess／effectを拒否すること、CHATではbody publicationがDB commitを待たないこと、writer failureがheadを越えずhealthに現れること、crashでRAM tailが再生されないことを確認する。
+- **Historical status:** 元の失敗は依然としてdurable successを偽るものです。このFailure Knowledgeの旧「全Eventはrequest内で同期append」Invariantだけを、上記CMD→CORE Mio combined CHATの範囲でsupersedeします。そこでは成功の意味がvolatile RAM acceptance／publicationに限定されます。他route、外部effect gate、durable receiptの意味は引き続き有効です。
 
 #### Step 02 Failure Knowledge: TTS callbackによるTrace分断
 
@@ -2086,8 +2096,17 @@ Test:
   mechanismをassignee Actorにしない。
 - `routing.decision`はroot Task、`agent.assignment`は実行対象TaskへCanonical Eventとして保存する。
   assignmentの`CausationEventID`は有効なrouting Eventを指し、Taskは両EventIDを保持する。
-- Event Storeはappend前に正の単調増加`EventSeq`を割り当て、SQLite、Monitor、SSEの順序と再起動後の
-  次Eventまで同じ順序を維持する。SSE `id:`と再接続cursorには既存`EventID`を使い、EventSeqは内部順序とpage queryに限る。
+- Event Store pathごとに一つだけ存在するlive ownerが起動時にdurable最大EventSeqを一度読み、RAM high-waterを初期化します。
+  全Event writer（`v2 live_*`を含む）は、EventSeq割当とenqueueを同じsequencer critical sectionで不可分に行うprocess-local
+  FIFOへ登録します。より低いEventSeq ticketがpendingの間、より高いEventSeqをdurable化またはpublicationしません。
+  唯一のworkerがFIFO順にSQLiteへcommitし、request pathでEventSeqごとのDB reservationをしません。
+  non-CHAT durable callerはそれ以前の全ticketと自分のticketがFIFO順にdurable commitした後で応答／effectへ進みます。
+  CMD→CORE Mio combined CHATはRAM admission後にpublicationできますが、global EventSeq順を保ち、後続sequenceを先行させません。
+  crashでdurableにならなかったRAM sequenceは失われ、再起動後に再利用されることがあります。durable EventSeqは単調増加を保ちます。
+  SSE `id:`とreconnect cursorには既存`EventID`を使い、EventSeqは内部順序とpage queryに限ります。
+- 同じEventStore pathをCOREと`rencrow storage-host serve`が同時にopenする構成は禁止です。startup ownership lease／fenceが確立できない
+  processは起動しません。別processのRAM sequencerを同じpathへ並行接続せず、remote topologyで共通owner FIFOを保証できない間は
+  async Mio CHAT routeをunavailableにします。
   `EventID`、`TraceID`、`TaskID`、`SessionID`、`ThreadID`、
   `TurnID`、`MessageID`はtyped validationを通し、相互変換しない。
 - COREからRenCrow LLM Gatewayへ送るprompt-free observation metadataは`task_id`だけを使う。
@@ -2112,7 +2131,7 @@ Gate 9:
 
 - COREとRenCrow_LLMのsource、artifact、active config、service PID、listener、正規Gateway routeを照合し、
   actual AgentのCHAT／WORKER／CODE／RESEARCH、route change、handoff、failure／retry／interruptionで
-  Task graph、Event graph、EventID lookup、EventSeq restart継続、`task_id` log／Gateway相関、旧route拒否を
+  Task graph、Event graph、EventID lookup、durable EventSeq high-water restart継続、`task_id` log／Gateway相関、旧route拒否を
   確認した後だけStep 09を閉じる。
 - rollbackに必要な旧／新runtime、writer-stopped snapshot、固定Check Plan、dry-run／apply／log rotation／
   deployment receiptを別filesystemのrecovery artifactとして保持する。旧runtimeへ戻す場合は3つの

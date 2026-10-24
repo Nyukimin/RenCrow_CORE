@@ -3,8 +3,11 @@ package eventstore
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -24,6 +27,100 @@ func TestLiveReadAndCutoverAPIsExist(t *testing.T) {
 		if !reflect.ValueOf(store).MethodByName(name).IsValid() {
 			t.Errorf("eventstore API %s is missing", name)
 		}
+	}
+}
+
+func TestReadSessionStateDoesNotWaitForWriterPoolOrReadUncommittedChanges(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	accepted := acceptLiveTurn(t, store, modulecore.NewSessionID(), "writer-pinned-read", true, 1)
+	committed, found, err := store.ReadSessionState(ctx, accepted.SessionID, "user-1")
+	if err != nil || !found {
+		t.Fatalf("ReadSessionState(before writer pin): state=%#v found=%t err=%v", committed, found, err)
+	}
+
+	store.db.SetMaxOpenConns(1)
+	writerTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx(writer pin): %v", err)
+	}
+	defer writerTx.Rollback()
+	uncommittedAdmissionSeq := int64(committed.AdmissionSeq + 100)
+	if _, err := writerTx.ExecContext(ctx, `UPDATE live_conversation_session SET admission_seq = ? WHERE session_id = ?`, uncommittedAdmissionSeq, string(accepted.SessionID)); err != nil {
+		t.Fatalf("stage uncommitted session admission: %v", err)
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancel()
+	type readResult struct {
+		state SessionState
+		found bool
+		err   error
+	}
+	readDone := make(chan readResult, 1)
+	go func() {
+		state, found, err := store.ReadSessionState(readCtx, accepted.SessionID, "user-1")
+		readDone <- readResult{state: state, found: found, err: err}
+	}()
+
+	var result readResult
+	select {
+	case result = <-readDone:
+	case <-readCtx.Done():
+		t.Fatalf("ReadSessionState waited for the pinned writer connection: %v", readCtx.Err())
+	}
+	if result.err != nil || !result.found || result.state != committed {
+		t.Fatalf("ReadSessionState with writer pinned = (%#v, %t, %v), want committed state %#v", result.state, result.found, result.err, committed)
+	}
+	if result.state.AdmissionSeq == modulecore.EventSeq(uncommittedAdmissionSeq) {
+		t.Fatalf("ReadSessionState observed an uncommitted admission_seq %d", result.state.AdmissionSeq)
+	}
+	if _, found, err := store.ReadSessionState(readCtx, accepted.SessionID, "foreign-owner"); found || !errors.Is(err, ErrConversationSessionConflict) {
+		t.Fatalf("ReadSessionState(foreign owner) = found %t, err %v; want owner conflict", found, err)
+	}
+	canceledCtx, cancelRead := context.WithCancel(ctx)
+	cancelRead()
+	if _, found, err := store.ReadSessionState(canceledCtx, accepted.SessionID, "user-1"); found || !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReadSessionState(canceled context) = found %t, err %v; want context cancellation", found, err)
+	}
+}
+
+func TestReadSessionStateReadPoolUsesEscapedReadOnlySQLiteURIAndCloses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event store ?#% 会話.sqlite")
+	fileURI, err := sqliteFileURI(path)
+	if err != nil {
+		t.Fatalf("sqliteFileURI(): %v", err)
+	}
+	for _, escaped := range []string{"%20", "%3F", "%23", "%25"} {
+		if !strings.Contains(fileURI, escaped) {
+			t.Fatalf("sqliteFileURI(%q) = %q, want escaped path component %q", path, fileURI, escaped)
+		}
+	}
+	store, err := NewSQLiteStore(fileURI + "?mode=rwc")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(escaped URI): %v", err)
+	}
+	reader := store.sessionStateDB
+	if reader == nil || reader == store.db {
+		t.Fatal("session-state reader pool is not independent from the writer pool")
+	}
+	if reader.Stats().MaxOpenConnections != 1 {
+		t.Fatalf("session-state reader MaxOpenConnections = %d, want 1", reader.Stats().MaxOpenConnections)
+	}
+	accepted := acceptLiveTurn(t, store, modulecore.NewSessionID(), "escaped-uri-reader", true, 1)
+	state, found, err := store.ReadSessionState(context.Background(), accepted.SessionID, "user-1")
+	if err != nil || !found || state.SessionID != accepted.SessionID || state.OwnerID != "user-1" {
+		t.Fatalf("ReadSessionState(escaped URI) = (%#v, %t, %v)", state, found, err)
+	}
+	if _, err := reader.ExecContext(context.Background(), `CREATE TABLE forbidden_reader_write (id INTEGER)`); err == nil {
+		t.Fatal("session-state reader pool accepted a write")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+	if err := reader.Ping(); err == nil {
+		t.Fatal("session-state reader pool remained usable after Close")
 	}
 }
 
@@ -390,10 +487,11 @@ func acceptLiveTurn(t *testing.T, store *SQLiteStore, sessionID modulecore.Sessi
 func seedIndexedMessages(t *testing.T, store *SQLiteStore, sessionID modulecore.SessionID, ownerID string, count int) []CanonicalMessage {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := store.db.BeginTx(ctx, nil)
+	tx, unlockSequence, err := store.beginSequenceTx(ctx)
 	if err != nil {
 		t.Fatalf("begin indexed message fixture: %v", err)
 	}
+	defer unlockSequence()
 	defer tx.Rollback()
 	messages := make([]CanonicalMessage, 0, count)
 	for index := 0; index < count; index++ {
@@ -409,7 +507,7 @@ func seedIndexedMessages(t *testing.T, store *SQLiteStore, sessionID modulecore.
 			event.Payload = map[string]any{"from": "user", "source_actor_id": ownerID, "to": "mio", "content": "indexed", "text": "indexed"}
 		}
 		event.SessionID, event.TurnID, event.MessageID = sessionID, turnID, modulecore.NewMessageID()
-		event.EventSeq, err = nextEventSeq(ctx, tx)
+		event.EventSeq, err = store.sequence.next()
 		if err != nil {
 			t.Fatalf("next indexed event sequence: %v", err)
 		}

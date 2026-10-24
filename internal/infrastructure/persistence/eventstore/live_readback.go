@@ -91,10 +91,17 @@ func (s *SQLiteStore) AcceptReadback(ctx context.Context, input ReadbackInput) (
 	if err != nil {
 		return ReadbackAcceptance{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		return enqueueOrderedWriteResult(s, ctx, 1, queuedInput, func(commandCtx context.Context) (ReadbackAcceptance, error) {
+			return s.AcceptReadback(commandCtx, queuedInput)
+		})
+	}
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return ReadbackAcceptance{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {
@@ -172,7 +179,7 @@ func (s *SQLiteStore) AcceptReadback(ctx context.Context, input ReadbackInput) (
 	if err := validateReplyTarget(ctx, tx, message.ReplyToMessageID, message.SessionID); err != nil {
 		return ReadbackAcceptance{}, err
 	}
-	event.EventSeq, err = nextEventSeq(ctx, tx)
+	event.EventSeq, err = s.nextSequence(ctx)
 	if err != nil {
 		return ReadbackAcceptance{}, err
 	}
@@ -254,6 +261,7 @@ func (s *SQLiteStore) AcceptReadback(ctx context.Context, input ReadbackInput) (
 		return ReadbackAcceptance{}, err
 	}
 	committed = true
+	s.observeCommittedOrchestratorEvent(acceptance.Event)
 	return acceptance, nil
 }
 

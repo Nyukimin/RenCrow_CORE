@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -88,22 +89,90 @@ func (s *CanonicalEventLog) AppendSequenced(event orchestrator.OrchestratorEvent
 	if s.sequencer == nil {
 		return orchestrator.OrchestratorEvent{}, fmt.Errorf("canonical event store must own event sequencing")
 	}
-	if err := event.EventID.Validate(); err != nil {
-		return orchestrator.OrchestratorEvent{}, fmt.Errorf("event_id is invalid: %w", err)
-	}
-	if event.EventSeq != 0 {
-		return orchestrator.OrchestratorEvent{}, fmt.Errorf("event_seq must be assigned by the canonical store")
-	}
-	if err := validateOrchestratorEventIdentities(event); err != nil {
+	envelope, err := orchestratorEventEnvelope(event)
+	if err != nil {
 		return orchestrator.OrchestratorEvent{}, err
 	}
+	persisted, err := s.sequencer.AppendSequenced(context.Background(), envelope)
+	if err != nil {
+		return orchestrator.OrchestratorEvent{}, fmt.Errorf("append canonical orchestrator event: %w", err)
+	}
+	if err := modulecore.ValidateEventEnvelope(persisted); err != nil {
+		return orchestrator.OrchestratorEvent{}, fmt.Errorf("canonical event store returned invalid envelope: %w", err)
+	}
+	return authoritativeOrchestratorEvent(event, persisted), nil
+}
+
+// BeginChat activates the EventStore's RAM admission lease for one explicitly
+// admitted CHAT request. The returned end function only releases the logical
+// lease; it does not wait for the durable writer.
+func (s *CanonicalEventLog) BeginChat(ctx context.Context) (func() error, modulecore.EventSeq, error) {
+	if s == nil || s.store == nil {
+		return nil, 0, fmt.Errorf("canonical event store is required")
+	}
+	if ctx == nil {
+		return nil, 0, fmt.Errorf("canonical CHAT context is required")
+	}
+	store, ok := s.store.(interface {
+		BeginChatAdmission(context.Context) (func() error, modulecore.EventSeq, error)
+	})
+	if !ok {
+		return nil, 0, errors.New("canonical event store does not support CHAT admission leases")
+	}
+	end, highWater, err := store.BeginChatAdmission(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin canonical CHAT admission: %w", err)
+	}
+	return end, highWater, nil
+}
+
+// AdmitSequenced admits one orchestrator event to the active CHAT EventStore
+// lease. It assigns identity in RAM and returns after FIFO queue acceptance;
+// it does not wait for the durable writer.
+func (s *CanonicalEventLog) AdmitSequenced(ctx context.Context, event orchestrator.OrchestratorEvent) (orchestrator.OrchestratorEvent, uint64, error) {
+	if s == nil || s.store == nil {
+		return orchestrator.OrchestratorEvent{}, 0, fmt.Errorf("canonical event store is required")
+	}
+	if ctx == nil {
+		return orchestrator.OrchestratorEvent{}, 0, fmt.Errorf("canonical CHAT context is required")
+	}
+	envelope, err := orchestratorEventEnvelope(event)
+	if err != nil {
+		return orchestrator.OrchestratorEvent{}, 0, err
+	}
+	admitter, ok := s.store.(interface {
+		AdmitSequenced(context.Context, modulecore.EventEnvelope) (modulecore.EventEnvelope, uint64, error)
+	})
+	if !ok {
+		return orchestrator.OrchestratorEvent{}, 0, errors.New("canonical event store does not support RAM-only CHAT admission")
+	}
+	accepted, ticket, err := admitter.AdmitSequenced(ctx, envelope)
+	if err != nil {
+		return orchestrator.OrchestratorEvent{}, 0, fmt.Errorf("admit canonical orchestrator event: %w", err)
+	}
+	if err := modulecore.ValidateEventEnvelope(accepted); err != nil {
+		return orchestrator.OrchestratorEvent{}, 0, fmt.Errorf("canonical event store returned invalid admitted envelope: %w", err)
+	}
+	return authoritativeOrchestratorEvent(event, accepted), ticket, nil
+}
+
+func orchestratorEventEnvelope(event orchestrator.OrchestratorEvent) (modulecore.EventEnvelope, error) {
+	if err := event.EventID.Validate(); err != nil {
+		return modulecore.EventEnvelope{}, fmt.Errorf("event_id is invalid: %w", err)
+	}
+	if event.EventSeq != 0 {
+		return modulecore.EventEnvelope{}, fmt.Errorf("event_seq must be assigned by the canonical store")
+	}
+	if err := validateOrchestratorEventIdentities(event); err != nil {
+		return modulecore.EventEnvelope{}, err
+	}
 	if event.TraceID == "" && (event.CausationEventID != "" || len(event.DependencyEventIDs) > 0) {
-		return orchestrator.OrchestratorEvent{}, fmt.Errorf("causation and dependency event IDs require trace_id")
+		return modulecore.EventEnvelope{}, fmt.Errorf("causation and dependency event IDs require trace_id")
 	}
 
 	payload, err := marshalOrchestratorEventPayload(event)
 	if err != nil {
-		return orchestrator.OrchestratorEvent{}, err
+		return modulecore.EventEnvelope{}, err
 	}
 	traceID := event.TraceID
 	var envelope modulecore.EventEnvelope
@@ -124,15 +193,7 @@ func (s *CanonicalEventLog) AppendSequenced(event orchestrator.OrchestratorEvent
 	if traceID.Validate() == nil {
 		envelope.TraceID = traceID
 	}
-
-	persisted, err := s.sequencer.AppendSequenced(context.Background(), envelope)
-	if err != nil {
-		return orchestrator.OrchestratorEvent{}, fmt.Errorf("append canonical orchestrator event: %w", err)
-	}
-	if err := modulecore.ValidateEventEnvelope(persisted); err != nil {
-		return orchestrator.OrchestratorEvent{}, fmt.Errorf("canonical event store returned invalid envelope: %w", err)
-	}
-	return authoritativeOrchestratorEvent(event, persisted), nil
+	return envelope, nil
 }
 
 // GetByEventID resolves the exact canonical event addressed by EventID.

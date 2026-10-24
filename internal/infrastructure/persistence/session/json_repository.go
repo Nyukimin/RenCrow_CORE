@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -20,8 +21,31 @@ import (
 
 // JSONSessionRepository はJSONファイルベースのSessionRepository実装
 type JSONSessionRepository struct {
-	baseDir string
-	mu      sync.Mutex
+	baseDir   string
+	mu        sync.Mutex
+	writeGate sync.RWMutex
+	writeMu   sync.Mutex
+	overlay   map[string]*pendingSessionWrite
+
+	canonicalIndex            map[canonicalSessionKey]string
+	canonicalIndexBySessionID map[string]canonicalSessionKey
+	canonicalIndexWarmed      bool
+	readCanonicalDirectory    func(string) ([]os.DirEntry, error)
+	readCanonicalIdentityFile func(string) ([]byte, error)
+	beforeWriteSessionBytes   func(context.Context, string, []byte) error
+}
+
+type pendingSessionWrite struct {
+	data      []byte
+	done      chan struct{}
+	err       error
+	admission *persistencequeue.Admission
+}
+
+type canonicalSessionKey struct {
+	logicalDate            string
+	channelType            string
+	externalConversationID string
 }
 
 type sessionIdentityProbe struct {
@@ -69,8 +93,11 @@ func (r *JSONSessionRepository) LoadCanonical(ctx context.Context, logicalDate s
 // used to reconcile an uncertain v2 reservation. The intent is read from the
 // same JSON record as the canonical identity.
 func (r *JSONSessionRepository) LoadCanonicalWithCreationIntent(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*session.Session, *session.CreationIntent, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock, err := r.lockForContext(ctx)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	defer unlock()
 
 	if err := validateCanonicalLookup(ctx, logicalDate, address); err != nil {
 		return nil, nil, false, err
@@ -102,8 +129,11 @@ func (r *JSONSessionRepository) LoadCanonicalWithCreationIntent(ctx context.Cont
 // canonical session exists. The returned created flag is decided under the
 // same repository lock as the lookup and write.
 func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*session.Session, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock, err := r.lockForContext(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
 
 	if err := validateCanonicalLookup(ctx, logicalDate, address); err != nil {
 		return nil, false, err
@@ -145,8 +175,11 @@ func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logic
 // restart. Any pre-existing unreserved JSON session remains legacy and cannot
 // be promoted.
 func (r *JSONSessionRepository) ReserveCanonicalV2(ctx context.Context, logicalDate string, address conversation.ChannelAddress, ownerID string, createdAt time.Time) (*session.Session, bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock, err := r.lockForSynchronousWrite(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
 
 	if err := validateCanonicalLookup(ctx, logicalDate, address); err != nil {
 		return nil, false, err
@@ -201,8 +234,11 @@ func (r *JSONSessionRepository) ReserveCanonicalV2(ctx context.Context, logicalD
 // It is read-only and deliberately returns false for missing, legacy, or
 // differently-owned sessions.
 func (r *JSONSessionRepository) IsCanonicalV2Reserved(ctx context.Context, id, ownerID string) (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock, err := r.lockForContext(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -235,12 +271,90 @@ func validateCanonicalLookup(ctx context.Context, logicalDate string, address co
 	return nil
 }
 
+func (r *JSONSessionRepository) lockForContext(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		if !r.writeGate.TryRLock() {
+			return nil, fmt.Errorf("session repository is busy with a synchronous write")
+		}
+		r.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			r.mu.Unlock()
+			r.writeGate.RUnlock()
+			return nil, err
+		}
+		return func() {
+			r.mu.Unlock()
+			r.writeGate.RUnlock()
+		}, nil
+	}
+	r.writeGate.Lock()
+	r.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		r.mu.Unlock()
+		r.writeGate.Unlock()
+		return nil, err
+	}
+	return func() {
+		r.mu.Unlock()
+		r.writeGate.Unlock()
+	}, nil
+}
+
+func (r *JSONSessionRepository) lockForSynchronousWrite(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.writeGate.Lock()
+	r.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		r.mu.Unlock()
+		r.writeGate.Unlock()
+		return nil, err
+	}
+	return func() {
+		r.mu.Unlock()
+		r.writeGate.Unlock()
+	}, nil
+}
+
 func (r *JSONSessionRepository) findCanonicalSessionID(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (string, error) {
-	entries, err := os.ReadDir(r.baseDir)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	key := canonicalSessionKeyFor(logicalDate, address)
+	if r.canonicalIndexWarmed {
+		return r.canonicalIndex[key], nil
+	}
+	return r.scanCanonicalSessionID(ctx, logicalDate, address)
+}
+
+func (r *JSONSessionRepository) scanCanonicalSessionID(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (string, error) {
+	entries, err := r.readCanonicalDir(r.baseDir)
 	if err != nil {
 		return "", fmt.Errorf("read session directory: %w", err)
 	}
 	matchedID := ""
+	inspect := func(raw []byte) error {
+		id, key, present, err := parseCanonicalSessionIdentity(raw)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return nil
+		}
+		if key != canonicalSessionKeyFor(logicalDate, address) {
+			return nil
+		}
+		if matchedID != "" && matchedID != id {
+			return fmt.Errorf("multiple canonical sessions match lookup attributes")
+		}
+		matchedID = id
+		return nil
+	}
+
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -248,48 +362,217 @@ func (r *JSONSessionRepository) findCanonicalSessionID(ctx context.Context, logi
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		raw, readErr := os.ReadFile(filepath.Join(r.baseDir, entry.Name()))
+		fileID := strings.TrimSuffix(entry.Name(), ".json")
+		if r.overlay[fileID] != nil {
+			continue
+		}
+		raw, readErr := r.readCanonicalFile(filepath.Join(r.baseDir, entry.Name()))
 		if readErr != nil {
 			return "", fmt.Errorf("read session identity: %w", readErr)
 		}
-		if err := rejectLegacySessionIdentityFields(raw); err != nil {
+		if err := inspect(raw); err != nil {
 			return "", err
 		}
-		var probe sessionIdentityProbe
-		if err := json.Unmarshal(raw, &probe); err != nil {
-			return "", fmt.Errorf("decode session identity: %w", err)
+	}
+	for _, pending := range r.overlay {
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
-		if probe.ID == "" && probe.LogicalDate == "" && probe.ChannelAddress == nil {
-			continue
+		if err := inspect(pending.data); err != nil {
+			return "", err
 		}
-		if probe.ID == "" || probe.LogicalDate == "" || probe.ChannelAddress == nil {
-			return "", fmt.Errorf("canonical session identity is incomplete")
-		}
-		candidateAddress, err := channelAddressFromDTO(probe.ChannelAddress)
-		if err != nil {
-			return "", fmt.Errorf("canonical ChannelAddress is invalid: %w", err)
-		}
-		if err := session.ValidateLogicalDate(probe.LogicalDate); err != nil {
-			return "", fmt.Errorf("canonical logical_date is invalid: %w", err)
-		}
-		if err := modulecore.SessionID(probe.ID).Validate(); err != nil {
-			return "", fmt.Errorf("canonical session_id is invalid: %w", err)
-		}
-		if probe.LogicalDate != logicalDate || candidateAddress != address {
-			continue
-		}
-		if matchedID != "" && matchedID != probe.ID {
-			return "", fmt.Errorf("multiple canonical sessions match lookup attributes")
-		}
-		matchedID = probe.ID
 	}
 	return matchedID, nil
+}
+
+// WarmCanonicalIndex scans and validates persisted session identities once for
+// this repository process. Canonical lookup calls use the in-memory index
+// after this succeeds. A failed scan leaves the index unwarmed and unchanged.
+func (r *JSONSessionRepository) WarmCanonicalIndex(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.canonicalIndexWarmed {
+		return nil
+	}
+
+	entries, err := r.readCanonicalDir(r.baseDir)
+	if err != nil {
+		return fmt.Errorf("read session directory while warming canonical index: %w", err)
+	}
+	index := make(map[canonicalSessionKey]string)
+	byID := make(map[string]canonicalSessionKey)
+	add := func(id string, key canonicalSessionKey) error {
+		if existingID, exists := index[key]; exists && existingID != id {
+			return fmt.Errorf("multiple canonical sessions match lookup attributes")
+		}
+		if existingKey, exists := byID[id]; exists && existingKey != key {
+			return fmt.Errorf("canonical session %q has conflicting identities", id)
+		}
+		index[key] = id
+		byID[id] = key
+		return nil
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		fileID := strings.TrimSuffix(entry.Name(), ".json")
+		if r.overlay[fileID] != nil {
+			continue
+		}
+		raw, readErr := r.readCanonicalFile(filepath.Join(r.baseDir, entry.Name()))
+		if readErr != nil {
+			return fmt.Errorf("read session identity %q while warming canonical index: %w", entry.Name(), readErr)
+		}
+		id, key, present, err := parseCanonicalSessionIdentity(raw)
+		if err != nil {
+			return fmt.Errorf("invalid canonical identity in %q: %w", entry.Name(), err)
+		}
+		if !present {
+			continue
+		}
+		if id != fileID {
+			return fmt.Errorf("canonical session id %q does not match filename %q", id, entry.Name())
+		}
+		if err := add(id, key); err != nil {
+			return err
+		}
+	}
+	for id, pending := range r.overlay {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		pendingID, key, present, err := parseCanonicalSessionIdentity(pending.data)
+		if err != nil {
+			return fmt.Errorf("invalid canonical identity in pending session %q: %w", id, err)
+		}
+		if !present || pendingID != id {
+			return fmt.Errorf("pending session %q has no matching canonical identity", id)
+		}
+		if oldKey, exists := byID[id]; exists && oldKey != key {
+			delete(index, oldKey)
+			delete(byID, id)
+		}
+		if err := add(id, key); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.canonicalIndex = index
+	r.canonicalIndexBySessionID = byID
+	r.canonicalIndexWarmed = true
+	return nil
+}
+
+// CanonicalIndexWarmed reports whether startup successfully built the
+// process-local canonical index. Before warming, lookups retain the legacy
+// synchronous scan path for callers that have not yet adopted startup wiring.
+func (r *JSONSessionRepository) CanonicalIndexWarmed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.canonicalIndexWarmed
+}
+
+func (r *JSONSessionRepository) readCanonicalDir(path string) ([]os.DirEntry, error) {
+	if r.readCanonicalDirectory != nil {
+		return r.readCanonicalDirectory(path)
+	}
+	return os.ReadDir(path)
+}
+
+func (r *JSONSessionRepository) readCanonicalFile(path string) ([]byte, error) {
+	if r.readCanonicalIdentityFile != nil {
+		return r.readCanonicalIdentityFile(path)
+	}
+	return os.ReadFile(path)
+}
+
+func parseCanonicalSessionIdentity(raw []byte) (string, canonicalSessionKey, bool, error) {
+	if err := rejectLegacySessionIdentityFields(raw); err != nil {
+		return "", canonicalSessionKey{}, false, err
+	}
+	var probe sessionIdentityProbe
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return "", canonicalSessionKey{}, false, fmt.Errorf("decode session identity: %w", err)
+	}
+	if probe.ID == "" && probe.LogicalDate == "" && probe.ChannelAddress == nil {
+		return "", canonicalSessionKey{}, false, nil
+	}
+	if probe.ID == "" || probe.LogicalDate == "" || probe.ChannelAddress == nil {
+		return "", canonicalSessionKey{}, false, fmt.Errorf("canonical session identity is incomplete")
+	}
+	address, err := channelAddressFromDTO(probe.ChannelAddress)
+	if err != nil {
+		return "", canonicalSessionKey{}, false, fmt.Errorf("canonical ChannelAddress is invalid: %w", err)
+	}
+	if err := session.ValidateLogicalDate(probe.LogicalDate); err != nil {
+		return "", canonicalSessionKey{}, false, fmt.Errorf("canonical logical_date is invalid: %w", err)
+	}
+	if err := modulecore.SessionID(probe.ID).Validate(); err != nil {
+		return "", canonicalSessionKey{}, false, fmt.Errorf("canonical session_id is invalid: %w", err)
+	}
+	return probe.ID, canonicalSessionKeyFor(probe.LogicalDate, address), true, nil
+}
+
+func canonicalSessionKeyFor(logicalDate string, address conversation.ChannelAddress) canonicalSessionKey {
+	return canonicalSessionKey{
+		logicalDate:            logicalDate,
+		channelType:            address.ChannelType(),
+		externalConversationID: address.ExternalConversationID(),
+	}
+}
+
+func (r *JSONSessionRepository) validateCanonicalIndexUpdate(id string, key canonicalSessionKey) error {
+	if !r.canonicalIndexWarmed {
+		return nil
+	}
+	if existingID, exists := r.canonicalIndex[key]; exists && existingID != id {
+		return fmt.Errorf("multiple canonical sessions match lookup attributes")
+	}
+	return nil
+}
+
+func (r *JSONSessionRepository) updateCanonicalIndex(id string, key canonicalSessionKey) {
+	if r.canonicalIndex == nil {
+		r.canonicalIndex = make(map[canonicalSessionKey]string)
+	}
+	if r.canonicalIndexBySessionID == nil {
+		r.canonicalIndexBySessionID = make(map[string]canonicalSessionKey)
+	}
+	if oldKey, exists := r.canonicalIndexBySessionID[id]; exists && oldKey != key {
+		delete(r.canonicalIndex, oldKey)
+	}
+	r.canonicalIndex[key] = id
+	r.canonicalIndexBySessionID[id] = key
+}
+
+func (r *JSONSessionRepository) removeCanonicalIndexEntry(id string) {
+	if key, exists := r.canonicalIndexBySessionID[id]; exists {
+		if r.canonicalIndex[key] == id {
+			delete(r.canonicalIndex, key)
+		}
+		delete(r.canonicalIndexBySessionID, id)
+	}
 }
 
 // NewJSONSessionRepository は新しいJSONSessionRepositoryを作成
 func NewJSONSessionRepository(baseDir string) *JSONSessionRepository {
 	return &JSONSessionRepository{
-		baseDir: baseDir,
+		baseDir:                   baseDir,
+		overlay:                   make(map[string]*pendingSessionWrite),
+		canonicalIndex:            make(map[canonicalSessionKey]string),
+		canonicalIndexBySessionID: make(map[string]canonicalSessionKey),
 	}
 }
 
@@ -323,9 +606,80 @@ type turnInputDTO struct {
 
 // Save はセッションを保存
 func (r *JSONSessionRepository) Save(ctx context.Context, sess *session.Session) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
+		return r.saveAfterPendingWrites(ctx, sess)
+	}
+	unlock, err := r.lockForContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return r.save(ctx, sess)
+}
+
+func (r *JSONSessionRepository) saveAfterPendingWrites(ctx context.Context, sess *session.Session) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateCanonicalSession(sess); err != nil {
+		return err
+	}
+	for {
+		pending, saveErr := func() (*pendingSessionWrite, error) {
+			unlock, err := r.lockForContext(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
+			if pending := r.overlay[sess.ID()]; pending != nil {
+				return pending, nil
+			}
+			return nil, r.save(ctx, sess)
+		}()
+		if saveErr != nil {
+			return saveErr
+		}
+		if pending == nil {
+			return nil
+		}
+		if err := pending.waitForDurability(ctx); err != nil {
+			return fmt.Errorf("wait for earlier admitted session write: %w", err)
+		}
+	}
+}
+
+func (pending *pendingSessionWrite) waitForDurability(ctx context.Context) error {
+	if pending == nil {
+		return nil
+	}
+	if pending.done == nil || pending.admission == nil {
+		return fmt.Errorf("pending session write has no durability ticket")
+	}
+
+	barrierCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	barrierDone := make(chan error, 1)
+	// The command-local completion is the durability barrier for this session.
+	// Watch the admission barrier only to surface a prior queue failure that
+	// prevents this command from ever reaching Apply; cancel it as soon as this
+	// specific command completes so later sessions do not extend the wait.
+	go func() {
+		barrierDone <- pending.admission.Barrier(barrierCtx)
+	}()
+
+	select {
+	case <-pending.done:
+		return pending.err
+	case err := <-barrierDone:
+		select {
+		case <-pending.done:
+			return pending.err
+		default:
+			return err
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (r *JSONSessionRepository) save(ctx context.Context, sess *session.Session) error {
@@ -342,7 +696,11 @@ func (r *JSONSessionRepository) save(ctx context.Context, sess *session.Session)
 	if intent != nil {
 		return fmt.Errorf("cannot save a response-first v2 reserved session through the legacy session contract")
 	}
-	return r.saveDTO(ctx, sess, r.toDTO(sess))
+	dto := r.toDTO(sess)
+	if admission, ok := persistencequeue.AdmissionFromContext(ctx); ok {
+		return r.enqueueSessionWrite(admission, sess.ID(), dto)
+	}
+	return r.saveDTO(ctx, sess, dto)
 }
 
 func (r *JSONSessionRepository) saveDTO(ctx context.Context, sess *session.Session, dto *sessionDTO) error {
@@ -362,12 +720,105 @@ func (r *JSONSessionRepository) saveDTO(ctx context.Context, sess *session.Sessi
 	if err := validateCreationIntent(dto.CreationIntent); err != nil {
 		return err
 	}
-
-	data, err := json.MarshalIndent(dto, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal session: %w", err)
+	key := canonicalSessionKeyFor(dto.LogicalDate, address)
+	if err := r.validateCanonicalIndexUpdate(sess.ID(), key); err != nil {
+		return err
 	}
 
+	data, err := marshalSessionDTO(dto)
+	if err != nil {
+		return err
+	}
+	if err := r.writeSessionBytes(ctx, sess.ID(), data); err != nil {
+		return err
+	}
+	r.updateCanonicalIndex(sess.ID(), key)
+	return nil
+}
+
+func marshalSessionDTO(dto *sessionDTO) ([]byte, error) {
+	data, err := json.MarshalIndent(dto, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal session: %w", err)
+	}
+	return data, nil
+}
+
+func (r *JSONSessionRepository) enqueueSessionWrite(admission *persistencequeue.Admission, id string, dto *sessionDTO) error {
+	data, err := marshalSessionDTO(dto)
+	if err != nil {
+		return err
+	}
+	identityID, key, present, err := parseCanonicalSessionIdentity(data)
+	if err != nil {
+		return err
+	}
+	if !present || identityID != id {
+		return fmt.Errorf("session write does not contain matching canonical identity")
+	}
+	if err := r.validateCanonicalIndexUpdate(id, key); err != nil {
+		return err
+	}
+	entry := &pendingSessionWrite{
+		data:      data,
+		done:      make(chan struct{}),
+		admission: admission,
+	}
+	_, err = admission.Enqueue(persistencequeue.PersistenceCommand{
+		Owner:     persistencequeue.OwnerSession,
+		Kind:      "session.json.write",
+		SizeBytes: int64(len(data)),
+		Apply: func(ctx context.Context) (applyErr error) {
+			defer func() {
+				entry.err = applyErr
+				close(entry.done)
+			}()
+			r.mu.Lock()
+			if r.overlay[id] != entry {
+				r.mu.Unlock()
+				return nil
+			}
+			r.writeMu.Lock()
+			r.mu.Unlock()
+			err := r.writeSessionBytesLocked(ctx, id, entry.data)
+			r.writeMu.Unlock()
+			if err != nil {
+				return err
+			}
+			r.mu.Lock()
+			if r.overlay[id] == entry {
+				delete(r.overlay, id)
+			}
+			r.mu.Unlock()
+			return nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if r.overlay == nil {
+		r.overlay = make(map[string]*pendingSessionWrite)
+	}
+	r.overlay[id] = entry
+	r.updateCanonicalIndex(id, key)
+	return nil
+}
+
+func (r *JSONSessionRepository) writeSessionBytes(ctx context.Context, id string, data []byte) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	return r.writeSessionBytesLocked(ctx, id, data)
+}
+
+func (r *JSONSessionRepository) writeSessionBytesLocked(ctx context.Context, id string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.beforeWriteSessionBytes != nil {
+		if err := r.beforeWriteSessionBytes(ctx, id, data); err != nil {
+			return err
+		}
+	}
 	temporary, err := os.CreateTemp(r.baseDir, ".session-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create session temp file: %w", err)
@@ -392,7 +843,7 @@ func (r *JSONSessionRepository) saveDTO(ctx context.Context, sess *session.Sessi
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("failed to close session temp file: %w", err)
 	}
-	if err := os.Rename(temporaryPath, r.getFilePath(sess.ID())); err != nil {
+	if err := os.Rename(temporaryPath, r.getFilePath(id)); err != nil {
 		return fmt.Errorf("failed to commit session file: %w", err)
 	}
 	committed = true
@@ -401,8 +852,11 @@ func (r *JSONSessionRepository) saveDTO(ctx context.Context, sess *session.Sessi
 
 // Load はセッションをロード
 func (r *JSONSessionRepository) Load(ctx context.Context, id string) (*session.Session, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock, err := r.lockForContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	return r.load(ctx, id)
 }
 
@@ -413,12 +867,10 @@ func (r *JSONSessionRepository) load(ctx context.Context, id string) (*session.S
 	if err := modulecore.SessionID(id).Validate(); err != nil {
 		return nil, fmt.Errorf("invalid canonical session_id: %w", err)
 	}
-	filePath := r.getFilePath(id)
-
-	data, err := os.ReadFile(filePath)
+	data, err := r.readSessionBytes(ctx, id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("session %s: %w", id, session.ErrSessionNotFound)
+		if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
 		return nil, fmt.Errorf("failed to read session file: %w", err)
 	}
@@ -447,14 +899,31 @@ func (r *JSONSessionRepository) creationIntent(ctx context.Context, id string) (
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	data, err := r.readSessionBytes(ctx, id)
+	if err != nil {
+		if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to read session creation intent: %w", err)
+	}
+	return creationIntentFromJSON(data)
+}
+
+func (r *JSONSessionRepository) readSessionBytes(ctx context.Context, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if pending := r.overlay[id]; pending != nil {
+		return pending.data, nil
+	}
 	data, err := os.ReadFile(r.getFilePath(id))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("session %s: %w", id, session.ErrSessionNotFound)
 		}
-		return nil, fmt.Errorf("failed to read session creation intent: %w", err)
+		return nil, err
 	}
-	return creationIntentFromJSON(data)
+	return data, nil
 }
 
 func creationIntentFromJSON(data []byte) (*session.CreationIntent, error) {
@@ -539,13 +1008,19 @@ func rejectLegacySessionIdentityFields(data []byte) error {
 
 // Exists はセッションが存在するか確認
 func (r *JSONSessionRepository) Exists(ctx context.Context, id string) (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock, err := r.lockForContext(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
 	if err := modulecore.SessionID(id).Validate(); err != nil {
 		return false, fmt.Errorf("invalid canonical session_id: %w", err)
 	}
+	if r.overlay[id] != nil {
+		return true, nil
+	}
 	filePath := r.getFilePath(id)
-	_, err := os.Stat(filePath)
+	_, err = os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -557,18 +1032,28 @@ func (r *JSONSessionRepository) Exists(ctx context.Context, id string) (bool, er
 
 // Delete はセッションを削除
 func (r *JSONSessionRepository) Delete(ctx context.Context, id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	unlock, err := r.lockForSynchronousWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := modulecore.SessionID(id).Validate(); err != nil {
 		return fmt.Errorf("invalid canonical session_id: %w", err)
 	}
+	// Removing the current overlay invalidates every older queued command for
+	// this session. Serialize the removal with file writes already in progress.
+	delete(r.overlay, id)
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	filePath := r.getFilePath(id)
 	if err := os.Remove(filePath); err != nil {
 		if os.IsNotExist(err) {
+			r.removeCanonicalIndexEntry(id)
 			return nil // 既に存在しない場合はエラーとしない
 		}
 		return fmt.Errorf("failed to delete session file: %w", err)
 	}
+	r.removeCanonicalIndexEntry(id)
 	return nil
 }
 

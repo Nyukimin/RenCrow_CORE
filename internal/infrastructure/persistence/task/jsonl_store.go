@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/txobserve"
@@ -46,6 +47,7 @@ type JSONLStore struct {
 	txHot             *txHotPaths
 	rot               *rotationState // segment rotation (nil for a reader)
 	idx               *taskIndex     // optional in-memory index (OpenOptions.Index); nil keeps the original path
+	taskPersistence   *taskPersistenceQueueState
 	root              string
 	statePath         string
 	runPath           string
@@ -138,6 +140,7 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 		notificationsPath: filepath.Join(current.dir, notificationsFilename),
 		lifecycle:         newTaskStoreLifecycle(),
 		executionFence:    newTaskExecutionFence(),
+		taskPersistence:   newTaskPersistenceQueueState(),
 		fenceByID:         make(map[string]persistedTaskFence),
 		activeFences:      make(map[modulecore.TaskID]string),
 	}
@@ -196,12 +199,13 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 				_ = idx.ck.checkpointNow("open")
 			}
 		}
-		batch.SetPostCommitHook(idx.onCommitFor(idx.cur))
+		store.setTaskPersistencePostCommitHook(idx.cur)
 	} else {
 		receipts, err = readTaskOperationReceipts(context.Background(), filepath.Join(root, taskOperationReceiptFilename))
 		if err != nil {
 			return nil, fmt.Errorf("load task operation receipts: %w", err)
 		}
+		store.setTaskPersistencePostCommitHook(0)
 	}
 	fenceSnapshot, err := readTaskExecutionFences(context.Background(), store.fenceLogPaths()...)
 	if err != nil {
@@ -352,7 +356,9 @@ func (s *JSONLStore) SaveRun(ctx context.Context, value domaintask.Run) error {
 
 func (s *JSONLStore) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
 	if s != nil && s.idx != nil {
-		return s.indexGetRun(ctx, runID)
+		if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
+			return s.indexGetRun(ctx, runID)
+		}
 	}
 	var result domaintask.Run
 	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
@@ -375,7 +381,9 @@ func (s *JSONLStore) ListRuns(ctx context.Context, filter domaintask.RunFilter) 
 
 func (s *JSONLStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
 	if s != nil && s.idx != nil {
-		return s.indexGetTask(ctx, taskID)
+		if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
+			return s.indexGetTask(ctx, taskID)
+		}
 	}
 	var result domaintask.Task
 	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
@@ -404,7 +412,9 @@ func (s *JSONLStore) SaveContext(ctx context.Context, value domaintask.SharedRol
 
 func (s *JSONLStore) GetContext(ctx context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
 	if s != nil && s.idx != nil {
-		return s.indexGetContext(ctx, taskID)
+		if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
+			return s.indexGetContext(ctx, taskID)
+		}
 	}
 	var result domaintask.SharedRoleContext
 	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
@@ -629,6 +639,10 @@ func (s *JSONLStore) closeStore(flushCheckpoint bool) error {
 	if s.lifecycle != nil {
 		s.lifecycle.wait()
 	}
+	var pendingErr error
+	if flushCheckpoint && s.taskPersistence != nil {
+		pendingErr = s.taskPersistence.drain(context.Background())
+	}
 	// No transaction is in flight and none can start. Stop the checkpoint loop
 	// first and only then write the final checkpoint, so two writers of the
 	// sidecar never overlap; it runs before the writer lock is released, so no
@@ -646,12 +660,12 @@ func (s *JSONLStore) closeStore(flushCheckpoint bool) error {
 		if s.lifecycle != nil {
 			s.lifecycle.finishClose()
 		}
-		return nil
+		return pendingErr
 	}
 	s.closed = true
-	var err error
+	err := pendingErr
 	if s.writerLock != nil {
-		err = releaseTaskWriter(s.writerLock)
+		err = errors.Join(err, releaseTaskWriter(s.writerLock))
 		s.writerLock = nil
 	}
 	err = errors.Join(err, s.idx.close())

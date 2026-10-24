@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence"
 	_ "modernc.org/sqlite"
@@ -18,6 +21,10 @@ type SQLiteStore struct {
 	db               *sql.DB
 	metaRoot         string
 	checkpointWorker *persistence.SQLiteWALCheckpointWorker
+	admissionWrites  *personaAdmissionState
+	closeMu          sync.Mutex
+	closed           bool
+	closeErr         error
 }
 
 const sqliteBusyTimeoutMilliseconds = 5000
@@ -33,7 +40,7 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &SQLiteStore{db: db}
+	store := &SQLiteStore{db: db, admissionWrites: newPersonaAdmissionState()}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -60,16 +67,108 @@ func NewSQLiteStoreWithMetaRoot(path, metaRoot string) (*SQLiteStore, error) {
 	return store, nil
 }
 
+// SetPersistenceQueue binds this owner to the process's shared RAM FIFO. It
+// warms bounded read snapshots before admissions can use the queue so CHAT
+// reads never need to wait on SQLite while a queued write is in flight.
+func (s *SQLiteStore) SetPersistenceQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) error {
+	if s == nil || s.db == nil {
+		return ErrPersonaAdmissionUnavailable
+	}
+	if err := s.admissionWrites.validateQueueBinding(queue); err != nil {
+		return err
+	}
+	release, err := s.admissionWrites.beginSynchronous(context.Background())
+	if err != nil {
+		return err
+	}
+	defer release()
+	snapshots, err := s.loadAdmissionSnapshots(context.Background())
+	if err != nil {
+		return fmt.Errorf("warm Persona admission read snapshots: %w", err)
+	}
+	for table, snapshot := range snapshots {
+		s.admissionWrites.setSnapshot(table, snapshot.writes, personaAdmissionListSnapshotLimit, snapshot.complete)
+	}
+	return s.admissionWrites.setQueue(queue)
+}
+
+func (s *SQLiteStore) MatchesPersistenceQueue(queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) bool {
+	return s != nil && s.admissionWrites.matchesQueue(queue)
+}
+
+type personaReadSnapshot struct {
+	writes   []personaAdmissionWrite
+	complete bool
+}
+
+func (s *SQLiteStore) loadAdmissionSnapshots(ctx context.Context) (map[string]personaReadSnapshot, error) {
+	tables := []struct {
+		name      string
+		keyColumn string
+	}{
+		{name: "persona_discomfort_log", keyColumn: "event_id"},
+		{name: "persona_trigger_log", keyColumn: "event_id"},
+		{name: "canonical_response_log", keyColumn: "event_id"},
+		{name: "observation_log", keyColumn: "event_id"},
+		{name: "meta_profile_update", keyColumn: "update_id"},
+		{name: "persona_interface_session", keyColumn: "session_id"},
+	}
+	snapshots := make(map[string]personaReadSnapshot, len(tables))
+	for _, table := range tables {
+		rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT %s, payload FROM %s ORDER BY rowid DESC LIMIT ?`, table.keyColumn, table.name), personaAdmissionListSnapshotLimit+1)
+		if err != nil {
+			return nil, err
+		}
+		writes := make([]personaAdmissionWrite, 0, personaAdmissionListSnapshotLimit+1)
+		for rows.Next() {
+			var key, payload string
+			if err := rows.Scan(&key, &payload); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			writes = append(writes, personaAdmissionWrite{table: table.name, key: key, payload: payload})
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		complete := len(writes) <= personaAdmissionListSnapshotLimit
+		if len(writes) > personaAdmissionListSnapshotLimit {
+			writes = writes[:personaAdmissionListSnapshotLimit]
+		}
+		snapshots[table.name] = personaReadSnapshot{
+			writes:   writes,
+			complete: complete,
+		}
+	}
+	return snapshots, nil
+}
+
 func (s *SQLiteStore) Close() error {
 	if s == nil {
 		return nil
 	}
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return s.closeErr
+	}
+	var drainErr error
+	if s.admissionWrites != nil {
+		drainErr = s.admissionWrites.stopAcceptingAndDrain()
+	}
 	var writerErr error
 	if s.db == nil {
+		var checkpointErr error
 		if s.checkpointWorker != nil {
-			return s.checkpointWorker.Close()
+			checkpointErr = s.checkpointWorker.Close()
 		}
-		return nil
+		s.closeErr = errors.Join(drainErr, checkpointErr)
+		s.closed = true
+		return s.closeErr
 	}
 	// Close and drain the writer pool before the final checkpoint.
 	writerErr = persistence.CloseSQLiteWALWriter(s.db)
@@ -77,7 +176,9 @@ func (s *SQLiteStore) Close() error {
 	if s.checkpointWorker != nil {
 		checkpointErr = s.checkpointWorker.Close()
 	}
-	return errors.Join(writerErr, checkpointErr)
+	s.closeErr = errors.Join(drainErr, writerErr, checkpointErr)
+	s.closed = true
+	return s.closeErr
 }
 
 // CheckpointStatus reports the latest checkpoint and its effective WAL settings.
@@ -207,7 +308,7 @@ func (s *SQLiteStore) SaveDiscomfortLog(ctx context.Context, item domainpersona.
 	if err := domainpersona.ValidateDiscomfortLog(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO persona_discomfort_log (
+	return s.save(ctx, "persona_discomfort_log", item.EventID, `INSERT OR REPLACE INTO persona_discomfort_log (
 		event_id, character_id, status, created_at, payload
 	) VALUES (?, ?, ?, ?, ?)`,
 		item.EventID, item.CharacterID, item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -221,7 +322,7 @@ func (s *SQLiteStore) SaveTriggerLog(ctx context.Context, item domainpersona.Tri
 	if err := domainpersona.ValidateTriggerLog(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO persona_trigger_log (
+	return s.save(ctx, "persona_trigger_log", item.EventID, `INSERT OR REPLACE INTO persona_trigger_log (
 		event_id, character_id, trigger_id, trigger_category, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?)`,
 		item.EventID, item.CharacterID, item.TriggerID, item.TriggerCategory, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -235,7 +336,7 @@ func (s *SQLiteStore) SaveCanonicalResponseLog(ctx context.Context, item domainp
 	if err := domainpersona.ValidateCanonicalResponseLog(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO canonical_response_log (
+	return s.save(ctx, "canonical_response_log", item.EventID, `INSERT OR REPLACE INTO canonical_response_log (
 		event_id, character_id, response_key, message_id, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?)`,
 		item.EventID, item.CharacterID, item.ResponseKey, item.MessageID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -249,7 +350,7 @@ func (s *SQLiteStore) SaveObservationLog(ctx context.Context, item domainpersona
 	if err := domainpersona.ValidateObservationLog(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO observation_log (
+	return s.save(ctx, "observation_log", item.EventID, `INSERT OR REPLACE INTO observation_log (
 		event_id, observer_id, target_id, observation_type, sensitivity, review_status, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.EventID, item.ObserverID, item.TargetID, item.ObservationType, item.Sensitivity, item.ReviewStatus, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -263,6 +364,23 @@ func (s *SQLiteStore) ListObservationLogs(ctx context.Context, limit int) ([]dom
 func (s *SQLiteStore) FindObservationLogByID(ctx context.Context, eventID string) (domainpersona.ObservationLog, bool, error) {
 	if s == nil || s.db == nil {
 		return domainpersona.ObservationLog{}, false, fmt.Errorf("persona sqlite store is closed")
+	}
+	if admission, ok := persistencequeue.AdmissionFromContext(ctx); ok {
+		write, found, complete, err := s.admissionWrites.observationSnapshotAndPending(admission, eventID)
+		if err != nil {
+			return domainpersona.ObservationLog{}, false, err
+		}
+		if found {
+			item, err := decodePersonaAdmissionWrite[domainpersona.ObservationLog](write)
+			if err != nil {
+				return domainpersona.ObservationLog{}, false, err
+			}
+			return item, true, nil
+		}
+		if !complete {
+			return domainpersona.ObservationLog{}, false, ErrPersonaAdmissionSnapshotUnavailable
+		}
+		return domainpersona.ObservationLog{}, false, nil
 	}
 	var payload string
 	err := s.db.QueryRowContext(ctx, `SELECT payload FROM observation_log WHERE event_id = ?`, eventID).Scan(&payload)
@@ -283,7 +401,7 @@ func (s *SQLiteStore) SaveMetaProfileUpdate(ctx context.Context, item domainpers
 	if err := domainpersona.ValidateMetaProfileUpdate(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO meta_profile_update (
+	return s.save(ctx, "meta_profile_update", item.UpdateID, `INSERT OR REPLACE INTO meta_profile_update (
 		update_id, observer_id, target_id, section, sensitivity, review_status, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.UpdateID, item.ObserverID, item.TargetID, item.Section, item.Sensitivity, item.ReviewStatus, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -297,7 +415,7 @@ func (s *SQLiteStore) SaveInterfaceSession(ctx context.Context, item domainperso
 	if err := domainpersona.ValidateInterfaceSession(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO persona_interface_session (
+	return s.save(ctx, "persona_interface_session", item.SessionID, `INSERT OR REPLACE INTO persona_interface_session (
 		session_id, character_id, interface_type, session_key, workstream_id, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		item.SessionID, item.CharacterID, item.InterfaceType, item.SessionKey, item.WorkstreamID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -307,19 +425,39 @@ func (s *SQLiteStore) ListInterfaceSessions(ctx context.Context, limit int) ([]d
 	return listSQLiteItems[domainpersona.InterfaceSession](ctx, s, "persona_interface_session", limit)
 }
 
-func (s *SQLiteStore) save(ctx context.Context, query string, args ...any) error {
+func (s *SQLiteStore) save(ctx context.Context, table, key, query string, args ...any) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("persona sqlite store is closed")
 	}
-	if len(args) == 0 {
+	if len(args) == 0 || strings.TrimSpace(table) == "" || strings.TrimSpace(key) == "" {
 		return fmt.Errorf("persona sqlite store save requires payload")
 	}
 	payload, err := json.Marshal(args[len(args)-1])
 	if err != nil {
 		return err
 	}
-	args[len(args)-1] = string(payload)
-	_, err = s.db.ExecContext(ctx, query, args...)
+	immutableArgs := append([]any(nil), args...)
+	immutablePayload := string(payload)
+	immutableArgs[len(immutableArgs)-1] = immutablePayload
+	if admission, ok := persistencequeue.AdmissionFromContext(ctx); ok {
+		immutableQuery := query
+		return s.admissionWrites.enqueue(admission, table, key, "sqlite."+table+".insert_or_replace", immutablePayload, func(workerCtx context.Context) error {
+			if s == nil || s.db == nil {
+				return errors.New("persona sqlite store is closed")
+			}
+			_, err := s.db.ExecContext(workerCtx, immutableQuery, immutableArgs...)
+			return err
+		})
+	}
+	release, err := s.admissionWrites.beginSynchronous(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	_, err = s.db.ExecContext(ctx, query, immutableArgs...)
+	if err == nil {
+		s.admissionWrites.recordSynchronous(table, key, immutablePayload)
+	}
 	return err
 }
 
@@ -329,6 +467,21 @@ func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, l
 	}
 	if limit <= 0 {
 		limit = 50
+	}
+	if admission, ok := persistencequeue.AdmissionFromContext(ctx); ok {
+		snapshot, admissionWrites, _, err := s.admissionWrites.snapshotAndPendingFor(admission, table, limit)
+		if err != nil {
+			return nil, err
+		}
+		items := make([]T, 0, len(snapshot))
+		for _, write := range snapshot {
+			item, err := decodePersonaAdmissionWrite[T](write)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
+		}
+		return mergePersonaAdmissionWrites(items, admissionWrites, limit)
 	}
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT payload FROM %s ORDER BY rowid DESC LIMIT ?`, table), limit)
 	if err != nil {
@@ -347,7 +500,10 @@ func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, l
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const timeFormatRFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"

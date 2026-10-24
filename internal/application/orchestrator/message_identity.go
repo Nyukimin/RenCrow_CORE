@@ -1,15 +1,23 @@
 package orchestrator
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type correlatedSessionTurnLogger interface {
 	WriteUserWithIdentity(sessionID, channel, messageID, traceID, content string)
 	WriteAssistantWithIdentity(sessionID, channel, route, taskID, messageID, traceID, content string)
+}
+
+type contextAwareSessionTurnLogger interface {
+	WriteUserWithIdentityContext(ctx context.Context, sessionID, channel, messageID, traceID, content string) error
+	WriteAssistantWithIdentityContext(ctx context.Context, sessionID, channel, route, taskID, messageID, traceID, content string) error
 }
 
 func ensureProcessRequestIdentity(req *ProcessMessageRequest) error {
@@ -79,20 +87,46 @@ func ensureProcessResponseIdentity(
 	return resp
 }
 
-func writeUserSessionTurn(logger SessionTurnLogger, req ProcessMessageRequest) {
+func writeUserSessionTurn(ctx context.Context, logger SessionTurnLogger, req ProcessMessageRequest) error {
 	if logger == nil {
-		return
+		return nil
+	}
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		if contextAware, ok := logger.(contextAwareSessionTurnLogger); ok {
+			if err := contextAware.WriteUserWithIdentityContext(ctx, req.SessionID, req.Channel, req.MessageID, req.TraceID, req.UserMessage); err != nil {
+				return fmt.Errorf("write user session turn: %w", err)
+			}
+			return nil
+		}
 	}
 	if correlated, ok := logger.(correlatedSessionTurnLogger); ok {
 		correlated.WriteUserWithIdentity(req.SessionID, req.Channel, req.MessageID, req.TraceID, req.UserMessage)
-		return
+		return nil
 	}
 	logger.WriteUser(req.SessionID, req.Channel, req.UserMessage)
+	return nil
 }
 
-func writeAssistantSessionTurn(logger SessionTurnLogger, req ProcessMessageRequest, resp ProcessMessageResponse) {
+func writeAssistantSessionTurn(ctx context.Context, logger SessionTurnLogger, req ProcessMessageRequest, resp ProcessMessageResponse) error {
 	if logger == nil {
-		return
+		return nil
+	}
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		if contextAware, ok := logger.(contextAwareSessionTurnLogger); ok {
+			if err := contextAware.WriteAssistantWithIdentityContext(
+				ctx,
+				req.SessionID,
+				req.Channel,
+				string(resp.Route),
+				resp.TaskID,
+				resp.MessageID,
+				resp.TraceID,
+				resp.Response,
+			); err != nil {
+				return fmt.Errorf("write assistant session turn: %w", err)
+			}
+			return nil
+		}
 	}
 	if correlated, ok := logger.(correlatedSessionTurnLogger); ok {
 		correlated.WriteAssistantWithIdentity(
@@ -104,7 +138,8 @@ func writeAssistantSessionTurn(logger SessionTurnLogger, req ProcessMessageReque
 			resp.TraceID,
 			resp.Response,
 		)
-		return
+		return nil
 	}
 	logger.WriteAssistant(req.SessionID, req.Channel, string(resp.Route), resp.TaskID, resp.Response)
+	return nil
 }

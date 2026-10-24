@@ -19,6 +19,7 @@ type JSONLStore struct {
 	worktreePath      string
 	commandPath       string
 	contextUsagePath  string
+	admissionWrites   *admissionState
 }
 
 func NewJSONLStore(root string) *JSONLStore {
@@ -30,61 +31,105 @@ func NewJSONLStore(root string) *JSONLStore {
 		worktreePath:      filepath.Join(root, "worktree_registry.jsonl"),
 		commandPath:       filepath.Join(root, "command_registry.jsonl"),
 		contextUsagePath:  filepath.Join(root, "ai_context_usage.jsonl"),
+		admissionWrites:   &admissionState{},
 	}
 }
 
 func (s *JSONLStore) CompactOperationalLogs() error {
-	return jsonlutil.CompactLatestRecords(s.contextUsagePath, contextUsageMaxRecords)
+	return s.admissionWrites.withSynchronousFence(context.Background(), func() error {
+		return jsonlutil.CompactLatestRecords(s.contextUsagePath, contextUsageMaxRecords)
+	})
 }
 
-func (s *JSONLStore) SaveProjectMemoryIndex(_ context.Context, item domainai.ProjectMemoryIndex) error {
+func (s *JSONLStore) SaveProjectMemoryIndex(ctx context.Context, item domainai.ProjectMemoryIndex) error {
 	if err := domainai.ValidateProjectMemoryIndex(item); err != nil {
 		return err
 	}
-	return appendJSONL(s.projectMemoryPath, item)
+	return s.save(ctx, "jsonl.project_memory_index.append", s.projectMemoryPath, item, false)
 }
 
-func (s *JSONLStore) ListProjectMemoryIndexes(_ context.Context, limit int) ([]domainai.ProjectMemoryIndex, error) {
-	return listLatestJSONLByKey(s.projectMemoryPath, limit, func(item domainai.ProjectMemoryIndex) string {
-		return string(item.MemoryID)
+func (s *JSONLStore) ListProjectMemoryIndexes(ctx context.Context, limit int) ([]domainai.ProjectMemoryIndex, error) {
+	var items []domainai.ProjectMemoryIndex
+	err := s.admissionWrites.withSynchronousFence(ctx, func() error {
+		var err error
+		items, err = listLatestJSONLByKey(s.projectMemoryPath, limit, func(item domainai.ProjectMemoryIndex) string {
+			return string(item.MemoryID)
+		})
+		return err
 	})
+	return items, err
 }
 
-func (s *JSONLStore) SaveWorktreeRegistry(_ context.Context, item domainai.WorktreeRegistry) error {
+func (s *JSONLStore) SaveWorktreeRegistry(ctx context.Context, item domainai.WorktreeRegistry) error {
 	if err := domainai.ValidateWorktreeRegistry(item); err != nil {
 		return err
 	}
-	return appendJSONL(s.worktreePath, item)
+	return s.save(ctx, "jsonl.worktree_registry.append", s.worktreePath, item, false)
 }
 
-func (s *JSONLStore) ListWorktreeRegistries(_ context.Context, limit int) ([]domainai.WorktreeRegistry, error) {
-	return listLatestJSONLByKey(s.worktreePath, limit, func(item domainai.WorktreeRegistry) string {
-		return item.WorktreeID
+func (s *JSONLStore) ListWorktreeRegistries(ctx context.Context, limit int) ([]domainai.WorktreeRegistry, error) {
+	var items []domainai.WorktreeRegistry
+	err := s.admissionWrites.withSynchronousFence(ctx, func() error {
+		var err error
+		items, err = listLatestJSONLByKey(s.worktreePath, limit, func(item domainai.WorktreeRegistry) string {
+			return item.WorktreeID
+		})
+		return err
 	})
+	return items, err
 }
 
-func (s *JSONLStore) SaveCommandRegistry(_ context.Context, item domainai.CommandRegistry) error {
+func (s *JSONLStore) SaveCommandRegistry(ctx context.Context, item domainai.CommandRegistry) error {
 	if err := domainai.ValidateCommandRegistry(item); err != nil {
 		return err
 	}
-	return appendJSONL(s.commandPath, item)
+	return s.save(ctx, "jsonl.command_registry.append", s.commandPath, item, false)
 }
 
-func (s *JSONLStore) ListCommandRegistries(_ context.Context, limit int) ([]domainai.CommandRegistry, error) {
-	return listLatestJSONLByKey(s.commandPath, limit, func(item domainai.CommandRegistry) string {
-		return item.CommandName
+func (s *JSONLStore) ListCommandRegistries(ctx context.Context, limit int) ([]domainai.CommandRegistry, error) {
+	var items []domainai.CommandRegistry
+	err := s.admissionWrites.withSynchronousFence(ctx, func() error {
+		var err error
+		items, err = listLatestJSONLByKey(s.commandPath, limit, func(item domainai.CommandRegistry) string {
+			return item.CommandName
+		})
+		return err
 	})
+	return items, err
 }
 
-func (s *JSONLStore) SaveContextUsage(_ context.Context, item domainai.ContextUsage) error {
+func (s *JSONLStore) SaveContextUsage(ctx context.Context, item domainai.ContextUsage) error {
 	if err := domainai.ValidateContextUsage(item); err != nil {
 		return err
 	}
-	return appendJSONLBounded(s.contextUsagePath, item, contextUsageMaxRecords, contextUsageMaxBytes)
+	return s.save(ctx, "jsonl.ai_context_usage.append", s.contextUsagePath, item, true)
 }
 
-func (s *JSONLStore) ListContextUsages(_ context.Context, limit int) ([]domainai.ContextUsage, error) {
-	return jsonlutil.ListLatest[domainai.ContextUsage](s.contextUsagePath, limit)
+func (s *JSONLStore) ListContextUsages(ctx context.Context, limit int) ([]domainai.ContextUsage, error) {
+	var items []domainai.ContextUsage
+	err := s.admissionWrites.withSynchronousFence(ctx, func() error {
+		var err error
+		items, err = jsonlutil.ListLatest[domainai.ContextUsage](s.contextUsagePath, limit)
+		return err
+	})
+	return items, err
+}
+
+func (s *JSONLStore) save(ctx context.Context, kind, path string, item any, bounded bool) error {
+	if s == nil {
+		return ErrAdmissionUnavailable
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	return persist(ctx, s.admissionWrites, kind, payload, func(_ context.Context, immutablePayload []byte) error {
+		value := json.RawMessage(immutablePayload)
+		if bounded {
+			return appendJSONLBounded(path, value, contextUsageMaxRecords, contextUsageMaxBytes)
+		}
+		return appendJSONL(path, value)
+	})
 }
 
 func appendJSONL(path string, value any) error {

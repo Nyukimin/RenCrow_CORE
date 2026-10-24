@@ -17,6 +17,7 @@ import (
 type SQLiteStore struct {
 	db               *sql.DB
 	checkpointWorker *persistence.SQLiteWALCheckpointWorker
+	admissionWrites  *admissionState
 }
 
 const sqliteBusyTimeoutMilliseconds = 5000
@@ -32,7 +33,7 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &SQLiteStore{db: db}
+	store := &SQLiteStore{db: db, admissionWrites: &admissionState{}}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -54,12 +55,16 @@ func (s *SQLiteStore) Close() error {
 	if s == nil {
 		return nil
 	}
+	release, waitErr := s.admissionWrites.stopAndFence(context.Background())
+	if release != nil {
+		defer release()
+	}
 	var writerErr error
 	if s.db == nil {
 		if s.checkpointWorker != nil {
-			return s.checkpointWorker.Close()
+			return errors.Join(waitErr, s.checkpointWorker.Close())
 		}
-		return nil
+		return waitErr
 	}
 	// Close and drain the writer pool before the final checkpoint.
 	writerErr = persistence.CloseSQLiteWALWriter(s.db)
@@ -67,7 +72,7 @@ func (s *SQLiteStore) Close() error {
 	if s.checkpointWorker != nil {
 		checkpointErr = s.checkpointWorker.Close()
 	}
-	return errors.Join(writerErr, checkpointErr)
+	return errors.Join(waitErr, writerErr, checkpointErr)
 }
 
 // CheckpointStatus reports the latest checkpoint and its effective WAL settings.
@@ -141,7 +146,7 @@ func (s *SQLiteStore) SaveProjectMemoryIndex(ctx context.Context, item domainai.
 	if err := domainai.ValidateProjectMemoryIndex(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO project_memory_index (
+	return s.save(ctx, "project_memory_index", `INSERT OR REPLACE INTO project_memory_index (
 		memory_id, repo, file_path, memory_type, updated_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?)`,
 		item.MemoryID, item.Repo, item.FilePath, item.MemoryType, item.UpdatedAt.Format(timeFormatRFC3339Nano), item)
@@ -155,7 +160,7 @@ func (s *SQLiteStore) SaveWorktreeRegistry(ctx context.Context, item domainai.Wo
 	if err := domainai.ValidateWorktreeRegistry(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO worktree_registry (
+	return s.save(ctx, "worktree_registry", `INSERT OR REPLACE INTO worktree_registry (
 		worktree_id, repo, path, branch, status, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		item.WorktreeID, item.Repo, item.Path, item.Branch, item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -169,7 +174,7 @@ func (s *SQLiteStore) SaveCommandRegistry(ctx context.Context, item domainai.Com
 	if err := domainai.ValidateCommandRegistry(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO command_registry (
+	return s.save(ctx, "command_registry", `INSERT OR REPLACE INTO command_registry (
 		command_name, file_path, default_agent, required_skill, updated_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?)`,
 		item.CommandName, item.FilePath, item.DefaultAgent, item.RequiredSkill, item.UpdatedAt.Format(timeFormatRFC3339Nano), item)
@@ -183,7 +188,7 @@ func (s *SQLiteStore) SaveContextUsage(ctx context.Context, item domainai.Contex
 	if err := domainai.ValidateContextUsage(item); err != nil {
 		return err
 	}
-	return s.save(ctx, `INSERT OR REPLACE INTO ai_context_usage (
+	return s.save(ctx, "ai_context_usage", `INSERT OR REPLACE INTO ai_context_usage (
 		event_id, session_id, task_id, run_id, workstream_id, agent, model, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.EventID, item.SessionID, item.TaskID.String(), string(item.RunID), item.WorkstreamID, item.Agent, item.Model, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
@@ -193,7 +198,7 @@ func (s *SQLiteStore) ListContextUsages(ctx context.Context, limit int) ([]domai
 	return listSQLiteItems[domainai.ContextUsage](ctx, s, "ai_context_usage", limit)
 }
 
-func (s *SQLiteStore) save(ctx context.Context, query string, args ...any) error {
+func (s *SQLiteStore) save(ctx context.Context, table string, query string, args ...any) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("ai workflow sqlite store is closed")
 	}
@@ -204,9 +209,17 @@ func (s *SQLiteStore) save(ctx context.Context, query string, args ...any) error
 	if err != nil {
 		return err
 	}
-	args[len(args)-1] = string(payload)
-	_, err = s.db.ExecContext(ctx, query, args...)
-	return err
+	immutableArgs := append([]any(nil), args...)
+	immutableArgs[len(immutableArgs)-1] = nil
+	return persist(ctx, s.admissionWrites, "sqlite."+table+".insert_or_replace", payload, func(writeCtx context.Context, immutablePayload []byte) error {
+		if s == nil || s.db == nil {
+			return fmt.Errorf("ai workflow sqlite store is closed")
+		}
+		writeArgs := append([]any(nil), immutableArgs...)
+		writeArgs[len(writeArgs)-1] = string(immutablePayload)
+		_, err := s.db.ExecContext(writeCtx, query, writeArgs...)
+		return err
+	})
 }
 
 func addColumnIfMissing(db *sql.DB, table string, column string, columnType string) error {
@@ -242,24 +255,28 @@ func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, l
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT payload FROM %s ORDER BY rowid DESC LIMIT ?`, table), limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []T{}
-	for rows.Next() {
-		var payload string
-		if err := rows.Scan(&payload); err != nil {
-			return nil, err
+	var items []T
+	err := s.admissionWrites.withSynchronousFence(ctx, func() error {
+		rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT payload FROM %s ORDER BY rowid DESC LIMIT ?`, table), limit)
+		if err != nil {
+			return err
 		}
-		var item T
-		if err := json.Unmarshal([]byte(payload), &item); err != nil {
-			return nil, err
+		defer rows.Close()
+		items = []T{}
+		for rows.Next() {
+			var payload string
+			if err := rows.Scan(&payload); err != nil {
+				return err
+			}
+			var item T
+			if err := json.Unmarshal([]byte(payload), &item); err != nil {
+				return err
+			}
+			items = append(items, item)
 		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
+		return rows.Err()
+	})
+	return items, err
 }
 
 const timeFormatRFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"

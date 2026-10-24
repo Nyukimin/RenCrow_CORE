@@ -40,6 +40,15 @@ func (tx *transactionStore) selectActions(filter domainaction.Filter) []domainac
 				take(item)
 			}
 		}
+		for id := range tx.overlayActions {
+			if _, done := considered[id]; done {
+				continue
+			}
+			considered[id] = struct{}{}
+			if item, ok := tx.lookupAction(id); ok {
+				take(item)
+			}
+		}
 		for id, item := range tx.actions {
 			if _, done := considered[id]; !done {
 				take(item)
@@ -48,13 +57,24 @@ func (tx *transactionStore) selectActions(filter domainaction.Filter) []domainac
 		return result
 	}
 	for id, item := range tx.base.actions.latest {
-		if written, ok := tx.actions[id]; ok {
-			item = written
+		if current, ok := tx.lookupAction(id); ok {
+			item = current
 		}
 		take(item)
 	}
+	for id := range tx.overlayActions {
+		if _, inBase := tx.base.actions.latest[id]; inBase {
+			continue
+		}
+		if item, ok := tx.lookupAction(id); ok {
+			take(item)
+		}
+	}
 	for id, item := range tx.actions {
 		if _, inBase := tx.base.actions.latest[id]; !inBase {
+			if _, inOverlay := tx.overlayActions[id]; inOverlay {
+				continue
+			}
 			take(item)
 		}
 	}
@@ -64,19 +84,31 @@ func (tx *transactionStore) selectActions(filter domainaction.Filter) []domainac
 // attemptsOfAction lists the Attempts of an Action as this transaction sees them.
 func (tx *transactionStore) attemptsOfAction(actionID modulecore.ActionID) []domainaction.Attempt {
 	var out []domainaction.Attempt
+	considered := make(map[modulecore.AttemptID]struct{})
 	if tx.base != nil {
 		for _, id := range tx.base.attemptsOf[actionID] {
-			if _, rewritten := tx.attempts[id]; rewritten {
-				continue
-			}
-			if item, ok := tx.base.attempt(id); ok {
+			considered[id] = struct{}{}
+			if item, ok := tx.lookupAttempt(id); ok {
 				out = append(out, item)
+			}
+		}
+	}
+	for id, item := range tx.overlayAttempts {
+		if _, done := considered[id]; done {
+			continue
+		}
+		if item.ActionID == actionID {
+			considered[id] = struct{}{}
+			if current, ok := tx.lookupAttempt(id); ok {
+				out = append(out, current)
 			}
 		}
 	}
 	for _, item := range tx.attempts {
 		if item.ActionID == actionID {
-			out = append(out, item)
+			if _, done := considered[item.AttemptID]; !done {
+				out = append(out, item)
+			}
 		}
 	}
 	return out
@@ -106,14 +138,25 @@ func (tx *transactionStore) selectAttempts(filter domainaction.AttemptFilter) []
 		}
 		return result
 	}
+	considered := make(map[modulecore.AttemptID]struct{}, len(tx.base.attempts.latest)+len(tx.overlayAttempts))
 	for id, item := range tx.base.attempts.latest {
-		if written, ok := tx.attempts[id]; ok {
-			item = written
+		considered[id] = struct{}{}
+		if current, ok := tx.lookupAttempt(id); ok {
+			item = current
 		}
 		take(item)
 	}
+	for id := range tx.overlayAttempts {
+		if _, done := considered[id]; done {
+			continue
+		}
+		considered[id] = struct{}{}
+		if item, ok := tx.lookupAttempt(id); ok {
+			take(item)
+		}
+	}
 	for id, item := range tx.attempts {
-		if _, inBase := tx.base.attempts.latest[id]; !inBase {
+		if _, done := considered[id]; !done {
 			take(item)
 		}
 	}
@@ -168,6 +211,11 @@ func (tx *transactionStore) checkNativeOwnerLocked(action domainaction.Action) e
 		return fmt.Errorf("Task Run %s/%s has multiple native delegation actions", action.TaskID, action.RunID)
 	}
 	for _, other := range tx.actions {
+		if other.ActionID != action.ActionID && isNativeDelegationAction(other) && other.TaskID == action.TaskID && other.RunID == action.RunID {
+			return fmt.Errorf("Task Run %s/%s has multiple native delegation actions", action.TaskID, action.RunID)
+		}
+	}
+	for _, other := range tx.overlayActions {
 		if other.ActionID != action.ActionID && isNativeDelegationAction(other) && other.TaskID == action.TaskID && other.RunID == action.RunID {
 			return fmt.Errorf("Task Run %s/%s has multiple native delegation actions", action.TaskID, action.RunID)
 		}

@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -896,6 +898,557 @@ func TestHandleSendLegacyRejectsOwnerReservedUnpinnedV2Session(t *testing.T) {
 	}
 }
 
+func TestHandleSendLegacyPreSessionAdmissionRunsAfterValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+		body   string
+		status int
+	}{
+		{name: "method", method: http.MethodGet, body: `{"message":"hello"}`, status: http.StatusMethodNotAllowed},
+		{name: "body", method: http.MethodPost, body: `{"message":`, status: http.StatusBadRequest},
+		{name: "recipient", method: http.MethodPost, body: `{"message":"hello","to":"unknown"}`, status: http.StatusBadRequest},
+		{name: "audio output", method: http.MethodPost, body: `{"message":"hello","audio_output":"mute"}`, status: http.StatusBadRequest},
+		{name: "provenance", method: http.MethodPost, body: `{"message":"hello","input_source":"direct"}`, status: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hookCalls atomic.Int32
+			var resolverCalls atomic.Int32
+			var handlerCalls atomic.Int32
+			options := &V2SendOptions{
+				LegacyPreSessionAdmission: func(context.Context, LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+					hookCalls.Add(1)
+					return nil, nil, errors.New("unexpected admission hook call")
+				},
+			}
+			h := HandleSendWithProtocolV2(func(context.Context, SendRequest) (string, error) {
+				handlerCalls.Add(1)
+				return "ok", nil
+			}, nil, nil, func(context.Context) (modulecore.SessionID, error) {
+				resolverCalls.Add(1)
+				return modulecore.NewSessionID(), nil
+			}, nil, options)
+			request := httptest.NewRequest(tc.method, "/viewer/send", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			h.ServeHTTP(response, request)
+
+			if response.Code != tc.status {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, tc.status, response.Body.String())
+			}
+			if hookCalls.Load() != 0 || resolverCalls.Load() != 0 || handlerCalls.Load() != 0 {
+				t.Fatalf("hook=%d resolver=%d handler=%d, want all zero for invalid request", hookCalls.Load(), resolverCalls.Load(), handlerCalls.Load())
+			}
+		})
+	}
+}
+
+func TestHandleSendLegacyPreSessionAdmissionRunsForUnversionedRequest(t *testing.T) {
+	admission := newViewerTestRAMAdmission(t)
+	var hookCalls atomic.Int32
+	var releaseCalls atomic.Int32
+	released := make(chan struct{})
+	processed := make(chan struct{}, 1)
+	h := HandleSendWithProtocolV2(func(ctx context.Context, _ SendRequest) (string, error) {
+		if got, ok := persistencequeue.AdmissionFromContext(ctx); !ok || got != admission {
+			t.Errorf("MessageHandler RAM admission=%p, want %p", got, admission)
+		}
+		processed <- struct{}{}
+		return "ok", nil
+	}, nil, nil, nil, nil, &V2SendOptions{
+		LegacyPreSessionAdmission: func(_ context.Context, _ LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+			hookCalls.Add(1)
+			return persistencequeue.WithAdmission(context.Background(), admission), func() {
+				if releaseCalls.Add(1) == 1 {
+					close(released)
+				}
+			}, nil
+		},
+	})
+	response := postViewerV2FromRenCrowCMD(t, h, `{"message":"legacy","to":"mio"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", response.Code, http.StatusOK, response.Body.String())
+	}
+	select {
+	case <-processed:
+	case <-time.After(time.Second):
+		t.Fatal("unversioned legacy handler did not process accepted request")
+	}
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("unversioned legacy admission was not released after processing")
+	}
+	if hookCalls.Load() != 1 || releaseCalls.Load() != 1 {
+		t.Fatalf("hook calls=%d release calls=%d, want one each", hookCalls.Load(), releaseCalls.Load())
+	}
+}
+
+func TestHandleSendLegacyPreSessionAdmissionContextPropagatesAndReleasesAfterErrorPublication(t *testing.T) {
+	admission := newViewerTestRAMAdmission(t)
+	requestOnlyKey := struct{ name string }{"request-only"}
+	hookOnlyKey := struct{ name string }{"hook-only"}
+	var hookCalls atomic.Int32
+	var releaseCalls atomic.Int32
+	released := make(chan struct{})
+	hookIdentity := make(chan LegacyPreSessionAdmissionIdentity, 1)
+	messageRequest := make(chan SendRequest, 1)
+	resolverContext := make(chan context.Context, 1)
+	processContext := make(chan context.Context, 1)
+	processGate := make(chan struct{})
+	errorPublicationContext := make(chan context.Context, 1)
+	errorPublicationGate := make(chan struct{})
+	var fallbackCalls atomic.Int32
+	options := &V2SendOptions{
+		LegacyPreSessionAdmission: func(requestContext context.Context, identity LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+			hookCalls.Add(1)
+			hookIdentity <- identity
+			if requestContext.Value(requestOnlyKey) != "request value" {
+				return nil, nil, errors.New("hook did not receive request context")
+			}
+			returnedContext := context.WithValue(requestContext, hookOnlyKey, "untrusted hook value")
+			fallback := persistencequeue.SynchronousFallback(func(ctx context.Context) (context.Context, error) {
+				if got, ok := persistencequeue.AdmissionFromContext(ctx); !ok || got != admission {
+					return nil, errors.New("fallback did not receive the admitted context")
+				}
+				if ctx.Value(requestOnlyKey) != nil || ctx.Value(hookOnlyKey) != nil {
+					return nil, errors.New("fallback received arbitrary context values")
+				}
+				fallbackCalls.Add(1)
+				return persistencequeue.WithAdmission(ctx, nil), nil
+			})
+			returnedContext = persistencequeue.WithSynchronousFallback(persistencequeue.WithAdmission(returnedContext, admission), fallback)
+			return returnedContext, func() {
+				if releaseCalls.Add(1) == 1 {
+					close(released)
+				}
+			}, nil
+		},
+	}
+	h := HandleSendWithProtocolV2(func(ctx context.Context, req SendRequest) (string, error) {
+		processContext <- ctx
+		messageRequest <- req
+		<-processGate
+		return "", errors.New("processing failed")
+	}, func(ctx context.Context, _ SendRequest, _ error) {
+		errorPublicationContext <- ctx
+		<-errorPublicationGate
+	}, nil, func(ctx context.Context) (modulecore.SessionID, error) {
+		if hookCalls.Load() != 1 {
+			return "", errors.New("session resolution ran before pre-session admission")
+		}
+		resolverContext <- ctx
+		return modulecore.NewSessionID(), nil
+	}, nil, options)
+	requestContext, cancelRequest := context.WithCancel(context.WithValue(context.Background(), requestOnlyKey, "request value"))
+	defer cancelRequest()
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"protocol_version":1,"message":"hello","to":"mio"}`)).WithContext(requestContext)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	response := httptest.NewRecorder()
+
+	h.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if hookCalls.Load() != 1 {
+		t.Fatalf("hook calls=%d want=1", hookCalls.Load())
+	}
+	var identity LegacyPreSessionAdmissionIdentity
+	select {
+	case identity = <-hookIdentity:
+	case <-time.After(time.Second):
+		t.Fatal("pre-session admission did not receive correlation identity")
+	}
+	if identity.TraceID.Validate() != nil || identity.TurnID.Validate() != nil || identity.RootTaskID.Validate() != nil {
+		t.Fatalf("pre-session admission received invalid correlation identity: %+v", identity)
+	}
+	if identity.Recipient != "mio" || identity.OperationSource != "RenCrow_CMD" {
+		t.Fatalf("pre-session admission scope=(%q,%q), want (mio,RenCrow_CMD)", identity.Recipient, identity.OperationSource)
+	}
+	select {
+	case ctx := <-resolverContext:
+		gotAdmission, ok := persistencequeue.AdmissionFromContext(ctx)
+		if !ok || gotAdmission != admission {
+			t.Fatalf("resolver context RAM admission=%p, want %p", gotAdmission, admission)
+		}
+		if ctx.Value(requestOnlyKey) != nil || ctx.Value(hookOnlyKey) != nil {
+			t.Fatal("resolver context propagated values outside the trusted RAM admission")
+		}
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("resolver context unexpectedly canceled: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("session resolver did not receive the admitted context")
+	}
+	var asyncContext context.Context
+	select {
+	case asyncContext = <-processContext:
+	case <-time.After(time.Second):
+		t.Fatal("legacy MessageHandler did not start")
+	}
+	var acceptedRequest SendRequest
+	select {
+	case acceptedRequest = <-messageRequest:
+	case <-time.After(time.Second):
+		t.Fatal("legacy MessageHandler did not receive its request")
+	}
+	if acceptedRequest.TraceID != string(identity.TraceID) || acceptedRequest.TurnID != string(identity.TurnID) || acceptedRequest.RootTaskID != string(identity.RootTaskID) {
+		t.Fatalf("MessageHandler correlation IDs differ from admission identity: request=(%s,%s,%s) hook=(%s,%s,%s)", acceptedRequest.TraceID, acceptedRequest.TurnID, acceptedRequest.RootTaskID, identity.TraceID, identity.TurnID, identity.RootTaskID)
+	}
+	cancelRequest()
+	if err := asyncContext.Err(); err != nil {
+		t.Fatalf("async context inherited request cancellation: %v", err)
+	}
+	gotAdmission, ok := persistencequeue.AdmissionFromContext(asyncContext)
+	if !ok || gotAdmission != admission {
+		t.Fatalf("async context RAM admission=%p, want %p", gotAdmission, admission)
+	}
+	fallback, ok := persistencequeue.SynchronousFallbackFromContext(asyncContext)
+	if !ok {
+		t.Fatal("async context lost the explicit synchronous fallback capability")
+	}
+	fallbackContext, err := fallback(asyncContext)
+	if err != nil {
+		t.Fatalf("invoke asynchronous context fallback: %v", err)
+	}
+	if _, ok := persistencequeue.AdmissionFromContext(fallbackContext); ok {
+		t.Fatal("fallback result retained the RAM admission capability")
+	}
+	if fallbackContext.Value(requestOnlyKey) != nil || fallbackContext.Value(hookOnlyKey) != nil {
+		t.Fatal("fallback result propagated arbitrary request or hook context values")
+	}
+	if fallbackCalls.Load() != 1 {
+		t.Fatalf("fallback calls=%d want=1", fallbackCalls.Load())
+	}
+	if asyncContext.Value(requestOnlyKey) != nil || asyncContext.Value(hookOnlyKey) != nil {
+		t.Fatal("async context propagated values outside the trusted RAM admission")
+	}
+	if releaseCalls.Load() != 0 {
+		t.Fatalf("release calls while MessageHandler was active=%d want=0", releaseCalls.Load())
+	}
+	close(processGate)
+	select {
+	case ctx := <-errorPublicationContext:
+		gotAdmission, ok := persistencequeue.AdmissionFromContext(ctx)
+		if !ok || gotAdmission != admission {
+			t.Fatalf("error publication context RAM admission=%p, want %p", gotAdmission, admission)
+		}
+		if releaseCalls.Load() != 0 {
+			t.Fatalf("release calls before error publication completed=%d want=0", releaseCalls.Load())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("async error publication did not start")
+	}
+	close(errorPublicationGate)
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("pre-session admission was not released after error publication")
+	}
+	if releaseCalls.Load() != 1 {
+		t.Fatalf("release calls=%d want=1", releaseCalls.Load())
+	}
+}
+
+func TestHandleSendLegacyPreSessionAdmissionRejectsSynchronouslyAndReleases(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		hookContext func(context.Context, *persistencequeue.Admission) context.Context
+		hookErr     error
+	}{
+		{
+			name: "hook error",
+			hookContext: func(ctx context.Context, admission *persistencequeue.Admission) context.Context {
+				return persistencequeue.WithAdmission(ctx, admission)
+			},
+			hookErr: errors.New("RAM admission unavailable"),
+		},
+		{
+			name: "missing RAM admission capability",
+			hookContext: func(context.Context, *persistencequeue.Admission) context.Context {
+				return context.Background()
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admission := newViewerTestRAMAdmission(t)
+			var releaseCalls atomic.Int32
+			var resolverCalls atomic.Int32
+			var handlerCalls atomic.Int32
+			options := &V2SendOptions{
+				LegacyPreSessionAdmission: func(ctx context.Context, _ LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+					return tc.hookContext(ctx, admission), func() { releaseCalls.Add(1) }, tc.hookErr
+				},
+			}
+			h := HandleSendWithProtocolV2(func(context.Context, SendRequest) (string, error) {
+				handlerCalls.Add(1)
+				return "ok", nil
+			}, nil, nil, func(context.Context) (modulecore.SessionID, error) {
+				resolverCalls.Add(1)
+				return modulecore.NewSessionID(), nil
+			}, nil, options)
+			response := postViewerV2FromRenCrowCMD(t, h, `{"protocol_version":1,"message":"hello","to":"mio"}`)
+
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
+			}
+			if resolverCalls.Load() != 0 || handlerCalls.Load() != 0 {
+				t.Fatalf("resolver=%d handler=%d, want neither after admission rejection", resolverCalls.Load(), handlerCalls.Load())
+			}
+			if releaseCalls.Load() != 1 {
+				t.Fatalf("release calls=%d want=1", releaseCalls.Load())
+			}
+		})
+	}
+}
+
+func TestHandleSendLegacyPreSessionAdmissionReleasesOnLaterSynchronousErrors(t *testing.T) {
+	validSession := modulecore.NewSessionID()
+	for _, tc := range []struct {
+		name              string
+		resolve           SessionIDResolver
+		protocolAdmission *SessionProtocolAdmission
+		cancellations     *SpeechCancellationRegistry
+	}{
+		{
+			name: "session resolver error",
+			resolve: func(context.Context) (modulecore.SessionID, error) {
+				return "", errors.New("session store unavailable")
+			},
+		},
+		{
+			name: "invalid canonical session",
+			resolve: func(context.Context) (modulecore.SessionID, error) {
+				return "", nil
+			},
+		},
+		{
+			name: "session protocol admission error",
+			resolve: func(context.Context) (modulecore.SessionID, error) {
+				return validSession, nil
+			},
+			protocolAdmission: NewSessionProtocolAdmission(func(context.Context, modulecore.SessionID) (string, bool, error) {
+				return "", false, errors.New("protocol state unavailable")
+			}),
+		},
+		{
+			name: "speech cancellation registration error",
+			resolve: func(context.Context) (modulecore.SessionID, error) {
+				return validSession, nil
+			},
+			cancellations: newSpeechCancellationRegistry(func() (string, error) {
+				return "", errors.New("capability source unavailable")
+			}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admission := newViewerTestRAMAdmission(t)
+			var releaseCalls atomic.Int32
+			var handlerCalls atomic.Int32
+			options := &V2SendOptions{
+				Admission: tc.protocolAdmission,
+				LegacyPreSessionAdmission: func(ctx context.Context, _ LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+					return persistencequeue.WithAdmission(ctx, admission), func() { releaseCalls.Add(1) }, nil
+				},
+			}
+			h := HandleSendWithProtocolV2(func(context.Context, SendRequest) (string, error) {
+				handlerCalls.Add(1)
+				return "ok", nil
+			}, nil, nil, tc.resolve, tc.cancellations, options)
+			response := postViewerV2FromRenCrowCMD(t, h, `{"protocol_version":1,"message":"hello","to":"mio"}`)
+
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
+			}
+			if handlerCalls.Load() != 0 {
+				t.Fatalf("handler calls=%d want=0 after synchronous error", handlerCalls.Load())
+			}
+			if releaseCalls.Load() != 1 {
+				t.Fatalf("release calls=%d want=1 after synchronous error", releaseCalls.Load())
+			}
+		})
+	}
+}
+
+func TestHandleSendLegacyRAMAdmissionOnlyRunsForRenCrowCMDToMio(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		body            string
+		operationSource string
+		withAttachment  bool
+		wantHook        bool
+	}{
+		{name: "eligible", body: `{"message":"hello","to":"mio"}`, operationSource: "RenCrow_CMD", wantHook: true},
+		{name: "eligible with attachment", body: `{"message":"hello","to":"mio"}`, operationSource: "RenCrow_CMD", withAttachment: true},
+		{name: "other recipient", body: `{"message":"hello","to":"shiro"}`, operationSource: "RenCrow_CMD"},
+		{name: "other source", body: `{"message":"hello","to":"mio"}`, operationSource: "RenCrow_VIEWER"},
+		{name: "missing source", body: `{"message":"hello","to":"mio"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hookCalls atomic.Int32
+			processed := make(chan struct{}, 1)
+			saver := &fakeAttachmentSaver{attachments: []domainattachment.Attachment{{ID: "attachment-1"}}}
+			h := HandleSendWithProtocolV2(func(ctx context.Context, request SendRequest) (string, error) {
+				if !tc.wantHook {
+					if _, ok := persistencequeue.SynchronousFallbackFromContext(ctx); ok {
+						t.Error("non-admitted legacy request received a synchronous fallback capability")
+					}
+				}
+				if tc.withAttachment && len(request.Attachments) != 1 {
+					t.Errorf("MessageHandler attachments=%d, want=1", len(request.Attachments))
+				}
+				processed <- struct{}{}
+				return "ok", nil
+			}, nil, saver, nil, nil, &V2SendOptions{
+				LegacyPreSessionAdmission: func(_ context.Context, identity LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+					hookCalls.Add(1)
+					if identity.Recipient != "mio" || identity.OperationSource != "RenCrow_CMD" {
+						return nil, nil, errors.New("hook received an out-of-scope request")
+					}
+					admission := newViewerTestRAMAdmission(t)
+					return persistencequeue.WithAdmission(context.Background(), admission), nil, nil
+				},
+			})
+			var request *http.Request
+			if tc.withAttachment {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				for key, value := range map[string]string{"message": "hello", "to": "mio"} {
+					if err := writer.WriteField(key, value); err != nil {
+						t.Fatal(err)
+					}
+				}
+				part, err := writer.CreateFormFile("attachments[]", "photo.png")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := part.Write([]byte("image bytes")); err != nil {
+					t.Fatal(err)
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatal(err)
+				}
+				request = httptest.NewRequest(http.MethodPost, "/viewer/send", &body)
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+			} else {
+				request = httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(tc.body))
+				request.Header.Set("Content-Type", "application/json")
+			}
+			if tc.operationSource != "" {
+				request.Header.Set("X-RenCrow-Client", tc.operationSource)
+			}
+			response := httptest.NewRecorder()
+			h.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, http.StatusOK, response.Body.String())
+			}
+			select {
+			case <-processed:
+			case <-time.After(time.Second):
+				t.Fatal("legacy request did not reach MessageHandler")
+			}
+			want := int32(0)
+			if tc.wantHook {
+				want = 1
+			}
+			if got := hookCalls.Load(); got != want {
+				t.Fatalf("hook calls=%d want=%d", got, want)
+			}
+			if tc.withAttachment && len(saver.files) != 1 {
+				t.Fatalf("saved files=%d, want=1", len(saver.files))
+			}
+		})
+	}
+}
+
+func TestHandleSendLegacyRAMAdmissionRejectsFullQueueBeforeSessionOrLLM(t *testing.T) {
+	queue, err := persistencequeue.NewPersistenceQueue(1, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := queue.Reserve(1, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolverCalls atomic.Int32
+	var handlerCalls atomic.Int32
+	h := HandleSendWithProtocolV2(func(context.Context, SendRequest) (string, error) {
+		handlerCalls.Add(1)
+		return "unexpected", nil
+	}, nil, nil, func(context.Context) (modulecore.SessionID, error) {
+		resolverCalls.Add(1)
+		return modulecore.NewSessionID(), nil
+	}, nil, &V2SendOptions{
+		LegacyPreSessionAdmission: func(ctx context.Context, _ LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+			_, err := persistencequeue.Admit(queue, 1, 1024)
+			return nil, nil, err
+		},
+	})
+	response := postViewerV2FromRenCrowCMD(t, h, `{"message":"hello","to":"mio"}`)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
+	}
+	if resolverCalls.Load() != 0 || handlerCalls.Load() != 0 {
+		t.Fatalf("resolver calls=%d MessageHandler calls=%d, want both zero after full queue", resolverCalls.Load(), handlerCalls.Load())
+	}
+	if err := queue.CancelReservation(reservation); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := queue.Shutdown(ctx); err != nil {
+		t.Fatalf("queue shutdown: %v", err)
+	}
+}
+
+func TestHandleSendV2DoesNotInvokeLegacyPreSessionAdmission(t *testing.T) {
+	var hookCalls atomic.Int32
+	var acceptCalls atomic.Int32
+	options := &V2SendOptions{
+		LegacyPreSessionAdmission: func(context.Context, LegacyPreSessionAdmissionIdentity) (context.Context, func(), error) {
+			hookCalls.Add(1)
+			return nil, nil, errors.New("legacy hook must not be used by v2")
+		},
+		Admission: testV2Admission(), Enabled: true, ActorID: "viewer-user",
+		ResolveSessionID: func(context.Context) (modulecore.SessionID, error) { return modulecore.NewSessionID(), nil },
+		Accept: func(_ context.Context, request V2SendRequest) (V2AcceptedTurn, error) {
+			acceptCalls.Add(1)
+			return acceptedV2Turn(request, false), nil
+		},
+		Process: func(context.Context, V2AcceptedTurn) error { return nil },
+	}
+	h := HandleSendWithProtocolV2(nil, nil, nil, nil, nil, options)
+	response := postViewerV2(t, h, `{"protocol_version":2,"message":"v2","client_submission_id":"v2-hook-scope"}`, "application/json")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d want=%d body=%s", response.Code, http.StatusAccepted, response.Body.String())
+	}
+	if hookCalls.Load() != 0 || acceptCalls.Load() != 1 {
+		t.Fatalf("legacy hook calls=%d v2 Accept calls=%d, want 0 and 1", hookCalls.Load(), acceptCalls.Load())
+	}
+}
+
+func newViewerTestRAMAdmission(t *testing.T) *persistencequeue.Admission {
+	t.Helper()
+	queue, err := persistencequeue.NewPersistenceQueue(1, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission, err := persistencequeue.Admit(queue, 1, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = admission.Release()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = queue.Shutdown(ctx)
+	})
+	return admission
+}
+
 func TestHandleSendV2RejectsUnsupportedInputBeforeAcceptance(t *testing.T) {
 	base := `{"protocol_version":2,"message":"text","client_submission_id":"validation-key","to":"mio"}`
 	for _, tc := range []struct {
@@ -1020,6 +1573,16 @@ func postViewerV2(t *testing.T, handler http.Handler, body, contentType string) 
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(body))
 	request.Header.Set("Content-Type", contentType)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func postViewerV2FromRenCrowCMD(t *testing.T, handler http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	return recorder

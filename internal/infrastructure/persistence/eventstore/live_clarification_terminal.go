@@ -32,10 +32,17 @@ func (s *SQLiteStore) CommitClarificationTerminal(ctx context.Context, input Cla
 	if err != nil {
 		return ClarificationDecisionCommit{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		return enqueueOrderedWriteResult(s, ctx, 2, queuedInput, func(commandCtx context.Context) (ClarificationDecisionCommit, error) {
+			return s.CommitClarificationTerminal(commandCtx, queuedInput)
+		})
+	}
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return ClarificationDecisionCommit{}, err
 	}
+	defer unlockSequence()
 	committed := false
 	defer func() {
 		if !committed {

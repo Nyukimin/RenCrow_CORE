@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -61,6 +63,43 @@ func TestRuntimeActionManagerIsNotSharedWhenTheSnapshotIsOff(t *testing.T) {
 	}
 	if first == second {
 		t.Fatal("with the snapshot off the runtime must open the store for every request, as it always did")
+	}
+}
+
+func TestRuntimeActionManagerRequiresTheSamePersistenceQueueForSharedOwner(t *testing.T) {
+	workspace := t.TempDir()
+	firstQueue, err := persistencequeue.NewPersistenceQueue(4, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondQueue, err := persistencequeue.NewPersistenceQueue(4, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := firstQueue.Shutdown(ctx); err != nil {
+			t.Errorf("first persistence queue shutdown: %v", err)
+		}
+		if err := secondQueue.Shutdown(ctx); err != nil {
+			t.Errorf("second persistence queue shutdown: %v", err)
+		}
+	}()
+
+	first, err := newRuntimeActionOwner(workspace, actionpersistence.OpenOptions{Index: true}, firstQueue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newRuntimeActionOwner(workspace, actionpersistence.OpenOptions{Index: true}, firstQueue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.manager != second.manager || first.persistenceQueue != firstQueue {
+		t.Fatal("shared Action owner did not preserve its injected persistence queue")
+	}
+	if _, err := newRuntimeActionOwner(workspace, actionpersistence.OpenOptions{Index: true}, secondQueue); err == nil {
+		t.Fatal("same Action store accepted a different process persistence queue")
 	}
 }
 

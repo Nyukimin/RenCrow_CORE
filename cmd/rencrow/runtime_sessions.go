@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -22,6 +23,9 @@ func buildSessionRuntime(cfg *config.Config) sessionRuntime {
 	centralMemory := domainsession.NewCentralMemory()
 	if err := os.MkdirAll(cfg.Session.StorageDir, 0755); err != nil {
 		log.Fatalf("Failed to create session directory: %v", err)
+	}
+	if err := sessionRepo.WarmCanonicalIndex(context.Background()); err != nil {
+		log.Fatalf("Failed to warm canonical Session index: %v", err)
 	}
 	operationMemoryDir := cfg.OperationMemoryDir
 	if operationMemoryDir == "" {

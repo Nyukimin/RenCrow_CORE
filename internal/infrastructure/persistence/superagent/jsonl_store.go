@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -24,9 +25,23 @@ type JSONLStore struct {
 	messageChannelPath string
 	runQueuePath       string
 	maxContextTokens   int
+	writeQueue         *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 }
 
 func NewJSONLStore(root string, maxContextTokens int) *JSONLStore {
+	return newJSONLStore(root, maxContextTokens, nil)
+}
+
+// NewJSONLStoreWithWriteQueue configures the store to enqueue writes admitted
+// by the same process-local FIFO used by the rest of the runtime.
+func NewJSONLStoreWithWriteQueue(root string, maxContextTokens int, queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) (*JSONLStore, error) {
+	if queue == nil {
+		return nil, persistencequeue.ErrNilPersistenceQueue
+	}
+	return newJSONLStore(root, maxContextTokens, queue), nil
+}
+
+func newJSONLStore(root string, maxContextTokens int, queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) *JSONLStore {
 	if root == "" {
 		root = "workspace/logs/superagent_harness"
 	}
@@ -37,14 +52,15 @@ func NewJSONLStore(root string, maxContextTokens int) *JSONLStore {
 		messageChannelPath: filepath.Join(root, "message_channel.jsonl"),
 		runQueuePath:       filepath.Join(root, "run_queue.jsonl"),
 		maxContextTokens:   maxContextTokens,
+		writeQueue:         queue,
 	}
 }
 
-func (s *JSONLStore) SaveAgentRun(_ context.Context, item domainsuperagent.AgentRun) error {
+func (s *JSONLStore) SaveAgentRun(ctx context.Context, item domainsuperagent.AgentRun) error {
 	if err := domainsuperagent.ValidateAgentRun(item); err != nil {
 		return err
 	}
-	return appendJSONL(s.agentRunPath, item)
+	return s.appendAdmitted(ctx, s.agentRunPath, "jsonl.agent_run.append", item)
 }
 
 func (s *JSONLStore) ListAgentRuns(_ context.Context, limit int) ([]domainsuperagent.AgentRun, error) {
@@ -139,11 +155,11 @@ func latestSubagentTasks(items []domainsuperagent.SubagentTask, limit int) []dom
 	return out
 }
 
-func (s *JSONLStore) SaveContextPack(_ context.Context, item domainsuperagent.ContextPack) error {
+func (s *JSONLStore) SaveContextPack(ctx context.Context, item domainsuperagent.ContextPack) error {
 	if err := domainsuperagent.ValidateContextPack(item, s.maxContextTokens); err != nil {
 		return err
 	}
-	return appendJSONL(s.contextPackPath, item)
+	return s.appendAdmitted(ctx, s.contextPackPath, "jsonl.context_pack.append", item)
 }
 
 func (s *JSONLStore) ListContextPacks(_ context.Context, limit int) ([]domainsuperagent.ContextPack, error) {
@@ -348,6 +364,39 @@ func appendJSONL(path string, value any) error {
 		return err
 	}
 	_, err = f.Write(append(line, '\n'))
+	return err
+}
+
+func (s *JSONLStore) appendAdmitted(ctx context.Context, path, kind string, value any) error {
+	if s == nil {
+		return errors.New("superagent JSONL store is unavailable")
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	handled, err := enqueueAdmittedSuperAgentWrite(ctx, s.writeQueue, kind, string(payload), func(context.Context) error {
+		return appendJSONLLine(path, string(payload))
+	})
+	if handled || err != nil {
+		return err
+	}
+	return appendJSONLLine(path, string(payload))
+}
+
+func appendJSONLLine(path string, payload string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	line := make([]byte, len(payload)+1)
+	copy(line, payload)
+	line[len(payload)] = '\n'
+	_, err = f.Write(line)
 	return err
 }
 

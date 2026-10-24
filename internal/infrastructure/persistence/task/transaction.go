@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -93,6 +94,9 @@ func validateTransactionArgs(s *JSONLStore, ctx context.Context, fn func(domaint
 }
 
 func (s *JSONLStore) transactionWithScope(ctx context.Context, scopeTaskID modulecore.TaskID, lease *taskExecutionLease, fn func(domaintask.Store) error) error {
+	if admission, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		return s.admittedTransactionWithScope(ctx, scopeTaskID, lease, fn, admission)
+	}
 	s.rotateIfDue(ctx)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -136,7 +140,16 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, fn func(domaintask.Sto
 	if ctx == nil {
 		return errors.New("task read transaction context is nil")
 	}
-	s.mu.RLock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		if !s.mu.TryRLock() {
+			return ErrTaskAdmissionBusy
+		}
+	} else {
+		s.mu.RLock()
+	}
 	defer s.mu.RUnlock()
 	if s.closed {
 		return os.ErrClosed
@@ -147,11 +160,13 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, fn func(domaintask.Sto
 	if s.idx != nil {
 		return s.indexReadTransaction(ctx, fn)
 	}
+	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
+		return ErrTaskAdmissionRequiresIndex
+	}
 	return s.batch.Read(withTxLabel(ctx, "ReadTransaction", ""), func() error {
 		tx := newTaskTransaction(s, true, "", nil)
 		defer tx.end()
-		err := fn(tx)
-		return err
+		return fn(tx)
 	})
 }
 
@@ -162,7 +177,8 @@ type transactionStore struct {
 	lease       *taskExecutionLease
 	// idxLocked is true for the views of a read transaction on an indexed store,
 	// which holds the index read lock for its whole callback.
-	idxLocked bool
+	idxLocked       bool
+	admittedPending map[string][]byte
 
 	mu    sync.Mutex
 	local bool
@@ -200,10 +216,35 @@ func newTaskTransaction(parent *JSONLStore, readOnly bool, scopeTaskID modulecor
 }
 
 type transactionSnapshot struct {
-	payloads map[string][]byte
-	touched  map[modulecore.TaskID]struct{}
-	owner    *taskExecutionLease
-	base     *transactionTaskRunBase
+	payloads        map[string][]byte
+	touched         map[modulecore.TaskID]struct{}
+	owner           *taskExecutionLease
+	base            *transactionTaskRunBase
+	admittedPending map[string][]byte
+}
+
+func (s *transactionStore) setAdmissionOverlay(payloads map[string][]byte) error {
+	if s == nil || s.state == nil {
+		return errTaskTransactionExpired
+	}
+	s.admittedPending = cloneTaskPayloads(payloads)
+	if s.parent == nil || s.parent.idx == nil || len(payloads) == 0 {
+		return nil
+	}
+	if s.state.ov == nil {
+		s.state.ov = newTxOverlay()
+	}
+	for name, payload := range payloads {
+		for _, line := range bytes.SplitAfter(payload, []byte{'\n'}) {
+			if len(bytes.TrimSpace(line)) == 0 {
+				continue
+			}
+			if err := s.state.ov.record(name, line); err != nil {
+				return fmt.Errorf("decode accepted Task persistence overlay %s: %w", name, err)
+			}
+		}
+	}
+	return nil
 }
 
 func validateTaskTransaction(ctx context.Context, parent *JSONLStore, snapshot transactionSnapshot) error {
@@ -227,10 +268,11 @@ func validateTaskTransaction(ctx context.Context, parent *JSONLStore, snapshot t
 		return nil
 	}
 	view := &transactionStore{
-		parent:      parent,
-		readOnly:    true,
-		scopeTaskID: "",
-		local:       true,
+		parent:          parent,
+		readOnly:        true,
+		scopeTaskID:     "",
+		local:           true,
+		admittedPending: cloneTaskPayloads(snapshot.admittedPending),
 		state: &transactionState{
 			active:     true,
 			pending:    snapshot.payloads,
@@ -360,7 +402,7 @@ func (s *transactionStore) ReadTransaction(ctx context.Context, fn func(domainta
 	if s.readOnly {
 		return fn(s)
 	}
-	view := &transactionStore{parent: s.parent, readOnly: true, scopeTaskID: s.scopeTaskID, lease: s.lease, idxLocked: s.idxLocked, local: true, state: s.state}
+	view := &transactionStore{parent: s.parent, readOnly: true, scopeTaskID: s.scopeTaskID, lease: s.lease, idxLocked: s.idxLocked, local: true, state: s.state, admittedPending: s.admittedPending}
 	defer view.end()
 	return fn(view)
 }
@@ -416,6 +458,7 @@ func (s *transactionStore) freezeAndSnapshot() transactionSnapshot {
 		snapshot.touched[taskID] = struct{}{}
 	}
 	snapshot.base = s.state.base
+	snapshot.admittedPending = cloneTaskPayloads(s.admittedPending)
 	return snapshot
 }
 
@@ -443,11 +486,12 @@ func (s *transactionStore) touchTask(ctx context.Context, taskID modulecore.Task
 
 func (s *transactionStore) pendingBytes(filename string) []byte {
 	if s.state == nil {
-		return nil
+		return append([]byte(nil), s.admittedPending[filename]...)
 	}
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
-	return append([]byte(nil), s.state.pending[filename]...)
+	combined := append([]byte(nil), s.admittedPending[filename]...)
+	return append(combined, s.state.pending[filename]...)
 }
 
 func (s *transactionStore) SaveTask(ctx context.Context, value domaintask.Task) error {

@@ -64,8 +64,8 @@ func (s *transactionStore) taskRunView(ctx context.Context) (*transactionTaskRun
 	view := deriveTransactionTaskRunView(
 		ctx,
 		s.state.base,
-		s.state.pending[stateFilename],
-		s.state.pending[runFilename],
+		append(append([]byte(nil), s.admittedPending[stateFilename]...), s.state.pending[stateFilename]...),
+		append(append([]byte(nil), s.admittedPending[runFilename]...), s.state.pending[runFilename]...),
 	)
 	if err := ctx.Err(); err != nil {
 		return nil, err

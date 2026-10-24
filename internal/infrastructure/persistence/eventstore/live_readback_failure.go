@@ -76,6 +76,12 @@ func (s *SQLiteStore) FailReadback(ctx context.Context, input ReadbackFailureInp
 	if err != nil {
 		return ReadbackFailure{}, err
 	}
+	if s.shouldQueueWrite(ctx) {
+		queuedInput := cloneQueuedValue(input)
+		return enqueueOrderedWriteResult(s, ctx, 1, queuedInput, func(commandCtx context.Context) (ReadbackFailure, error) {
+			return s.FailReadback(commandCtx, queuedInput)
+		})
+	}
 	if err := s.persistReadbackFailureIntent(ctx, input, inputHash); err != nil {
 		return ReadbackFailure{}, err
 	}
@@ -117,10 +123,11 @@ func (s *SQLiteStore) persistReadbackFailureIntent(ctx context.Context, input Re
 }
 
 func (s *SQLiteStore) commitReadbackFailure(ctx context.Context, input ReadbackFailureInput, inputHash string) (ReadbackFailure, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, unlockSequence, err := s.beginSequenceTx(ctx)
 	if err != nil {
 		return ReadbackFailure{}, err
 	}
+	defer unlockSequence()
 	defer tx.Rollback()
 
 	if receipt, found, err := readOperationReceipt(ctx, tx, input.OperationID); err != nil {
@@ -174,7 +181,7 @@ func (s *SQLiteStore) commitReadbackFailure(ctx context.Context, input ReadbackF
 	if err := validateReplyTarget(ctx, tx, message.ReplyToMessageID, message.SessionID); err != nil {
 		return ReadbackFailure{}, err
 	}
-	event.EventSeq, err = nextEventSeq(ctx, tx)
+	event.EventSeq, err = s.nextSequence(ctx)
 	if err != nil {
 		return ReadbackFailure{}, err
 	}
@@ -215,6 +222,7 @@ func (s *SQLiteStore) commitReadbackFailure(ctx context.Context, input ReadbackF
 	if err := tx.Commit(); err != nil {
 		return ReadbackFailure{}, err
 	}
+	s.observeCommittedOrchestratorEvent(failure.Event)
 	return failure, nil
 }
 

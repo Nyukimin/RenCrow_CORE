@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -65,6 +68,318 @@ func TestAppendAndReadRootChildParallelJoin(t *testing.T) {
 func TestNewSQLiteStoreRejectsUnconfiguredPath(t *testing.T) {
 	if _, err := NewSQLiteStore(""); err == nil {
 		t.Fatal("NewSQLiteStore(\"\") error = nil")
+	}
+}
+
+func TestNewSQLiteStoreAllowsOnlyOneLiveWriterPerDatabasePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "会話-event-store.sqlite")
+	first, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(first): %v", err)
+	}
+	if second, err := NewSQLiteStore(path); err == nil {
+		_ = second.Close()
+		t.Fatal("NewSQLiteStore(second) succeeded for a path with a live writer")
+	}
+
+	stored, err := first.AppendSequenced(context.Background(), eventFixture(modulecore.NewTraceID(), "writer.locked", "dci"))
+	if err != nil {
+		t.Fatalf("AppendSequenced after rejected second writer: %v", err)
+	}
+	if stored.EventSeq != 1 {
+		t.Fatalf("EventSeq = %d, want 1", stored.EventSeq)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close(first): %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore after Close: %v", err)
+	}
+	defer reopened.Close()
+	next, err := reopened.AppendSequenced(context.Background(), eventFixture(stored.TraceID, "writer.reopened", "dci"))
+	if err != nil {
+		t.Fatalf("AppendSequenced after reopen: %v", err)
+	}
+	if next.EventSeq != 2 {
+		t.Fatalf("reopened EventSeq = %d, want 2", next.EventSeq)
+	}
+}
+
+func TestNewSQLiteStoreRejectsEquivalentSQLiteURIWhileWriterIsOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "会話 uri.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(path): %v", err)
+	}
+	defer store.Close()
+
+	uri := "file:" + filepath.ToSlash(path) + "?mode=rwc"
+	second, err := NewSQLiteStore(uri)
+	if err == nil {
+		_ = second.Close()
+		t.Fatalf("NewSQLiteStore(%q) succeeded while its file path already has a live writer", uri)
+	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd(): %v", err)
+	}
+	relativePath, err := filepath.Rel(workingDirectory, path)
+	if err != nil {
+		t.Fatalf("filepath.Rel(): %v", err)
+	}
+	if second, err := NewSQLiteStore(relativePath); err == nil {
+		_ = second.Close()
+		t.Fatalf("NewSQLiteStore(%q) succeeded while its absolute path already has a live writer", relativePath)
+	}
+	escapedURI := "file:" + strings.ReplaceAll(filepath.ToSlash(relativePath), " ", "%20") + "?mode=rwc"
+	if second, err := NewSQLiteStore(escapedURI); err == nil {
+		_ = second.Close()
+		t.Fatalf("NewSQLiteStore(%q) succeeded while its decoded file path already has a live writer", escapedURI)
+	}
+}
+
+func TestNewSQLiteStoreRejectsSymlinkAliasWhileWriterIsOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-store.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(): %v", err)
+	}
+	defer store.Close()
+	alias := filepath.Join(filepath.Dir(path), "event-store-alias.sqlite")
+	if err := os.Symlink(path, alias); err != nil {
+		t.Skipf("filesystem does not support symlinks: %v", err)
+	}
+	if second, err := NewSQLiteStore(alias); err == nil {
+		_ = second.Close()
+		t.Fatal("NewSQLiteStore(symlink alias) succeeded while the resolved database path already has a live writer")
+	}
+	danglingTarget := filepath.Join(filepath.Dir(path), "not-created.sqlite")
+	danglingAlias := filepath.Join(filepath.Dir(path), "dangling-event-store.sqlite")
+	if err := os.Symlink(danglingTarget, danglingAlias); err != nil {
+		t.Skipf("filesystem does not support dangling symlinks: %v", err)
+	}
+	if dangling, err := NewSQLiteStore(danglingAlias); err == nil {
+		_ = dangling.Close()
+		t.Fatal("NewSQLiteStore(dangling symlink) succeeded despite ambiguous database identity")
+	}
+}
+
+func TestEventStoreSiblingLockIsHeldUntilClose(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-store-file-lock.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(): %v", err)
+	}
+	lockPath := path + ".writer.lock"
+	if _, err := acquireEventStoreFileLock(lockPath); !errors.Is(err, errEventStoreWriterBusy) {
+		t.Fatalf("acquireEventStoreFileLock while store is open: %v, want busy", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+	lock, err := acquireEventStoreFileLock(lockPath)
+	if err != nil {
+		t.Fatalf("acquireEventStoreFileLock after Close: %v", err)
+	}
+	if err := releaseEventStoreFileLock(lock); err != nil {
+		t.Fatalf("releaseEventStoreFileLock(): %v", err)
+	}
+}
+
+func TestEventStorePathLockKeysHandleURIAndMemoryPaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "会話-event-store.sqlite")
+	plainKey, err := eventStorePathLockKey(path)
+	if err != nil {
+		t.Fatalf("eventStorePathLockKey(path): %v", err)
+	}
+	uriKey, err := eventStorePathLockKey("file:" + filepath.ToSlash(path) + "?mode=rwc")
+	if err != nil {
+		t.Fatalf("eventStorePathLockKey(file URI): %v", err)
+	}
+	if uriKey != plainKey {
+		t.Fatalf("SQLite URI key = %q, plain path key = %q; want same identity", uriKey, plainKey)
+	}
+	privateFirst, err := eventStorePathLockKey(":memory:")
+	if err != nil {
+		t.Fatalf("eventStorePathLockKey(:memory:): %v", err)
+	}
+	privateSecond, err := eventStorePathLockKey(":memory:")
+	if err != nil {
+		t.Fatalf("eventStorePathLockKey(second :memory:): %v", err)
+	}
+	if privateFirst == privateSecond {
+		t.Fatal(":memory: paths share a writer identity despite SQLite creating a private database per connection")
+	}
+	sharedFirst, err := eventStorePathLockKey("file:shared_events?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatalf("eventStorePathLockKey(shared memory): %v", err)
+	}
+	sharedSecond, err := eventStorePathLockKey("file:shared_events?cache=shared&mode=memory")
+	if err != nil {
+		t.Fatalf("eventStorePathLockKey(reordered shared memory): %v", err)
+	}
+	if sharedFirst != sharedSecond {
+		t.Fatalf("shared-memory keys differ for reordered URI query: %q vs %q", sharedFirst, sharedSecond)
+	}
+}
+
+func TestNewSQLiteStoreRejectsHardlinkedDatabasePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-store.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(): %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+	alias := filepath.Join(filepath.Dir(path), "event-store-hardlink.sqlite")
+	if err := os.Link(path, alias); err != nil {
+		t.Skipf("filesystem does not support hard links: %v", err)
+	}
+	if _, err := NewSQLiteStore(path); err == nil || !strings.Contains(strings.ToLower(err.Error()), "hard-link") {
+		t.Fatalf("NewSQLiteStore(hardlinked file) error = %v, want ambiguous hard-link rejection", err)
+	}
+}
+
+func TestNewSQLiteStoreHoldsPathLockUntilCloseDrainsAndReleasesAfterConstructorFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-store-lock-lifecycle.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(): %v", err)
+	}
+	tx, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx(): %v", err)
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- store.Close() }()
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before the active transaction drained: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if second, err := NewSQLiteStore(path); err == nil {
+		_ = second.Close()
+		t.Fatal("NewSQLiteStore succeeded while Close was still draining the old writer")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback(): %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+
+	failedPath := filepath.Join(t.TempDir(), "event-store-constructor-failure.sqlite")
+	legacy, err := sql.Open("sqlite", failedPath)
+	if err != nil {
+		t.Fatalf("sql.Open(legacy): %v", err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE event_envelope (event_id TEXT PRIMARY KEY NOT NULL)`); err != nil {
+		_ = legacy.Close()
+		t.Fatalf("create incompatible schema: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("Close(legacy): %v", err)
+	}
+	if _, err := NewSQLiteStore(failedPath); err == nil || !strings.Contains(err.Error(), "Step09 migration required") {
+		t.Fatalf("NewSQLiteStore(incompatible schema) error = %v, want migration-required error", err)
+	}
+	legacy, err = sql.Open("sqlite", failedPath)
+	if err != nil {
+		t.Fatalf("sql.Open(repair): %v", err)
+	}
+	if _, err := legacy.Exec(`DROP TABLE event_envelope`); err != nil {
+		_ = legacy.Close()
+		t.Fatalf("drop incompatible schema: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("Close(repair): %v", err)
+	}
+	recovered, err := NewSQLiteStore(failedPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore after constructor failure: %v", err)
+	}
+	if err := recovered.Close(); err != nil {
+		t.Fatalf("Close(recovered): %v", err)
+	}
+}
+
+func TestEventSeqIsSharedAcrossConcurrentAppendAndLiveAcceptanceAndSeedsAfterRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-store-mixed-sequences.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(): %v", err)
+	}
+	const writesPerPath = 12
+	sequences := make(chan modulecore.EventSeq, writesPerPath*2)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for index := 0; index < writesPerPath; index++ {
+		index := index
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			<-start
+			stored, err := store.AppendSequenced(context.Background(), eventFixture(modulecore.NewTraceID(), fmt.Sprintf("mixed.append.%d", index), "dci"))
+			if err != nil {
+				t.Errorf("AppendSequenced(%d): %v", index, err)
+				return
+			}
+			sequences <- stored.EventSeq
+		}()
+		go func() {
+			defer workers.Done()
+			<-start
+			sessionID, turnID := modulecore.NewSessionID(), modulecore.NewTurnID()
+			event := liveInputEvent(sessionID, turnID, fmt.Sprintf("mixed live %d", index))
+			accepted, err := store.AcceptTurn(context.Background(), AcceptInput{
+				OperationID: fmt.Sprintf("mixed-live-op-%d", index), OwnerID: "user-1", RuntimeVersion: "v2",
+				ClientSubmissionID: fmt.Sprintf("mixed-live-submission-%d", index), ActorID: "user-1", TriggerKind: "user_message",
+				GenerationEpoch: 1, CreateNewSession: true, InputEvent: event,
+				InputMessage: MessageIndex{MessageID: event.MessageID, EventID: event.EventID, SessionID: sessionID, TurnID: turnID,
+					FromActor: "user-1", ToKind: "agent", ToActor: "mio", Kind: "user_message", Visibility: "public"},
+			})
+			if err != nil {
+				t.Errorf("AcceptTurn(%d): %v", index, err)
+				return
+			}
+			sequences <- accepted.AdmissionSeq
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(sequences)
+	got := make([]int, 0, writesPerPath*2)
+	for sequence := range sequences {
+		got = append(got, int(sequence))
+	}
+	if len(got) != writesPerPath*2 {
+		t.Fatalf("successful write count = %d, want %d", len(got), writesPerPath*2)
+	}
+	sort.Ints(got)
+	for index, sequence := range got {
+		if sequence != index+1 {
+			t.Fatalf("sorted mixed EventSeq[%d] = %d, want %d", index, sequence, index+1)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(reopen): %v", err)
+	}
+	defer reopened.Close()
+	next, err := reopened.AppendSequenced(context.Background(), eventFixture(modulecore.NewTraceID(), "mixed.after-restart", "dci"))
+	if err != nil {
+		t.Fatalf("AppendSequenced(after restart): %v", err)
+	}
+	if next.EventSeq != writesPerPath*2+1 {
+		t.Fatalf("after-restart EventSeq = %d, want %d", next.EventSeq, writesPerPath*2+1)
 	}
 }
 
@@ -446,6 +761,29 @@ func TestAppendBatchSkipsExplicitSequenceImmediatelyAfterPersistedMaximum(t *tes
 	if storedZero.EventSeq != 6 {
 		t.Fatalf("zero EventSeq = %d, want 6 after reserved 5", storedZero.EventSeq)
 	}
+}
+
+func TestAppendBatchRejectsExplicitSequenceBehindLiveAllocator(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	traceID := modulecore.NewTraceID()
+	first := eventFixture(traceID, "sequence.order.first", "dci")
+	if stored, err := store.AppendSequenced(ctx, first); err != nil || stored.EventSeq != 1 {
+		t.Fatalf("AppendSequenced(first) = (%d, %v), want (1, nil)", stored.EventSeq, err)
+	}
+	if _, err := store.AppendSequenced(ctx, first); err == nil {
+		t.Fatal("AppendSequenced(duplicate) error = nil, want duplicate event rejection")
+	}
+	third, err := store.AppendSequenced(ctx, eventFixture(traceID, "sequence.order.third", "dci"))
+	if err != nil || third.EventSeq != 3 {
+		t.Fatalf("AppendSequenced(third) = (%d, %v), want (3, nil)", third.EventSeq, err)
+	}
+	lateGap := eventFixture(traceID, "sequence.order.late-gap", "dci")
+	lateGap.EventSeq = 2
+	if err := store.AppendBatch(ctx, []modulecore.EventEnvelope{lateGap}); err == nil || !strings.Contains(err.Error(), "allocator") {
+		t.Fatalf("AppendBatch(sequence 2) error = %v, want allocator-order rejection", err)
+	}
+	assertEventAbsent(t, store, lateGap.EventID)
 }
 
 func TestNewSQLiteStoreRejectsLegacySchemaWithoutEventSeq(t *testing.T) {

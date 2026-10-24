@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
@@ -19,9 +20,23 @@ import (
 type SQLiteStore struct {
 	db               *sql.DB
 	maxContextTokens int
+	writeQueue       *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 }
 
 func NewSQLiteStore(path string, maxContextTokens int) (*SQLiteStore, error) {
+	return newSQLiteStore(path, maxContextTokens, nil)
+}
+
+// NewSQLiteStoreWithWriteQueue configures the store to enqueue writes admitted
+// by the same process-local FIFO used by the rest of the runtime.
+func NewSQLiteStoreWithWriteQueue(path string, maxContextTokens int, queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) (*SQLiteStore, error) {
+	if queue == nil {
+		return nil, persistencequeue.ErrNilPersistenceQueue
+	}
+	return newSQLiteStore(path, maxContextTokens, queue)
+}
+
+func newSQLiteStore(path string, maxContextTokens int, queue *persistencequeue.Queue[persistencequeue.PersistenceCommand]) (*SQLiteStore, error) {
 	if path == "" {
 		path = "workspace/logs/superagent_harness.sqlite"
 	}
@@ -34,7 +49,7 @@ func NewSQLiteStore(path string, maxContextTokens int) (*SQLiteStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	store := &SQLiteStore{db: db, maxContextTokens: maxContextTokens}
+	store := &SQLiteStore{db: db, maxContextTokens: maxContextTokens, writeQueue: queue}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -129,7 +144,7 @@ func (s *SQLiteStore) SaveAgentRun(ctx context.Context, item domainsuperagent.Ag
 	if err := domainsuperagent.ValidateAgentRun(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "agent_run", "run_id", string(item.RunID), "started_at", item.StartedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveAdmitted(ctx, "agent_run", "run_id", string(item.RunID), "started_at", item.StartedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListAgentRuns(ctx context.Context, limit int) ([]domainsuperagent.AgentRun, error) {
@@ -177,7 +192,7 @@ func (s *SQLiteStore) SaveContextPack(ctx context.Context, item domainsuperagent
 	if err := domainsuperagent.ValidateContextPack(item, s.maxContextTokens); err != nil {
 		return err
 	}
-	return s.save(ctx, "context_pack", "artifact_id", string(item.ArtifactID), "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveAdmitted(ctx, "context_pack", "artifact_id", string(item.ArtifactID), "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListContextPacks(ctx context.Context, limit int) ([]domainsuperagent.ContextPack, error) {
@@ -416,6 +431,29 @@ func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, i
 		return err
 	}
 	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, %s, payload) VALUES (?, ?, ?)`, table, idColumn, timeColumn)
+	_, err = s.db.ExecContext(ctx, query, id, timestamp, string(payload))
+	return err
+}
+
+func (s *SQLiteStore) saveAdmitted(ctx context.Context, table string, idColumn string, id string, timeColumn string, timestamp string, item any) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("superagent sqlite store is closed")
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, %s, payload) VALUES (?, ?, ?)`, table, idColumn, timeColumn)
+	handled, err := enqueueAdmittedSuperAgentWrite(ctx, s.writeQueue, "sqlite."+table+".insert_or_replace", string(payload), func(workerCtx context.Context) error {
+		if s == nil || s.db == nil {
+			return fmt.Errorf("superagent sqlite store is closed")
+		}
+		_, err := s.db.ExecContext(workerCtx, query, id, timestamp, string(payload))
+		return err
+	})
+	if handled || err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx, query, id, timestamp, string(payload))
 	return err
 }

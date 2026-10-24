@@ -82,7 +82,7 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 		return
 	}
 
-	ch, history := h.Subscribe()
+	ch, replaySnapshot := h.SubscribeForReplay()
 	defer h.Unsubscribe(ch)
 	lastSeen := modulecore.EventSeq(0)
 	resetReason := ""
@@ -162,9 +162,20 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 			return nil
 		}
 		if resetReason != "" {
-			replayCursor, err = h.ReplayAvailable(r.Context(), history, emit)
+			replayCursor, err = h.ReplayAvailableCaptured(r.Context(), replaySnapshot, emit)
 		} else {
-			replayCursor, err = h.Replay(r.Context(), lastSeen, history, emit)
+			replayCursor, err = h.ReplayCaptured(r.Context(), lastSeen, replaySnapshot, emit)
+		}
+		var coverageErr *ReplayCoverageError
+		if err != nil && resetReason == "" && errors.As(err, &coverageErr) {
+			log.Printf("[Viewer] SSE replay coverage lost at EventSeq %d (%s); resetting cursor", coverageErr.Missing.EventSeq, coverageErr.Missing.EventID)
+			resetReason = "replay_coverage_lost"
+			if resetErr := writeSSEReset(w, resetReason); resetErr != nil {
+				return
+			}
+			flusher.Flush()
+			replayWrote = false
+			replayCursor, err = h.ReplayAvailableCaptured(r.Context(), replaySnapshot, emit)
 		}
 		if err != nil {
 			if r.Context().Err() != nil {
@@ -173,6 +184,10 @@ func (h *EventHub) HandleSSEWithFilter(w http.ResponseWriter, r *http.Request, f
 			log.Printf("[Viewer] SSE replay failed: %v", err)
 			if !replayWrote && resetReason == "" {
 				http.Error(w, "event replay unavailable", http.StatusConflict)
+			} else {
+				// A reset frame precedes this failure; flush it even when the durable
+				// store cannot restore the evicted admitted suffix.
+				flusher.Flush()
 			}
 			return
 		}

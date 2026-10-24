@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
@@ -48,8 +49,10 @@ func (m *Manager) beginRequest(ctx context.Context, operation string, requestID 
 	if operation == "" {
 		return domaintransport.Request{}, errors.New("transport operation is required")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if !hasRAMAdmission(ctx) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+	}
 	var created domaintransport.Request
 	err = m.store.Transaction(ctx, func(tx Store) error {
 		if _, err := tx.GetRequest(ctx, requestID); err == nil {
@@ -88,8 +91,10 @@ func (m *Manager) CompleteResponse(ctx context.Context, requestID modulecore.Req
 	if err := requestID.Validate(); err != nil {
 		return domaintransport.Response{}, fmt.Errorf("request_id is invalid: %w", err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if !hasRAMAdmission(ctx) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+	}
 	var response domaintransport.Response
 	err = m.store.Transaction(ctx, func(tx Store) error {
 		request, err := tx.GetRequest(ctx, requestID)
@@ -136,8 +141,10 @@ func (m *Manager) FailWithoutResponse(ctx context.Context, requestID modulecore.
 	if err := requestID.Validate(); err != nil {
 		return fmt.Errorf("request_id is invalid: %w", err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if !hasRAMAdmission(ctx) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+	}
 	return m.store.Transaction(ctx, func(tx Store) error {
 		request, err := tx.GetRequest(ctx, requestID)
 		if err != nil {
@@ -161,8 +168,10 @@ func (m *Manager) ListRequests(ctx context.Context, filter domaintransport.Reque
 	if m == nil || m.store == nil {
 		return nil, errors.New("transport store is unavailable")
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	if !hasRAMAdmission(ctx) {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+	}
 	var result []domaintransport.Request
 	err := m.store.ReadTransaction(ctx, func(tx Store) error {
 		var err error
@@ -176,8 +185,10 @@ func (m *Manager) ListResponses(ctx context.Context, filter domaintransport.Resp
 	if m == nil || m.store == nil {
 		return nil, errors.New("transport store is unavailable")
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	if !hasRAMAdmission(ctx) {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+	}
 	var result []domaintransport.Response
 	err := m.store.ReadTransaction(ctx, func(tx Store) error {
 		var err error
@@ -261,6 +272,11 @@ func (m *Manager) boundLineage(ctx context.Context) (domainexecution.Identity, m
 		return domainexecution.Identity{}, "", "", err
 	}
 	return identity, actionID, attemptID, nil
+}
+
+func hasRAMAdmission(ctx context.Context) bool {
+	_, ok := persistencequeue.AdmissionFromContext(ctx)
+	return ok
 }
 
 func requireRequestLineage(request domaintransport.Request, identity domainexecution.Identity, actionID modulecore.ActionID, attemptID modulecore.AttemptID) error {

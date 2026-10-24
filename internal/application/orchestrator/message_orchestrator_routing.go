@@ -21,6 +21,7 @@ type routeDecisionCoordinator struct {
 type routeDecisionResult struct {
 	Decision  routing.Decision
 	ChatDraft *domainagent.MioChatDraft
+	Context   context.Context
 }
 
 func newRouteDecisionCoordinator(mio MioAgent) *routeDecisionCoordinator {
@@ -44,7 +45,7 @@ func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconve
 
 func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID, allowCombined bool) (routeDecisionResult, error) {
 	if recipient, ok := directViewerRecipientForChat(req); ok {
-		return routeDecisionResult{Decision: directViewerRecipientDecision(recipient)}, nil
+		return routeDecisionResult{Decision: directViewerRecipientDecision(recipient), Context: ctx}, nil
 	}
 	var decision routing.Decision
 	var chatDraft *domainagent.MioChatDraft
@@ -62,16 +63,19 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 	classifiedRoute := decision.Route
 	decision, pinnedViewerRecipient := pinSelectedViewerRecipientDecision(decision, req)
 	if pinnedViewerRecipient {
-		return routeDecisionResult{Decision: decision}, nil
+		return routeDecisionResult{Decision: decision, Context: ctx}, nil
 	}
 	if chatDraft.Failed() {
-		return routeDecisionResult{Decision: decision, ChatDraft: chatDraft}, nil
+		return routeDecisionResult{Decision: decision, ChatDraft: chatDraft, Context: ctx}, nil
 	}
-	decision = c.applyHeavyWorkerPolicy(ctx, decision, req, taskID)
+	decision, ctx, err = c.applyHeavyWorkerPolicy(ctx, decision, req, taskID)
+	if err != nil {
+		return routeDecisionResult{}, err
+	}
 	if decision.Route != routing.RouteCHAT || decision.Route != classifiedRoute {
 		chatDraft = nil
 	}
-	return routeDecisionResult{Decision: decision, ChatDraft: chatDraft}, nil
+	return routeDecisionResult{Decision: decision, ChatDraft: chatDraft, Context: ctx}, nil
 }
 
 // directViewerRecipientForChat returns the explicit Viewer recipient (shiro,
@@ -176,17 +180,22 @@ func preserveOriginalUserMessage(req *ProcessMessageRequest) {
 	}
 }
 
-func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, taskID modulecore.TaskID) routing.Decision {
+func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, taskID modulecore.TaskID) (routing.Decision, context.Context, error) {
 	if !canHeavyPolicyElevate(decision.Route) {
-		return decision
+		return decision, ctx, nil
 	}
 	heavyReq := heavyWorkerRequestFromMessage(taskID.String(), req.UserMessage)
 	if !heavyReq.UserRequestedDeepDive {
-		return decision
+		return decision, ctx, nil
 	}
 	evaluated := domainai.EvaluateHeavyWorker(heavyReq, c.heavyPolicy)
 	if evaluated.Status != domainai.HeavyWorkerStatusRequested {
-		return decision
+		return decision, ctx, nil
+	}
+	var err error
+	ctx, err = synchronousPersistenceBeforeEffect(ctx, "heavy worker policy event")
+	if err != nil {
+		return decision, ctx, err
 	}
 	recordHeavyCanonicalEvent(ctx, c.canonicalEvents, "requested", strings.Join(evaluated.Reasons, "; "), taskID.String())
 	elevated := decision
@@ -206,7 +215,7 @@ func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, d
 		Confidence: elevated.Confidence,
 		Reason:     strings.Join(evaluated.Reasons, "; "),
 	})
-	return elevated
+	return elevated, ctx, nil
 }
 
 func canHeavyPolicyElevate(route routing.Route) bool {
