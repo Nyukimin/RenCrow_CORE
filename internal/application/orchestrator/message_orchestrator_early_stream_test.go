@@ -186,9 +186,9 @@ func TestMioAnswerStartPreparesRunBeforeProviderCompletes(t *testing.T) {
 		release: release,
 		steps: []earlyStreamProviderStep{{
 			events: []llm.LogicalOutcomeEvent{
-				{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 2, Route: "CHAT", PayloadKind: "text"},
+				{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"},
 				{Kind: llm.LogicalOutcomeAnswerDelta, Text: "validated partial"},
-				{Kind: llm.LogicalOutcomeAnswerDone, FinishReason: "stop"},
+				{Kind: llm.LogicalOutcomeAnswerDone, FinishReason: "stop", ThreadBoundary: "new"},
 			},
 			response:     "validated partial",
 			finishReason: "stop",
@@ -202,10 +202,14 @@ func TestMioAnswerStartPreparesRunBeforeProviderCompletes(t *testing.T) {
 		}
 		return nil
 	}
-	done := make(chan error, 1)
+	type processResult struct {
+		response ProcessMessageResponse
+		err      error
+	}
+	done := make(chan processResult, 1)
 	go func() {
-		_, err := orch.ProcessMessage(context.Background(), req)
-		done <- err
+		response, err := orch.ProcessMessage(context.Background(), req)
+		done <- processResult{response: response, err: err}
 	}()
 
 	observation := <-started
@@ -218,11 +222,15 @@ func TestMioAnswerStartPreparesRunBeforeProviderCompletes(t *testing.T) {
 	default:
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatalf("ProcessMessage: %v", err)
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("ProcessMessage: %v", result.err)
 	}
-	if len(provider.requests) != 1 || provider.requests[0].LogicalOutcomeStream != llm.LogicalOutcomeStreamV1 {
-		t.Fatalf("provider stream opt-in requests = %#v, want one v1 generation", provider.requests)
+	if len(provider.requests) != 1 || provider.requests[0].LogicalOutcomeStream != llm.LogicalOutcomeStreamV2 {
+		t.Fatalf("provider stream opt-in requests = %#v, want one v2 generation", provider.requests)
+	}
+	if result.response.Response != "validated partial" {
+		t.Fatalf("user-visible response = %q, want answer text without terminal boundary metadata", result.response.Response)
 	}
 	if got := countLifecycleCalls(manager.calls, "Start"); got != 1 {
 		t.Fatalf("Task Start calls = %d, want exactly one", got)
@@ -254,7 +262,7 @@ func TestMioHeavyPolicySuppressesEarlyAnswerActivationAndDeltas(t *testing.T) {
 		release: release,
 		steps: []earlyStreamProviderStep{{
 			events: []llm.LogicalOutcomeEvent{
-				{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 2, Route: "CHAT", PayloadKind: "text"},
+				{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"},
 				{Kind: llm.LogicalOutcomeAnswerDelta, Text: "must be suppressed"},
 				{Kind: llm.LogicalOutcomeAnswerDone, FinishReason: "stop"},
 			},
@@ -298,7 +306,7 @@ func TestMioHeavyPolicySuppressesEarlyAnswerActivationAndDeltas(t *testing.T) {
 
 func TestMioHeavyPolicyDoesNotDispatchAfterMalformedSuppressedAnswer(t *testing.T) {
 	provider := &earlyStreamProvider{steps: []earlyStreamProviderStep{{
-		events:   []llm.LogicalOutcomeEvent{{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 2, Route: "CHAT", PayloadKind: "text"}},
+		events:   []llm.LogicalOutcomeEvent{{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"}},
 		response: "",
 	}}}
 	orch, req, manager, bridge, _ := newEarlyStreamOrchestrator(t, provider)
@@ -322,14 +330,14 @@ func TestMioRetrievalContinuationReusesPreparedLifecycleForAnswerStart(t *testin
 	provider := &earlyStreamProvider{steps: []earlyStreamProviderStep{
 		{
 			events: []llm.LogicalOutcomeEvent{{
-				Kind: llm.LogicalOutcomeRetrievalRequest, SchemaVersion: 2, Route: "CHAT",
+				Kind: llm.LogicalOutcomeRetrievalRequest, SchemaVersion: 3, Route: "CHAT",
 				RetrievalRequests: []byte(`[{"source_kind":"user_memory","query":"departure","references":[],"information_needed":"departure time"}]`),
 			}},
 			response: "",
 		},
 		{
 			events: []llm.LogicalOutcomeEvent{
-				{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 2, Route: "CHAT", PayloadKind: "text"},
+				{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"},
 				{Kind: llm.LogicalOutcomeAnswerDelta, Text: "10時だよ。"},
 				{Kind: llm.LogicalOutcomeAnswerDone, FinishReason: "stop"},
 			},
@@ -345,7 +353,7 @@ func TestMioRetrievalContinuationReusesPreparedLifecycleForAnswerStart(t *testin
 	if _, err := orch.ProcessMessage(context.Background(), req); err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
 	}
-	if len(provider.requests) != 2 || provider.requests[1].LogicalOutcomeStream != llm.LogicalOutcomeStreamV1 {
+	if len(provider.requests) != 2 || provider.requests[1].LogicalOutcomeStream != llm.LogicalOutcomeStreamV2 {
 		t.Fatalf("retrieval/continuation generations = %#v, want initial request and opted-in fixed CHAT continuation", provider.requests)
 	}
 	if got := countLifecycleCalls(manager.calls, "Start"); got != 1 {
@@ -375,7 +383,7 @@ func TestMioEarlyStreamFailureClosesStartedRunAndTTS(t *testing.T) {
 		{
 			name: "malformed answer after start",
 			step: earlyStreamProviderStep{
-				events:   []llm.LogicalOutcomeEvent{{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 2, Route: "CHAT", PayloadKind: "text"}},
+				events:   []llm.LogicalOutcomeEvent{{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"}},
 				response: "",
 			},
 		},
@@ -383,7 +391,7 @@ func TestMioEarlyStreamFailureClosesStartedRunAndTTS(t *testing.T) {
 			name: "provider abort after partial answer",
 			step: earlyStreamProviderStep{
 				events: []llm.LogicalOutcomeEvent{
-					{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 2, Route: "CHAT", PayloadKind: "text"},
+					{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"},
 					{Kind: llm.LogicalOutcomeAnswerDelta, Text: "partial"},
 				},
 				err: errors.New("provider aborted"),
@@ -419,7 +427,7 @@ func TestMioRunCancellationCancelsLiveProviderAndClosesTTS(t *testing.T) {
 		started: started,
 		release: release,
 		steps: []earlyStreamProviderStep{{
-			events: []llm.LogicalOutcomeEvent{{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 2, Route: "CHAT", PayloadKind: "text"}},
+			events: []llm.LogicalOutcomeEvent{{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"}},
 		}},
 	}
 	orch, req, manager, bridge, _ := newEarlyStreamOrchestrator(t, provider)

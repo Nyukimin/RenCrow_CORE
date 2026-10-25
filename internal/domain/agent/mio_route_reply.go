@@ -93,6 +93,7 @@ type MioChatDraft struct {
 	retrievalItems         int
 	retrievalEnvelopeBytes int
 	recallPack             *conversation.RecallPack
+	boundary               conversation.ThreadBoundaryProposal
 	preparation            *conversation.ConversationTurnPreparation
 	guard                  conversation.PreparedChatTurnGuard
 	guardTransferred       bool
@@ -209,7 +210,11 @@ func (m *MioAgent) ChatWithDraft(ctx context.Context, t conversation.TurnInput, 
 		reportGenerationMetrics(ctx, draft.generation)
 	}
 	if m.conversationEngine != nil {
-		if err := commitConversationTurn(ctx, m.conversationEngine, t, t.SessionID(), userMessage, response, draft.speaker, draft.recallPack, draft.preparation); err != nil {
+		commitCtx := ctx
+		if draft.speaker == conversation.SpeakerMio && draft.preparation != nil && draft.guard != nil {
+			commitCtx = withMioThreadBoundaryAttestation(commitCtx, t, draft.preparation, draft.guard, draft.boundary)
+		}
+		if err := commitConversationTurn(commitCtx, m.conversationEngine, t, t.SessionID(), userMessage, response, draft.speaker, draft.recallPack, draft.preparation); err != nil {
 			return response, err
 		}
 	}
@@ -453,7 +458,7 @@ func withMioTurnLogicalOutcomeStream(ctx context.Context, request llm.GenerateRe
 	if handler == nil {
 		return request
 	}
-	request.LogicalOutcomeStream = llm.LogicalOutcomeStreamV1
+	request.LogicalOutcomeStream = llm.LogicalOutcomeStreamV2
 	// Logical answer text has a single validated source: answer_delta events.
 	// Do not retain Mio's ordinary stream-mode token callback here, because
 	// providers must not expose unvalidated JSON or duplicate the typed deltas.
@@ -543,6 +548,91 @@ func cloneLLMMessages(messages []llm.Message) []llm.Message {
 		}
 	}
 	return cloned
+}
+
+func appendMioPreparedThreadBoundaryHint(messages []llm.Message, preparation *conversation.ConversationTurnPreparation) []llm.Message {
+	lines := []string{
+		"Prepared conversation head state (internal guidance for thread_boundary only):",
+		"current_thread_exists: unknown",
+		"last_activity_at_utc: unknown",
+		"last_chat_speakers: unknown",
+		"continuity_state: unknown",
+		"Use the user's message and allowed conversation context to propose keep for a question, clarification, or continuation; propose new only for a clear independent-topic instruction; otherwise use unknown. Elapsed time alone is not a new topic. Do not expose this hint in the reply.",
+	}
+	if preparation != nil {
+		thread := preparation.ActiveThread
+		if thread == nil {
+			lines[1] = "current_thread_exists: false"
+			lines[2] = "last_activity_at_utc: none"
+			lines[3] = "last_chat_speakers: none"
+			lines[4] = "continuity_state: no_prior_thread"
+		} else {
+			lines[1] = "current_thread_exists: true"
+			if len(thread.Turns) == 0 {
+				lines[2] = "last_activity_at_utc: unknown"
+			} else {
+				lastActivity := thread.LastMessageTime()
+				if lastActivity.IsZero() {
+					lines[2] = "last_activity_at_utc: unknown"
+				} else {
+					lines[2] = "last_activity_at_utc: " + lastActivity.UTC().Format(time.RFC3339Nano)
+				}
+			}
+			var recent []string
+			lastUser := -1
+			lastAgent := -1
+			for index, message := range thread.Turns {
+				if message.Speaker == conversation.SpeakerUser {
+					lastUser = index
+				} else if conversation.IsChatAgentSpeaker(message.Speaker) {
+					lastAgent = index
+				}
+			}
+			for index := len(thread.Turns) - 1; index >= 0 && len(recent) < 2; index-- {
+				speaker := thread.Turns[index].Speaker
+				if speaker != conversation.SpeakerUser && !conversation.IsChatAgentSpeaker(speaker) {
+					continue
+				}
+				recent = append(recent, string(speaker))
+			}
+			for left, right := 0, len(recent)-1; left < right; left, right = left+1, right-1 {
+				recent[left], recent[right] = recent[right], recent[left]
+			}
+			if len(recent) == 0 {
+				lines[3] = "last_chat_speakers: none"
+			} else {
+				lines[3] = "last_chat_speakers: " + strings.Join(recent, ",")
+			}
+			switch {
+			case lastUser > lastAgent:
+				lines[4] = "continuity_state: awaiting_agent_reply"
+			case lastAgent >= 0:
+				lines[4] = "continuity_state: prior_agent_reply_available"
+			default:
+				lines[4] = "continuity_state: unknown"
+			}
+		}
+	}
+	hint := llm.Message{
+		Role:    "system",
+		Content: strings.Join(lines, "\n"),
+		Type:    llm.PromptContextVariable,
+		Metadata: map[string]string{
+			"runtime_context_kind": "prepared_conversation_boundary_state",
+		},
+	}
+	insertAt := len(messages)
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Type == llm.PromptContextUser || strings.EqualFold(strings.TrimSpace(messages[index].Role), "user") {
+			insertAt = index
+			break
+		}
+	}
+	result := make([]llm.Message, 0, len(messages)+1)
+	result = append(result, messages[:insertAt]...)
+	result = append(result, hint)
+	result = append(result, messages[insertAt:]...)
+	return result
 }
 
 func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.TurnInput, evidence []routing.DecisionEvidence) (routing.Decision, *MioChatDraft, error) {
@@ -636,6 +726,7 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 
 	turntiming.Mark(ctx, turntiming.PointPromptPreparationStarted)
 	messages, latestOther := m.assembleChatPrompt(ctx, t, userMessage, messages, recallPack, false)
+	messages = appendMioPreparedThreadBoundaryHint(messages, draft.preparation)
 	draft.latestOther = latestOther
 	turntiming.Mark(ctx, turntiming.PointPromptPreparationEnded)
 	req := m.generationRequest(messages, nil)
@@ -681,6 +772,7 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	if classification.Outcome.Kind == MioTurnOutcomeHandoff {
 		return classification.Decision, nil, nil
 	}
+	draft.boundary = normalizeMioThreadBoundaryProposal(classification.Boundary)
 	draft.outcome = cloneMioTurnOutcome(classification.Outcome)
 	draft.ready = true
 	keepPreparation = true

@@ -677,6 +677,7 @@ Ingressの`turn_id`、`trace_id`、`session_id`はpublic final eventへ明示伝
 設定します。Agent readもauthenticated userと`DataScopeUser`、active、`confirmed | pinned`、non-sensitiveをserver側で
 検証し、source failureを空の200へ変換せずRecall traceへ記録します。
 
+<a id="recall-internal-contract"></a>
 #### 段階的想起の内部契約（実装仕様）
 
 既存のChat HTTP／SSE routeと認証・policyを維持する。`MioTurnOutcome` v2はCORE内部の論理契約であり、LLM制御JSON、source reference、物理DB情報を公開本文・音声へ流さない。初回combinedは`route`と`outcome`を一回のMio生成から得る。既に確定したrouteでは分類をやり直さず、固定routeと異なる値を`invalid_outcome`にする。`answer`、`retrieve`、初回の非CHAT `handoff`は排他的で、unknown field、空answer、混在branchを拒否する。
@@ -684,6 +685,8 @@ Ingressの`turn_id`、`trace_id`、`session_id`はpublic final eventへ明示伝
 `retrieve.requests`は1〜2件、`source_kind`はCORE登録済み意味カテゴリ、`query`は1〜512 rune、`information_needed`は1〜256 rune、`references`は最大8件とする。referencesなしのscope内検索は許す。LLMの要求からowner、認証scope、SQL、任意Tool、物理pathを採用しない。owner readはauthenticated user、purpose、scope、版、provenance、freshnessを検査し、`not_found`、`unavailable`、`blocked`を区別する。初期実装で検証可能な失効資格を返せないremote結果はpublicationへ採用しない。
 
 plain streamingはRenCrow_LLMの専用論理event `answer_start`、`answer_delta`、`answer_done`、`retrieval_request`、初回未固定routeの`handoff`を使う。`handoff`は`{"schema_version":2,"route":"<canonical route>"}`を終端eventとして返し、本文eventを伴わない。COREだけがroute固定状態と許可先を検証する。`answer_start`前の本文公開と、本文公開後の同一turn検索は許さない。一般の`response_format=json_object`＋`stream=true`は従来どおり無効である。SpeechPlanは最終answer一回のplanだけを公開する。取得・継続でも同じ`turn_id`、`trace_id`、`root_task_id`、User／Agent `message_id`を使い、EndTurnは一回。取得上限は2 round、2 req/round、同時2、8 result、64KiB、DB 2秒、Web 8秒、全体10秒。上限到達で追加検索・追加生成を隠れて実行しない。
+
+source実装済み・本番検証中の[ThreadBoundary軽量化v1.0](04_アーキテクチャ概要.md#threadboundary-lightweight-v1)では、CORE内部の`MioTurnOutcome` JSONをschema v3に拡張し、境界提案を内部metadataとして持つ。v2 JSON／論理stream v1は境界`unknown`として互換受理する。専用論理stream v2も境界値を終端制御metadataだけに持ち、`answer_delta`、公開SSE、TTS、Avatarの本文には載せない。既存のChat HTTP／SSE route、認証・policy、route・branchの厳格検証は維持する。従来のv2 handoff eventをv3適用後の形式と読み替えない。
 
 初回の`answer_start`をCOREが検証した後、本文deltaの公開前に後段の決定的route policyを一度だけ評価し、CHATのTask／Lead Run／公開先を確定する。深掘りpolicy等でANALYZEへ変更した場合はMioの暫定CHAT deltaを一切公開せず、後段で同じpolicyを再適用しない。Task／Run確定失敗や途中の失効は一時deltaを完成回答へ昇格させず、既に公開済みのprefixだけをpartialとして終端する。
 

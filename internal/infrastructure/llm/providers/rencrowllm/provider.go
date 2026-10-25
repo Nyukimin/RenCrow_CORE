@@ -160,7 +160,7 @@ func (p *GatewayProvider) SetBaseURL(url string) {
 // Generate はLLM生成を実行
 func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
 	logicalOutcomeStreaming := req.LogicalOutcomeStream != ""
-	if logicalOutcomeStreaming && req.LogicalOutcomeStream != llm.LogicalOutcomeStreamV1 {
+	if logicalOutcomeStreaming && req.LogicalOutcomeStream != llm.LogicalOutcomeStreamV1 && req.LogicalOutcomeStream != llm.LogicalOutcomeStreamV2 {
 		return llm.GenerateResponse{}, fmt.Errorf("unsupported logical outcome stream version %q", req.LogicalOutcomeStream)
 	}
 	if logicalOutcomeStreaming && req.OnLogicalOutcomeEvent == nil {
@@ -271,7 +271,7 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	if streaming {
 		var result llm.GenerateResponse
 		if logicalOutcomeStreaming {
-			result, err = p.readLogicalOutcomeStream(resp.Body, req.OnToken, req.OnLogicalOutcomeEvent)
+			result, err = p.readLogicalOutcomeStream(resp.Body, req.OnToken, req.OnLogicalOutcomeEvent, req.LogicalOutcomeStream)
 		} else {
 			result, err = p.readChatCompletionsStream(resp.Body, req.OnToken)
 		}
@@ -322,7 +322,7 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	}, nil
 }
 
-func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.StreamCallback, onEvent llm.LogicalOutcomeEventCallback) (llm.GenerateResponse, error) {
+func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.StreamCallback, onEvent llm.LogicalOutcomeEventCallback, streamVersion string) (llm.GenerateResponse, error) {
 	type outcomeBranch uint8
 	const (
 		noOutcomeBranch outcomeBranch = iota
@@ -343,6 +343,10 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 	eventNameSet := false
 	var data strings.Builder
 	dataSet := false
+	schemaVersion := 3
+	if streamVersion == llm.LogicalOutcomeStreamV1 {
+		schemaVersion = 2
+	}
 	processFrame := func() error {
 		if !eventNameSet && !dataSet {
 			return nil
@@ -402,10 +406,10 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 				Route         *string `json:"route"`
 				PayloadKind   *string `json:"payload_kind"`
 			}
-			if err := decodeLogicalOutcomePayload(payload, &wire); err != nil {
+			if err := decodeLogicalOutcomePayload(payload, &wire, "schema_version", "route", "payload_kind"); err != nil {
 				return fmt.Errorf("decode answer_start: %w", err)
 			}
-			if wire.SchemaVersion == nil || *wire.SchemaVersion != 2 || wire.Route == nil || strings.TrimSpace(*wire.Route) == "" || *wire.Route != strings.TrimSpace(*wire.Route) || wire.PayloadKind == nil || *wire.PayloadKind != "text" {
+			if wire.SchemaVersion == nil || *wire.SchemaVersion != schemaVersion || wire.Route == nil || strings.TrimSpace(*wire.Route) == "" || *wire.Route != strings.TrimSpace(*wire.Route) || wire.PayloadKind == nil || *wire.PayloadKind != "text" {
 				return fmt.Errorf("answer_start has an invalid schema_version, route, or payload_kind")
 			}
 			branch = answerOutcomeBranch
@@ -425,7 +429,7 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 			var wire struct {
 				Text *string `json:"text"`
 			}
-			if err := decodeLogicalOutcomePayload(payload, &wire); err != nil {
+			if err := decodeLogicalOutcomePayload(payload, &wire, "text"); err != nil {
 				return fmt.Errorf("decode answer_delta: %w", err)
 			}
 			if wire.Text == nil {
@@ -444,9 +448,14 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 				return fmt.Errorf("answer_done is outside the active answer branch")
 			}
 			var wire struct {
-				FinishReason *string `json:"finish_reason"`
+				FinishReason   *string         `json:"finish_reason"`
+				ThreadBoundary json.RawMessage `json:"thread_boundary"`
 			}
-			if err := decodeLogicalOutcomePayload(payload, &wire); err != nil {
+			allowed := []string{"finish_reason"}
+			if streamVersion == llm.LogicalOutcomeStreamV2 {
+				allowed = append(allowed, "thread_boundary")
+			}
+			if err := decodeLogicalOutcomePayload(payload, &wire, allowed...); err != nil {
 				return fmt.Errorf("decode answer_done: %w", err)
 			}
 			if wire.FinishReason == nil || *wire.FinishReason != "stop" || strings.TrimSpace(content.String()) == "" {
@@ -454,7 +463,10 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 			}
 			answerDone = true
 			finishReason = *wire.FinishReason
-			event := llm.LogicalOutcomeEvent{Kind: llm.LogicalOutcomeAnswerDone, FinishReason: *wire.FinishReason}
+			event := llm.LogicalOutcomeEvent{
+				Kind: llm.LogicalOutcomeAnswerDone, FinishReason: *wire.FinishReason,
+				ThreadBoundary: parseLogicalThreadBoundary(wire.ThreadBoundary),
+			}
 			if err := onEvent(event); err != nil {
 				return fmt.Errorf("logical outcome callback rejected %s: %w", event.Kind, err)
 			}
@@ -463,14 +475,19 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 				return fmt.Errorf("logical outcome stream contains a contradictory or duplicate retrieval_request")
 			}
 			var wire struct {
-				SchemaVersion *int            `json:"schema_version"`
-				Route         *string         `json:"route"`
-				Requests      json.RawMessage `json:"requests"`
+				SchemaVersion  *int            `json:"schema_version"`
+				Route          *string         `json:"route"`
+				Requests       json.RawMessage `json:"requests"`
+				ThreadBoundary json.RawMessage `json:"thread_boundary"`
 			}
-			if err := decodeLogicalOutcomePayload(payload, &wire); err != nil {
+			allowed := []string{"schema_version", "route", "requests"}
+			if streamVersion == llm.LogicalOutcomeStreamV2 {
+				allowed = append(allowed, "thread_boundary")
+			}
+			if err := decodeLogicalOutcomePayload(payload, &wire, allowed...); err != nil {
 				return fmt.Errorf("decode retrieval_request: %w", err)
 			}
-			if wire.SchemaVersion == nil || *wire.SchemaVersion != 2 || wire.Route == nil || strings.TrimSpace(*wire.Route) == "" || *wire.Route != strings.TrimSpace(*wire.Route) {
+			if wire.SchemaVersion == nil || *wire.SchemaVersion != schemaVersion || wire.Route == nil || strings.TrimSpace(*wire.Route) == "" || *wire.Route != strings.TrimSpace(*wire.Route) {
 				return fmt.Errorf("retrieval_request has an invalid schema_version or route")
 			}
 			trimmedRequests := bytes.TrimSpace(wire.Requests)
@@ -482,6 +499,7 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 				Kind:              llm.LogicalOutcomeRetrievalRequest,
 				SchemaVersion:     *wire.SchemaVersion,
 				Route:             *wire.Route,
+				ThreadBoundary:    parseLogicalThreadBoundary(wire.ThreadBoundary),
 				RetrievalRequests: append(json.RawMessage(nil), trimmedRequests...),
 			}
 			if err := onEvent(event); err != nil {
@@ -492,20 +510,26 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 				return fmt.Errorf("logical outcome stream contains a contradictory or duplicate handoff")
 			}
 			var wire struct {
-				SchemaVersion *int    `json:"schema_version"`
-				Route         *string `json:"route"`
+				SchemaVersion  *int            `json:"schema_version"`
+				Route          *string         `json:"route"`
+				ThreadBoundary json.RawMessage `json:"thread_boundary"`
 			}
-			if err := decodeLogicalOutcomePayload(payload, &wire); err != nil {
+			allowed := []string{"schema_version", "route"}
+			if streamVersion == llm.LogicalOutcomeStreamV2 {
+				allowed = append(allowed, "thread_boundary")
+			}
+			if err := decodeLogicalOutcomePayload(payload, &wire, allowed...); err != nil {
 				return fmt.Errorf("decode handoff: %w", err)
 			}
-			if wire.SchemaVersion == nil || *wire.SchemaVersion != 2 || wire.Route == nil || strings.TrimSpace(*wire.Route) == "" || *wire.Route != strings.TrimSpace(*wire.Route) {
+			if wire.SchemaVersion == nil || *wire.SchemaVersion != schemaVersion || wire.Route == nil || strings.TrimSpace(*wire.Route) == "" || *wire.Route != strings.TrimSpace(*wire.Route) {
 				return fmt.Errorf("handoff has an invalid schema_version or route")
 			}
 			branch = handoffOutcomeBranch
 			event := llm.LogicalOutcomeEvent{
-				Kind:          llm.LogicalOutcomeHandoff,
-				SchemaVersion: *wire.SchemaVersion,
-				Route:         *wire.Route,
+				Kind:           llm.LogicalOutcomeHandoff,
+				SchemaVersion:  *wire.SchemaVersion,
+				Route:          *wire.Route,
+				ThreadBoundary: parseLogicalThreadBoundary(wire.ThreadBoundary),
 			}
 			if err := onEvent(event); err != nil {
 				return fmt.Errorf("logical outcome callback rejected %s: %w", event.Kind, err)
@@ -562,7 +586,13 @@ func (p *GatewayProvider) readLogicalOutcomeStream(body io.Reader, onToken llm.S
 	return llm.GenerateResponse{Content: content.String(), FinishReason: finishReason}, nil
 }
 
-func decodeLogicalOutcomePayload(data []byte, target any) error {
+func decodeLogicalOutcomePayload(data []byte, target any, allowedFields ...string) error {
+	if err := rejectDuplicateLogicalJSONKeys(data); err != nil {
+		return err
+	}
+	if err := validateLogicalOutcomeObjectFields(data, allowedFields); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -576,6 +606,137 @@ func decodeLogicalOutcomePayload(data []byte, target any) error {
 		return err
 	}
 	return nil
+}
+
+func validateLogicalOutcomeObjectFields(data []byte, allowedFields []string) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok || delimiter != '{' {
+		return fmt.Errorf("logical outcome payload must be a JSON object")
+	}
+	allowed := make(map[string]struct{}, len(allowedFields))
+	for _, field := range allowedFields {
+		allowed[field] = struct{}{}
+	}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		field, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("logical outcome field name must be a string")
+		}
+		if _, ok := allowed[field]; !ok {
+			return fmt.Errorf("logical outcome payload contains unsupported field %q", field)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func rejectDuplicateLogicalJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := consumeLogicalJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func consumeLogicalJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("JSON object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("JSON object repeats field %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := consumeLogicalJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim('}') {
+			return fmt.Errorf("JSON object has invalid end")
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeLogicalJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim(']') {
+			return fmt.Errorf("JSON array has invalid end")
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+	}
+	return nil
+}
+
+func parseLogicalThreadBoundary(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '"' {
+		return ""
+	}
+	var proposal string
+	if err := json.Unmarshal(trimmed, &proposal); err != nil {
+		return ""
+	}
+	switch proposal {
+	case "keep", "new", "unknown":
+		return proposal
+	default:
+		return ""
+	}
 }
 
 func decodeLogicalOutcomeGatewayError(eventName string, data []byte) (*GatewayError, bool, error) {

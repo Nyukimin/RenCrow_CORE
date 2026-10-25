@@ -170,7 +170,7 @@ type mockDetector struct {
 	result domconv.ThreadBoundaryResult
 }
 
-func (m *mockDetector) Detect(currentThread *domconv.Thread, newMessage, newDomain string) domconv.ThreadBoundaryResult {
+func (m *mockDetector) Detect(currentThread *domconv.Thread, newMessage string) domconv.ThreadBoundaryResult {
 	return m.result
 }
 
@@ -178,7 +178,7 @@ type recordingPreparedHeadDetector struct {
 	calls int
 }
 
-func (d *recordingPreparedHeadDetector) Detect(currentThread *domconv.Thread, newMessage, newDomain string) domconv.ThreadBoundaryResult {
+func (d *recordingPreparedHeadDetector) Detect(currentThread *domconv.Thread, newMessage string) domconv.ThreadBoundaryResult {
 	d.calls++
 	return domconv.ThreadBoundaryResult{}
 }
@@ -823,7 +823,7 @@ func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T
 			return nil
 		},
 	}
-	detector := &mockDetector{result: domconv.ThreadBoundaryResult{ShouldCreateNew: true, Reason: domconv.BoundaryKeyword}}
+	detector := &mockDetector{result: domconv.ThreadBoundaryResult{Proposal: domconv.ThreadBoundaryNew, Reason: domconv.BoundaryExplicitTopicChange}}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
 		WithUserMemoryStore(mgr, "trusted-owner").WithDetector(detector)
 	request := engineTestConversationTurnRequest(sessionID, "new topic", "response", domconv.SpeakerKuro)
@@ -835,7 +835,7 @@ func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T
 	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
 		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
-	if got.OwnerID != "trusted-owner" || got.Domain != "authoritative" || !got.Boundary || got.BoundaryReason != string(domconv.BoundaryKeyword) {
+	if got.OwnerID != "trusted-owner" || got.Domain != "authoritative" || !got.Boundary || got.BoundaryReason != string(domconv.BoundaryExplicitTopicChange) {
 		t.Fatalf("trusted/boundary fields=%#v", got)
 	}
 	if len(got.Targets) != 2 || got.Targets[0] != domconv.ConversationTurnTargetRedisProjection || got.Targets[1] != domconv.ConversationTurnTargetThreadFollowers {
@@ -862,7 +862,7 @@ func TestCommitConversationTurnUsesPreparedHeadWithoutReloadingL1(t *testing.T) 
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
 		WithUserMemoryStore(mgr, "trusted-owner").
-		WithDetector(&mockDetector{result: domconv.ThreadBoundaryResult{ShouldCreateNew: true, Reason: domconv.BoundaryKeyword}})
+		WithDetector(&mockDetector{result: domconv.ThreadBoundaryResult{Proposal: domconv.ThreadBoundaryNew, Reason: domconv.BoundaryExplicitTopicChange}})
 	request := engineTestConversationTurnRequest(sessionID, "new topic", "reply", domconv.SpeakerMio)
 	request.Preparation = &domconv.ConversationTurnPreparation{
 		TurnID: request.TurnID, SessionID: sessionID, OwnerID: "trusted-owner", Revision: 9, ActiveThread: active,
@@ -872,7 +872,7 @@ func TestCommitConversationTurnUsesPreparedHeadWithoutReloadingL1(t *testing.T) 
 	if _, err := engine.CommitConversationTurn(ctx, request); err != nil {
 		t.Fatalf("CommitConversationTurn() error=%v", err)
 	}
-	if got.Domain != "prepared-domain" || !got.Boundary || got.BoundaryReason != string(domconv.BoundaryKeyword) || got.Preparation == nil || got.Preparation.Revision != 9 {
+	if got.Domain != "prepared-domain" || !got.Boundary || got.BoundaryReason != string(domconv.BoundaryExplicitTopicChange) || got.Preparation == nil || got.Preparation.Revision != 9 {
 		t.Fatalf("committed request=%+v, want prepared domain/boundary and lease", got)
 	}
 	points := recorder.Snapshot().PointsMS
@@ -1423,7 +1423,7 @@ func TestCommitConversationTurn_WithDetector_NoBoundary(t *testing.T) {
 		},
 	}
 	detector := &mockDetector{
-		result: domconv.ThreadBoundaryResult{ShouldCreateNew: false},
+		result: domconv.ThreadBoundaryResult{Proposal: domconv.ThreadBoundaryKeep},
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren").WithDetector(detector)
 
@@ -1450,7 +1450,7 @@ func TestCommitConversationTurn_WithDetector_Boundary(t *testing.T) {
 		},
 	}
 	detector := &mockDetector{
-		result: domconv.ThreadBoundaryResult{ShouldCreateNew: true, Reason: domconv.BoundaryKeyword},
+		result: domconv.ThreadBoundaryResult{Proposal: domconv.ThreadBoundaryNew, Reason: domconv.BoundaryExplicitTopicChange},
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren").WithDetector(detector)
 

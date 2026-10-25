@@ -94,15 +94,16 @@ func (c *LLMClassifier) ClassifyWithChatReply(ctx context.Context, req llm.Gener
 	}, nil
 }
 
-// ClassifyWithMioTurnOutcome is the optional one-generation v2 route,
-// answer, and retrieval-request path. A fixed route is preserved exactly;
-// this method never repairs an invalid model response with another LLM call.
+// ClassifyWithMioTurnOutcome is the optional one-generation route, answer, and
+// retrieval-request path. Explicit streams select a strict schema version;
+// nonstream requests ask for v3 and also accept the strict legacy v2 envelope.
+// A fixed route is preserved exactly and invalid output is never repaired.
 func (c *LLMClassifier) ClassifyWithMioTurnOutcome(ctx context.Context, req llm.GenerateRequest, fixedRoute *routing.Route) (domainagent.MioTurnClassification, error) {
 	if c.llmProvider == nil {
 		return domainagent.MioTurnClassification{}, fmt.Errorf("LLM provider is unavailable")
 	}
 	logicalOutcomeStreaming := req.LogicalOutcomeStream != ""
-	if logicalOutcomeStreaming && req.LogicalOutcomeStream != llm.LogicalOutcomeStreamV1 {
+	if logicalOutcomeStreaming && req.LogicalOutcomeStream != llm.LogicalOutcomeStreamV1 && req.LogicalOutcomeStream != llm.LogicalOutcomeStreamV2 {
 		return domainagent.MioTurnClassification{}, fmt.Errorf("%w: unsupported logical outcome stream version %q", domainagent.ErrInvalidMioTurnOutcome, req.LogicalOutcomeStream)
 	}
 	if logicalOutcomeStreaming && req.OnLogicalOutcomeEvent == nil {
@@ -110,6 +111,10 @@ func (c *LLMClassifier) ClassifyWithMioTurnOutcome(ctx context.Context, req llm.
 	}
 	if !logicalOutcomeStreaming && req.OnLogicalOutcomeEvent != nil {
 		return domainagent.MioTurnClassification{}, fmt.Errorf("%w: logical outcome event callback requires an explicit stream version", domainagent.ErrInvalidMioTurnOutcome)
+	}
+	schemaVersion := 3
+	if req.LogicalOutcomeStream == llm.LogicalOutcomeStreamV1 {
+		schemaVersion = 2
 	}
 
 	var streamState *mioTurnOutcomeStreamState
@@ -122,10 +127,12 @@ func (c *LLMClassifier) ClassifyWithMioTurnOutcome(ctx context.Context, req llm.
 			}
 		}
 		streamState = &mioTurnOutcomeStreamState{
-			classifier: c,
-			fixedRoute: fixedRoute,
-			onEvent:    req.OnLogicalOutcomeEvent,
-			onToken:    req.OnToken,
+			classifier:     c,
+			fixedRoute:     fixedRoute,
+			streamVersion:  req.LogicalOutcomeStream,
+			threadBoundary: conversation.ThreadBoundaryUnknown,
+			onEvent:        req.OnLogicalOutcomeEvent,
+			onToken:        req.OnToken,
 		}
 		req.OnLogicalOutcomeEvent = streamState.handleEvent
 		if req.OnToken != nil {
@@ -139,7 +146,7 @@ func (c *LLMClassifier) ClassifyWithMioTurnOutcome(ctx context.Context, req llm.
 	req.SystemPrompt = ""
 	policyMessage := llm.Message{
 		Role:    "system",
-		Content: strings.TrimSpace(c.systemPrompt + "\n\n" + mioTurnOutcomeJSONContract()),
+		Content: strings.TrimSpace(c.systemPrompt + "\n\n" + mioTurnOutcomeJSONContract(schemaVersion)),
 		Type:    llm.PromptContextStable,
 		Metadata: map[string]string{
 			"runtime_context_kind": "classifier_mio_turn_outcome_contract",
@@ -161,16 +168,17 @@ func (c *LLMClassifier) ClassifyWithMioTurnOutcome(ctx context.Context, req llm.
 	}
 	var route routing.Route
 	var outcome domainagent.MioTurnOutcome
+	boundary := conversation.ThreadBoundaryUnknown
 	if logicalOutcomeStreaming {
-		route, outcome, err = streamState.classification(resp)
+		route, outcome, boundary, err = streamState.classification(resp)
 	} else {
-		route, outcome, err = c.decodeMioTurnOutcome(resp.Content, fixedRoute)
+		route, outcome, boundary, err = c.decodeMioTurnOutcome(resp.Content, fixedRoute, schemaVersion, true)
 	}
 	if err != nil {
 		return domainagent.MioTurnClassification{}, fmt.Errorf("%w: %v", domainagent.ErrInvalidMioTurnOutcome, err)
 	}
 	confidence := c.calculateConfidence(route, string(route))
-	reason := fmt.Sprintf("LLM generated MioTurnOutcome v2: %s on %s", outcome.Kind, route)
+	reason := fmt.Sprintf("LLM generated MioTurnOutcome v%d: %s on %s", schemaVersion, outcome.Kind, route)
 	decision := routing.NewDecisionWithEvidence(route, confidence, reason, routing.DecisionEvidence{
 		Source:     routing.EvidenceSourceClassifier,
 		Matched:    true,
@@ -181,18 +189,31 @@ func (c *LLMClassifier) ClassifyWithMioTurnOutcome(ctx context.Context, req llm.
 	return domainagent.MioTurnClassification{
 		Decision:   decision,
 		Outcome:    outcome,
+		Boundary:   boundary,
 		Generation: resp,
 	}, nil
 }
 
-const mioTurnOutcomeJSONContractTemplate = `Return exactly one JSON object for MioTurnOutcome schema_version 2 with only these top-level fields: "schema_version", "route", and "outcome". schema_version must be the integer 2. route must be exactly one canonical route name allowed by the existing route policy. Keep a supplied fixed route unchanged.
+const mioTurnOutcomeJSONContractV2Template = `Return exactly one JSON object for MioTurnOutcome schema_version 2 with only these top-level fields: "schema_version", "route", and "outcome". schema_version must be the integer 2. route must be exactly one canonical route name allowed by the existing route policy. Keep a supplied fixed route unchanged.
 
 The outcome is exactly one branch. For route CHAT, use either {"kind":"answer","text":"..."} with a non-empty direct answer, or {"kind":"retrieve","requests":[...]} with one or two requests. Do not include fields from another branch. Each retrieve request has exactly "source_kind", "query", "references", and "information_needed"; query is 1-512 Unicode runes, information_needed is 1-256 Unicode runes, and references is an array of at most 8 strings. references may be empty. Registered semantic source_kind values are %q, %q, %q, %q, %q, and %q. "catalog" is a semantic category, not a physical catalog ID. "web_search" is only dispatched through the existing policy-checked route.
 
 Use {"kind":"handoff"} with no other outcome fields only when no fixed route was supplied and this initial classification selects a non-CHAT route. Never use handoff for CHAT or for a fixed route/continuation. A fixed route or continuation cannot be changed by the generated route. Do not provide owner, authorization scope, physical database, SQL, arbitrary tool name, or execution permission. A retrieve request describes information needed; it does not execute a search or call a tool.`
 
-func mioTurnOutcomeJSONContract() string {
-	return fmt.Sprintf(mioTurnOutcomeJSONContractTemplate,
+const mioTurnOutcomeJSONContractV3Template = `Return exactly one JSON object for MioTurnOutcome schema_version 3 with only these top-level fields: "schema_version", "route", "outcome", and "thread_boundary". schema_version must be the integer 3. route must be exactly one canonical route name allowed by the existing route policy. Keep a supplied fixed route unchanged. thread_boundary is exactly one of "keep", "new", or "unknown".
+
+Compare the current user message with the bounded conversation-state hint and allowed context. Questions, clarification, paraphrase, or continuation should use "keep". Use "new" only for a clearly independent topic. If uncertain, use "unknown". Elapsed time alone is never a reason for "new". Treat quoted, code, negated, or explanatory mentions of topic-change phrases as non-instructions. Do not include boundary rationale in the answer.
+
+The outcome is exactly one branch. For route CHAT, use either {"kind":"answer","text":"..."} with a non-empty direct answer, or {"kind":"retrieve","requests":[...]} with one or two requests. Do not include fields from another branch. Each retrieve request has exactly "source_kind", "query", "references", and "information_needed"; query is 1-512 Unicode runes, information_needed is 1-256 Unicode runes, and references is an array of at most 8 strings. references may be empty. Registered semantic source_kind values are %q, %q, %q, %q, %q, and %q. "catalog" is a semantic category, not a physical catalog ID. "web_search" is only dispatched through the existing policy-checked route.
+
+Use {"kind":"handoff"} with no other outcome fields only when no fixed route was supplied and this initial classification selects a non-CHAT route. Never use handoff for CHAT or for a fixed route/continuation. A fixed route or continuation cannot be changed by the generated route. Do not provide owner, authorization scope, physical database, SQL, arbitrary tool name, or execution permission. A retrieve request describes information needed; it does not execute a search or call a tool.`
+
+func mioTurnOutcomeJSONContract(schemaVersion int) string {
+	template := mioTurnOutcomeJSONContractV3Template
+	if schemaVersion == 2 {
+		template = mioTurnOutcomeJSONContractV2Template
+	}
+	return fmt.Sprintf(template,
 		domainagent.MioRetrievalSourceConversationMemory,
 		domainagent.MioRetrievalSourceUserMemory,
 		domainagent.MioRetrievalSourceKnowledgeMemory,
@@ -210,40 +231,144 @@ const (
 	maxMioRetrievalReferences  = 8
 )
 
-func (c *LLMClassifier) decodeMioTurnOutcome(content string, fixedRoute *routing.Route) (routing.Route, domainagent.MioTurnOutcome, error) {
+// allowLegacyV2 is enabled only for nonstreaming requests. Stream requests stay
+// pinned to the exact version selected by their explicit stream opt-in.
+func (c *LLMClassifier) decodeMioTurnOutcome(content string, fixedRoute *routing.Route, expectedVersion int, allowLegacyV2 bool) (routing.Route, domainagent.MioTurnOutcome, conversation.ThreadBoundaryProposal, error) {
 	if len(content) > maxMioTurnOutcomeJSONBytes {
-		return "", domainagent.MioTurnOutcome{}, fmt.Errorf("combined MioTurnOutcome response exceeds %d bytes", maxMioTurnOutcomeJSONBytes)
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("combined MioTurnOutcome response exceeds %d bytes", maxMioTurnOutcomeJSONBytes)
 	}
-	fields, err := decodeStrictJSONObject([]byte(content), "combined MioTurnOutcome", "schema_version", "route", "outcome")
+	if err := rejectDuplicateMioOutcomeJSONKeys([]byte(content)); err != nil {
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("combined MioTurnOutcome has invalid or duplicate JSON keys: %w", err)
+	}
+	allowedFields := []string{"schema_version", "route", "outcome"}
+	if expectedVersion == 3 {
+		allowedFields = append(allowedFields, "thread_boundary")
+	}
+	fields, err := decodeStrictJSONObject([]byte(content), "combined MioTurnOutcome", allowedFields...)
 	if err != nil {
-		return "", domainagent.MioTurnOutcome{}, err
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, err
 	}
 	if err := requireJSONFields(fields, "schema_version", "route", "outcome"); err != nil {
-		return "", domainagent.MioTurnOutcome{}, fmt.Errorf("combined MioTurnOutcome %w", err)
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("combined MioTurnOutcome %w", err)
 	}
 	version, err := decodeJSONInt(fields["schema_version"], "schema_version")
 	if err != nil {
-		return "", domainagent.MioTurnOutcome{}, err
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, err
 	}
-	if version != 2 {
-		return "", domainagent.MioTurnOutcome{}, fmt.Errorf("combined MioTurnOutcome schema_version = %d, want 2", version)
+	legacyV2 := allowLegacyV2 && expectedVersion == 3 && version == 2
+	if version != expectedVersion && !legacyV2 {
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("combined MioTurnOutcome schema_version = %d, want %d", version, expectedVersion)
+	}
+	if version == 2 && fields["thread_boundary"] != nil {
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("combined MioTurnOutcome schema_version 2 does not allow thread_boundary")
 	}
 	routeText, err := decodeJSONStringValue(fields["route"], "route")
 	if err != nil {
-		return "", domainagent.MioTurnOutcome{}, err
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, err
 	}
 	route, err := c.validateMioTurnOutcomeRoute(routeText, fixedRoute)
 	if err != nil {
-		return "", domainagent.MioTurnOutcome{}, err
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, err
 	}
 	outcome, err := decodeMioTurnOutcomeBranch(fields["outcome"], route)
 	if err != nil {
-		return "", domainagent.MioTurnOutcome{}, err
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, err
 	}
 	if fixedRoute != nil && outcome.Kind == domainagent.MioTurnOutcomeHandoff {
-		return "", domainagent.MioTurnOutcome{}, fmt.Errorf("handoff outcome is only valid for an initial classification without a fixed route")
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("handoff outcome is only valid for an initial classification without a fixed route")
 	}
-	return route, outcome, nil
+	boundary := conversation.ThreadBoundaryUnknown
+	if version == 3 {
+		boundary = decodeThreadBoundaryProposal(fields["thread_boundary"])
+	}
+	return route, outcome, boundary, nil
+}
+
+func rejectDuplicateMioOutcomeJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := consumeMioOutcomeJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func consumeMioOutcomeJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("JSON object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("JSON object repeats field %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := consumeMioOutcomeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim('}') {
+			return fmt.Errorf("JSON object has invalid end")
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeMioOutcomeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if end != json.Delim(']') {
+			return fmt.Errorf("JSON array has invalid end")
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
+	}
+	return nil
+}
+
+func decodeThreadBoundaryProposal(raw json.RawMessage) conversation.ThreadBoundaryProposal {
+	proposal, err := decodeJSONStringValue(raw, "thread_boundary")
+	if err != nil {
+		return conversation.ThreadBoundaryUnknown
+	}
+	return threadBoundaryProposalFromString(proposal)
+}
+
+func threadBoundaryProposalFromString(value string) conversation.ThreadBoundaryProposal {
+	switch conversation.ThreadBoundaryProposal(value) {
+	case conversation.ThreadBoundaryKeep, conversation.ThreadBoundaryNew:
+		return conversation.ThreadBoundaryProposal(value)
+	default:
+		return conversation.ThreadBoundaryUnknown
+	}
 }
 
 func (c *LLMClassifier) validateMioTurnOutcomeRoute(routeText string, fixedRoute *routing.Route) (routing.Route, error) {
@@ -276,19 +401,21 @@ const (
 )
 
 type mioTurnOutcomeStreamState struct {
-	classifier *LLMClassifier
-	fixedRoute *routing.Route
-	onEvent    llm.LogicalOutcomeEventCallback
-	onToken    llm.StreamCallback
+	classifier    *LLMClassifier
+	fixedRoute    *routing.Route
+	streamVersion string
+	onEvent       llm.LogicalOutcomeEventCallback
+	onToken       llm.StreamCallback
 
-	branch       mioTurnOutcomeStreamBranch
-	route        routing.Route
-	outcome      domainagent.MioTurnOutcome
-	answer       strings.Builder
-	answerDone   bool
-	tokenPending bool
-	pendingToken string
-	callbackErr  error
+	branch         mioTurnOutcomeStreamBranch
+	route          routing.Route
+	outcome        domainagent.MioTurnOutcome
+	threadBoundary conversation.ThreadBoundaryProposal
+	answer         strings.Builder
+	answerDone     bool
+	tokenPending   bool
+	pendingToken   string
+	callbackErr    error
 }
 
 func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) error {
@@ -304,7 +431,7 @@ func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) e
 		if s.branch != mioTurnOutcomeStreamNoBranch {
 			return s.fail("answer_start is contradictory or duplicated")
 		}
-		if event.SchemaVersion != 2 || event.PayloadKind != "text" || event.Text != "" || event.FinishReason != "" || len(event.RetrievalRequests) != 0 {
+		if event.SchemaVersion != s.expectedSchemaVersion() || event.PayloadKind != "text" || event.Text != "" || event.FinishReason != "" || event.ThreadBoundary != "" || len(event.RetrievalRequests) != 0 {
 			return s.fail("answer_start has an invalid schema or branch shape")
 		}
 		route, err := s.classifier.validateMioTurnOutcomeRoute(event.Route, s.fixedRoute)
@@ -321,7 +448,7 @@ func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) e
 		if s.branch != mioTurnOutcomeStreamAnswer || s.answerDone {
 			return s.fail("answer_delta is outside the active answer branch")
 		}
-		if event.SchemaVersion != 0 || event.Route != "" || event.PayloadKind != "" || event.FinishReason != "" || len(event.RetrievalRequests) != 0 {
+		if event.SchemaVersion != 0 || event.Route != "" || event.PayloadKind != "" || event.FinishReason != "" || event.ThreadBoundary != "" || len(event.RetrievalRequests) != 0 {
 			return s.fail("answer_delta contains fields outside its branch")
 		}
 		if !utf8.ValidString(event.Text) {
@@ -335,9 +462,13 @@ func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) e
 		if event.SchemaVersion != 0 || event.Route != "" || event.PayloadKind != "" || event.Text != "" || len(event.RetrievalRequests) != 0 {
 			return s.fail("answer_done contains fields outside its branch")
 		}
+		if s.streamVersion == llm.LogicalOutcomeStreamV1 && event.ThreadBoundary != "" {
+			return s.fail("v1 answer_done contains v2 boundary metadata")
+		}
 		if event.FinishReason != "stop" || strings.TrimSpace(s.answer.String()) == "" {
 			return s.fail("answer_done has an invalid finish reason or empty answer")
 		}
+		s.threadBoundary = threadBoundaryProposalFromString(event.ThreadBoundary)
 		s.answerDone = true
 	case llm.LogicalOutcomeRetrievalRequest:
 		if s.branch != mioTurnOutcomeStreamNoBranch {
@@ -346,8 +477,8 @@ func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) e
 		if event.PayloadKind != "" || event.Text != "" || event.FinishReason != "" {
 			return s.fail("retrieval_request contains fields outside its branch")
 		}
-		if event.SchemaVersion != 2 {
-			return s.fail("retrieval_request schema_version = %d, want 2", event.SchemaVersion)
+		if event.SchemaVersion != s.expectedSchemaVersion() {
+			return s.fail("retrieval_request schema_version = %d, want %d", event.SchemaVersion, s.expectedSchemaVersion())
 		}
 		route, err := s.classifier.validateMioTurnOutcomeRoute(event.Route, s.fixedRoute)
 		if err != nil {
@@ -365,6 +496,10 @@ func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) e
 		s.branch = mioTurnOutcomeStreamRetrieve
 		s.route = route
 		s.outcome = outcome
+		if s.streamVersion == llm.LogicalOutcomeStreamV1 && event.ThreadBoundary != "" {
+			return s.fail("v1 retrieval_request contains v2 boundary metadata")
+		}
+		s.threadBoundary = threadBoundaryProposalFromString(event.ThreadBoundary)
 	case llm.LogicalOutcomeHandoff:
 		if s.branch != mioTurnOutcomeStreamNoBranch {
 			return s.fail("handoff is contradictory or duplicated")
@@ -372,8 +507,8 @@ func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) e
 		if event.PayloadKind != "" || event.Text != "" || event.FinishReason != "" || len(event.RetrievalRequests) != 0 {
 			return s.fail("handoff contains fields outside its branch")
 		}
-		if event.SchemaVersion != 2 {
-			return s.fail("handoff schema_version = %d, want 2", event.SchemaVersion)
+		if event.SchemaVersion != s.expectedSchemaVersion() {
+			return s.fail("handoff schema_version = %d, want %d", event.SchemaVersion, s.expectedSchemaVersion())
 		}
 		if s.fixedRoute != nil {
 			return s.fail("handoff is invalid for a fixed route")
@@ -388,12 +523,18 @@ func (s *mioTurnOutcomeStreamState) handleEvent(event llm.LogicalOutcomeEvent) e
 		s.branch = mioTurnOutcomeStreamHandoff
 		s.route = route
 		s.outcome = domainagent.MioTurnOutcome{Kind: domainagent.MioTurnOutcomeHandoff}
+		if s.streamVersion == llm.LogicalOutcomeStreamV1 && event.ThreadBoundary != "" {
+			return s.fail("v1 handoff contains v2 boundary metadata")
+		}
+		s.threadBoundary = threadBoundaryProposalFromString(event.ThreadBoundary)
 	default:
 		return s.fail("unknown event kind %q", event.Kind)
 	}
 
 	if s.onEvent != nil {
-		if err := s.onEvent(event); err != nil {
+		publishedEvent := event
+		publishedEvent.ThreadBoundary = ""
+		if err := s.onEvent(publishedEvent); err != nil {
 			s.callbackErr = err
 			return err
 		}
@@ -418,34 +559,41 @@ func (s *mioTurnOutcomeStreamState) forwardValidatedToken(token string) {
 	s.onToken(token)
 }
 
-func (s *mioTurnOutcomeStreamState) classification(response llm.GenerateResponse) (routing.Route, domainagent.MioTurnOutcome, error) {
+func (s *mioTurnOutcomeStreamState) classification(response llm.GenerateResponse) (routing.Route, domainagent.MioTurnOutcome, conversation.ThreadBoundaryProposal, error) {
 	if s.callbackErr != nil {
-		return "", domainagent.MioTurnOutcome{}, s.callbackErr
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, s.callbackErr
 	}
 	if s.tokenPending {
-		return "", domainagent.MioTurnOutcome{}, fmt.Errorf("answer_delta was not followed by its text callback")
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("answer_delta was not followed by its text callback")
 	}
 	if s.branch == mioTurnOutcomeStreamNoBranch {
-		return "", domainagent.MioTurnOutcome{}, fmt.Errorf("logical outcome stream ended without an outcome")
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("logical outcome stream ended without an outcome")
 	}
 	switch s.branch {
 	case mioTurnOutcomeStreamAnswer:
 		answer := s.answer.String()
 		if !s.answerDone || response.FinishReason != "stop" || strings.TrimSpace(answer) == "" {
-			return "", domainagent.MioTurnOutcome{}, fmt.Errorf("logical answer stream ended before a completed answer")
+			return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("logical answer stream ended before a completed answer")
 		}
 		if response.Content != answer {
-			return "", domainagent.MioTurnOutcome{}, fmt.Errorf("logical answer content does not match streamed answer deltas")
+			return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("logical answer content does not match streamed answer deltas")
 		}
 		s.outcome.Text = answer
 	case mioTurnOutcomeStreamRetrieve, mioTurnOutcomeStreamHandoff:
 		if response.Content != "" || response.FinishReason != "" {
-			return "", domainagent.MioTurnOutcome{}, fmt.Errorf("non-answer logical outcome returned answer content or finish reason")
+			return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("non-answer logical outcome returned answer content or finish reason")
 		}
 	default:
-		return "", domainagent.MioTurnOutcome{}, fmt.Errorf("logical outcome stream has an unknown branch")
+		return "", domainagent.MioTurnOutcome{}, conversation.ThreadBoundaryUnknown, fmt.Errorf("logical outcome stream has an unknown branch")
 	}
-	return s.route, s.outcome, nil
+	return s.route, s.outcome, s.threadBoundary, nil
+}
+
+func (s *mioTurnOutcomeStreamState) expectedSchemaVersion() int {
+	if s.streamVersion == llm.LogicalOutcomeStreamV1 {
+		return 2
+	}
+	return 3
 }
 
 func (s *mioTurnOutcomeStreamState) fail(format string, args ...any) error {

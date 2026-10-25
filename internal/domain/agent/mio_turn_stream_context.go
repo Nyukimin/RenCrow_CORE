@@ -37,8 +37,8 @@ type mioTurnStreamEventHandlerContextKey struct{}
 type mioTurnGenerateRequestAdmissionFactoryContextKey struct{}
 type mioTurnGenerateRequestAdmissionContextKey struct{}
 
-// ContextWithMioTurnStreamEventHandler enables the v1 logical outcome stream
-// for combined Mio CHAT and fixed-CHAT continuation generations.
+// ContextWithMioTurnStreamEventHandler enables the canonical v2 logical
+// outcome stream for combined Mio CHAT and fixed-CHAT continuation generations.
 func ContextWithMioTurnStreamEventHandler(ctx context.Context, handler MioTurnStreamEventHandler) context.Context {
 	if ctx == nil || handler == nil {
 		return ctx

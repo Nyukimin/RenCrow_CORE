@@ -10,12 +10,13 @@ import (
 	"testing"
 
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainrouting "github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 func TestLLMClassifier_ClassifyWithMioTurnOutcomeUsesOneStrictVersionedGeneration(t *testing.T) {
-	response := `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"Mio answer."}}`
+	response := `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"Mio answer."},"thread_boundary":"unknown"}`
 	var captured llm.GenerateRequest
 	generateCalls := 0
 	classifier := NewLLMClassifier(&mockLLMProvider{
@@ -54,13 +55,13 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeUsesOneStrictVersionedGeneratio
 		t.Fatalf("generation request = %#v, want JSON object mode, no token callback, and typed messages", captured)
 	}
 	if len(captured.Messages) != len(messages)+1 || !reflect.DeepEqual(captured.Messages[0], messages[0]) || !reflect.DeepEqual(captured.Messages[2], messages[1]) || !reflect.DeepEqual(captured.Messages[3], messages[2]) {
-		t.Fatalf("messages = %#v, want character, v2 contract, recall, user order", captured.Messages)
+		t.Fatalf("messages = %#v, want character, v3 contract, recall, user order", captured.Messages)
 	}
 	contract := captured.Messages[1]
 	if contract.Role != "system" || contract.Type != llm.PromptContextStable || contract.Metadata["runtime_context_kind"] != "classifier_mio_turn_outcome_contract" {
 		t.Fatalf("contract message = %#v, want stable Mio turn contract", contract)
 	}
-	for _, value := range []string{"schema_version", "2", "answer", "retrieve", "handoff", "conversation_memory", "user_memory", "knowledge_memory", "catalog", "glossary", "web_search", "owner", "scope"} {
+	for _, value := range []string{"schema_version", "3", "thread_boundary", "keep", "new", "unknown", "answer", "retrieve", "handoff", "conversation_memory", "user_memory", "knowledge_memory", "catalog", "glossary", "web_search", "owner", "scope"} {
 		if !strings.Contains(contract.Content, value) {
 			t.Errorf("contract prompt is missing %q", value)
 		}
@@ -68,6 +69,105 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeUsesOneStrictVersionedGeneratio
 	kwargs, ok := captured.ProviderOptions["chat_template_kwargs"].(map[string]any)
 	if captured.ProviderOptions["think"] != false || !ok || kwargs["enable_thinking"] != false {
 		t.Fatalf("ProviderOptions = %#v, want thinking disabled", captured.ProviderOptions)
+	}
+}
+
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeDefaultsToSchemaV3AndReadsBoundary(t *testing.T) {
+	response := `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"Mio answer."},"thread_boundary":"new"}`
+	var captured llm.GenerateRequest
+	classifier := NewLLMClassifier(&mockLLMProvider{
+		response:   response,
+		onGenerate: func(req llm.GenerateRequest) { captured = req },
+	}, "existing route policy")
+
+	result, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, nil)
+	if err != nil {
+		t.Fatalf("ClassifyWithMioTurnOutcome() error = %v", err)
+	}
+	field := reflect.ValueOf(result).FieldByName("Boundary")
+	if !field.IsValid() || field.String() != "new" {
+		t.Fatalf("ThreadBoundary = %v, want new", field)
+	}
+	if len(captured.Messages) == 0 || !strings.Contains(captured.Messages[0].Content, "schema_version 3") {
+		t.Fatalf("combined prompt does not request schema_version 3: %#v", captured.Messages)
+	}
+}
+
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeAcceptsLegacySchemaV2Nonstream(t *testing.T) {
+	response := `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"Legacy answer."}}`
+	var captured llm.GenerateRequest
+	classifier := NewLLMClassifier(&mockLLMProvider{
+		response:   response,
+		onGenerate: func(req llm.GenerateRequest) { captured = req },
+	}, "existing route policy")
+
+	result, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, nil)
+	if err != nil {
+		t.Fatalf("ClassifyWithMioTurnOutcome() error = %v", err)
+	}
+	if result.Outcome.Kind != domainagent.MioTurnOutcomeAnswer || result.Outcome.Text != "Legacy answer." {
+		t.Fatalf("outcome = %#v, want valid legacy answer", result.Outcome)
+	}
+	if result.Boundary != domainconversation.ThreadBoundaryUnknown {
+		t.Fatalf("boundary = %q, want unknown for schema v2", result.Boundary)
+	}
+	if len(captured.Messages) == 0 || !strings.Contains(captured.Messages[0].Content, "schema_version 3") {
+		t.Fatalf("combined prompt does not request schema_version 3: %#v", captured.Messages)
+	}
+}
+
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsBoundaryOnLegacySchemaV2(t *testing.T) {
+	classifier := NewLLMClassifier(&mockLLMProvider{
+		response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"Legacy answer."},"thread_boundary":"new"}`,
+	}, "existing route policy")
+	_, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, nil)
+	if !errors.Is(err, domainagent.ErrInvalidMioTurnOutcome) {
+		t.Fatalf("ClassifyWithMioTurnOutcome() error = %v, want strict v2 envelope rejection", err)
+	}
+}
+
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeBoundaryOnlyMalformedFallsBackToUnknown(t *testing.T) {
+	for _, boundary := range []string{`null`, `42`, `1e400`, `[]`, `"maybe"`} {
+		t.Run(boundary, func(t *testing.T) {
+			response := `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"Mio answer."},"thread_boundary":` + boundary + `}`
+			classifier := NewLLMClassifier(&mockLLMProvider{response: response}, "route policy")
+			result, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, nil)
+			if err != nil {
+				t.Fatalf("ClassifyWithMioTurnOutcome() error = %v", err)
+			}
+			field := reflect.ValueOf(result).FieldByName("Boundary")
+			if !field.IsValid() || field.String() != "unknown" || result.Outcome.Text != "Mio answer." {
+				t.Fatalf("classification boundary/outcome = %v / %#v, want unknown / valid answer", field, result.Outcome)
+			}
+		})
+	}
+}
+
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsNestedDuplicateBoundaryKeys(t *testing.T) {
+	generateCalls := 0
+	classifier := NewLLMClassifier(&mockLLMProvider{
+		response:   `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"valid answer"},"thread_boundary":{"x":1,"x":2}}`,
+		onGenerate: func(llm.GenerateRequest) { generateCalls++ },
+	}, "route policy")
+	_, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, nil)
+	if !errors.Is(err, domainagent.ErrInvalidMioTurnOutcome) {
+		t.Fatalf("ClassifyWithMioTurnOutcome() error = %v, want duplicate boundary rejection", err)
+	}
+	if generateCalls != 1 {
+		t.Fatalf("Generate calls = %d, want exactly one and no repair generation", generateCalls)
+	}
+}
+
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeMissingBoundaryFallsBackToUnknown(t *testing.T) {
+	classifier := NewLLMClassifier(&mockLLMProvider{
+		response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"Mio answer."}}`,
+	}, "route policy")
+	result, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, nil)
+	if err != nil {
+		t.Fatalf("ClassifyWithMioTurnOutcome() error = %v", err)
+	}
+	if result.Boundary != domainconversation.ThreadBoundaryUnknown || result.Outcome.Text != "Mio answer." {
+		t.Fatalf("classification = %#v, want unknown boundary and valid answer", result)
 	}
 }
 
@@ -139,7 +239,7 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeAcceptsEveryRegisteredSourceKin
 	}
 }
 
-func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsInvalidV2Responses(t *testing.T) {
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsInvalidV3Responses(t *testing.T) {
 	tooManyRequests := marshalMioTurnOutcome(t, "CHAT", map[string]any{
 		"kind": "retrieve",
 		"requests": []any{
@@ -158,27 +258,28 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsInvalidV2Responses(t *te
 		fixedRoute *domainrouting.Route
 	}{
 		{name: "missing schema version", response: `{"route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`},
-		{name: "old schema version", response: `{"schema_version":1,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`},
-		{name: "fractional schema version", response: `{"schema_version":2.0,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`},
-		{name: "unknown top-level field", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"ok"},"extra":true}`},
-		{name: "duplicate top-level field", response: `{"schema_version":2,"route":"CHAT","route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`},
-		{name: "missing route", response: `{"schema_version":2,"outcome":{"kind":"answer","text":"ok"}}`},
-		{name: "missing outcome", response: `{"schema_version":2,"route":"CHAT"}`},
-		{name: "unknown route", response: `{"schema_version":2,"route":"UNKNOWN","outcome":{"kind":"handoff"}}`},
-		{name: "route excluded by classifier policy CODE4", response: `{"schema_version":2,"route":"CODE4","outcome":{"kind":"handoff"}}`},
-		{name: "route excluded by classifier policy WILD", response: `{"schema_version":2,"route":"WILD","outcome":{"kind":"handoff"}}`},
-		{name: "noncanonical route", response: `{"schema_version":2,"route":"chat","outcome":{"kind":"answer","text":"ok"}}`},
-		{name: "unknown outcome kind", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"search","query":"x"}}`},
-		{name: "duplicate outcome kind", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","kind":"retrieve","text":"ok"}}`},
-		{name: "answer text missing", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer"}}`},
-		{name: "answer text empty", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":""}}`},
-		{name: "answer text whitespace", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"  \n "}}`},
-		{name: "answer with retrieval branch", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"ok","requests":[]}}`},
-		{name: "answer on handoff route", response: `{"schema_version":2,"route":"RESEARCH","outcome":{"kind":"answer","text":"ok"}}`},
-		{name: "retrieve with answer field", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"retrieve","requests":[],"text":"ok"}}`},
-		{name: "retrieve route mismatch", response: `{"schema_version":2,"route":"CODE2","outcome":{"kind":"retrieve","requests":[]}}`},
+		{name: "unsupported schema version", response: `{"schema_version":1,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`},
+		{name: "fractional schema version", response: `{"schema_version":3.0,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`},
+		{name: "unknown top-level field", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"ok"},"extra":true}`},
+		{name: "duplicate top-level field", response: `{"schema_version":3,"route":"CHAT","route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`},
+		{name: "duplicate boundary field", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"ok"},"thread_boundary":"new","thread_boundary":"keep"}`},
+		{name: "missing route", response: `{"schema_version":3,"outcome":{"kind":"answer","text":"ok"}}`},
+		{name: "missing outcome", response: `{"schema_version":3,"route":"CHAT"}`},
+		{name: "unknown route", response: `{"schema_version":3,"route":"UNKNOWN","outcome":{"kind":"handoff"}}`},
+		{name: "route excluded by classifier policy CODE4", response: `{"schema_version":3,"route":"CODE4","outcome":{"kind":"handoff"}}`},
+		{name: "route excluded by classifier policy WILD", response: `{"schema_version":3,"route":"WILD","outcome":{"kind":"handoff"}}`},
+		{name: "noncanonical route", response: `{"schema_version":3,"route":"chat","outcome":{"kind":"answer","text":"ok"}}`},
+		{name: "unknown outcome kind", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"search","query":"x"}}`},
+		{name: "duplicate outcome kind", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","kind":"retrieve","text":"ok"}}`},
+		{name: "answer text missing", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer"}}`},
+		{name: "answer text empty", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":""}}`},
+		{name: "answer text whitespace", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"  \n "}}`},
+		{name: "answer with retrieval branch", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"ok","requests":[]}}`},
+		{name: "answer on handoff route", response: `{"schema_version":3,"route":"RESEARCH","outcome":{"kind":"answer","text":"ok"}}`},
+		{name: "retrieve with answer field", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"retrieve","requests":[],"text":"ok"}}`},
+		{name: "retrieve route mismatch", response: `{"schema_version":3,"route":"CODE2","outcome":{"kind":"retrieve","requests":[]}}`},
 		{name: "empty requests", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{}})},
-		{name: "missing requests", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"retrieve"}}`},
+		{name: "missing requests", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"retrieve"}}`},
 		{name: "more than two requests", response: tooManyRequests},
 		{name: "query empty", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": "", "references": []string{}, "information_needed": "reason"}}})},
 		{name: "query whitespace", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": " \n ", "references": []string{}, "information_needed": "reason"}}})},
@@ -188,19 +289,19 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsInvalidV2Responses(t *te
 		{name: "more than eight references", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": "query", "references": tooManyReferences, "information_needed": "reason"}}})},
 		{name: "references wrong type", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": "query", "references": []any{"ref-1", 2}, "information_needed": "reason"}}})},
 		{name: "empty reference item", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": "query", "references": []string{" "}, "information_needed": "reason"}}})},
-		{name: "duplicate request field", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"retrieve","requests":[{"source_kind":"conversation_memory","query":"first","query":"second","references":[],"information_needed":"reason"}]}}`},
+		{name: "duplicate request field", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"retrieve","requests":[{"source_kind":"conversation_memory","query":"first","query":"second","references":[],"information_needed":"reason"}]}}`},
 		{name: "unregistered physical catalog id", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "movie_catalog", "query": "query", "references": []string{}, "information_needed": "reason"}}})},
 		{name: "unregistered source", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "arbitrary_sql", "query": "query", "references": []string{}, "information_needed": "reason"}}})},
 		{name: "owner and scope fields are forbidden", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": "query", "references": []string{}, "information_needed": "reason", "owner": "other", "scope": "all"}}})},
 		{name: "request missing references", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": "query", "information_needed": "reason"}}})},
-		{name: "handoff cannot be CHAT", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"handoff"}}`},
-		{name: "handoff with answer field", response: `{"schema_version":2,"route":"CODE2","outcome":{"kind":"handoff","text":"do it"}}`},
-		{name: "handoff cannot be interpreted on fixed non-CHAT route", response: `{"schema_version":2,"route":"CODE2","outcome":{"kind":"handoff"}}`, fixedRoute: routePointer(domainrouting.RouteCODE2)},
-		{name: "fixed route rejects classifier route change", response: `{"schema_version":2,"route":"CODE2","outcome":{"kind":"handoff"}}`, fixedRoute: routePointer(domainrouting.RouteCHAT)},
-		{name: "fixed route rejects answer/handoff mismatch", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`, fixedRoute: routePointer(domainrouting.RouteCODE2)},
-		{name: "invalid JSON", response: `{"schema_version":2,`},
-		{name: "trailing content", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}} garbage`},
-		{name: "second JSON object", response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}} {}`},
+		{name: "handoff cannot be CHAT", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"handoff"}}`},
+		{name: "handoff with answer field", response: `{"schema_version":3,"route":"CODE2","outcome":{"kind":"handoff","text":"do it"}}`},
+		{name: "handoff cannot be interpreted on fixed non-CHAT route", response: `{"schema_version":3,"route":"CODE2","outcome":{"kind":"handoff"}}`, fixedRoute: routePointer(domainrouting.RouteCODE2)},
+		{name: "fixed route rejects classifier route change", response: `{"schema_version":3,"route":"CODE2","outcome":{"kind":"handoff"}}`, fixedRoute: routePointer(domainrouting.RouteCHAT)},
+		{name: "fixed route rejects answer/handoff mismatch", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}}`, fixedRoute: routePointer(domainrouting.RouteCODE2)},
+		{name: "invalid JSON", response: `{"schema_version":3,`},
+		{name: "trailing content", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}} garbage`},
+		{name: "second JSON object", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"ok"}} {}`},
 		{name: "oversized response", response: strings.Repeat(" ", 64*1024+1)},
 	}
 
@@ -227,7 +328,7 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsNilProvider(t *testing.T
 func TestLLMClassifier_ClassifyWithMioTurnOutcomeDoesNotRepairInvalidOutput(t *testing.T) {
 	generateCalls := 0
 	classifier := NewLLMClassifier(&mockLLMProvider{
-		response: `{"schema_version":2,"route":"CHAT","outcome":{"kind":"unknown"}}`,
+		response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"unknown"}}`,
 		onGenerate: func(llm.GenerateRequest) {
 			generateCalls++
 		},
@@ -254,9 +355,10 @@ func classifyWithMioTurnOutcome(t *testing.T, classifier *LLMClassifier, req llm
 func marshalMioTurnOutcome(t *testing.T, route string, outcome map[string]any) string {
 	t.Helper()
 	encoded, err := json.Marshal(map[string]any{
-		"schema_version": 2,
-		"route":          route,
-		"outcome":        outcome,
+		"schema_version":  3,
+		"route":           route,
+		"outcome":         outcome,
+		"thread_boundary": "unknown",
 	})
 	if err != nil {
 		t.Fatalf("marshal MioTurnOutcome fixture: %v", err)

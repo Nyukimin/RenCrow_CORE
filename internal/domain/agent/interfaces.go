@@ -103,6 +103,7 @@ type MioTurnOutcome struct {
 type MioTurnClassification struct {
 	Decision   routing.Decision
 	Outcome    MioTurnOutcome
+	Boundary   conversation.ThreadBoundaryProposal
 	Generation llm.GenerateResponse
 }
 

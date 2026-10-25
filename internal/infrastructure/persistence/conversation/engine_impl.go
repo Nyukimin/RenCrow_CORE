@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
@@ -24,7 +25,7 @@ import (
 type RealConversationEngine struct {
 	manager                  domconv.ConversationManager
 	persona                  domconv.PersonaState
-	detector                 domconv.ThreadBoundaryDetector // nil の場合はスレッド自動検出無効
+	detector                 domconv.ThreadBoundaryDetector // nil の場合もtrusted Mio proposalだけは利用できる
 	knowledgeRelationEnabled bool
 	knowledgeRelationMaxHops int
 	userMemoryStore          conversationEngineUserMemoryStore
@@ -1522,10 +1523,17 @@ func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, req
 		base.ErrorCode = domconv.ConversationTurnErrorInvalid
 		return base, domconv.ErrConversationTurnInvalid
 	}
+	mioBoundary, mioAttested, err := agent.MioThreadBoundaryProposalFromContext(ctx, request, ownerID)
+	if err != nil {
+		base.ErrorCode = domconv.ConversationTurnErrorCodeOf(err)
+		if base.ErrorCode == "" {
+			base.ErrorCode = domconv.ConversationTurnErrorConflict
+		}
+		return base, err
+	}
 
 	preparation := cloneConversationTurnPreparation(request.Preparation)
 	var activeThread *domconv.Thread
-	var err error
 	if preparation != nil {
 		if preparation.TurnID != request.TurnID || preparation.SessionID != request.SessionID ||
 			preparation.OwnerID != ownerID ||
@@ -1560,17 +1568,24 @@ func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, req
 			if domain == "" {
 				return base, domconv.ErrConversationTurnInvalid
 			}
+			decision := domconv.ThreadBoundaryResult{Proposal: domconv.ThreadBoundaryUnknown}
 			if e.detector != nil {
 				turntiming.Mark(ctx, turntiming.PointConversationDetectorStarted)
-				decision := e.detector.Detect(activeThread, request.UserMessage, domain)
+				decision = e.detector.Detect(activeThread, request.UserMessage)
 				turntiming.Mark(ctx, turntiming.PointConversationDetectorEnded)
-				boundary = decision.ShouldCreateNew
-				if boundary {
-					reason = strings.TrimSpace(string(decision.Reason))
-					if reason == "" {
-						return base, domconv.ErrConversationTurnInvalid
-					}
+			}
+			switch decision.Proposal {
+			case domconv.ThreadBoundaryKeep:
+				// Deterministic owner continuation cues outrank Mio's semantic proposal.
+			case domconv.ThreadBoundaryNew:
+				if decision.Reason == domconv.BoundaryExplicitTopicChange {
+					boundary = true
+					reason = string(domconv.BoundaryExplicitTopicChange)
 				}
+			}
+			if !boundary && decision.Proposal != domconv.ThreadBoundaryKeep && mioAttested && mioBoundary == domconv.ThreadBoundaryNew {
+				boundary = true
+				reason = string(domconv.BoundaryMioTopicChange)
 			}
 		}
 	} else if !errors.Is(err, domconv.ErrThreadNotFound) {

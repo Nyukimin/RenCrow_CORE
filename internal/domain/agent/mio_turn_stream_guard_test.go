@@ -81,6 +81,9 @@ func TestMioLogicalAnswerDeltaCallbackRunsInsidePreparedTurnGuard(t *testing.T) 
 	if request.OnLogicalOutcomeEvent == nil {
 		t.Fatal("logical outcome callback was not installed")
 	}
+	if request.LogicalOutcomeStream != llm.LogicalOutcomeStreamV2 {
+		t.Fatalf("Mio logical outcome stream = %q, want canonical v2", request.LogicalOutcomeStream)
+	}
 	if err := request.OnLogicalOutcomeEvent(llm.LogicalOutcomeEvent{Kind: llm.LogicalOutcomeAnswerDelta, Text: "prefix"}); err != nil {
 		t.Fatalf("answer_delta callback: %v", err)
 	}

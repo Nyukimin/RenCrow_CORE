@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -832,5 +835,174 @@ func TestCommitConversationTurnUsesBindingOwnerAndPublicPartition(t *testing.T) 
 				t.Fatalf("committed owner=%q, want %q", committed.OwnerID, wantOwner)
 			}
 		})
+	}
+}
+
+type mioThreadBoundaryClassifierTestStub struct {
+	classification domainagent.MioTurnClassification
+	calls          int
+}
+
+func (c *mioThreadBoundaryClassifierTestStub) Classify(context.Context, domconv.TurnInput) (routing.Decision, error) {
+	return routing.NewDecision(routing.RouteCHAT, 0.95, "chat"), nil
+}
+
+func (c *mioThreadBoundaryClassifierTestStub) ClassifyWithMioTurnOutcome(context.Context, llm.GenerateRequest, *routing.Route) (domainagent.MioTurnClassification, error) {
+	c.calls++
+	return c.classification, nil
+}
+
+type mioThreadBoundaryRuleDictionaryTestStub struct{}
+
+func (mioThreadBoundaryRuleDictionaryTestStub) Match(domconv.TurnInput) (routing.Route, float64, bool) {
+	return "", 0, false
+}
+
+type mioThreadBoundaryProviderTestStub struct{ calls int }
+
+func (p *mioThreadBoundaryProviderTestStub) Generate(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+	p.calls++
+	return llm.GenerateResponse{}, errors.New("combined Mio test must not invoke a second provider")
+}
+
+func (*mioThreadBoundaryProviderTestStub) Name() string { return "boundary-test" }
+
+func newPreparedMioBoundaryHarness(t *testing.T, userMessage string, proposal domconv.ThreadBoundaryProposal) (
+	*preparedChatTurnManager,
+	domconv.TurnInput,
+	context.Context,
+	*domainagent.MioAgent,
+	*domainagent.MioChatDraft,
+	*mioThreadBoundaryClassifierTestStub,
+	*mioThreadBoundaryProviderTestStub,
+) {
+	t.Helper()
+	sessionID := string(modulecore.NewSessionID())
+	address, err := domconv.NewChannelAddress("viewer", "mio-boundary")
+	if err != nil {
+		t.Fatalf("NewChannelAddress: %v", err)
+	}
+	input, err := domconv.NewTurnInput(modulecore.NewTaskID(), userMessage, address)
+	if err != nil {
+		t.Fatalf("NewTurnInput: %v", err)
+	}
+	input = input.WithSessionID(sessionID).WithViewerRecipient("mio")
+	binding, err := domconv.NewSessionBinding(modulecore.SessionID(sessionID), address, domconv.SessionAudiencePublic, "", 1)
+	if err != nil {
+		t.Fatalf("NewSessionBinding: %v", err)
+	}
+	ctx := domconv.WithSessionBinding(context.Background(), binding)
+	active := newEngineTestThread(sessionID, "general")
+	active.Turns = []domconv.Message{
+		{Speaker: domconv.SpeakerUser, Msg: "先ほどの相談", Timestamp: time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC)},
+		{Speaker: domconv.SpeakerMio, Msg: "返答", Timestamp: time.Date(2026, 10, 25, 1, 1, 0, 0, time.UTC)},
+	}
+	manager := &preparedChatTurnManager{mockManager: &mockManager{}, activeThread: active}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{Name: "mio"}).WithUserMemoryStore(manager, "configured-owner").WithDetector(NewThreadBoundaryDetector())
+	classifier := &mioThreadBoundaryClassifierTestStub{classification: domainagent.MioTurnClassification{
+		Decision:   routing.NewDecision(routing.RouteCHAT, 0.95, "combined Mio chat"),
+		Boundary:   proposal,
+		Outcome:    domainagent.MioTurnOutcome{Kind: domainagent.MioTurnOutcomeAnswer, Text: "了解だよ。"},
+		Generation: llm.GenerateResponse{Content: "combined outcome"},
+	}}
+	provider := &mioThreadBoundaryProviderTestStub{}
+	mio := domainagent.NewMioAgent(provider, classifier, mioThreadBoundaryRuleDictionaryTestStub{}, nil, nil, engine)
+	decision, draft, err := mio.DecideActionWithChatDraft(ctx, input, true)
+	if err != nil || decision.Route != routing.RouteCHAT || draft == nil || draft.Failed() {
+		t.Fatalf("DecideActionWithChatDraft route=%q draft=%v err=%v", decision.Route, draft != nil, err)
+	}
+	return manager, input, ctx, mio, draft, classifier, provider
+}
+
+func TestPreparedMioBoundaryProposalUsesOwnerPriorityAndFixedReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		message      string
+		proposal     domconv.ThreadBoundaryProposal
+		wantRule     domconv.ThreadBoundaryProposal
+		wantBoundary bool
+		wantReason   string
+	}{
+		{name: "semantic new follows unknown rule", message: "今日の交通情報を教えて", proposal: domconv.ThreadBoundaryNew, wantRule: domconv.ThreadBoundaryUnknown, wantBoundary: true, wantReason: string(domconv.BoundaryMioTopicChange)},
+		{name: "semantic keep follows unknown rule", message: "今日の交通情報を教えて", proposal: domconv.ThreadBoundaryKeep, wantRule: domconv.ThreadBoundaryUnknown},
+		{name: "unknown semantic proposal keeps after unknown rule", message: "今日の交通情報を教えて", proposal: domconv.ThreadBoundaryUnknown, wantRule: domconv.ThreadBoundaryUnknown},
+		{name: "explicit continuation outranks Mio new", message: "さっきの続きを教えて", proposal: domconv.ThreadBoundaryNew, wantRule: domconv.ThreadBoundaryKeep},
+		{name: "explicit new outranks Mio keep", message: "別件です。旅行の持ち物を教えて", proposal: domconv.ThreadBoundaryKeep, wantRule: domconv.ThreadBoundaryNew, wantBoundary: true, wantReason: string(domconv.BoundaryExplicitTopicChange)},
+		{name: "explicit new is not masked by added fee wording", message: "別件です。追加料金はいくらですか", proposal: domconv.ThreadBoundaryKeep, wantRule: domconv.ThreadBoundaryNew, wantBoundary: true, wantReason: string(domconv.BoundaryExplicitTopicChange)},
+		{name: "conflicting explicit cues keep", message: "別件です。前の回答の続きをお願いします", proposal: domconv.ThreadBoundaryNew, wantRule: domconv.ThreadBoundaryKeep},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rule := NewThreadBoundaryDetector().Detect(newEngineTestThread("detector-session", "general"), tc.message)
+			if rule.Proposal != tc.wantRule {
+				t.Fatalf("explicit rule proposal=%q, want %q (reason=%q)", rule.Proposal, tc.wantRule, rule.Reason)
+			}
+			manager, input, ctx, mio, draft, classifier, provider := newPreparedMioBoundaryHarness(t, tc.message, tc.proposal)
+			if _, err := mio.ChatWithDraft(ctx, input, draft); err != nil {
+				t.Fatalf("ChatWithDraft: %v", err)
+			}
+			if classifier.calls != 1 {
+				t.Fatalf("Mio provider calls=%d, want one combined generation", classifier.calls)
+			}
+			if provider.calls != 0 {
+				t.Fatalf("secondary LLM calls=%d, want zero", provider.calls)
+			}
+			if len(manager.commitRequests) != 1 {
+				t.Fatalf("committed turns=%d, want one", len(manager.commitRequests))
+			}
+			got := manager.commitRequests[0]
+			if got.Boundary != tc.wantBoundary || got.BoundaryReason != tc.wantReason {
+				t.Fatalf("boundary=(%t,%q), want (%t,%q)", got.Boundary, got.BoundaryReason, tc.wantBoundary, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestConversationEndTurnIgnoresCallerBoundaryAndUsesOnlyExplicitRuleOutsideMio(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		message      string
+		callerFlag   bool
+		callerReason string
+		wantBoundary bool
+		wantReason   string
+	}{
+		{name: "caller proposal ignored", message: "ところで、少し聞きたい", callerFlag: true, callerReason: "caller supplied"},
+		{name: "quoted cue with no Mio proposal keeps", message: "『別件です』という表現の意味を教えて"},
+		{name: "non Mio explicit rule", message: "別件です。旅行の持ち物を教えて", wantBoundary: true, wantReason: string(domconv.BoundaryExplicitTopicChange)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sessionID := string(modulecore.NewSessionID())
+			manager := &mockManager{}
+			engine := NewRealConversationEngine(manager, domconv.PersonaState{}).
+				WithUserMemoryStore(manager, "owner").WithDetector(NewThreadBoundaryDetector())
+			request := engineTestConversationTurnRequest(sessionID, tc.message, "response", domconv.SpeakerKuro)
+			request.Boundary, request.BoundaryReason = tc.callerFlag, tc.callerReason
+			if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
+				t.Fatalf("CommitConversationTurn: %v", err)
+			}
+			if len(manager.commitRequests) != 1 {
+				t.Fatalf("commits=%d, want one", len(manager.commitRequests))
+			}
+			got := manager.commitRequests[0]
+			if got.Boundary != tc.wantBoundary || got.BoundaryReason != tc.wantReason {
+				t.Fatalf("boundary=(%t,%q), want (%t,%q)", got.Boundary, got.BoundaryReason, tc.wantBoundary, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestPreparedMioBoundaryRejectsStaleHeadBeforeCommit(t *testing.T) {
+	manager, input, ctx, mio, draft, classifier, _ := newPreparedMioBoundaryHarness(t, "今日の交通情報を教えて", domconv.ThreadBoundaryNew)
+	if classifier.calls != 1 {
+		t.Fatalf("initial Mio calls=%d, want one", classifier.calls)
+	}
+	manager.validatePreparationFunc = func(context.Context, *domconv.ConversationTurnPreparation) error {
+		return domconv.ErrConversationTurnConflict
+	}
+	if _, err := mio.ChatWithDraft(ctx, input, draft); err == nil {
+		t.Fatal("ChatWithDraft succeeded after the prepared head became stale")
+	}
+	if len(manager.commitRequests) != 0 {
+		t.Fatalf("stale prepared head committed %d turns", len(manager.commitRequests))
 	}
 }

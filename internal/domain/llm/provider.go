@@ -54,7 +54,10 @@ type MessagePart struct {
 // StreamCallback はストリーミング時にトークンごとに呼ばれるコールバック
 type StreamCallback func(token string)
 
-const LogicalOutcomeStreamV1 = "v1"
+const (
+	LogicalOutcomeStreamV1 = "v1"
+	LogicalOutcomeStreamV2 = "v2"
+)
 
 type LogicalOutcomeEventKind string
 
@@ -76,6 +79,7 @@ type LogicalOutcomeEvent struct {
 	PayloadKind       string
 	Text              string
 	FinishReason      string
+	ThreadBoundary    string
 	RetrievalRequests json.RawMessage
 }
 

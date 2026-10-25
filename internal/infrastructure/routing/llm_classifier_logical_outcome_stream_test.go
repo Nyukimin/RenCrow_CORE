@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainrouting "github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
@@ -48,17 +49,55 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeLogicalStreamAnswer(t *testing.
 	if result.Generation.Content != "Mio answer." || result.Generation.FinishReason != "stop" {
 		t.Fatalf("generation = %#v, want provider's completed answer", result.Generation)
 	}
+	if result.Boundary != domainconversation.ThreadBoundaryUnknown {
+		t.Fatalf("v1 compatibility boundary = %q, want unknown", result.Boundary)
+	}
 	if provider.generateCalls != 1 {
 		t.Fatalf("Generate calls = %d, want one", provider.generateCalls)
 	}
 	if provider.request.LogicalOutcomeStream != llm.LogicalOutcomeStreamV1 || provider.request.OnLogicalOutcomeEvent == nil || provider.request.OnToken == nil {
 		t.Fatalf("provider request stream contract = %#v, want wrapped event and text callbacks", provider.request)
 	}
+	if !strings.Contains(provider.request.Messages[0].Content, "schema_version 2") {
+		t.Fatalf("v1 compatibility prompt = %q, want schema_version 2", provider.request.Messages[0].Content)
+	}
 	if tokens.String() != "Mio answer." {
 		t.Fatalf("streamed tokens = %q, want validated answer text only", tokens.String())
 	}
 	if len(forwarded) != len(events) {
 		t.Fatalf("forwarded logical events = %d, want %d", len(forwarded), len(events))
+	}
+}
+
+func TestLLMClassifierLogicalOutcomeStreamV2UsesBoundaryOnlyInternally(t *testing.T) {
+	provider := &logicalOutcomeStreamTestProvider{
+		events: []llm.LogicalOutcomeEvent{
+			{Kind: llm.LogicalOutcomeAnswerStart, SchemaVersion: 3, Route: "CHAT", PayloadKind: "text"},
+			{Kind: llm.LogicalOutcomeAnswerDelta, Text: "answer"},
+			{Kind: llm.LogicalOutcomeAnswerDone, FinishReason: "stop", ThreadBoundary: "new"},
+		},
+		response: llm.GenerateResponse{Content: "answer", FinishReason: "stop"},
+	}
+	classifier := NewLLMClassifier(provider, "route policy")
+	var forwarded []llm.LogicalOutcomeEvent
+	result, err := classifier.ClassifyWithMioTurnOutcome(context.Background(), llm.GenerateRequest{
+		LogicalOutcomeStream: llm.LogicalOutcomeStreamV2,
+		OnLogicalOutcomeEvent: func(event llm.LogicalOutcomeEvent) error {
+			forwarded = append(forwarded, event)
+			return nil
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ClassifyWithMioTurnOutcome() error = %v", err)
+	}
+	if result.Boundary != domainconversation.ThreadBoundaryNew || result.Outcome.Text != "answer" {
+		t.Fatalf("classification = %#v, want new boundary and answer", result)
+	}
+	if len(forwarded) != 3 || forwarded[2].ThreadBoundary != "" {
+		t.Fatalf("forwarded events = %#v, want terminal boundary stripped", forwarded)
+	}
+	if !strings.Contains(provider.request.Messages[0].Content, "schema_version 3") {
+		t.Fatalf("v2 stream prompt = %q, want schema_version 3", provider.request.Messages[0].Content)
 	}
 }
 
@@ -239,7 +278,7 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsInvalidStreamOptIn(t *te
 			req.LogicalOutcomeStream = llm.LogicalOutcomeStreamV1
 		}},
 		{name: "unknown stream version", set: func(req *llm.GenerateRequest) {
-			req.LogicalOutcomeStream = "v2"
+			req.LogicalOutcomeStream = "v3"
 			req.OnLogicalOutcomeEvent = func(llm.LogicalOutcomeEvent) error { return nil }
 		}},
 	} {

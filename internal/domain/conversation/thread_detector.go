@@ -1,23 +1,34 @@
 package conversation
 
-// ThreadBoundaryReason はスレッド境界検出の理由
+// ThreadBoundaryProposal is a semantic proposal about whether a message
+// starts a new thread. The canonical conversation owner resolves it against
+// the prepared head and any trusted Mio proposal before committing.
+type ThreadBoundaryProposal string
+
+const (
+	ThreadBoundaryUnknown ThreadBoundaryProposal = "unknown"
+	ThreadBoundaryKeep    ThreadBoundaryProposal = "keep"
+	ThreadBoundaryNew     ThreadBoundaryProposal = "new"
+)
+
+// ThreadBoundaryReason is a fixed code stored with a canonical new-thread
+// decision. It never contains caller or model prose.
 type ThreadBoundaryReason string
 
 const (
-	BoundaryKeyword    ThreadBoundaryReason = "keyword"
-	BoundarySimilarity ThreadBoundaryReason = "similarity"
-	BoundaryInactivity ThreadBoundaryReason = "inactivity"
-	BoundaryDomain     ThreadBoundaryReason = "domain_change"
+	BoundaryExplicitTopicChange ThreadBoundaryReason = "explicit_topic_change"
+	BoundaryMioTopicChange      ThreadBoundaryReason = "mio_topic_change"
 )
 
-// ThreadBoundaryResult はスレッド境界検出の結果
+// ThreadBoundaryResult is the bounded deterministic rule result. Unknown is
+// resolved to keep unless a valid, turn-bound Mio proposal is available.
 type ThreadBoundaryResult struct {
-	ShouldCreateNew bool
-	Reason          ThreadBoundaryReason
-	Score           float32 // cosine similarity score（similarity の場合のみ有効）
+	Proposal ThreadBoundaryProposal
+	Reason   ThreadBoundaryReason
 }
 
-// ThreadBoundaryDetector は新しいメッセージが新スレッドに属するかを判定する
+// ThreadBoundaryDetector derives lightweight cues from the already prepared
+// head and current user message. It performs no embedding or storage access.
 type ThreadBoundaryDetector interface {
-	Detect(currentThread *Thread, newMessage string, newDomain string) ThreadBoundaryResult
+	Detect(currentThread *Thread, newMessage string) ThreadBoundaryResult
 }

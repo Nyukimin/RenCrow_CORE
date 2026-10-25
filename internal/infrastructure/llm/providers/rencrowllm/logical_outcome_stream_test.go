@@ -107,6 +107,105 @@ func TestGatewayProviderLogicalOutcomeStreamSendsOptInAndDispatchesTextOnly(t *t
 	}
 }
 
+func TestGatewayProviderLogicalOutcomeStreamV2CarriesOnlyTerminalBoundaryMetadata(t *testing.T) {
+	var gatewayRequest map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gatewayRequest); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		writeLogicalSSE(w,
+			"event: answer_start\n",
+			"data: {\"schema_version\":3,\"route\":\"CHAT\",\"payload_kind\":\"text\"}\n\n",
+			"event: answer_delta\n",
+			"data: {\"text\":\"answer\"}\n\n",
+			"event: answer_done\n",
+			"data: {\"finish_reason\":\"stop\",\"thread_boundary\":\"new\"}\n\n",
+			"data: [DONE]\n\n",
+		)
+	}))
+	defer server.Close()
+
+	var tokens strings.Builder
+	var events []llm.LogicalOutcomeEvent
+	provider := NewGatewayProviderWithOptions("", "mio", server.URL, time.Second)
+	request := logicalOutcomeRequest(func(token string) { tokens.WriteString(token) }, func(event llm.LogicalOutcomeEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	request.LogicalOutcomeStream = "v2"
+	response, err := provider.Generate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if response.Content != "answer" || tokens.String() != "answer" {
+		t.Fatalf("response/text callback = %#v / %q, want answer only", response, tokens.String())
+	}
+	if len(events) != 3 {
+		t.Fatalf("logical events = %#v, want answer_start, delta, and done", events)
+	}
+	if events[0].SchemaVersion != 3 || events[1].ThreadBoundary != "" || events[2].ThreadBoundary != "new" {
+		t.Fatalf("logical events = %#v, want v2 events with boundary only on answer_done", events)
+	}
+	metadata, _ := gatewayRequest["rencrow"].(map[string]any)
+	if metadata["logical_outcome_stream"] != llm.LogicalOutcomeStreamV2 {
+		t.Fatalf("rencrow.logical_outcome_stream = %#v, want %q", metadata["logical_outcome_stream"], llm.LogicalOutcomeStreamV2)
+	}
+}
+
+func TestGatewayProviderLogicalOutcomeStreamV2BoundaryFallbackAndStrictKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		terminal     string
+		wantBoundary string
+		wantError    bool
+	}{
+		{name: "missing boundary", terminal: `{"finish_reason":"stop"}`},
+		{name: "null boundary", terminal: `{"finish_reason":"stop","thread_boundary":null}`},
+		{name: "wrong boundary type", terminal: `{"finish_reason":"stop","thread_boundary":[]}`},
+		{name: "oversized numeric boundary", terminal: `{"finish_reason":"stop","thread_boundary":1e400}`},
+		{name: "unknown boundary value", terminal: `{"finish_reason":"stop","thread_boundary":"later"}`},
+		{name: "duplicate boundary field", terminal: `{"finish_reason":"stop","thread_boundary":"new","thread_boundary":"keep"}`, wantError: true},
+		{name: "duplicate nested field", terminal: `{"finish_reason":"stop","thread_boundary":{"x":1,"x":2}}`, wantError: true},
+		{name: "unknown event field", terminal: `{"finish_reason":"stop","thread_boundary":"new","extra":true}`, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				writeLogicalSSE(w,
+					"event: answer_start\n",
+					"data: {\"schema_version\":3,\"route\":\"CHAT\",\"payload_kind\":\"text\"}\n\n",
+					"event: answer_delta\n",
+					"data: {\"text\":\"answer\"}\n\n",
+					"event: answer_done\n",
+					"data: "+tc.terminal+"\n\n",
+					"data: [DONE]\n\n",
+				)
+			}))
+			defer server.Close()
+
+			var events []llm.LogicalOutcomeEvent
+			request := logicalOutcomeRequest(nil, func(event llm.LogicalOutcomeEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			request.LogicalOutcomeStream = llm.LogicalOutcomeStreamV2
+			provider := NewGatewayProviderWithOptions("", "mio", server.URL, time.Second)
+			_, err := provider.Generate(context.Background(), request)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("Generate() error = nil, want strict event rejection")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			if len(events) != 3 || events[2].ThreadBoundary != tc.wantBoundary {
+				t.Fatalf("events = %#v, want terminal boundary %q", events, tc.wantBoundary)
+			}
+		})
+	}
+}
+
 func TestGatewayProviderLogicalOutcomeRetrievalDoesNotReachOnToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeLogicalSSE(w,

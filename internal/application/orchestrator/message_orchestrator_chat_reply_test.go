@@ -163,6 +163,7 @@ func TestMessageOrchestrator_UsesCombinedMioRouteAndAnswerAfterTaskActivation(t 
 		llm.PromptContextVariable,
 		llm.PromptContextVariable,
 		llm.PromptContextVariable,
+		llm.PromptContextVariable,
 		llm.PromptContextUser,
 	}
 	if len(combined.Messages) != len(wantTypes) {
@@ -178,7 +179,7 @@ func TestMessageOrchestrator_UsesCombinedMioRouteAndAnswerAfterTaskActivation(t 
 	}
 	if combined.Messages[1].Metadata["runtime_context_kind"] != "classifier_mio_turn_outcome_contract" ||
 		!strings.Contains(combined.Messages[1].Content, "current Mio classifier route policy") ||
-		!strings.Contains(combined.Messages[1].Content, "MioTurnOutcome schema_version 2") {
+		!strings.Contains(combined.Messages[1].Content, "MioTurnOutcome schema_version 3") {
 		t.Fatalf("typed classifier policy/JSON contract = %#v", combined.Messages[1])
 	}
 	if !strings.Contains(combined.Messages[2].Content, "RecallPack contains the authoritative shared conversation history") {
@@ -190,8 +191,19 @@ func TestMessageOrchestrator_UsesCombinedMioRouteAndAnswerAfterTaskActivation(t 
 	if !strings.Contains(combined.Messages[4].Content, "# Runtime-injected Mio context") || !strings.Contains(combined.Messages[5].Content, "発言帰属ガード") {
 		t.Fatalf("runtime/attribution messages = %#v / %#v", combined.Messages[4], combined.Messages[5])
 	}
-	if combined.Messages[6].Metadata["runtime_context_kind"] != "time" || !strings.HasPrefix(combined.Messages[6].Content, "現在時刻（JST）:") {
-		t.Fatalf("JST time message = %#v", combined.Messages[6])
+	preparedBoundary := combined.Messages[len(combined.Messages)-3]
+	if preparedBoundary.Metadata["runtime_context_kind"] != "prepared_conversation_boundary_state" ||
+		!strings.HasPrefix(preparedBoundary.Content, "Prepared conversation head state (internal guidance for thread_boundary only):") ||
+		!strings.Contains(preparedBoundary.Content, "current_thread_exists: false") ||
+		!strings.Contains(preparedBoundary.Content, "continuity_state: no_prior_thread") {
+		t.Fatalf("prepared conversation boundary state = %#v, want the prepared no-prior-thread hint", preparedBoundary)
+	}
+	if len(preparedBoundary.Content) > 512 {
+		t.Fatalf("prepared conversation boundary state length = %d, want a bounded hint of at most 512 bytes", len(preparedBoundary.Content))
+	}
+	timeMessage := combined.Messages[len(combined.Messages)-2]
+	if timeMessage.Metadata["runtime_context_kind"] != "time" || !strings.HasPrefix(timeMessage.Content, "現在時刻（JST）:") {
+		t.Fatalf("JST time message = %#v", timeMessage)
 	}
 	last := combined.Messages[len(combined.Messages)-1]
 	if last.Role != "user" || last.Content != req.UserMessage {

@@ -233,9 +233,7 @@ func buildConversationRuntime(
 			log.Printf("  Summarizer: %s", summaryProviderLabel)
 		}
 
-		var embedderForDetector conversation.EmbeddingProvider
-		embedderForDetector = embedder
-		detector := conversationpersistence.NewThreadBoundaryDetector(embedderForDetector)
+		detector := conversationpersistence.NewThreadBoundaryDetector()
 
 		engine := conversationpersistence.NewRealConversationEngine(
 			realMgr,

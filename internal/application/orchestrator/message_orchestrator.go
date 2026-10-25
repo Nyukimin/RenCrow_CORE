@@ -929,7 +929,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 					earlyStream.fail(err)
 					return nil, err
 				}
-				reason := "LLM generated MioTurnOutcome v2: answer on CHAT"
+				reason := fmt.Sprintf("LLM generated MioTurnOutcome schema_version %d: answer on CHAT", event.SchemaVersion)
 				provisional := routing.NewDecisionWithEvidence(routing.RouteCHAT, 0.7, reason, routing.DecisionEvidence{
 					Source: routing.EvidenceSourceClassifier, Matched: true, Route: routing.RouteCHAT,
 					Confidence: 0.7, Reason: reason,
