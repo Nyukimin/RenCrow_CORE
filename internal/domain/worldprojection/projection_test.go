@@ -2,6 +2,7 @@ package worldprojection
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +110,41 @@ func TestNewWorkSetRejectsRunningWithoutRunID(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("NewWorkSet() accepted running work without run_id")
+	}
+}
+
+// Tests: TestNewWorkSetRejectsWorkClassesOutsideAssignedWork.
+//
+// Failure / Problem: ordinary chat has no assigned task, so CORE must not put it
+// into the WorkSet and WORLD must not see it as work. The assigned_work-only
+// restriction in validateWorkItem had no test, so a loosened check would have let
+// another work class through silently.
+// Cause: the contract boundary was exercised only through valid fixtures.
+// Lesson: a closed vocabulary is part of the contract and needs a negative test at
+// the boundary that owns it.
+// Invariant: a WorkSet carries assigned_work items only.
+// Enforcement: this test pins the domain validation every projector must pass.
+func TestNewWorkSetRejectsWorkClassesOutsideAssignedWork(t *testing.T) {
+	tests := []struct {
+		name      string
+		workClass string
+	}{
+		{name: "empty", workClass: ""},
+		{name: "ordinary chat", workClass: "normal_chat"},
+		{name: "unknown class", workClass: "self_initiated"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewWorkSet("world-house", "mio", "core-epoch-1", 1, time.Now().UTC().Add(time.Hour), []WorkItem{{
+				TaskID:                   "tsk_1",
+				ExecutionState:           ExecutionQueued,
+				WorkClass:                test.workClass,
+				ClassificationReasonCode: "assigned_task",
+			}})
+			if !errors.Is(err, ErrInvalidProjection) {
+				t.Fatalf("NewWorkSet() work class %q error = %v, want %v", test.workClass, err, ErrInvalidProjection)
+			}
+		})
 	}
 }
 
