@@ -1506,9 +1506,10 @@ func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, req
 	}
 	// Admission means EndTurn must use the already prepared RAM head. Refuse
 	// missing preparation before the active-thread provider can perform a cold
-	// L1 read; synchronous callers without Admission retain the legacy path.
+	// L1 read; verified synchronous callers without Admission retain the legacy
+	// path.
 	if request.Preparation == nil {
-		if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted || bindingPresent {
+		if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
 			base.ErrorCode = domconv.ConversationTurnErrorUnavailable
 			return base, domconv.ErrConversationTurnUnavailable
 		}

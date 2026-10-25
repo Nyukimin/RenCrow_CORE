@@ -975,6 +975,171 @@ func TestRealConversationEngineRejectsAdmittedMissingPreparationBeforeActiveHead
 	}
 }
 
+func TestRealConversationEngineAllowsBoundSynchronousCommitWithoutPreparation(t *testing.T) {
+	const ownerID = "bound-owner"
+	sessionID := string(modulecore.NewSessionID())
+	var got domconv.ConversationTurnRequest
+	activeReads := 0
+	manager := &mockManager{
+		getActiveThreadFunc: func(_ context.Context, gotSessionID string) (*domconv.Thread, error) {
+			activeReads++
+			if gotSessionID != sessionID {
+				t.Fatalf("active head session=%q, want %q", gotSessionID, sessionID)
+			}
+			return newEngineTestThread(sessionID, "bound-domain"), nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			got = request
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, "configured-owner")
+	ctx := withPrivateSessionBinding(t, preparedRecallContext(t, ownerID), sessionID, ownerID, 1)
+	request := engineTestConversationTurnRequest(sessionID, "synchronous input", "reply", domconv.SpeakerMio)
+	request.OwnerID = "caller-owner"
+
+	result, err := engine.CommitConversationTurn(ctx, request)
+	if err != nil {
+		t.Fatalf("CommitConversationTurn() = %+v, %v; want verified bound synchronous commit", result, err)
+	}
+	if result.Status != domconv.ConversationTurnCompleted {
+		t.Fatalf("status=%s, want completed", result.Status)
+	}
+	if activeReads != 1 || got.OwnerID != ownerID || got.Domain != "bound-domain" || got.Preparation != nil {
+		t.Fatalf("active reads=%d committed request=%+v, want one owner read and bound owner without preparation", activeReads, got)
+	}
+}
+
+func TestRealConversationEngineAllowsPublicBoundSynchronousCommitWithoutPreparation(t *testing.T) {
+	sessionID := string(modulecore.NewSessionID())
+	address, err := domconv.NewChannelAddress("cmd", "public-chat")
+	if err != nil {
+		t.Fatalf("NewChannelAddress: %v", err)
+	}
+	binding, err := domconv.NewSessionBinding(modulecore.SessionID(sessionID), address, domconv.SessionAudiencePublic, "", 1)
+	if err != nil {
+		t.Fatalf("NewSessionBinding: %v", err)
+	}
+	var got domconv.ConversationTurnRequest
+	activeReads := 0
+	manager := &mockManager{
+		getActiveThreadFunc: func(_ context.Context, gotSessionID string) (*domconv.Thread, error) {
+			activeReads++
+			if gotSessionID != sessionID {
+				t.Fatalf("active head session=%q, want %q", gotSessionID, sessionID)
+			}
+			return newEngineTestThread(sessionID, "public-domain"), nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			got = request
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, "configured-owner")
+	ctx := domconv.WithSessionBinding(context.Background(), binding)
+	request := engineTestConversationTurnRequest(sessionID, "public synchronous input", "reply", domconv.SpeakerMio)
+	request.OwnerID = "caller-owner"
+
+	result, err := engine.CommitConversationTurn(ctx, request)
+	if err != nil {
+		t.Fatalf("CommitConversationTurn() = %+v, %v; want public bound synchronous commit", result, err)
+	}
+	if result.Status != domconv.ConversationTurnCompleted {
+		t.Fatalf("status=%s, want completed", result.Status)
+	}
+	if activeReads != 1 || got.OwnerID != "public:"+sessionID || got.Domain != "public-domain" || got.Preparation != nil {
+		t.Fatalf("active reads=%d committed request=%+v, want public owner partition without preparation", activeReads, got)
+	}
+}
+
+func TestRealConversationEngineRejectsBoundAdmittedMissingPreparation(t *testing.T) {
+	const ownerID = "bound-owner"
+	sessionID := string(modulecore.NewSessionID())
+	activeReads := 0
+	commits := 0
+	manager := &mockManager{
+		getActiveThreadFunc: func(context.Context, string) (*domconv.Thread, error) {
+			activeReads++
+			return newEngineTestThread(sessionID, "general"), nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			commits++
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnAccepted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, "configured-owner")
+	_, admission, _ := newConversationTurnAdmission(t, 1)
+	ctx := withPrivateSessionBinding(t, preparedRecallContext(t, ownerID), sessionID, ownerID, 1)
+	ctx = persistencequeue.WithAdmission(ctx, admission)
+	request := engineTestConversationTurnRequest(sessionID, "admitted input", "reply", domconv.SpeakerMio)
+
+	result, err := engine.CommitConversationTurn(ctx, request)
+	if !errors.Is(err, domconv.ErrConversationTurnUnavailable) || result.ErrorCode != domconv.ConversationTurnErrorUnavailable {
+		t.Fatalf("result=%+v err=%v, want admitted missing-preparation unavailable", result, err)
+	}
+	if activeReads != 0 || commits != 0 {
+		t.Fatalf("active reads=%d commits=%d, want neither head read nor manager commit", activeReads, commits)
+	}
+}
+
+func TestRealConversationEngineRejectsBoundSynchronousOwnerMismatch(t *testing.T) {
+	const authenticatedOwner = "authenticated-owner"
+	const boundOwner = "bound-owner"
+	sessionID := string(modulecore.NewSessionID())
+	activeReads := 0
+	commits := 0
+	manager := &mockManager{
+		getActiveThreadFunc: func(context.Context, string) (*domconv.Thread, error) {
+			activeReads++
+			return newEngineTestThread(sessionID, "general"), nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			commits++
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnCompleted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, authenticatedOwner)
+	ctx := withPrivateSessionBinding(t, preparedRecallContext(t, authenticatedOwner), sessionID, boundOwner, 1)
+	request := engineTestConversationTurnRequest(sessionID, "mismatched owner input", "reply", domconv.SpeakerMio)
+
+	result, err := engine.CommitConversationTurn(ctx, request)
+	if !errors.Is(err, domconv.ErrConversationTurnInvalid) || result.ErrorCode != domconv.ConversationTurnErrorInvalid {
+		t.Fatalf("result=%+v err=%v, want mismatched bound owner denied", result, err)
+	}
+	if activeReads != 0 || commits != 0 {
+		t.Fatalf("active reads=%d commits=%d, want neither head read nor manager commit", activeReads, commits)
+	}
+}
+
+func TestRealConversationEngineRejectsMismatchedBoundSessionIDBeforeReadOrCommit(t *testing.T) {
+	const ownerID = "bound-owner"
+	boundSessionID := string(modulecore.NewSessionID())
+	requestSessionID := string(modulecore.NewSessionID())
+	activeReads := 0
+	commits := 0
+	manager := &mockManager{
+		getActiveThreadFunc: func(context.Context, string) (*domconv.Thread, error) {
+			activeReads++
+			return newEngineTestThread(boundSessionID, "general"), nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			commits++
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnCompleted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).WithUserMemoryStore(nil, ownerID)
+	ctx := withPrivateSessionBinding(t, preparedRecallContext(t, ownerID), boundSessionID, ownerID, 1)
+	request := engineTestConversationTurnRequest(requestSessionID, "wrong session input", "reply", domconv.SpeakerMio)
+
+	result, err := engine.CommitConversationTurn(ctx, request)
+	if !errors.Is(err, domconv.ErrConversationTurnConflict) || result.ErrorCode != domconv.ConversationTurnErrorConflict {
+		t.Fatalf("result=%+v err=%v, want bound session conflict", result, err)
+	}
+	if activeReads != 0 || commits != 0 {
+		t.Fatalf("active reads=%d commits=%d, want neither head read nor manager commit", activeReads, commits)
+	}
+}
+
 func TestRealConversationEngineRejectsMutatedPreparedHeadBeforeDecisionOrCommit(t *testing.T) {
 	mutations := []struct {
 		name   string
