@@ -151,6 +151,7 @@
         "internal/adapter/viewer/viewer_audio_button.test.mjs",
         "internal/adapter/viewer/viewer_idle_mode_buttons.test.mjs",
         "internal/adapter/viewer/viewer_memory_panel.test.mjs",
+        "internal/adapter/viewer/viewer_presence_client.test.mjs",
         "internal/adapter/viewer/viewer_stt_https.test.mjs",
         "internal/adapter/viewer/viewer_llm_ops.test.mjs",
         "internal/adapter/viewer/viewer_to_be_ops.test.mjs",

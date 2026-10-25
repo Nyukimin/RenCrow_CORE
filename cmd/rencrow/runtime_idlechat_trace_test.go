@@ -20,19 +20,19 @@ func TestIdleChatViewerEventKeepsOwnerSessionTrace(t *testing.T) {
 	const runtimeEpoch = "runtime-test-epoch"
 	const playbackGeneration = 12
 	event := idleChatViewerEvent(idlechat.TimelineEvent{
-		Type:       "idlechat.message",
-		From:       "mio",
-		To:         "shiro",
-		Content:    "確認です。",
-		SessionID:  "idle-trace-topic-00",
-		MessageID:  "msg-1",
-		TurnIndex:  1,
-		TraceID:    traceID,
-		RuntimeEpoch: runtimeEpoch,
+		Type:               "idlechat.message",
+		From:               "mio",
+		To:                 "shiro",
+		Content:            "確認です。",
+		SessionID:          "idle-trace-topic-00",
+		MessageID:          "msg-1",
+		TurnIndex:          1,
+		TraceID:            traceID,
+		RuntimeEpoch:       runtimeEpoch,
 		PlaybackGeneration: playbackGeneration,
-		ThreadID:   threadID,
-		ThreadSeq:  threadSeq,
-		ThreadKind: threadKind,
+		ThreadID:           threadID,
+		ThreadSeq:          threadSeq,
+		ThreadKind:         threadKind,
 	})
 	if event.TraceID != traceID {
 		t.Fatalf("viewer trace_id = %q, want %q", event.TraceID, traceID)
