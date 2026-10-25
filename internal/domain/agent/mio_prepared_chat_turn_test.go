@@ -114,6 +114,9 @@ func TestMioExactSharedRecallClassifierReceivesPreparedRequestAdmission(t *testi
 	if len(classifier.requests) != 0 {
 		t.Fatalf("exact shared recall issued %d combined generations, want route classification only", len(classifier.requests))
 	}
+	if draft.boundary != conversation.ThreadBoundaryUnknown {
+		t.Fatalf("exact shared recall boundary=%q, want unknown", draft.boundary)
+	}
 	mio.ReleaseChatDraft(ctx, draft)
 }
 func (c *preparedChatClassifierStub) ClassifyWithMioTurnOutcome(_ context.Context, request llm.GenerateRequest, _ *routing.Route) (MioTurnClassification, error) {
@@ -300,8 +303,11 @@ func TestMioCombinedChatExactRecallUsesReadyPack(t *testing.T) {
 	if !ok || outcome.Kind != MioTurnOutcomeAnswer || outcome.Text != exactToken {
 		t.Fatalf("ready RecallPack exact outcome = %#v, %v; want %q", outcome, ok, exactToken)
 	}
-	if engine.prepareCalls != 1 || len(classifier.requests) != 0 {
-		t.Fatalf("ready calls=%d combined LLM calls=%d, want one preparation and deterministic exact recall", engine.prepareCalls, len(classifier.requests))
+	if draft.boundary != conversation.ThreadBoundaryUnknown {
+		t.Fatalf("ready exact recall boundary=%q, want unknown", draft.boundary)
+	}
+	if engine.prepareCalls != 1 || len(classifier.classifyCaps) != 1 || len(classifier.requests) != 0 {
+		t.Fatalf("ready calls=%d route-only classifier=%d combined generations=%d, want one preparation and route-only exact recall classification", engine.prepareCalls, len(classifier.classifyCaps), len(classifier.requests))
 	}
 	mio.ReleaseChatDraft(context.Background(), draft)
 	if guard.releaseCalls != 1 {

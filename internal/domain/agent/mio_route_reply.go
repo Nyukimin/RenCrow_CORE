@@ -635,7 +635,7 @@ func appendMioPreparedThreadBoundaryHint(messages []llm.Message, preparation *co
 	return result
 }
 
-func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.TurnInput, evidence []routing.DecisionEvidence) (routing.Decision, *MioChatDraft, error) {
+func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.TurnInput, evidence []routing.DecisionEvidence, fixedDecision *routing.Decision) (routing.Decision, *MioChatDraft, error) {
 	userMessage := t.MessageText()
 	draft := &MioChatDraft{
 		turnID:      string(t.TurnID()),
@@ -651,6 +651,12 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	var recallPack *conversation.RecallPack
 	var messages []llm.Message
 	keepPreparation := false
+	decisionForFailure := func(classified routing.Decision, classifyErr error) routing.Decision {
+		if fixedDecision != nil {
+			return *fixedDecision
+		}
+		return routeDecisionFallback(evidence, classified, classifyErr)
+	}
 	if supportsPreparedChatTurn(m.conversationEngine) {
 		readyPath = true
 		turntiming.Mark(ctx, turntiming.PointConversationHeadPreparationStarted)
@@ -675,28 +681,37 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	}()
 	if prepareErr != nil {
 		draft.failure = prepareErr
-		return routeDecisionFallback(evidence, routing.Decision{}, prepareErr), draft, nil
+		return decisionForFailure(routing.Decision{}, prepareErr), draft, nil
 	}
 	if readyPath {
 		if prepared == nil || prepared.RecallPack == nil || prepared.Preparation == nil || prepared.Guard == nil ||
 			!prepared.Guard.MatchesPreparation(prepared.Preparation) {
 			draft.failure = conversation.ErrConversationTurnUnavailable
-			return routeDecisionFallback(evidence, routing.Decision{}, draft.failure), draft, nil
+			return decisionForFailure(routing.Decision{}, draft.failure), draft, nil
 		}
 		if err := prepared.Guard.Validate(); err != nil {
 			draft.failure = err
-			return routeDecisionFallback(evidence, routing.Decision{}, err), draft, nil
+			return decisionForFailure(routing.Decision{}, err), draft, nil
 		}
 		recallPack, messages = projectChatRecallPack(prepared.RecallPack)
 	}
 	draft.recallPack = recallPack
 	if exactReply, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
-		// Exact-token recall stays deterministic. The normal route classifier
-		// runs once, and the already prepared answer is adopted after activation.
+		if fixedDecision != nil {
+			// A fixed dictionary CHAT route already supplies the route decision.
+			// Keep exact recall deterministic and do not classify it again.
+			draft.boundary = conversation.ThreadBoundaryUnknown
+			draft.ready = true
+			draft.outcome = MioTurnOutcome{Kind: MioTurnOutcomeAnswer, Text: exactReply}
+			keepPreparation = true
+			return *fixedDecision, draft, nil
+		}
+		// Without a fixed route, preserve the route-only classifier behavior
+		// while adopting the exact recall answer without a body generation.
 		classifierCtx, admissionErr := contextWithMioTurnGenerateRequestAdmission(ctx, draft.guard)
 		if admissionErr != nil {
 			draft.failure = admissionErr
-			return routeDecisionFallback(evidence, routing.Decision{}, admissionErr), draft, nil
+			return decisionForFailure(routing.Decision{}, admissionErr), draft, nil
 		}
 		turntiming.Mark(ctx, turntiming.PointClassificationStarted)
 		classified, err := m.classifier.Classify(classifierCtx, t)
@@ -704,7 +719,7 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 		if err == nil && draft.guard != nil {
 			if guardErr := draft.guard.Validate(); guardErr != nil {
 				draft.failure = guardErr
-				return routeDecisionFallback(evidence, classified, guardErr), draft, nil
+				return decisionForFailure(classified, guardErr), draft, nil
 			}
 		}
 		if err == nil && classified.Route != "" && classified.Confidence >= 0.7 {
@@ -712,11 +727,13 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 			if classified.Route != routing.RouteCHAT {
 				return classified, nil, nil
 			}
+			draft.boundary = conversation.ThreadBoundaryUnknown
 			draft.ready = true
 			draft.outcome = MioTurnOutcome{Kind: MioTurnOutcomeAnswer, Text: exactReply}
-			keepPreparation = classified.Route == routing.RouteCHAT
+			keepPreparation = true
 			return classified, draft, nil
 		}
+		draft.boundary = conversation.ThreadBoundaryUnknown
 		draft.ready = true
 		draft.outcome = MioTurnOutcome{Kind: MioTurnOutcomeAnswer, Text: exactReply}
 		decision := routeDecisionFallback(evidence, classified, err)
@@ -735,7 +752,7 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	req, admissionErr = withMioTurnGenerateRequestAdmission(ctx, req, draft.guard)
 	if admissionErr != nil {
 		draft.failure = admissionErr
-		return routeDecisionFallback(evidence, routing.Decision{}, admissionErr), draft, nil
+		return decisionForFailure(routing.Decision{}, admissionErr), draft, nil
 	}
 	draft.prompt = cloneLLMMessages(messages)
 	generationCtx := turntiming.WithBodyGenerationContext(ctx)
@@ -744,30 +761,41 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	classifier, ok := m.classifier.(MioTurnClassifier)
 	if !ok {
 		draft.failure = errors.New("combined Mio turn outcome classifier is unavailable")
-		return routeDecisionFallback(evidence, routing.Decision{}, draft.failure), draft, nil
+		return decisionForFailure(routing.Decision{}, draft.failure), draft, nil
 	}
-	classification, err := classifier.ClassifyWithMioTurnOutcome(generationCtx, req, nil)
+	var fixedRoute *routing.Route
+	if fixedDecision != nil {
+		route := fixedDecision.Route
+		fixedRoute = &route
+	}
+	classification, err := classifier.ClassifyWithMioTurnOutcome(generationCtx, req, fixedRoute)
 	turntiming.Mark(ctx, turntiming.PointGenerationProviderEnd)
 	turntiming.Mark(ctx, turntiming.PointClassificationEnded)
 	if err != nil {
 		draft.failure = err
-		return routeDecisionFallback(evidence, routing.Decision{}, err), draft, nil
+		return decisionForFailure(routing.Decision{}, err), draft, nil
 	}
 	if draft.guard != nil {
 		if err := draft.guard.Validate(); err != nil {
 			draft.failure = err
-			return routeDecisionFallback(evidence, classification.Decision, err), draft, nil
+			return decisionForFailure(classification.Decision, err), draft, nil
 		}
 	}
-	if classification.Decision.Route == "" || classification.Decision.Confidence < 0.7 {
-		draft.failure = fmt.Errorf("combined Mio turn classifier returned low-confidence route %q", classification.Decision.Route)
-		return routeDecisionFallback(evidence, classification.Decision, nil), draft, nil
+	if fixedDecision != nil && classification.Decision.Route != fixedDecision.Route {
+		draft.failure = fmt.Errorf("%w: combined Mio turn classifier changed fixed route %s to %s", ErrInvalidMioTurnOutcome, fixedDecision.Route, classification.Decision.Route)
+		return *fixedDecision, draft, nil
 	}
-	classification.Decision.Evidence = append(evidence, classifierEvidence(classification.Decision)...)
+	if classification.Decision.Route == "" || (fixedDecision == nil && classification.Decision.Confidence < 0.7) {
+		draft.failure = fmt.Errorf("combined Mio turn classifier returned low-confidence route %q", classification.Decision.Route)
+		return decisionForFailure(classification.Decision, nil), draft, nil
+	}
+	if fixedDecision == nil {
+		classification.Decision.Evidence = append(evidence, classifierEvidence(classification.Decision)...)
+	}
 	draft.generation = classification.Generation
 	if err := validateMioTurnClassification(classification); err != nil {
 		draft.failure = err
-		return routeDecisionFallback(evidence, classification.Decision, err), draft, nil
+		return decisionForFailure(classification.Decision, err), draft, nil
 	}
 	if classification.Outcome.Kind == MioTurnOutcomeHandoff {
 		return classification.Decision, nil, nil
@@ -776,6 +804,9 @@ func (m *MioAgent) classifyChatWithDraft(ctx context.Context, t conversation.Tur
 	draft.outcome = cloneMioTurnOutcome(classification.Outcome)
 	draft.ready = true
 	keepPreparation = true
+	if fixedDecision != nil {
+		return *fixedDecision, draft, nil
+	}
 	return classification.Decision, draft, nil
 }
 

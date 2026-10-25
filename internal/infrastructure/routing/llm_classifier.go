@@ -144,9 +144,13 @@ func (c *LLMClassifier) ClassifyWithMioTurnOutcome(ctx context.Context, req llm.
 		req.OnToken = nil
 	}
 	req.SystemPrompt = ""
+	contractPrompt := mioTurnOutcomeJSONContract(schemaVersion)
+	if fixedRoute != nil {
+		contractPrompt += fmt.Sprintf("\n\nThe caller supplied fixed route %s. Set route exactly %s.", *fixedRoute, *fixedRoute)
+	}
 	policyMessage := llm.Message{
 		Role:    "system",
-		Content: strings.TrimSpace(c.systemPrompt + "\n\n" + mioTurnOutcomeJSONContract(schemaVersion)),
+		Content: strings.TrimSpace(c.systemPrompt + "\n\n" + contractPrompt),
 		Type:    llm.PromptContextStable,
 		Metadata: map[string]string{
 			"runtime_context_kind": "classifier_mio_turn_outcome_contract",

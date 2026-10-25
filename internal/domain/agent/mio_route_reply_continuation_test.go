@@ -86,7 +86,10 @@ func TestMioAgentContinueChatDraftRetainsPromptAndPreparedTurn(t *testing.T) {
 			Generation: llm.GenerateResponse{Content: "final control outcome"},
 		},
 	}}
-	mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, nil, nil, engine)
+	rules := &mockRuleDictionary{matchFunc: func(conversation.TurnInput) (routing.Route, float64, bool) {
+		return routing.RouteCHAT, 0.95, true
+	}}
+	mio := NewMioAgent(&mockLLMProvider{}, classifier, rules, nil, nil, engine)
 	decision, draft, err := mio.DecideActionWithChatDraft(context.Background(), input, true)
 	if err != nil || decision.Route != routing.RouteCHAT || draft == nil {
 		t.Fatalf("DecideActionWithChatDraft = route %s draft=%v err=%v", decision.Route, draft != nil, err)
@@ -133,8 +136,8 @@ func TestMioAgentContinueChatDraftRetainsPromptAndPreparedTurn(t *testing.T) {
 	if len(classifier.requests) != 2 {
 		t.Fatalf("classifier calls = %d, want initial plus one continuation", len(classifier.requests))
 	}
-	if len(classifier.fixedRoutes) != 2 || classifier.fixedRoutes[0] != nil || classifier.fixedRoutes[1] == nil || *classifier.fixedRoutes[1] != routing.RouteCHAT {
-		t.Fatalf("fixed routes = %#v, want initial unpinned then fixed CHAT", classifier.fixedRoutes)
+	if len(classifier.fixedRoutes) != 2 || classifier.fixedRoutes[0] == nil || *classifier.fixedRoutes[0] != routing.RouteCHAT || classifier.fixedRoutes[1] == nil || *classifier.fixedRoutes[1] != routing.RouteCHAT {
+		t.Fatalf("fixed routes = %#v, want initial rule-matched CHAT and fixed CHAT continuation", classifier.fixedRoutes)
 	}
 	continuationMessages := classifier.requests[1].Messages
 	joined := make([]string, 0, len(continuationMessages))

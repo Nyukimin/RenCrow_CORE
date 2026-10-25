@@ -144,7 +144,13 @@ func (m *MioAgent) decideAction(ctx context.Context, t conversation.TurnInput, a
 			Confidence: confidence,
 			Reason:     "rule dictionary matched",
 		})
-		return routing.NewDecisionWithEvidence(route, confidence, "Rule dictionary match", evidence...), nil, nil
+		decision := routing.NewDecisionWithEvidence(route, confidence, "Rule dictionary match", evidence...)
+		if allowCombined && route == routing.RouteCHAT && m.canUseCombinedChatDraft(ctx, t) {
+			if _, ok := m.classifier.(MioTurnClassifier); ok {
+				return m.classifyChatWithDraft(ctx, t, evidence, &decision)
+			}
+		}
+		return decision, nil, nil
 	}
 	evidence = append(evidence, routing.DecisionEvidence{
 		Source:  routing.EvidenceSourceRuleDictionary,
@@ -154,7 +160,7 @@ func (m *MioAgent) decideAction(ctx context.Context, t conversation.TurnInput, a
 
 	if allowCombined && m.canUseCombinedChatDraft(ctx, t) {
 		if _, ok := m.classifier.(MioTurnClassifier); ok {
-			return m.classifyChatWithDraft(ctx, t, evidence)
+			return m.classifyChatWithDraft(ctx, t, evidence, nil)
 		}
 	}
 

@@ -93,6 +93,66 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeDefaultsToSchemaV3AndReadsBound
 	}
 }
 
+func TestLLMClassifier_ClassifyWithMioTurnOutcomePinsSuppliedRouteInPrompt(t *testing.T) {
+	response := `{"schema_version":3,"route":"CHAT","outcome":{"kind":"answer","text":"Mio answer."},"thread_boundary":"new"}`
+	var captured llm.GenerateRequest
+	generateCalls := 0
+	classifier := NewLLMClassifier(&mockLLMProvider{
+		response: response,
+		onGenerate: func(req llm.GenerateRequest) {
+			generateCalls++
+			captured = req
+		},
+	}, "existing route policy")
+	fixedRoute := domainrouting.RouteCHAT
+
+	result, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, &fixedRoute)
+	if err != nil {
+		t.Fatalf("ClassifyWithMioTurnOutcome() error = %v", err)
+	}
+	if result.Decision.Route != domainrouting.RouteCHAT || result.Outcome.Text != "Mio answer." || result.Boundary != domainconversation.ThreadBoundaryNew {
+		t.Fatalf("classification = %#v, want fixed CHAT answer with the generated boundary", result)
+	}
+	if generateCalls != 1 {
+		t.Fatalf("Generate calls = %d, want exactly one", generateCalls)
+	}
+	if len(captured.Messages) < 1 || !strings.Contains(captured.Messages[0].Content, "fixed route CHAT") || !strings.Contains(captured.Messages[0].Content, "Set route exactly CHAT") {
+		t.Fatalf("fixed-route prompt = %#v, want the supplied CHAT route stated explicitly", captured.Messages)
+	}
+}
+
+func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsRouteChangeAndHandoffForFixedRoute(t *testing.T) {
+	fixedRoute := domainrouting.RouteCHAT
+	for _, tc := range []struct {
+		name     string
+		response string
+	}{
+		{
+			name:     "changed route",
+			response: marshalMioTurnOutcome(t, "PLAN", map[string]any{"kind": "handoff"}),
+		},
+		{
+			name:     "handoff",
+			response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "handoff"}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			generateCalls := 0
+			classifier := NewLLMClassifier(&mockLLMProvider{
+				response:   tc.response,
+				onGenerate: func(llm.GenerateRequest) { generateCalls++ },
+			}, "existing route policy")
+			_, err := classifyWithMioTurnOutcome(t, classifier, llm.GenerateRequest{}, &fixedRoute)
+			if !errors.Is(err, domainagent.ErrInvalidMioTurnOutcome) {
+				t.Fatalf("ClassifyWithMioTurnOutcome() error = %v, want fixed-route rejection", err)
+			}
+			if generateCalls != 1 {
+				t.Fatalf("Generate calls = %d, want one attempt and no fallback generation", generateCalls)
+			}
+		})
+	}
+}
+
 func TestLLMClassifier_ClassifyWithMioTurnOutcomeAcceptsLegacySchemaV2Nonstream(t *testing.T) {
 	response := `{"schema_version":2,"route":"CHAT","outcome":{"kind":"answer","text":"Legacy answer."}}`
 	var captured llm.GenerateRequest
