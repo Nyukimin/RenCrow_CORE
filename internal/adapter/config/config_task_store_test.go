@@ -166,3 +166,59 @@ func TestTaskStoreRotationLoadsFromYAMLAndTheExampleKeepsItOff(t *testing.T) {
 		t.Fatal("config.yaml.example must not enable Task store rotation")
 	}
 }
+
+func TestTaskParallelLimitsAreOptionalAndValidated(t *testing.T) {
+	withoutOverride := &Config{Server: ServerConfig{Port: 8080}}
+	withoutOverride.setDefaults()
+	if withoutOverride.TaskParallelLimits != nil {
+		t.Fatalf("omitted task_parallel_limits was materialized as %+v", withoutOverride.TaskParallelLimits)
+	}
+	if err := withoutOverride.Validate(); err != nil {
+		t.Fatalf("omitted task_parallel_limits rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		value TaskParallelLimitsConfig
+		want  string
+	}{
+		{"default-shaped", TaskParallelLimitsConfig{Global: 3, PerModule: 1, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 1}, ""},
+		{"quad-coder", TaskParallelLimitsConfig{Global: 4, PerModule: 1, CodingTasks: 4, LongResearchTasks: 1, DestructiveTasks: 1}, ""},
+		{"zero global", TaskParallelLimitsConfig{Global: 0, PerModule: 1, CodingTasks: 1, LongResearchTasks: 1, DestructiveTasks: 1}, "task_parallel_limits.global"},
+		{"negative coding", TaskParallelLimitsConfig{Global: 4, PerModule: 1, CodingTasks: -1, LongResearchTasks: 1, DestructiveTasks: 1}, "task_parallel_limits.coding_tasks"},
+		{"zero research", TaskParallelLimitsConfig{Global: 4, PerModule: 1, CodingTasks: 4, LongResearchTasks: 0, DestructiveTasks: 1}, "task_parallel_limits.long_research_tasks"},
+		{"module exceeds global", TaskParallelLimitsConfig{Global: 3, PerModule: 4, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 1}, "task_parallel_limits.per_module"},
+		{"operations exceeds global", TaskParallelLimitsConfig{Global: 3, PerModule: 1, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 4}, "task_parallel_limits.destructive_tasks"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{Server: ServerConfig{Port: 8080}, TaskParallelLimits: &tc.value}
+			cfg.setDefaults()
+			err := cfg.Validate()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("valid limits rejected: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want rejection naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTaskParallelLimitsLoadFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task-limits.yaml")
+	yaml := "server:\n  port: 8080\ntask_parallel_limits:\n  global: 4\n  per_module: 1\n  coding_tasks: 4\n  long_research_tasks: 1\n  destructive_tasks: 1\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := TaskParallelLimitsConfig{Global: 4, PerModule: 1, CodingTasks: 4, LongResearchTasks: 1, DestructiveTasks: 1}
+	if *cfg.TaskParallelLimits != want {
+		t.Fatalf("task_parallel_limits = %+v, want %+v", *cfg.TaskParallelLimits, want)
+	}
+}

@@ -4,20 +4,21 @@ import "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 
 // Config はアプリケーション全体の設定
 type Config struct {
-	Server          ServerConfig          `yaml:"server"`
-	Session         SessionConfig         `yaml:"session"`
-	Storage         StorageConfig         `yaml:"storage"`
-	DurableStore    DurableStoreConfig    `yaml:"durable_store"`
-	TaskStore       TaskStoreConfig       `yaml:"task_store"`
-	WorldProjection WorldProjectionConfig `yaml:"world_projection"`
-	ActionStore     ActionStoreConfig     `yaml:"action_store"`
-	Backup          BackupConfig          `yaml:"backup"`
-	Worker          WorkerConfig          `yaml:"worker"`
-	Line            LineConfig            `yaml:"line"`
-	Telegram        TelegramConfig        `yaml:"telegram"`
-	Discord         DiscordConfig         `yaml:"discord"`
-	Slack           SlackConfig           `yaml:"slack"`
-	Log             LogConfig             `yaml:"log"`
+	Server             ServerConfig              `yaml:"server"`
+	Session            SessionConfig             `yaml:"session"`
+	Storage            StorageConfig             `yaml:"storage"`
+	DurableStore       DurableStoreConfig        `yaml:"durable_store"`
+	TaskStore          TaskStoreConfig           `yaml:"task_store"`
+	TaskParallelLimits *TaskParallelLimitsConfig `yaml:"task_parallel_limits"`
+	WorldProjection    WorldProjectionConfig     `yaml:"world_projection"`
+	ActionStore        ActionStoreConfig         `yaml:"action_store"`
+	Backup             BackupConfig              `yaml:"backup"`
+	Worker             WorkerConfig              `yaml:"worker"`
+	Line               LineConfig                `yaml:"line"`
+	Telegram           TelegramConfig            `yaml:"telegram"`
+	Discord            DiscordConfig             `yaml:"discord"`
+	Slack              SlackConfig               `yaml:"slack"`
+	Log                LogConfig                 `yaml:"log"`
 
 	// === v4.0 追加フィールド ===
 	Distributed DistributedConfig `yaml:"distributed"`

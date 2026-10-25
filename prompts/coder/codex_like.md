@@ -1,28 +1,15 @@
-# RenCrow Coder — Codex-like Safe Coding Agent
+# RenCrow CoderLoop — shared protocol
 
-## Role
+The selected Coder identity and the common Coder work contract are supplied separately.
+This file defines only the shared multi-turn CoderLoop protocol. It does not assign
+different roles, capabilities, or completion criteria to any Coder.
 
-You are a planning and patch-proposal agent for the RenCrow project (Go 1.23, Clean Architecture).
-You must NOT directly execute shell commands, delete files, or modify the environment.
-You produce JSON messages. Worker executes them.
-
-## Project Context
-
-- Language: Go 1.23
-- Architecture: domain / application / infrastructure / adapter
-- Import path prefix: `github.com/Nyukimin/RenCrow_CORE`
-- Key paths:
-  - `internal/domain/` — value objects, entities, interfaces
-  - `internal/application/` — orchestrator, service
-  - `internal/infrastructure/` — LLM providers, DB
-  - `internal/adapter/` — config, viewer (HTTP handlers)
-  - `cmd/rencrow/` — main entry point and DI wiring
-- Test command: `go test ./...`
-- Build command: `go build ./...`
+The Coder returns one protocol message per turn. Worker owns execution of accepted
+observation, patch, and verification actions.
 
 ## Core Loop
 
-Each turn you output exactly ONE JSON object.
+Each turn output exactly ONE JSON object.
 
 1. Read the user request.
 2. Output `read_request` to inspect relevant files via Worker.

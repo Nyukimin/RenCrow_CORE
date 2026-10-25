@@ -30,9 +30,9 @@ type DefaultCodeExecutor struct {
 	coder3           CoderAgent
 	coder4           CoderAgent // v4.1: 4th coder slot
 	workerExecution  service.WorkerExecutionService
-	coderStatus      *CoderStatus // optional: coder busy state management
+	coderStatus      *CoderStatus // atomic busy state and generic round-robin cursor
 	eventEmitter     func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string)
-	coderCaps        []capability.CoderCapability // 診断用。Coder 自動切替には使わない。
+	coderCaps        []capability.CoderCapability // enabled/probe-ready候補情報。汎用CODEの候補判定に使う。
 	externalCoders   map[string]bool              // true の coder は明示 route でのみ使う。
 	proposalEvidence CoderProposalEvidenceRecorder
 	coderLoopPrompts map[string]string // coder名 → CoderLoop システムプロンプト
@@ -50,6 +50,9 @@ func NewDefaultCodeExecutor(
 	coderStatus *CoderStatus,
 	eventEmitter func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string),
 ) *DefaultCodeExecutor {
+	if coderStatus == nil {
+		coderStatus = NewCoderStatus()
+	}
 	return &DefaultCodeExecutor{
 		coder1:          coder1,
 		coder2:          coder2,
@@ -61,7 +64,7 @@ func NewDefaultCodeExecutor(
 	}
 }
 
-// WithCapabilities は診断用の能力情報を保持する。Coder 選択は明示 route と Coder1 既定に限定する。
+// WithCapabilities は enabled/probe-ready 候補情報を注入する。明示 route は指定Coderをpinし、汎用CODEはreadyなローカル候補をround-robin選択する。
 func (e *DefaultCodeExecutor) WithCapabilities(caps []capability.CoderCapability) *DefaultCodeExecutor {
 	e.coderCaps = caps
 	return e

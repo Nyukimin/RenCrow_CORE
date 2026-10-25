@@ -40,6 +40,7 @@ type DistributedOrchestrator struct {
 	nodeCaps                map[string]domainnode.ResourceProfile
 	coderCaps               []capdomain.CoderCapability
 	coderConfigs            map[string]interface{} // v4.1: coder1-4 の CoderConfig（SSH送信用）
+	coderStatus             *CoderStatus
 	ttsBridge               TTSBridge
 	vtuberBridge            VTuberBridge
 	dciSearcher             DCISearcher

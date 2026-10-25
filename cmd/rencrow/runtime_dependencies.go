@@ -128,6 +128,7 @@ type Dependencies struct {
 	taskStorePersist               bool                                        // task_store.index.persist: keep the index in a sidecar file
 	taskStoreRotation              bool                                        // task_store.rotation.enabled: write the Task store to daily segments
 	taskStoreSizeValve             int64                                       // task_store.rotation.size_valve_bytes (0: default)
+	taskParallelLimits             *taskmanager.ParallelLimits                 // canonical Task admission limits, from the loaded config
 	taskStore                      domaintask.Store                            // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	worldProjectionCancel          context.CancelFunc                          // stops the outbound WORLD projection loop
@@ -762,6 +763,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	deps := &Dependencies{
 		taskStoreIndex: cfg.TaskStore.Index.Enabled, taskStorePersist: cfg.TaskStore.Index.Persist,
 		taskStoreRotation: cfg.TaskStore.Rotation.Enabled, taskStoreSizeValve: cfg.TaskStore.Rotation.SizeValveBytes,
+		taskParallelLimits: taskParallelLimitsPointer(taskParallelLimitsFromConfig(cfg)),
 	}
 	var err error
 	deps.persistenceQueue, err = newRuntimePersistenceQueue()

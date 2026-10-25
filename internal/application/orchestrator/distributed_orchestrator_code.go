@@ -14,7 +14,7 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type distributedCoderSelector func(route routing.Route, userMessage string) string
+type distributedCoderAcquirer func(route routing.Route, userMessage string) (string, func(), error)
 type distributedCoderConfigProvider func() map[string]interface{}
 type distributedRetryMaxResolver func() int
 type distributedMailboxExecutor func(ctx context.Context, targetAgent string, msg domaintransport.Message, receiveOnAgent string) (domaintransport.Message, error)
@@ -24,7 +24,7 @@ type distributedCodeExecutionCoordinator struct {
 	memory           *session.CentralMemory
 	emit             messageEventEmitter
 	emitNote         distributedNoteEmitter
-	selectCoder      distributedCoderSelector
+	acquireCoder     distributedCoderAcquirer
 	coderConfigs     distributedCoderConfigProvider
 	coderRetryMax    distributedRetryMaxResolver
 	executeMailbox   distributedMailboxExecutor
@@ -37,7 +37,7 @@ func newDistributedCodeExecutionCoordinator(
 	memory *session.CentralMemory,
 	emit messageEventEmitter,
 	emitNote distributedNoteEmitter,
-	selectCoder distributedCoderSelector,
+	acquireCoder distributedCoderAcquirer,
 	coderConfigs distributedCoderConfigProvider,
 	coderRetryMax distributedRetryMaxResolver,
 	executeMailbox distributedMailboxExecutor,
@@ -47,7 +47,7 @@ func newDistributedCodeExecutionCoordinator(
 		memory:         memory,
 		emit:           emit,
 		emitNote:       emitNote,
-		selectCoder:    selectCoder,
+		acquireCoder:   acquireCoder,
 		coderConfigs:   coderConfigs,
 		coderRetryMax:  coderRetryMax,
 		executeMailbox: executeMailbox,
@@ -69,9 +69,18 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, input
 	}
 	sessionID, channel, chatID := turnInputMetadata(input)
 	taskIDText := taskID.String()
-	coderAgent := c.selectCoder(route, input.MessageText())
+	var coderAgent string
+	var releaseCoder func()
+	var acquireErr error
+	coderAgent, releaseCoder, acquireErr = c.acquireCoder(route, input.MessageText())
+	if acquireErr != nil {
+		return "", fmt.Errorf("select coder for route %s: %w", route, acquireErr)
+	}
 	if coderAgent == "" {
 		return "", fmt.Errorf("no coder mapped for route %s", route)
+	}
+	if releaseCoder != nil {
+		defer releaseCoder()
 	}
 	log.Printf("[DistributedOrch] code handoff route=%s target=%s task=%s", route, coderAgent, taskIDText)
 

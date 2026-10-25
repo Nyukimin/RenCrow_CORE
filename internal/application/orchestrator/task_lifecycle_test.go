@@ -119,6 +119,10 @@ func TestTaskLifecyclePreparesChildAndRunsRootThenChild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createRoot: %v", err)
 	}
+	root.ModuleID = "RenCrow_CORE"
+	root.ModuleRoot = "/workspace/RenCrow_CORE"
+	root.ReadOnly = true
+	manager.tasks[root.TaskID] = root
 	routingEventID := modulecore.NewEventID()
 	childID, err := lifecycle.prepareExecution(context.Background(), root.TaskID, routing.RouteCODE2, routingEventID, "ShIrO")
 	if err != nil {
@@ -130,6 +134,9 @@ func TestTaskLifecyclePreparesChildAndRunsRootThenChild(t *testing.T) {
 	child := manager.tasks[childID]
 	if child.ParentTaskID != root.TaskID || child.Route != domaintask.RouteCODE2 || child.OwnerID != "mio" || child.Assignee != "shiro" || child.RoutingEventID != routingEventID || child.Status != domaintask.StatusQueued {
 		t.Fatalf("child = %#v", child)
+	}
+	if child.ModuleID != root.ModuleID || child.ModuleRoot != root.ModuleRoot || child.ReadOnly != root.ReadOnly {
+		t.Fatalf("child scope = module_id %q module_root %q read_only %v, want parent scope %q %q %v", child.ModuleID, child.ModuleRoot, child.ReadOnly, root.ModuleID, root.ModuleRoot, root.ReadOnly)
 	}
 	childContext := manager.contexts[childID]
 	if childContext.TaskID != childID || childContext.UserIntent != strings.TrimSpace("implement feature") {

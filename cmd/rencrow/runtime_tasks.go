@@ -214,17 +214,43 @@ func initializeRuntimeTaskOwnerWithCriteriaRevision(deps *Dependencies, workspac
 			managerOptions = append(managerOptions, taskmanager.WithIDIndex())
 		}
 	}
+	limits := runtimeTaskParallelLimits(deps)
 	deps.taskStore = store
 	if expectedCriteriaRevision == "" {
-		deps.taskManager = taskmanager.New(store, taskmanager.DefaultParallelLimits(), managerOptions...)
+		deps.taskManager = taskmanager.New(store, limits, managerOptions...)
 		return nil
 	}
-	manager, err := taskmanager.NewWithExpectedCriteriaRevision(store, taskmanager.DefaultParallelLimits(), expectedCriteriaRevision, managerOptions...)
+	manager, err := taskmanager.NewWithExpectedCriteriaRevision(store, limits, expectedCriteriaRevision, managerOptions...)
 	if err != nil {
 		return fmt.Errorf("configure Task owner criteria revision: %w", err)
 	}
 	deps.taskManager = manager
 	return nil
+}
+
+func taskParallelLimitsFromConfig(cfg *config.Config) taskmanager.ParallelLimits {
+	if cfg == nil || cfg.TaskParallelLimits == nil {
+		return taskmanager.DefaultParallelLimits()
+	}
+	configured := cfg.TaskParallelLimits
+	return taskmanager.ParallelLimits{
+		Global:            configured.Global,
+		PerModule:         configured.PerModule,
+		CodingTasks:       configured.CodingTasks,
+		LongResearchTasks: configured.LongResearchTasks,
+		DestructiveTasks:  configured.DestructiveTasks,
+	}
+}
+
+func taskParallelLimitsPointer(limits taskmanager.ParallelLimits) *taskmanager.ParallelLimits {
+	return &limits
+}
+
+func runtimeTaskParallelLimits(deps *Dependencies) taskmanager.ParallelLimits {
+	if deps == nil || deps.taskParallelLimits == nil {
+		return taskmanager.DefaultParallelLimits()
+	}
+	return *deps.taskParallelLimits
 }
 
 // taskExecutionRunner admits a Tool call against the currently owned Task Run

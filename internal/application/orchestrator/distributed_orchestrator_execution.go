@@ -96,21 +96,13 @@ func (o *DistributedOrchestrator) routeToAgent(route routing.Route) string {
 	}
 }
 
-func (o *DistributedOrchestrator) routeToCoder(route routing.Route) string {
-	return o.coderSelector.RouteToCoder(route)
-}
-
-func (o *DistributedOrchestrator) routeToCoderForMessage(route routing.Route, userMessage string) string {
-	return o.coderSelector.RouteToCoderForMessage(route, userMessage)
-}
-
 func (o *DistributedOrchestrator) isCoderConnected(agent string) bool {
 	return o.coderSelector.IsCoderConnected(agent)
 }
 
 func isCodeRoute(route routing.Route) bool {
 	switch route {
-	case routing.RouteCODE, routing.RouteCODE1, routing.RouteCODE2, routing.RouteCODE3:
+	case routing.RouteCODE, routing.RouteCODE1, routing.RouteCODE2, routing.RouteCODE3, routing.RouteCODE4:
 		return true
 	default:
 		return false

@@ -95,7 +95,6 @@ func BuildCoderCapabilityPlans(llms []LLMCapability, coders []CoderSlotConfig, q
 	}
 
 	plans := make([]CoderCapabilityPlan, 0, len(coders))
-	anyUsable := false
 	for _, coder := range coders {
 		var quality int
 		var available bool
@@ -106,17 +105,11 @@ func BuildCoderCapabilityPlans(llms []LLMCapability, coders []CoderSlotConfig, q
 		} else {
 			quality = qualityOverrides[name]
 		}
-		if quality > 0 {
-			anyUsable = true
-		}
 		plans = append(plans, CoderCapabilityPlan{
-			Name:      coder.Name,
+			Name:      name,
 			Quality:   quality,
 			Available: available,
 		})
-	}
-	if !anyUsable {
-		return nil
 	}
 	return plans
 }

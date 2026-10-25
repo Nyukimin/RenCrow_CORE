@@ -14,9 +14,17 @@ func NewDistributedOrchestrator(
 	router *transport.MessageRouter,
 	memory *session.CentralMemory,
 	sshTransports map[string]domaintransport.Transport,
+	coderStatuses ...*CoderStatus,
 ) *DistributedOrchestrator {
 	if sshTransports == nil {
 		sshTransports = make(map[string]domaintransport.Transport)
+	}
+	var coderStatus *CoderStatus
+	if len(coderStatuses) > 0 {
+		coderStatus = coderStatuses[0]
+	}
+	if coderStatus == nil {
+		coderStatus = NewCoderStatus()
 	}
 	orch := &DistributedOrchestrator{
 		sessionRepo:   sessionRepo,
@@ -26,19 +34,20 @@ func NewDistributedOrchestrator(
 		sshTransports: sshTransports,
 		nodeSelector:  NewNodeSelector(),
 		nodeCaps:      make(map[string]domainnode.ResourceProfile),
+		coderStatus:   coderStatus,
 	}
 	orch.events = newDistributedEventPort(nil)
 	orch.evidence = newDistributedEvidenceReporter(nil)
 	orch.ttsLifecycle = newDistributedTTSLifecycle(nil, nil, orch.emit)
 	orch.sessions = newDistributedSessionLifecycle(sessionRepo)
 	orch.transports = newDistributedTransportExecutor(router, sshTransports, memory, orch.emitProgress, orch.distributedWaitTimeout)
-	orch.coderSelector = newDistributedCoderSelection(router, sshTransports, orch.nodeSelector, orch.nodeCaps)
+	orch.coderSelector = newDistributedCoderSelection(router, sshTransports, orch.nodeSelector, orch.nodeCaps, coderStatus)
 	orch.attribution = newDistributedAttributionGuard(memory)
 	orch.codeExecution = newDistributedCodeExecutionCoordinator(
 		memory,
 		orch.emit,
 		orch.emitNote,
-		orch.routeToCoderForMessage,
+		orch.coderSelector.AcquireForRoute,
 		func() map[string]interface{} { return orch.coderConfigs },
 		orch.coderRetryMaxOrDefault,
 		orch.executeToAgentViaMailbox,

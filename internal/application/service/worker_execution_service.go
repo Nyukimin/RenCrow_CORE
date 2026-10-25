@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
@@ -56,6 +59,15 @@ func (w *workerExecutionService) ExecuteProposal(
 	taskID modulecore.TaskID,
 	p *proposal.Proposal,
 ) (*patch.PatchExecutionResult, error) {
+	return w.executeProposal(ctx, taskID, p, nil)
+}
+
+func (w *workerExecutionService) executeProposal(
+	ctx context.Context,
+	taskID modulecore.TaskID,
+	p *proposal.Proposal,
+	beforeAutoCommit func(*patch.PatchExecutionResult) error,
+) (*patch.PatchExecutionResult, error) {
 	if w == nil {
 		return nil, fmt.Errorf("worker execution service is nil")
 	}
@@ -102,6 +114,12 @@ func (w *workerExecutionService) ExecuteProposal(
 		result.TestStatus = "not_run"
 	}
 	result = w.finalizeTestImpactResult(result)
+	if result.Success && beforeAutoCommit != nil {
+		if err := beforeAutoCommit(result); err != nil {
+			result.Success = false
+			result.WithFailureMetadata("test_impact_blocked", fmt.Sprintf("pre-autocommit verification evidence failed: %v", err), false)
+		}
+	}
 	if result.Success {
 		// A post-execution commit is allowed only after the owner test route has
 		// completed (or explicitly reported not_applicable).
@@ -119,6 +137,39 @@ func (w *workerExecutionService) ExecuteProposalInWorkspace(
 	if w == nil {
 		return nil, fmt.Errorf("worker execution service is nil")
 	}
+	if w.owner == nil {
+		return nil, fmt.Errorf("worker proposal execution owner is unavailable")
+	}
+	identity, err := w.owner.ValidateExecutionContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("worker proposal execution admission denied: %w", err)
+	}
+	if identity.TaskID != taskID {
+		return nil, fmt.Errorf("worker proposal task identity mismatch: context=%s argument=%s", identity.TaskID, taskID)
+	}
+	task, err := w.owner.Get(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("load worker task %s: %w", taskID, err)
+	}
+	if strings.TrimSpace(task.ModuleRoot) != "" {
+		authoritative, err := canonicalExistingTaskDirectory(task.ModuleRoot)
+		if err != nil {
+			return nil, fmt.Errorf("authoritative task module root: %w", err)
+		}
+		if strings.TrimSpace(workspace) != "" {
+			requested, err := canonicalExistingTaskDirectory(workspace)
+			if err != nil {
+				return nil, fmt.Errorf("requested proposal workspace: %w", err)
+			}
+			if requested != authoritative {
+				return nil, fmt.Errorf("proposal workspace %q cannot override authoritative Task.ModuleRoot %q", requested, authoritative)
+			}
+		}
+		clone := *w
+		clone.config = w.config
+		clone.config.Workspace = authoritative
+		return clone.ExecuteProposal(ctx, taskID, p)
+	}
 	if workspace == "" || workspace == w.config.Workspace {
 		return w.ExecuteProposal(ctx, taskID, p)
 	}
@@ -126,4 +177,26 @@ func (w *workerExecutionService) ExecuteProposalInWorkspace(
 	clone.config = w.config
 	clone.config.Workspace = workspace
 	return clone.ExecuteProposal(ctx, taskID, p)
+}
+
+func canonicalExistingTaskDirectory(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("workspace path is required")
+	}
+	abs, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("workspace path is not a directory")
+	}
+	return filepath.Clean(canonical), nil
 }

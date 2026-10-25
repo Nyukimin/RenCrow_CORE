@@ -17,6 +17,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 	var finishReason string
 	var completionTokens int
 	var tokensPerSecond float64
+	var hasToolCalls bool
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -39,7 +40,8 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 			} `json:"error,omitempty"`
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content   string            `json:"content"`
+					ToolCalls []json.RawMessage `json:"tool_calls"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -66,6 +68,9 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 			if choice.FinishReason != "" {
 				finishReason = choice.FinishReason
 			}
+			if len(choice.Delta.ToolCalls) > 0 {
+				hasToolCalls = true
+			}
 			if choice.Delta.Content == "" {
 				continue
 			}
@@ -89,7 +94,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 		return llm.GenerateResponse{}, fmt.Errorf("failed to read stream: %w", err)
 	}
 	if finishReason == "" {
-		finishReason = "stop"
+		return llm.GenerateResponse{}, fmt.Errorf("stream ended without terminal finish_reason")
 	}
 	content := full.String()
 	if strings.TrimSpace(content) == "" {
@@ -105,6 +110,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 			TokensUsed:      completionTokens,
 			TokensPerSecond: tokensPerSecond,
 			FinishReason:    finishReason,
+			HasToolCalls:    hasToolCalls,
 		}, nil
 	}
 	if !streamDirectly {
@@ -117,6 +123,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 		TokensUsed:      completionTokens,
 		TokensPerSecond: tokensPerSecond,
 		FinishReason:    finishReason,
+		HasToolCalls:    hasToolCalls,
 	}, nil
 }
 

@@ -49,10 +49,13 @@ func TestCoderAgentBuilderOptionsAndGenerateWithContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateWithContext failed: %v", err)
 	}
-	if resp != "context response" || len(gotReq.Messages) != 3 || gotReq.MaxTokens != 8192 || gotReq.Temperature != 0.5 {
+	if resp != "context response" || gotReq.MaxTokens != 8192 || gotReq.Temperature != 0 {
 		t.Fatalf("resp=%q req=%#v", resp, gotReq)
 	}
-	if gotReq.Messages[0].Content != "loop system" || gotReq.Messages[1].Type != llm.PromptContextVariable || !strings.Contains(gotReq.Messages[1].Content, "現在時刻（JST）: ") {
+	if countMessageContent(gotReq.Messages, CommonCoderContract) != 1 || countMessageContent(gotReq.Messages, "Be direct") != 1 {
+		t.Fatalf("common contract or persona missing: %#v", gotReq.Messages)
+	}
+	if indexOfMessageContent(gotReq.Messages, "loop system") < 0 || !hasVariableJSTTime(gotReq.Messages) {
 		t.Fatalf("time must be separate variable context: %#v", gotReq.Messages)
 	}
 
@@ -82,10 +85,10 @@ func TestCoderAgentStableRuntimeContextIsAddedWithoutChangingSystemPrompt(t *tes
 	if len(captured) != 1 || len(captured[0].Messages) < 2 {
 		t.Fatalf("unexpected GenerateWithPrompt request: %#v", captured)
 	}
-	if captured[0].Messages[0].Content != "coder system" || captured[0].Messages[0].Type != llm.PromptContextCharacter {
+	if indexOfMessageContent(captured[0].Messages, "coder system") < 0 {
 		t.Fatalf("system prompt changed: %#v", captured[0].Messages)
 	}
-	if captured[0].Messages[1].Content != stable || captured[0].Messages[1].Type != llm.PromptContextStable {
+	if indexOfMessageContentWithType(captured[0].Messages, stable, llm.PromptContextStable) < 0 {
 		t.Fatalf("stable context missing after system prompt: %#v", captured[0].Messages)
 	}
 
@@ -98,7 +101,7 @@ func TestCoderAgentStableRuntimeContextIsAddedWithoutChangingSystemPrompt(t *tes
 	if len(captured) != 2 || len(captured[1].Messages) < 3 {
 		t.Fatalf("unexpected GenerateWithContext request: %#v", captured)
 	}
-	if captured[1].Messages[0].Content != "loop system" || captured[1].Messages[1].Content != stable || captured[1].Messages[1].Type != llm.PromptContextStable {
+	if indexOfMessageContent(captured[1].Messages, "loop system") < 0 || indexOfMessageContentWithType(captured[1].Messages, stable, llm.PromptContextStable) < 0 {
 		t.Fatalf("GenerateWithContext omitted or misplaced stable context: %#v", captured[1].Messages)
 	}
 }
@@ -167,7 +170,7 @@ Low risk - simple implementation
 	if proposal.CostHint() == "" {
 		t.Error("CostHint should not be empty")
 	}
-	if len(captured) < 2 || captured[0].Type != llm.PromptContextCharacter || captured[1].Type != llm.PromptContextStable {
+	if len(captured) < 2 || countMessageContent(captured, CommonCoderContract) != 1 || indexOfMessageContentWithType(captured, "test prompt", llm.PromptContextCharacter) < 0 {
 		t.Fatalf("proposal request omitted stable context after system prompt: %#v", captured)
 	}
 }
@@ -472,8 +475,10 @@ func TestCoderAgentGenerateWithPrompt(t *testing.T) {
 	var capturedPrompt string
 	llmProvider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
-			if len(req.Messages) > 0 && req.Messages[0].Role == "system" {
-				capturedPrompt = req.Messages[0].Content
+			for _, message := range req.Messages {
+				if strings.Contains(message.Content, "You are a specification design assistant.") {
+					capturedPrompt = message.Content
+				}
 			}
 			return llm.GenerateResponse{
 				Content:      "Generated code response",
@@ -518,12 +523,13 @@ func TestCoderAgentGenerateWithPromptUsesLightMemory(t *testing.T) {
 		t.Fatalf("GenerateWithPrompt failed: %v", err)
 	}
 
-	if len(captured) != 5 {
+	if len(captured) != 6 {
 		t.Fatalf("messages=%#v", captured)
 	}
-	if captured[1].Role != "user" || captured[1].Content != "first user" ||
-		captured[2].Role != "assistant" || captured[2].Content != "first assistant" ||
-		captured[3].Type != llm.PromptContextVariable || captured[4].Content != "second user" {
+	if captured[0].Content != CommonCoderContract ||
+		captured[2].Role != "user" || captured[2].Content != "first user" ||
+		captured[3].Role != "assistant" || captured[3].Content != "first assistant" ||
+		captured[4].Type != llm.PromptContextVariable || captured[5].Content != "second user" {
 		t.Fatalf("LightMemory messages not injected in order: %#v", captured)
 	}
 	recent := memory.RecentMessages("U123")

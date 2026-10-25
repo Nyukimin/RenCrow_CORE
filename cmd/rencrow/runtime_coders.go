@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"log"
 	"os"
 	"strings"
@@ -179,11 +180,9 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker, actions *actio
 		// CoderAgent 作成
 		domainCoder := agent.NewCoderAgent(provider, nil, nil, cfg.Prompts.CoderProposal)
 
-		// Agent Persona 設定（persona_file 優先、なければ personality、最後に characters/<name>）
+		// Agent Persona 設定（persona_file 優先、なければ personality、最後に character bundle）
 		personality, source := resolveCoderPersonality(cfg, cc)
-		if source != "" {
-			log.Printf("[setupCoders] %s (%s) persona loaded from %s", plan.Name, cc.DisplayName, source)
-		}
+		logCoderPromptIdentity(plan.Name, cc.DisplayName, source, personality)
 		if personality != "" {
 			coderPersona := agent.AgentPersona{
 				Name:        cc.Name,
@@ -191,7 +190,6 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker, actions *actio
 				Tone:        cc.Tone,
 			}
 			domainCoder.WithPersona(coderPersona)
-			log.Printf("[setupCoders] %s (%s) persona enabled", plan.Name, cc.DisplayName)
 		}
 
 		// LightMemory 設定（全 Coder で共有）
@@ -237,4 +235,17 @@ func resolveCoderPersonality(cfg *config.Config, coderCfg config.CoderConfig) (s
 		}
 	}
 	return "", ""
+}
+
+func logCoderPromptIdentity(slot, displayName, source, personality string) {
+	if strings.TrimSpace(source) == "" {
+		source = "none"
+	}
+	log.Printf("[setupCoders] %s (%s) persona_source=%q personality_sha256=%x common_contract_sha256=%x",
+		slot,
+		displayName,
+		source,
+		sha256.Sum256([]byte(personality)),
+		sha256.Sum256([]byte(agent.CommonCoderContract)),
+	)
 }

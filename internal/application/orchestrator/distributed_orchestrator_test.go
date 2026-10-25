@@ -1105,8 +1105,8 @@ func TestDistributedOrchestrator_RouteToCoder_ConnectionAware(t *testing.T) {
 		memory := session.NewCentralMemory()
 
 		orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
-		if got := orch.routeToCoder(routing.RouteCODE); got != "" {
-			t.Fatalf("routeToCoder(CODE) = %q, want empty", got)
+		if got, err := acquireCoderForTest(t, orch.coderSelector, routing.RouteCODE); got != "" || err == nil {
+			t.Fatalf("AcquireForRoute(CODE) = %q, %v, want unavailable", got, err)
 		}
 	})
 
@@ -1119,8 +1119,8 @@ func TestDistributedOrchestrator_RouteToCoder_ConnectionAware(t *testing.T) {
 			"coder3": &distMockTransport{},
 		}
 		orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, sshTransports)
-		if got := orch.routeToCoder(routing.RouteCODE); got != "" {
-			t.Fatalf("routeToCoder(CODE) = %q, want empty", got)
+		if got, err := acquireCoderForTest(t, orch.coderSelector, routing.RouteCODE); got != "" || err == nil {
+			t.Fatalf("AcquireForRoute(CODE) = %q, %v, want unavailable", got, err)
 		}
 	})
 
@@ -1131,19 +1131,19 @@ func TestDistributedOrchestrator_RouteToCoder_ConnectionAware(t *testing.T) {
 		memory := session.NewCentralMemory()
 		orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 
-		if got := orch.routeToCoder(routing.RouteCODE1); got != "" {
-			t.Fatalf("routeToCoder(CODE1) = %q, want empty", got)
+		if got, err := acquireCoderForTest(t, orch.coderSelector, routing.RouteCODE1); got != "" || err == nil {
+			t.Fatalf("AcquireForRoute(CODE1) = %q, %v, want unavailable", got, err)
 		}
-		if got := orch.routeToCoder(routing.RouteCODE2); got != "coder2" {
-			t.Fatalf("routeToCoder(CODE2) = %q, want coder2", got)
+		if got, err := acquireCoderForTest(t, orch.coderSelector, routing.RouteCODE2); got != "coder2" || err != nil {
+			t.Fatalf("AcquireForRoute(CODE2) = %q, %v, want coder2", got, err)
 		}
-		if got := orch.routeToCoder(routing.RouteCODE3); got != "" {
-			t.Fatalf("routeToCoder(CODE3) = %q, want empty", got)
+		if got, err := acquireCoderForTest(t, orch.coderSelector, routing.RouteCODE3); got != "" || err == nil {
+			t.Fatalf("AcquireForRoute(CODE3) = %q, %v, want unavailable", got, err)
 		}
 	})
 }
 
-func TestDistributedOrchestrator_RouteToCoderForMessage_UsesCapabilityWhenConfigured(t *testing.T) {
+func TestDistributedOrchestrator_GenericCoderSelectionRoundRobinsReadyPool(t *testing.T) {
 	mockMio := &distMockMioAgent{}
 	mockRepo := &distMockSessionRepo{}
 	router := transport.NewMessageRouter()
@@ -1160,13 +1160,13 @@ func TestDistributedOrchestrator_RouteToCoderForMessage_UsesCapabilityWhenConfig
 		{Name: "coder3", Quality: 5, Available: true},
 	})
 
-	got := orch.routeToCoderForMessage(routing.RouteCODE, "TTSを実装して")
-	if got != "coder3" {
-		t.Fatalf("routeToCoderForMessage(CODE,TTS) = %q, want coder3", got)
+	got, err := acquireCoderForTest(t, orch.coderSelector, routing.RouteCODE)
+	if got != "coder1" || err != nil {
+		t.Fatalf("AcquireForRoute(CODE) = %q, %v, want coder1 regardless of quality", got, err)
 	}
 }
 
-func TestDistributedOrchestrator_RouteToCoderForMessage_DegradesByCapability(t *testing.T) {
+func TestDistributedOrchestrator_ExplicitCoderRouteDoesNotDegradeByCapability(t *testing.T) {
 	mockMio := &distMockMioAgent{}
 	mockRepo := &distMockSessionRepo{}
 	router := transport.NewMessageRouter()
@@ -1182,10 +1182,19 @@ func TestDistributedOrchestrator_RouteToCoderForMessage_DegradesByCapability(t *
 		{Name: "coder3", Quality: 5, Available: true},
 	})
 
-	got := orch.routeToCoderForMessage(routing.RouteCODE3, "高品質レビューをして")
-	if got != "coder2" {
-		t.Fatalf("routeToCoderForMessage(CODE3) = %q, want coder2 degraded from unavailable coder3", got)
+	got, err := acquireCoderForTest(t, orch.coderSelector, routing.RouteCODE3)
+	if got != "" || err == nil || !strings.Contains(err.Error(), "coder3 is unavailable") {
+		t.Fatalf("AcquireForRoute(CODE3) = %q, %v, want coder3 unavailable without fallback", got, err)
 	}
+}
+
+func acquireCoderForTest(t *testing.T, selector *distributedCoderSelection, route routing.Route) (string, error) {
+	t.Helper()
+	name, release, err := selector.AcquireForRoute(route, "")
+	if release != nil {
+		release()
+	}
+	return name, err
 }
 
 // distMockTransport はSSH経路テスト用のmock Transport
@@ -1560,7 +1569,7 @@ func TestDistributedOrchestrator_ProcessMessage_CodeRoute_UnconnectedExplicitCod
 	if err == nil {
 		t.Fatal("expected error for unconnected CODE1 coder")
 	}
-	if !strings.Contains(err.Error(), "no coder mapped for route CODE1") {
+	if !strings.Contains(err.Error(), "coder1 is unavailable") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(reporter.reports) != 1 {

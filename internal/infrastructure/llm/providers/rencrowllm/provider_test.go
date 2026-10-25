@@ -89,6 +89,125 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 	}
 }
 
+func TestGatewayProviderPreservesNativeToolCallPresenceWithTextContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"valid text","tool_calls":[{"id":"call-1","type":"function","function":{"name":"run","arguments":"{}"}}]},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "coder1", server.URL, time.Second)
+	response, err := provider.Generate(context.Background(), llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Content: "return a coder message"}},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if response.Content != "valid text" || response.FinishReason != "stop" {
+		t.Fatalf("response text/finish changed: %#v", response)
+	}
+	if !response.HasToolCalls {
+		t.Fatal("native tool_calls were discarded from GenerateResponse")
+	}
+}
+
+func TestReadGenerateStreamPreservesNativeToolCallPresenceWithTextContent(t *testing.T) {
+	provider := NewGatewayProviderWithOptions("", "coder1", "http://127.0.0.1:1", time.Second)
+	response, err := provider.readChatCompletionsStream(strings.NewReader(
+		`data: {"choices":[{"delta":{"role":"assistant","content":"valid text"}}]}`+"\n\n"+
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"run","arguments":"{}"}}]},"finish_reason":"stop"}]}`+"\n\n"+
+			"data: [DONE]\n\n",
+	), func(string) {})
+	if err != nil {
+		t.Fatalf("readChatCompletionsStream: %v", err)
+	}
+	if response.Content != "valid text" || response.FinishReason != "stop" {
+		t.Fatalf("response text/finish changed: %#v", response)
+	}
+	if !response.HasToolCalls {
+		t.Fatal("stream decoder discarded native tool_calls")
+	}
+}
+
+func TestReadGenerateStreamRequiresExplicitTerminalFinishReason(t *testing.T) {
+	provider := NewGatewayProviderWithOptions("", "coder1", "http://127.0.0.1:1", time.Second)
+	for _, test := range []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "abrupt EOF after complete-looking JSON",
+			input: `data: {"choices":[{"delta":{"content":"{\"ok\":true}"}}]}` + "\n\n",
+		},
+		{
+			name:  "DONE without finish reason",
+			input: `data: {"choices":[{"delta":{"content":"{\"ok\":true}"}}]}` + "\n\n" + "data: [DONE]\n\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response, err := provider.readChatCompletionsStream(strings.NewReader(test.input), func(string) {})
+			if err == nil || !strings.Contains(err.Error(), "terminal finish_reason") {
+				t.Fatalf("response=%#v err=%v, want missing terminal finish_reason error", response, err)
+			}
+			if response != (llm.GenerateResponse{}) {
+				t.Fatalf("response=%#v, want no usable response on incomplete stream", response)
+			}
+		})
+	}
+}
+
+func TestReadGenerateStreamAcceptsExplicitFinishAtEOFAndPreservesTerminalReasons(t *testing.T) {
+	provider := NewGatewayProviderWithOptions("", "coder1", "http://127.0.0.1:1", time.Second)
+	t.Run("stop at EOF without DONE", func(t *testing.T) {
+		response, err := provider.readChatCompletionsStream(strings.NewReader(
+			`data: {"choices":[{"delta":{"content":"{\"ok\":true}"},"finish_reason":"stop"}]}`+"\n\n",
+		), func(string) {})
+		if err != nil || response.FinishReason != "stop" || response.Content != `{"ok":true}` {
+			t.Fatalf("response=%#v err=%v", response, err)
+		}
+	})
+	for _, finishReason := range []string{"length", "tool_calls"} {
+		t.Run(finishReason, func(t *testing.T) {
+			input := `data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"` + finishReason + `"}]}` + "\n\n"
+			if finishReason == "tool_calls" {
+				input = `data: {"choices":[{"delta":{"content":"partial","tool_calls":[{"index":0,"id":"call-1"}]},"finish_reason":"tool_calls"}]}` + "\n\n" + "data: [DONE]\n\n"
+			}
+			response, err := provider.readChatCompletionsStream(strings.NewReader(input), func(string) {})
+			if err != nil || response.FinishReason != finishReason {
+				t.Fatalf("response=%#v err=%v, want finish_reason=%q", response, err, finishReason)
+			}
+			if finishReason == "tool_calls" && !response.HasToolCalls {
+				t.Fatal("native tool_calls were not preserved")
+			}
+		})
+	}
+}
+
+func TestGatewayGenerateKeepsSharedTokenLimitAndOmitsTemperature(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "coder1", server.URL, time.Second)
+	_, err := provider.Generate(context.Background(), llm.GenerateRequest{
+		Messages:  []llm.Message{{Role: "user", Content: "task"}},
+		MaxTokens: 8192,
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if payload["max_tokens"] != float64(8192) {
+		t.Fatalf("wire max_tokens = %#v, want 8192", payload["max_tokens"])
+	}
+	if _, exists := payload["temperature"]; exists {
+		t.Fatalf("wire request unexpectedly set temperature: %#v", payload["temperature"])
+	}
+}
+
 func TestGatewayProviderGenerateOwnsCanonicalTransportRequestAndResponse(t *testing.T) {
 	owner := &llmTransportReceiptOwner{}
 	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
@@ -838,7 +957,7 @@ func TestGatewayProviderGenerate_LocalCompatibleStreamingUsesDeltaContentOnly(t 
 		for _, line := range []string{
 			`data: {"choices":[{"delta":{"reasoning_content":"hidden","content":""}}]}`,
 			`data: {"choices":[{"delta":{"reasoning_content":"","content":"最終"}}]}`,
-			`data: {"choices":[{"delta":{"content":"回答"}}]}`,
+			`data: {"choices":[{"delta":{"content":"回答"},"finish_reason":"stop"}]}`,
 			`data: [DONE]`,
 		} {
 			fmt.Fprintln(w, line)
@@ -928,7 +1047,7 @@ func TestGatewayProviderGenerate_StreamingReturnsBackendThroughput(t *testing.T)
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"こんにちは"}}]}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"choices":[],"usage":{"completion_tokens":7},"timings":{"predicted_per_second":51.1808}}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":7},"timings":{"predicted_per_second":51.1808}}`)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: [DONE]`)
 		fmt.Fprintln(w)
@@ -954,7 +1073,7 @@ func TestGatewayProviderGenerate_LocalCompatibleStreamingDropsUntaggedReasoning(
 		for _, line := range []string{
 			`data: {"choices":[{"delta":{"content":"Okay, the user is asking for a confirmation message. "}}]}`,
 			`data: {"choices":[{"delta":{"content":"Let me check the query again.\n\nFinal answer: "}}]}`,
-			`data: {"choices":[{"delta":{"content":"了解しました。"}}]}`,
+			`data: {"choices":[{"delta":{"content":"了解しました。"},"finish_reason":"stop"}]}`,
 			`data: [DONE]`,
 		} {
 			fmt.Fprintln(w, line)

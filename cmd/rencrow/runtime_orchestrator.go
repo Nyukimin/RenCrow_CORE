@@ -162,7 +162,7 @@ func buildOrchestratorRuntime(
 	}
 	if coderCaps := buildCoderCapabilities(nodeCaps, cfg); coderCaps != nil {
 		orch.SetCoderCapabilities(coderCaps)
-		log.Printf("Coder capability metadata loaded (%d coders); CODE uses only local coder1 unless an explicit CODE route is requested", len(coderCaps))
+		log.Printf("Coder capability metadata loaded (%d coders); CODE round-robins across enabled, probe-ready, idle local candidates and explicit CODE1-CODE4 routes pin a coder", len(coderCaps))
 	}
 	// 自己認識コンテキストをプロンプトに注入
 	if cfg.SelfSourceDir != "" {

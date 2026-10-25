@@ -12,24 +12,40 @@ import (
 
 // loopMessageCaptureCoder は GenerateWithContext に渡された会話履歴を記録する。
 type loopMessageCaptureCoder struct {
-	response string
-	captured [][]llm.Message
+	responses []string
+	index     int
+	captured  [][]llm.Message
 }
 
 func (c *loopMessageCaptureCoder) Generate(context.Context, conversation.TurnInput, string) (string, error) {
-	return c.response, nil
+	return c.next(), nil
 }
 
 func (c *loopMessageCaptureCoder) GenerateWithContext(_ context.Context, messages []llm.Message) (string, error) {
 	c.captured = append(c.captured, append([]llm.Message(nil), messages...))
-	return c.response, nil
+	return c.next(), nil
+}
+
+func (c *loopMessageCaptureCoder) next() string {
+	if len(c.responses) == 0 {
+		return ""
+	}
+	if c.index >= len(c.responses) {
+		return c.responses[len(c.responses)-1]
+	}
+	response := c.responses[c.index]
+	c.index++
+	return response
 }
 
 // CoderLoop の先頭 system は Character として型付けして渡す。型が無いと Gateway は
 // 先頭固定の配置を適用できず（instruction_without_block）、時刻などの Variable が
 // 先頭 system へ畳み込まれて prefix cache が毎ターン崩れる。
 func TestCoderLoopLeadingSystemPromptIsTypedCharacter(t *testing.T) {
-	coder := &loopMessageCaptureCoder{response: `{"type":"final_report","summary":"修正完了","changed_files":[],"tests_run":[],"remaining_risks":[]}`}
+	coder := &loopMessageCaptureCoder{responses: []string{
+		`{"type":"read_request","actions":[{"action":"shell_command","target":"cat README.md"}]}`,
+		`{"type":"final_report","summary":"調査完了","changed_files":[],"tests_run":[],"remaining_risks":[]}`,
+	}}
 	worker := &recordingCodeWorkerExecutionService{}
 	var events []codeExecutorEvent
 	executor := NewDefaultCodeExecutor(coder, nil, nil, nil, worker, nil, recordingCodeEventEmitter(&events)).

@@ -86,11 +86,24 @@ func TestBuildCoderCapabilityPlansUsesSlotOverride(t *testing.T) {
 	}
 }
 
-func TestBuildCoderCapabilityPlansReturnsNilWhenNoQualityKnown(t *testing.T) {
+func TestBuildCoderCapabilityPlansPreservesAvailabilityWhenQualityIsUnknown(t *testing.T) {
+	got := BuildCoderCapabilityPlans([]LLMCapability{{
+		ProviderName: "rencrow_llm",
+		ModelName:    "coder1",
+		Available:    true,
+	}}, []CoderSlotConfig{
+		{Name: "coder1", Enabled: true},
+	}, nil)
+	if len(got) != 1 || got[0].Name != "coder1" || !got[0].Available || got[0].Quality != 0 {
+		t.Fatalf("BuildCoderCapabilityPlans() = %#v, want available coder1 with unknown quality", got)
+	}
+}
+
+func TestBuildCoderCapabilityPlansReturnsUnavailablePlanWithoutProbe(t *testing.T) {
 	got := BuildCoderCapabilityPlans(nil, []CoderSlotConfig{
 		{Name: "coder1", Enabled: true},
 	}, nil)
-	if got != nil {
-		t.Fatalf("BuildCoderCapabilityPlans() = %#v, want nil", got)
+	if len(got) != 1 || got[0].Name != "coder1" || got[0].Available {
+		t.Fatalf("BuildCoderCapabilityPlans() = %#v, want configured but unprobed coder1", got)
 	}
 }

@@ -38,8 +38,8 @@
       "required": ["type", "intent", "patch"],
       "properties": {
         "type": { "const": "patch_proposal" },
-        "intent": { "type": "string" },
-        "patch": { "type": "string", "description": "JSON array or Markdown fenced blocks" },
+        "intent": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "patch": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "JSON array or Markdown fenced blocks" },
         "tests": { "type": "array", "items": { "type": "string" } },
         "test_hint": { "$ref": "#/definitions/TestHint" }
       },
@@ -97,14 +97,40 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["shell_command"],
-          "description": "観測系コマンド（git grep / git show / go test 等）"
+          "enum": ["shell_command", "mcp_tool"],
+          "description": "WorkerAction parser が受け付ける形式。ここでの列挙は MCP 実行権限を付与しない。"
         },
         "target": {
           "type": "string",
-          "description": "実行するコマンド文字列"
-        }
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "shell command または MCP tool の実行対象"
+        },
+        "args": {}
       },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "const": "shell_command" } } },
+          "then": {
+            "properties": {
+              "args": {
+                "oneOf": [
+                  { "type": "null" },
+                  { "type": "object", "maxProperties": 0 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "action": { "const": "mcp_tool" } } },
+          "then": {
+            "properties": {
+              "args": { "type": "object" }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "TestHint": {

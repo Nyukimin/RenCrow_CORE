@@ -597,6 +597,10 @@ func (l *taskLifecycle) createExecutionChildForRootAssignee(ctx context.Context,
 	if actor == owner {
 		return rootTaskID, nil
 	}
+	parent, err := l.manager.Get(ctx, rootTaskID)
+	if err != nil {
+		return "", fmt.Errorf("load parent task scope: %w", err)
+	}
 	childTaskID := modulecore.NewTaskID()
 	child := domaintask.Task{
 		TaskID:         childTaskID,
@@ -608,6 +612,9 @@ func (l *taskLifecycle) createExecutionChildForRootAssignee(ctx context.Context,
 		Status:         domaintask.StatusQueued,
 		Priority:       domaintask.PriorityNormal,
 		ParentTaskID:   rootTaskID,
+		ModuleID:       parent.ModuleID,
+		ModuleRoot:     parent.ModuleRoot,
+		ReadOnly:       parent.ReadOnly,
 	}
 	shared := l.sharedContextForRoot(rootTaskID, childTaskID)
 	if _, err := l.manager.Create(ctx, child, shared); err != nil {

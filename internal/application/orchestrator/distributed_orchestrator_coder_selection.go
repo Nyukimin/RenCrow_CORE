@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"log"
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -16,6 +17,7 @@ type distributedCoderSelection struct {
 	nodeSelector  *NodeSelector
 	nodeCaps      map[string]domainnode.ResourceProfile
 	coderCaps     []capdomain.CoderCapability
+	coderStatus   *CoderStatus
 }
 
 func newDistributedCoderSelection(
@@ -23,12 +25,21 @@ func newDistributedCoderSelection(
 	sshTransports map[string]domaintransport.Transport,
 	nodeSelector *NodeSelector,
 	nodeCaps map[string]domainnode.ResourceProfile,
+	coderStatuses ...*CoderStatus,
 ) *distributedCoderSelection {
+	var coderStatus *CoderStatus
+	if len(coderStatuses) > 0 {
+		coderStatus = coderStatuses[0]
+	}
+	if coderStatus == nil {
+		coderStatus = NewCoderStatus()
+	}
 	return &distributedCoderSelection{
 		router:        router,
 		sshTransports: sshTransports,
 		nodeSelector:  nodeSelector,
 		nodeCaps:      nodeCaps,
+		coderStatus:   coderStatus,
 	}
 }
 
@@ -37,36 +48,12 @@ func (s *distributedCoderSelection) SetNodeCapabilities(caps map[string]domainno
 }
 
 func (s *distributedCoderSelection) SetCoderCapabilities(caps []capdomain.CoderCapability) {
-	s.coderCaps = append([]capdomain.CoderCapability(nil), caps...)
-}
-
-func (s *distributedCoderSelection) RouteToCoder(route routing.Route) string {
-	if selected := s.routeByCapability(route); selected != "" {
-		return selected
+	if caps == nil {
+		s.coderCaps = nil
+		return
 	}
-	switch route {
-	case routing.RouteCODE:
-		if s.IsCoderConnected("coder1") {
-			log.Printf("[DistributedOrch] coder selected route=%s target=coder1 mode=default", route)
-			return "coder1"
-		}
-		log.Printf("[DistributedOrch] coder skip route=%s target=coder1 reason=unconnected", route)
-		return ""
-	case routing.RouteCODE1:
-		return s.explicitCoder(route, "coder1")
-	case routing.RouteCODE2:
-		return s.explicitCoder(route, "coder2")
-	case routing.RouteCODE3:
-		return s.explicitCoder(route, "coder3")
-	case routing.RouteCODE4:
-		return s.explicitCoder(route, "coder4")
-	default:
-		return ""
-	}
-}
-
-func (s *distributedCoderSelection) RouteToCoderForMessage(route routing.Route, userMessage string) string {
-	return s.RouteToCoder(route)
+	s.coderCaps = make([]capdomain.CoderCapability, len(caps))
+	copy(s.coderCaps, caps)
 }
 
 func (s *distributedCoderSelection) IsCoderConnected(agent string) bool {
@@ -80,38 +67,66 @@ func (s *distributedCoderSelection) IsCoderConnected(agent string) bool {
 	return ok
 }
 
-func (s *distributedCoderSelection) explicitCoder(route routing.Route, coder string) string {
-	if s.IsCoderConnected(coder) {
+// AcquireForRoute atomically acquires the requested or round-robin eligible coder.
+// The returned release function owns the lease for the full distributed task.
+func (s *distributedCoderSelection) AcquireForRoute(route routing.Route, _ string) (string, func(), error) {
+	if coder, _, explicit := explicitCodeRouteTarget(route); explicit {
+		if available, known := s.coderAvailability(coder); s.coderCaps != nil && (!known || !available) {
+			log.Printf("[DistributedOrch] coder skip route=%s target=%s reason=unavailable", route, coder)
+			return "", nil, fmt.Errorf("%s is unavailable", coder)
+		}
+		if !s.IsCoderConnected(coder) {
+			log.Printf("[DistributedOrch] coder skip route=%s target=%s reason=unconnected", route, coder)
+			return "", nil, fmt.Errorf("%s is unavailable", coder)
+		}
+		if !s.coderStatus.Acquire(coder) {
+			log.Printf("[DistributedOrch] coder skip route=%s target=%s reason=busy", route, coder)
+			return "", nil, fmt.Errorf("%s is busy", coder)
+		}
 		log.Printf("[DistributedOrch] coder selected route=%s target=%s mode=explicit", route, coder)
-		return coder
+		return coder, func() { s.coderStatus.Release(coder) }, nil
 	}
-	log.Printf("[DistributedOrch] coder skip route=%s target=%s reason=unconnected", route, coder)
-	return ""
+	if route != routing.RouteCODE {
+		return "", nil, fmt.Errorf("no coder mapped for route %s", route)
+	}
+
+	candidates := s.readyConnectedCoders()
+	if len(candidates) == 0 {
+		log.Printf("[DistributedOrch] coder skip route=%s reason=no_ready_connected_candidates", route)
+		return "", nil, fmt.Errorf("no enabled, probe-ready connected coder is available")
+	}
+	coder, ok := s.coderStatus.AcquireNext(candidates)
+	if !ok {
+		log.Printf("[DistributedOrch] coder skip route=%s reason=all_ready_candidates_busy candidates=%d", route, len(candidates))
+		return "", nil, fmt.Errorf("all ready coders are busy")
+	}
+	log.Printf("[DistributedOrch] coder selected route=%s target=%s mode=round_robin candidates=%d", route, coder, len(candidates))
+	return coder, func() { s.coderStatus.Release(coder) }, nil
 }
 
-func (s *distributedCoderSelection) routeByCapability(route routing.Route) string {
-	if len(s.coderCaps) == 0 {
-		return ""
-	}
-	candidates := make([]capdomain.CoderCapability, 0, len(s.coderCaps))
+func (s *distributedCoderSelection) readyConnectedCoders() []string {
+	available := make(map[string]bool, len(s.coderCaps))
 	for _, cap := range s.coderCaps {
-		connected := s.IsCoderConnected(cap.Name)
-		if !connected {
-			log.Printf("[DistributedOrch] coder skip route=%s target=%s reason=unconnected capability_quality=%d", route, cap.Name, cap.Quality)
+		name := normalizeCoderStatusName(cap.Name)
+		if name != "" && cap.Available {
+			available[name] = true
 		}
-		cap.Available = cap.Available && connected
-		candidates = append(candidates, cap)
 	}
-	selected, degraded, evidence, err := capdomain.SelectCoderWithEvidence(candidates, route)
-	if err != nil {
-		log.Printf("[DistributedOrch] coder capability selection failed route=%s err=%v", route, err)
-		return ""
+	candidates := make([]string, 0, len(coderStatusSlotOrder))
+	for _, name := range coderStatusSlotOrder {
+		if !available[name] || !s.IsCoderConnected(name) {
+			continue
+		}
+		candidates = append(candidates, name)
 	}
-	mode := "capability"
-	if degraded != "" {
-		mode = "capability_degraded"
+	return candidates
+}
+
+func (s *distributedCoderSelection) coderAvailability(name string) (available, known bool) {
+	for _, cap := range s.coderCaps {
+		if normalizeCoderStatusName(cap.Name) == name {
+			return cap.Available, true
+		}
 	}
-	log.Printf("[DistributedOrch] coder selected route=%s target=%s mode=%s selected_quality=%d degraded_route=%s required_quality=%d candidates=%d",
-		route, selected, mode, evidence.SelectedQuality, degraded, evidence.RequiredQuality, len(evidence.Candidates))
-	return selected
+	return false, false
 }

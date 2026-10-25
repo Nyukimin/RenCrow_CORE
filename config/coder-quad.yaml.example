@@ -1,0 +1,42 @@
+# Partial overlay for four equally capable Coder slots.
+# Merge into config.yaml; Gateway aliases, model targets, and GPU placement stay in RenCrow_LLM.
+coder1:
+  name: aka
+  enabled: true
+  persona_file: ""
+  personality: ""
+  light_memory:
+    enabled: false
+
+coder2:
+  name: ao
+  enabled: true
+  persona_file: ""
+  personality: ""
+  light_memory:
+    enabled: false
+
+coder3:
+  name: kin
+  enabled: true
+  persona_file: ""
+  personality: ""
+  light_memory:
+    enabled: false
+
+coder4:
+  name: gin
+  enabled: true
+  persona_file: ""
+  personality: ""
+  light_memory:
+    enabled: false
+
+# Four coding Tasks may run concurrently when they target distinct modules.
+# The per-module write limit remains one.
+task_parallel_limits:
+  global: 4
+  per_module: 1
+  coding_tasks: 4
+  long_research_tasks: 1
+  destructive_tasks: 1

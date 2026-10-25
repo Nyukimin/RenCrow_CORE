@@ -80,6 +80,11 @@ func (c *Config) Validate() error {
 	if err := c.TaskStore.validate(); err != nil {
 		return err
 	}
+	if c.TaskParallelLimits != nil {
+		if err := c.TaskParallelLimits.validate(); err != nil {
+			return err
+		}
+	}
 	if err := c.ActionStore.validate(); err != nil {
 		return err
 	}

@@ -28,11 +28,11 @@ routeは処理分類であり、実行権限ではない。認証、利用者sco
 | `ANALYZE` | Kuro | Kuroが分析し、結果を返す |
 | `OPS` | Shiro | Shiroが運用処理を実行 |
 | `RESEARCH` | Mio | Mioの調査応答 |
-| `CODE` | Shiro | local executorがcoder1 slotを固定選択 |
-| `CODE1` | Shiro | local executorがcoder1 slotへ仕様設計の指示 |
-| `CODE2` | Shiro | local executorがcoder2 slotへ実装指示 |
-| `CODE3` | Shiro | local executorがcoder3 slotへreview/reasoning指示 |
-| `CODE4` | Shiro | local executorがcoder4 slotへ高速試作・実験の指示 |
+| `CODE` | Shiro | enabled・ready・idleのCoder slotからround-robin選択 |
+| `CODE1` | Shiro | `coder1`（Aka）を明示選択 |
+| `CODE2` | Shiro | `coder2`（Ao）を明示選択 |
+| `CODE3` | Shiro | `coder3`（Kin）を明示選択 |
+| `CODE4` | Shiro | `coder4`（Gin）を明示選択 |
 | `WILD` | Midori | MidoriがWild処理経路で応答 |
 
 ## Route別の入力基準
@@ -55,29 +55,29 @@ command、test、build、deploy、health checkなど運用処理の実行。Rule
 外部情報の深い調査、資料収集、仕様確認。RuleDictionary例は「リサーチ」「情報を集」「ドキュメントを探」「ウェブ検索で」「原文を取得」「情報収集」。実ActorはMioで、RESEARCH pathから調査応答を作る。Coderへの割当routeではない。
 
 ### CODE
-より具体的なcoder routeが指定されていない汎用code依頼。`/code`またはclassifierがroute文字列を返した場合に選ばれ得る。通常の自然文code edit ruleはCODE2へ分類する。実ActorはShiroで、local code executorはcoder1を固定選択する。coder1が未配置・busy、または外部providerの場合はerrorにし、別coderへ自動切替しない。
+より具体的なcoder slotが指定されていない汎用code依頼。`/code`またはclassifierがroute文字列を返した場合に選ばれ得る。通常の自然文code edit ruleはCODE2へ分類する。実ActorはShiroで、CODEはenabled、ready、idleのslotからround-robin選択する。候補全員が利用不能ならその状態を返す。
 
 ### CODE1
-仕様設計、初期案、骨格案。`/code1`またはclassifierで選ばれる。実ActorはShiroで、local code executorがcoder1 slotへ仕様設計用の指示を渡す。Coder1はActorではない。
+仕様設計、初期案、骨格案を表すroute分類。`/code1`またはclassifierで選ばれる。実ActorはShiroで、`coder1`（Aka）を固定選択する。このrouteの意味は依頼の意図を表し、coder1だけが設計できるという能力制限を作らない。
 
 ### CODE2
-既存codeの実装、修正、file edit、test追加。file referenceと編集意図の組合せ、および実装系keywordをRuleDictionaryがこのrouteへ自動分類する。`/code2`またはclassifierでも選ばれる。実ActorはShiroで、local code executorがcoder2 slotへimplementation用の指示を渡す。生成物の実行・適用はCORE/Shiroの実行policyに従う。
+既存codeの実装、修正、file edit、test追加などを表すroute分類。file referenceと編集意図の組合せ、および既存の実装系keywordをRuleDictionaryがこのrouteへ分類する。`/code2`またはclassifierでも選ばれる。実ActorはShiroで、routeが指定された場合は`coder2`（Ao）を固定選択する。CODE2はcoder2だけが実装できるという制約ではなく、生成物の実行・適用はCORE/Shiroの実行policyに従う。
 
 ### CODE3
-高品質なcode reasoning/review、またはbrowser/chrome操作を含むrule対象の依頼。RuleDictionary例は「chrome」「ブラウザ」「画面操作」「スクレイピング」「ページを開」「webを操作」。`/code3`またはclassifierでも選ばれる。実ActorはShiroで、local code executorがcoder3 slotへreview/reasoning用の指示を渡す。自然文browser ruleがあることは、全てのCODE3依頼がbrowser操作という意味ではない。
+高いcode reasoning／review意図、および既存のbrowser／Chrome関連RuleDictionary規則が分類するroute。RuleDictionary例は「chrome」「ブラウザ」「画面操作」「スクレイピング」「ページを開」「webを操作」。`/code3`またはclassifierでも選ばれる。実ActorはShiroで、routeが指定された場合は`coder3`（Kin）を固定選択する。reviewやbrowser操作の専任能力を意味せず、自然文browser ruleがあることも全てのCODE3依頼がbrowser操作という意味ではない。
 
 ### CODE4
-現在のroute意味は高速な試作・実験的codingであり、`/code4`明示commandで選べる。RuleDictionaryに自然文の専用CODE4規則はない。legacy `prompts/classifier.md` にCODE4の意味定義がない一方、`LLMClassifier.parseRoute`は応答文字列CODE4を受理する。この非対称性のため、classifierがCODE4を意味的に選ぶことは未定義であり、route parserの受理だけから選択可能とはみなさない。CODE4がlocal executorへ渡された場合、実ActorはShiro、slotはcoder4で、指示は高速試作・実験的codingとなる。比較レビューや仕上げのrouteではない。
+高速な試作・実験的codingのroute分類。`/code4`で明示できますが、RuleDictionaryに自然文の専用CODE4規則は追加しません。legacy classifier promptのCODE4意味定義とparserの受理は別の契約であり、parserが文字列を受理するだけで意味分類が確立したとは扱いません。実ActorはShiroで、`coder4`（Gin）を固定選択します。このrouteの意味は依頼の意図を表し、coder4だけが試作・実験できるという能力制限を作りません。
 
 ### WILD
 物語・文章・創作、画像検索／生成／解析、視覚内容の理解。RuleDictionaryはCodex work pathと創作・画像関連keywordを認識する。`/wild`明示commandでも選べる。legacy `prompts/classifier.md`にWILDの意味定義はないため、classifierの意味選択は定義済みと扱わない。実ActorはMidoriで、Wild処理経路から応答する。画像生成はCOREからRenCrow_Imageの公開contractを通る。Wildは実Actorではない。
 
 ## Code routeとtopologyの境界
 
-- local `DefaultCodeExecutor`では汎用`CODE`はlocal `coder1`固定。`CODE1`、`CODE2`、`CODE3`、`CODE4`は指定slotを選ぶ。Coder slotは実Actorではなく、生成提案の実行責任も引き受けない。
+- 汎用`CODE`はenabled、ready、idleのslotをround-robinで選び、Quality順位を配車条件にしない。明示`CODE1`〜`CODE4`はそれぞれ`coder1`〜`coder4`へ固定する。本人がbusyまたはunavailableなら状態をShiroへ返し、選択経路で別slotに置き換えない。Coder slotは実Actorではなく、生成提案の適用・実行責任も引き受けない。
 - RuleDictionaryの通常code editは`CODE2`へ自動分類する。browser/chrome関連の自然文ruleは`CODE3`へ分類する。`CODE4`には専用の自然文ruleがないため、`CODE4`の意味から暗黙に自動分類してはならない。
-- `internal/domain/routing/route.go`はCODE4を高速coding／実験として定義するが、legacy classifier promptはCODE4を定義していない。`internal/infrastructure/routing/llm_classifier.go`のparserがCODE4を受理することは、この意味差を解消しない。promptはこの作業範囲では変更しない。
-- 現行distributed pathの`isCodeRoute`は`CODE4`を含まない。localの`CODE4`→`coder4`対応をすべてのtopologyへ一般化せず、distributed pathで常に`coder4`が使用されると保証しない。
+- RuleDictionary分類は依頼の処理種別を決め、coder slot固有のcapability制限は作らない。`CODE1`、`CODE2`、`CODE3`、`CODE4`の意味分類を自然文RuleDictionaryへ新設しない。
+- localとdistributedの両経路は同じtask-wide CoderStatusでslot占有を共有する。explicit pinと汎用候補取得のどちらも同じacquire／release契約を通し、busyまたはunavailableを黙って回避しない。
 - `OPS`、`CODE`系routeの実Actor責任はShiroに残る。Coder、Worker、transport、provider、modelへの委譲を独立Actorやroute ownerとして記録しない。
 
 ## 実行安全とコーディング作業

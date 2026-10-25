@@ -22,7 +22,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 			events = append(events, NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID))
 		},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
-		func(route routing.Route, userMessage string) string { return "coder3" },
+		func(route routing.Route, userMessage string) (string, func(), error) { return "coder3", func() {}, nil },
 		func() map[string]interface{} { return map[string]interface{}{"coder3": "cfg"} },
 		func() int { return 0 },
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message, receiveOnAgent string) (domaintransport.Message, error) {
@@ -106,7 +106,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorReturnsNoCoderMapped(t *testi
 		session.NewCentralMemory(),
 		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
-		func(route routing.Route, userMessage string) string { return "" },
+		func(route routing.Route, userMessage string) (string, func(), error) { return "", nil, nil },
 		func() map[string]interface{} { return nil },
 		func() int { return 0 },
 		nil,
@@ -127,7 +127,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRetriesCoderMailboxFailure(t 
 		session.NewCentralMemory(),
 		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
-		func(route routing.Route, userMessage string) string { return "coder3" },
+		func(route routing.Route, userMessage string) (string, func(), error) { return "coder3", func() {}, nil },
 		func() map[string]interface{} { return nil },
 		func() int { return 1 },
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message, receiveOnAgent string) (domaintransport.Message, error) {
@@ -165,7 +165,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 		session.NewCentralMemory(),
 		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
-		func(route routing.Route, userMessage string) string { return "coder3" },
+		func(route routing.Route, userMessage string) (string, func(), error) { return "coder3", func() {}, nil },
 		func() map[string]interface{} { return nil },
 		func() int { return 0 },
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message, receiveOnAgent string) (domaintransport.Message, error) {
@@ -231,7 +231,7 @@ func TestPhase21DistributedWorkerTerminalBudgetAndMissingResult(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			c := newDistributedCodeExecutionCoordinator(session.NewCentralMemory(), func(string, string, string, string, string, string, string, string, string) {}, func(string, string, string, string, string, string, string, string) {}, func(routing.Route, string) string { return "coder3" }, func() map[string]interface{} { return nil }, func() int { return 0 },
+			c := newDistributedCodeExecutionCoordinator(session.NewCentralMemory(), func(string, string, string, string, string, string, string, string, string) {}, func(string, string, string, string, string, string, string, string) {}, func(routing.Route, string) (string, func(), error) { return "coder3", func() {}, nil }, func() map[string]interface{} { return nil }, func() int { return 0 },
 				func(context.Context, string, domaintransport.Message, string) (domaintransport.Message, error) {
 					return domaintransport.Message{Proposal: &domaintransport.ProposalPayload{Plan: "edit", Patch: "[]"}}, nil
 				},

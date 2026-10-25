@@ -375,7 +375,7 @@ func (o *MessageOrchestrator) SetTaskLifecycleManager(manager TaskLifecycleManag
 	o.taskLifecycle = newTaskLifecycle(manager)
 }
 
-// SetCoderCapabilities は診断用の能力情報を注入する。Coder 選択は明示 route と Coder1 既定に限定する。
+// SetCoderCapabilities は enabled/probe-ready 候補情報を注入する。明示 route は指定Coderをpinし、汎用CODEはreadyなローカル候補をround-robin選択する。
 func (o *MessageOrchestrator) SetCoderCapabilities(caps []capability.CoderCapability) {
 	if executor, ok := o.codeExecutor.(*DefaultCodeExecutor); ok {
 		executor.WithCapabilities(caps)

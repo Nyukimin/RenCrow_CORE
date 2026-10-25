@@ -67,3 +67,54 @@ func TestCoderStatus_ConcurrentAccess(t *testing.T) {
 		t.Errorf("exactly 1 goroutine should acquire, got %d", successCount)
 	}
 }
+
+func TestCoderStatus_AcquireNextRoundRobinsAndSkipsBusySlots(t *testing.T) {
+	s := NewCoderStatus()
+	if !s.Acquire("coder1") {
+		t.Fatal("fixture failed to occupy coder1")
+	}
+
+	if got, ok := s.AcquireNext([]string{"coder1", "coder2", "coder3", "coder4"}); !ok || got != "coder2" {
+		t.Fatalf("AcquireNext() = %q, %t, want coder2", got, ok)
+	}
+	s.Release("coder2")
+	s.Release("coder1")
+
+	for _, want := range []string{"coder3", "coder4", "coder1"} {
+		got, ok := s.AcquireNext([]string{"coder1", "coder2", "coder3", "coder4"})
+		if !ok || got != want {
+			t.Fatalf("AcquireNext() = %q, %t, want %s", got, ok, want)
+		}
+		s.Release(got)
+	}
+}
+
+func TestCoderStatus_AcquireNextConcurrentDoesNotDoubleAcquire(t *testing.T) {
+	s := NewCoderStatus()
+	const goroutines = 64
+	candidates := []string{"coder1", "coder2", "coder3", "coder4"}
+	var wg sync.WaitGroup
+	acquired := make(chan string, goroutines)
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if name, ok := s.AcquireNext(candidates); ok {
+				acquired <- name
+			}
+		}()
+	}
+	wg.Wait()
+	close(acquired)
+
+	seen := make(map[string]bool)
+	for name := range acquired {
+		if seen[name] {
+			t.Fatalf("%s was acquired more than once", name)
+		}
+		seen[name] = true
+	}
+	if len(seen) != len(candidates) {
+		t.Fatalf("unique acquired coders = %v, want all four", seen)
+	}
+}

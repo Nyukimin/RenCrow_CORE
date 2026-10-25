@@ -15,12 +15,47 @@ import (
 )
 
 const (
-	ProposalFailureEmpty             = "proposal_empty"
-	ProposalFailureMissingPlan       = "proposal_missing_plan"
-	ProposalFailureMissingPatch      = "proposal_missing_patch"
-	ProposalFailureInvalidPatch      = "proposal_invalid_patch"
-	ProposalFailureDisallowedCommand = "proposal_disallowed_command"
+	ProposalFailureEmpty              = "proposal_empty"
+	ProposalFailureMissingPlan        = "proposal_missing_plan"
+	ProposalFailureMissingPatch       = "proposal_missing_patch"
+	ProposalFailureInvalidPatch       = "proposal_invalid_patch"
+	ProposalFailureDisallowedCommand  = "proposal_disallowed_command"
+	ProposalFailureIncompleteResponse = "proposal_incomplete_response"
+
+	coderPromptOwnerMetadataKey = "rencrow.coder_prompt_owner"
+	coderPromptOwnerPersona     = "persona"
+	coderPromptOwnerContract    = "contract"
 )
+
+// CommonCoderContract is the shared execution and reporting contract for every
+// Coder slot. Persona instructions may change attention and explanation style,
+// but this contract keeps their scope, authority, and completion criteria equal.
+const CommonCoderContract = `あなたはShiroから割り当てられた作業を担当するCoderです。
+設計、調査、実装、テスト、修正、レビューを、タスクの目的に応じて行います。
+他のCoderと同じ実行権限・作業範囲・完了条件に従います。
+
+対象リポジトリ、要求仕様、変更制約、実行上限を確認し、必要な作業を進めてください。
+変更は目的に必要な範囲にとどめ、観測した事実と推測を区別してください。
+未実行のコマンドやテストを実行済みとして報告してはいけません。
+コード変更は、必要な検証と実行結果を確認してから完了として報告してください。
+調査だけの依頼では、不要なコード変更やテストを追加しないでください。
+CoderLoopでは指定されたCoderMessage JSONを返してください。
+
+要求された出力形式、実行権限、要求仕様、完了条件は人格表現より優先します。
+機械処理用JSONはsummary等の全文字列フィールドを含め、会話の語尾や装飾を加えずに返してください。
+コード、パッチ、コマンド、ログ、観測結果も変更せず、人格は判断の観点と人間向け説明に反映してください。`
+
+func coderOwnedPromptBlock(owner, content string, contextType llm.PromptContextType) llm.Message {
+	return llm.Message{
+		Role:    "system",
+		Content: content,
+		Type:    contextType,
+		Metadata: map[string]string{
+			coderPromptOwnerMetadataKey: owner,
+			"rencrow.prompt_revision":   "coder-contract-v1",
+		},
+	}
+}
 
 // ProposalError represents a classified coder proposal failure.
 type ProposalError struct {
@@ -105,21 +140,14 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t conversation.TurnIn
 	externalConversationID := t.ChannelAddress().ExternalConversationID()
 	log.Printf("[CoderAgent] proposal generate start provider=%s root_task_id=%s prompt_len=%d", c.llmProvider.Name(), rootTaskID, len(t.MessageText()))
 
-	// システムプロンプトの構築（v4.1: Agent Persona 対応）
-	systemPrompt := c.proposalPrompt
-	if c.persona != nil {
-		systemPrompt = c.persona.BuildSystemPrompt(c.proposalPrompt)
-	}
-
-	messages := c.coderSystemMessages(ctx, systemPrompt)
+	messages := c.assembleMessages(ctx, nil, c.proposalPrompt)
 	if c.lightMemory != nil {
 		messages = append(messages, c.lightMemory.RecentMessages(externalConversationID)...)
 	}
 	messages = append(messages, userMessageWithAttachments(t.MessageText(), t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		Messages:    messages,
-		MaxTokens:   8192,
-		Temperature: 0.5,
+		Messages:  messages,
+		MaxTokens: 8192,
 	})
 
 	resp, err := c.llmProvider.Generate(ctx, req)
@@ -128,6 +156,9 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t conversation.TurnIn
 		return nil, err
 	}
 	log.Printf("[CoderAgent] proposal generate response provider=%s root_task_id=%s content_len=%d finish=%s", c.llmProvider.Name(), rootTaskID, len(resp.Content), resp.FinishReason)
+	if err := validateCoderResponse(resp); err != nil {
+		return nil, newProposalError(ProposalFailureIncompleteResponse, err.Error(), true)
+	}
 
 	// レスポンスからProposalを抽出
 	p, err := c.extractProposal(resp.Content)
@@ -149,12 +180,14 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t conversation.TurnIn
 // GenerateWithContext は会話履歴を渡して LLM 応答を生成する（CoderLoop 多ターン用）
 func (c *CoderAgent) GenerateWithContext(ctx context.Context, messages []llm.Message) (string, error) {
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		Messages:    appendCoderStableRuntimeContext(messages, currentRuntimeContext(ctx, c.runtimeContextProvider, "coder", c.stableRuntimeContext)),
-		MaxTokens:   8192,
-		Temperature: 0.5,
+		Messages:  c.assembleMessages(ctx, messages, ""),
+		MaxTokens: 8192,
 	})
 	resp, err := c.llmProvider.Generate(ctx, req)
 	if err != nil {
+		return "", err
+	}
+	if err := validateCoderResponse(resp); err != nil {
 		return "", err
 	}
 	return resp.Content, nil
@@ -162,25 +195,21 @@ func (c *CoderAgent) GenerateWithContext(ctx context.Context, messages []llm.Mes
 
 // GenerateWithPrompt は指定されたシステムプロンプトでLLM応答を生成
 func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t conversation.TurnInput, systemPrompt string) (string, error) {
-	// システムプロンプトの構築（v4.1: Agent Persona 対応）
-	finalSystemPrompt := systemPrompt
-	if c.persona != nil {
-		finalSystemPrompt = c.persona.BuildSystemPrompt(systemPrompt)
-	}
-
-	messages := c.coderSystemMessages(ctx, finalSystemPrompt)
+	messages := c.assembleMessages(ctx, nil, systemPrompt)
 	if c.lightMemory != nil {
 		messages = append(messages, c.lightMemory.RecentMessages(t.ChannelAddress().ExternalConversationID())...)
 	}
 	messages = append(messages, userMessageWithAttachments(t.MessageText(), t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		Messages:    messages,
-		MaxTokens:   8192,
-		Temperature: 0.5,
+		Messages:  messages,
+		MaxTokens: 8192,
 	})
 
 	resp, err := c.llmProvider.Generate(ctx, req)
 	if err != nil {
+		return "", err
+	}
+	if err := validateCoderResponse(resp); err != nil {
 		return "", err
 	}
 	if c.lightMemory != nil {
@@ -190,23 +219,67 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t conversation.Turn
 	return resp.Content, nil
 }
 
-func (c *CoderAgent) coderSystemMessages(ctx context.Context, systemPrompt string) []llm.Message {
-	messages := []llm.Message{{
-		Role:    "system",
-		Content: systemPrompt,
-		Type:    llm.PromptContextCharacter,
-	}}
-	if content := currentRuntimeContext(ctx, c.runtimeContextProvider, "coder", c.stableRuntimeContext); content != "" {
-		messages = append(messages, llm.Message{
+func (c *CoderAgent) assembleMessages(ctx context.Context, input []llm.Message, outputPrompt string) []llm.Message {
+	messages := make([]llm.Message, 0, len(input)+4)
+	for _, message := range input {
+		if owner := message.Metadata[coderPromptOwnerMetadataKey]; owner == coderPromptOwnerPersona || owner == coderPromptOwnerContract {
+			continue
+		}
+		messages = append(messages, cloneCoderMessage(message))
+	}
+
+	assembled := make([]llm.Message, 0, len(messages)+4)
+	if c.persona != nil && strings.TrimSpace(c.persona.Personality) != "" {
+		assembled = append(assembled, coderOwnedPromptBlock(
+			coderPromptOwnerPersona,
+			c.persona.Personality,
+			llm.PromptContextCharacter,
+		))
+	}
+	assembled = append(assembled, coderOwnedPromptBlock(
+		coderPromptOwnerContract,
+		CommonCoderContract,
+		llm.PromptContextCharacter,
+	))
+	if strings.TrimSpace(outputPrompt) != "" {
+		assembled = append(assembled, llm.Message{
 			Role:    "system",
-			Content: content,
-			Type:    llm.PromptContextStable,
-			Metadata: map[string]string{
-				"runtime_context_kind": "capability_snapshot",
-			},
+			Content: outputPrompt,
+			Type:    llm.PromptContextCharacter,
 		})
 	}
-	return messages
+	assembled = append(assembled, messages...)
+	return appendCoderStableRuntimeContext(
+		assembled,
+		currentRuntimeContext(ctx, c.runtimeContextProvider, "coder", c.stableRuntimeContext),
+	)
+}
+
+func cloneCoderMessage(message llm.Message) llm.Message {
+	clone := message
+	if message.Metadata != nil {
+		clone.Metadata = make(map[string]string, len(message.Metadata))
+		for key, value := range message.Metadata {
+			clone.Metadata[key] = value
+		}
+	}
+	clone.Parts = append([]llm.MessagePart(nil), message.Parts...)
+	return clone
+}
+
+func validateCoderResponse(response llm.GenerateResponse) error {
+	if response.HasToolCalls {
+		return errors.New("Coder response included native tool_calls; only CoderMessage text is supported")
+	}
+
+	finishReason := strings.ToLower(strings.TrimSpace(response.FinishReason))
+	if finishReason == "" || finishReason == "stop" {
+		// The domain provider contract historically allowed an omitted finish reason.
+		// Keep that provider-neutral compatibility while rejecting every explicit
+		// non-complete finish state below.
+		return nil
+	}
+	return fmt.Errorf("Coder response did not finish normally: finish_reason=%q", finishReason)
 }
 
 func appendCoderStableRuntimeContext(messages []llm.Message, content string) []llm.Message {
@@ -230,6 +303,9 @@ func appendCoderStableRuntimeContext(messages []llm.Message, content string) []l
 	insertAt := 0
 	for insertAt < len(result) {
 		message := result[insertAt]
+		if message.Type == llm.PromptContextVariable {
+			break
+		}
 		if message.Type == llm.PromptContextCharacter || message.Type == llm.PromptContextStable || strings.EqualFold(strings.TrimSpace(message.Role), "system") {
 			insertAt++
 			continue

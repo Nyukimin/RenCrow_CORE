@@ -12,19 +12,35 @@ import (
 )
 
 type loopHandoffCoderStub struct {
-	response string
+	responses []string
+	index     int
 }
 
 func (s *loopHandoffCoderStub) Generate(context.Context, conversation.TurnInput, string) (string, error) {
-	return s.response, nil
+	return s.next(), nil
 }
 
 func (s *loopHandoffCoderStub) GenerateWithContext(context.Context, []llm.Message) (string, error) {
-	return s.response, nil
+	return s.next(), nil
+}
+
+func (s *loopHandoffCoderStub) next() string {
+	if len(s.responses) == 0 {
+		return ""
+	}
+	if s.index >= len(s.responses) {
+		return s.responses[len(s.responses)-1]
+	}
+	response := s.responses[s.index]
+	s.index++
+	return response
 }
 
 func TestCodeExecutor_CoderLoopReportsBackThroughDelegationChain(t *testing.T) {
-	coder := &loopHandoffCoderStub{response: `{"type":"final_report","summary":"修正完了","changed_files":["README.md"],"tests_run":["go test ./..."],"remaining_risks":[]}`}
+	coder := &loopHandoffCoderStub{responses: []string{
+		`{"type":"read_request","actions":[{"action":"shell_command","target":"cat README.md"}]}`,
+		`{"type":"final_report","summary":"調査完了","changed_files":["README.md"],"tests_run":["go test ./..."],"remaining_risks":[]}`,
+	}}
 	worker := &recordingCodeWorkerExecutionService{}
 	var events []codeExecutorEvent
 	executor := NewDefaultCodeExecutor(coder, nil, nil, nil, worker, nil, recordingCodeEventEmitter(&events)).
@@ -33,8 +49,12 @@ func TestCodeExecutor_CoderLoopReportsBackThroughDelegationChain(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 	req := newOrchestratorTestCodeExecutionRequest(t, taskID, "会話内容を保ったまま修正して", routing.RouteCODE1, "sess-1", "test", "chat-1")
 
-	if _, err := executor.ExecuteCode(context.Background(), req); err != nil {
+	response, err := executor.ExecuteCode(context.Background(), req)
+	if err != nil {
 		t.Fatalf("ExecuteCode failed: %v", err)
+	}
+	if strings.Contains(response.Response, "README.md") || strings.Contains(response.Response, "go test ./...") {
+		t.Fatalf("Coder claims were displayed as Worker evidence: %q", response.Response)
 	}
 
 	want := []struct {

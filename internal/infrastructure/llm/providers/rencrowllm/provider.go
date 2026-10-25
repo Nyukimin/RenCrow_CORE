@@ -284,10 +284,11 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	var gatewayResp struct {
 		Choices []struct {
 			Message struct {
-				Role        string `json:"role"`
-				Content     string `json:"content"`
-				ParseStatus string `json:"parse_status"`
-				ParserName  string `json:"parser_name"`
+				Role        string            `json:"role"`
+				Content     string            `json:"content"`
+				ParseStatus string            `json:"parse_status"`
+				ParserName  string            `json:"parser_name"`
+				ToolCalls   []json.RawMessage `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -303,16 +304,19 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	// コンテンツ抽出
 	var content string
 	var finishReason string
+	var hasToolCalls bool
 	if len(gatewayResp.Choices) > 0 {
 		msg := gatewayResp.Choices[0].Message
 		content = p.sanitizeThinkingBridgeContent(msg.Content, msg.ParseStatus, msg.ParserName)
 		finishReason = gatewayResp.Choices[0].FinishReason
+		hasToolCalls = len(msg.ToolCalls) > 0
 	}
 
 	return llm.GenerateResponse{
 		Content:      content,
 		TokensUsed:   gatewayResp.Usage.TotalTokens,
 		FinishReason: finishReason,
+		HasToolCalls: hasToolCalls,
 		RequestID:    requestID,
 		ResponseID:   responseID,
 	}, nil

@@ -11,6 +11,7 @@ import (
 	moduleapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moduleregistry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/coderloop"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmodule "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
@@ -238,43 +239,30 @@ func TestCodeExecutor_CODE3_WithProposalRecordsSkillChangeEvidence(t *testing.T)
 	}
 }
 
-func TestCodeExecutor_CODEDoesNotDynamicSelectCODE3(t *testing.T) {
-	testProposal := proposal.NewProposal(
-		"Test plan",
-		`[{"type": "file_edit", "action": "create", "target": "dynamic-code3.txt", "content": "ok"}]`,
-		"Low risk",
-		"Low cost",
-	)
-
-	coder3 := &mockCoderAgentWithProposal{
-		response: "plain response should not be used",
-		proposal: testProposal,
-	}
-
-	workerService := &recordingCodeWorkerExecutionService{}
-	executor := NewDefaultCodeExecutor(nil, nil, coder3, nil, workerService, nil, noopEventEmitter).WithCapabilities([]capability.CoderCapability{
+func TestCodeExecutor_CODESelectsTheOnlyReadyLocalCoder(t *testing.T) {
+	coder3 := &mockCoderAgent{response: "coder3 response"}
+	executor := NewDefaultCodeExecutor(nil, nil, coder3, nil, nil, nil, noopEventEmitter).WithCapabilities([]capability.CoderCapability{
 		{Name: "coder3", Quality: 5, Available: true},
 	})
 
 	taskID := modulecore.NewTaskID()
 	req := newOrchestratorTestCodeExecutionRequest(t, taskID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
 
-	_, err := executor.ExecuteCode(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected CODE route to fail when coder1 is unavailable")
+	resp, err := executor.ExecuteCode(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ExecuteCode failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "CODE route requested but coder1 is unavailable") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if workerService.calls != 0 {
-		t.Fatalf("worker ExecuteProposal calls=%d, want 0", workerService.calls)
+	if resp.Response != "coder3 response" {
+		t.Fatalf("response=%q, want coder3 response", resp.Response)
 	}
 }
 
 func TestCodeExecutor_CODE_ReleasesCoderStatusAfterGenerateSuccess(t *testing.T) {
 	status := NewCoderStatus()
 	coder1 := &mockCoderAgent{response: "CODE response"}
-	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, status, noopEventEmitter)
+	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, status, noopEventEmitter).WithCapabilities([]capability.CoderCapability{
+		{Name: "coder1", Available: true},
+	})
 
 	taskID := modulecore.NewTaskID()
 	req := newOrchestratorTestCodeExecutionRequest(t, taskID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
@@ -295,7 +283,9 @@ func TestCodeExecutor_CODE_ReleasesCoderStatusAfterGenerateError(t *testing.T) {
 	status := NewCoderStatus()
 	coderErr := errors.New("generate failed")
 	coder1 := &failingCoderAgent{err: coderErr}
-	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, status, noopEventEmitter)
+	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, status, noopEventEmitter).WithCapabilities([]capability.CoderCapability{
+		{Name: "coder1", Available: true},
+	})
 
 	taskID := modulecore.NewTaskID()
 	req := newOrchestratorTestCodeExecutionRequest(t, taskID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
@@ -478,7 +468,7 @@ func TestCodeExecutor_GenerateErrorDoesNotEmitShiroSuccess(t *testing.T) {
 	}
 }
 
-func TestCodeExecutor_CODE_GenericRouteUsesOnlyCoder1(t *testing.T) {
+func TestCodeExecutor_CODERejectsUnprobedCoderPool(t *testing.T) {
 	coder2 := &mockCoderAgent{response: "unexpected coder2 response"}
 
 	executor := NewDefaultCodeExecutor(nil, coder2, nil, nil, nil, nil, noopEventEmitter)
@@ -490,7 +480,7 @@ func TestCodeExecutor_CODE_GenericRouteUsesOnlyCoder1(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected CODE route to fail when coder1 is unavailable")
 	}
-	if !strings.Contains(err.Error(), "CODE route requested but coder1 is unavailable") {
+	if !strings.Contains(err.Error(), "no enabled, probe-ready local coder is available") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -498,7 +488,8 @@ func TestCodeExecutor_CODE_GenericRouteUsesOnlyCoder1(t *testing.T) {
 func TestCodeExecutor_CODE_GenericRouteBlocksExternalCoder1(t *testing.T) {
 	coder1 := &mockCoderAgent{response: "unexpected external response"}
 	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, nil, noopEventEmitter).
-		WithExternalCoderPolicy(map[string]bool{"coder1": true})
+		WithExternalCoderPolicy(map[string]bool{"coder1": true}).
+		WithCapabilities([]capability.CoderCapability{{Name: "coder1", Available: true}})
 
 	taskID := modulecore.NewTaskID()
 	req := newOrchestratorTestCodeExecutionRequest(t, taskID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
@@ -597,7 +588,11 @@ type recordingCodeWorkerExecutionService struct {
 }
 
 func (s *recordingCodeWorkerExecutionService) ExecuteObservation(_ context.Context, _ []service.ObservationAction) ([]service.ObservationActionResult, error) {
-	return nil, nil
+	return []service.ObservationActionResult{coderloop.NewObservationActionResult("shell_command", "cat fixture.txt", "observed", nil)}, nil
+}
+
+func (s *recordingCodeWorkerExecutionService) BeginCoderTaskExecution(_ context.Context, taskID modulecore.TaskID) (service.CoderTaskExecutionSession, error) {
+	return &recordingCoderLoopSession{worker: s, taskID: taskID}, nil
 }
 
 func (s *recordingCodeWorkerExecutionService) ExecuteProposal(ctx context.Context, taskID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
@@ -609,12 +604,51 @@ func (s *recordingCodeWorkerExecutionService) ExecuteProposal(ctx context.Contex
 	}
 	result := patch.NewPatchExecutionResult()
 	result.AddResult(patch.CommandResult{Success: true, Output: "ok"})
+	result.TestStatus = "not_applicable"
 	return result.WithSummary("実行: 1 件, 成功: 1 件, 失敗: 0 件"), nil
 }
 
 func (s *recordingCodeWorkerExecutionService) ExecuteProposalInWorkspace(ctx context.Context, taskID modulecore.TaskID, p *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error) {
 	s.workspace = workspace
 	return s.ExecuteProposal(ctx, taskID, p)
+}
+
+type recordingCoderLoopSession struct {
+	worker   *recordingCodeWorkerExecutionService
+	taskID   modulecore.TaskID
+	observed bool
+	failure  string
+}
+
+func (s *recordingCoderLoopSession) RecordLoopFailure(_ context.Context, reason string) error {
+	s.failure = reason
+	return nil
+}
+
+func (s *recordingCoderLoopSession) ExecuteObservation(ctx context.Context, actions []service.ObservationAction) ([]service.ObservationActionResult, error) {
+	results := make([]service.ObservationActionResult, len(actions))
+	for index, action := range actions {
+		results[index] = coderloop.NewObservationActionResult(action.Action, action.Target, "observed", nil)
+	}
+	if len(results) > 0 {
+		s.observed = true
+		s.failure = ""
+	}
+	return results, nil
+}
+
+func (s *recordingCoderLoopSession) ExecuteProposal(ctx context.Context, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+	return s.worker.ExecuteProposal(ctx, s.taskID, p)
+}
+
+func (s *recordingCoderLoopSession) CompletionEvidence(context.Context) (service.CoderTaskCompletionEvidence, error) {
+	return service.CoderTaskCompletionEvidence{
+		TaskID:                s.taskID,
+		ReadOnly:              true,
+		SuccessfulObservation: s.observed,
+		Ready:                 s.observed && s.failure == "",
+		FailureReason:         s.failure,
+	}, nil
 }
 
 type recordingCoderProposalEvidenceRecorder struct {

@@ -13,6 +13,7 @@ import (
 	appverification "github.com/Nyukimin/RenCrow_CORE/internal/application/verification"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
@@ -1093,6 +1094,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERoute(t *testing.T) {
 	coder := &mockCoderAgent{response: "```go\n// Generated code\nfunc main() {}\n```"}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, coder, nil, nil, nil, nil)
+	orchestrator.SetCoderCapabilities([]capability.CoderCapability{{Name: "coder1", Available: true}})
 	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
@@ -1123,6 +1125,7 @@ func TestMessageOrchestrator_ProcessMessage_CodeRouteRecordsSkillBootstrap(t *te
 	coder := &mockCoderAgent{response: "```go\nfunc main() {}\n```"}
 	recorder := &mockSkillBootstrapRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, shiro, coder, nil, nil, nil, nil)
+	orch.SetCoderCapabilities([]capability.CoderCapability{{Name: "coder1", Available: true}})
 	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetSkillBootstrapRecorder(recorder)
 
@@ -1181,6 +1184,10 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		coder2 := &mockCoderAgent{response: "coder2 response"}
 
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, coder1, coder2, nil, nil, nil)
+		orch.SetCoderCapabilities([]capability.CoderCapability{
+			{Name: "coder1", Available: true},
+			{Name: "coder2", Available: true},
+		})
 		attachCanonicalTestTaskOwner(t, orch)
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 			SessionID: newMockCanonicalSessionID("line", "U1"), Channel: "line", ChatID: "U1", UserMessage: "実装して",
@@ -1193,7 +1200,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		}
 	})
 
-	t.Run("Coder1なし_Coder2があってもエラー", func(t *testing.T) {
+	t.Run("Coder1なし_Coder2未probeのためエラー", func(t *testing.T) {
 		repo := newMockSessionRepository()
 		mio := &mockMioAgent{
 			decision: routing.NewDecision(routing.RouteCODE, 0.85, "CODE route"),
@@ -1208,12 +1215,12 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		if err == nil {
 			t.Fatal("expected CODE route to fail when coder1 is unavailable")
 		}
-		if !strings.Contains(err.Error(), "CODE route requested but coder1 is unavailable") {
+		if !strings.Contains(err.Error(), "no enabled, probe-ready local coder is available") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("Coder1なし_Coder3があってもエラー", func(t *testing.T) {
+	t.Run("Coder1なし_Coder3未probeのためエラー", func(t *testing.T) {
 		repo := newMockSessionRepository()
 		mio := &mockMioAgent{
 			decision: routing.NewDecision(routing.RouteCODE, 0.85, "CODE route"),
@@ -1228,7 +1235,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		if err == nil {
 			t.Fatal("expected CODE route to fail when coder1 is unavailable")
 		}
-		if !strings.Contains(err.Error(), "CODE route requested but coder1 is unavailable") {
+		if !strings.Contains(err.Error(), "no enabled, probe-ready local coder is available") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

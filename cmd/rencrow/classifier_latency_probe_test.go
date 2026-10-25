@@ -263,6 +263,8 @@ func TestMioClassifierLatencyProbe(t *testing.T) {
 	deps.taskStorePersist = cfg.TaskStore.Index.Persist
 	deps.taskStoreRotation = cfg.TaskStore.Rotation.Enabled
 	deps.taskStoreSizeValve = cfg.TaskStore.Rotation.SizeValveBytes
+	limits := taskParallelLimitsFromConfig(cfg)
+	deps.taskParallelLimits = &limits
 	if err := initializeRuntimeTaskOwner(&deps, workspace); err != nil {
 		t.Fatal("classifier latency probe could not initialize its isolated Task owner")
 	}

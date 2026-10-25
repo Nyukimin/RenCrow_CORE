@@ -12,7 +12,7 @@ type codeTarget struct {
 	name         string
 	coder        CoderAgent
 	systemPrompt string
-	release      func() // CoderStatus解放用（オプション）
+	release      func() // CoderStatus解放用
 }
 
 // selectCoderForRoute はルートに応じてCoderを選択
@@ -34,62 +34,82 @@ func (e *DefaultCodeExecutor) selectExplicitCoderForRoute(route routing.Route, n
 	if coder == nil {
 		return codeTarget{}, fmt.Errorf("%s route requested but no %s available", route, name)
 	}
-	log.Printf("[CodeExecutor] coder selected route=%s target=%s mode=explicit", route, name)
-	return codeTarget{name: name, coder: coder, systemPrompt: prompt}, nil
-}
-
-func (e *DefaultCodeExecutor) selectDefaultCoderForGenericRoute(route routing.Route) (codeTarget, error) {
-	const coderName = "coder1"
-	if e.coder1 == nil {
-		log.Printf("[CodeExecutor] coder skip route=%s target=%s reason=unavailable", route, coderName)
-		return codeTarget{}, fmt.Errorf("CODE route requested but %s is unavailable; use CODE2/CODE3/CODE4 explicitly for another coder", coderName)
-	}
-	if e.externalCoders[coderName] {
-		log.Printf("[CodeExecutor] coder skip route=%s target=%s reason=external_requires_explicit_route", route, coderName)
-		return codeTarget{}, fmt.Errorf("CODE route requested but %s uses an external provider; use CODE1/CODE2/CODE3/CODE4 explicitly to use an external coder", coderName)
-	}
-	if e.coderStatus != nil {
-		if !e.coderStatus.Acquire(coderName) {
-			log.Printf("[CodeExecutor] coder skip route=%s target=%s reason=busy", route, coderName)
-			return codeTarget{}, fmt.Errorf("CODE route requested but %s is busy", coderName)
+	if e.coderCaps != nil {
+		available := false
+		for _, cap := range e.coderCaps {
+			if normalizeCoderStatusName(cap.Name) == name && cap.Available {
+				available = true
+				break
+			}
 		}
-		log.Printf("[CodeExecutor] coder selected route=%s target=%s mode=default", route, coderName)
-		return codeTarget{
-			name:         coderName,
-			coder:        e.coder1,
-			systemPrompt: "You are a code generation assistant.",
-			release: func() {
-				e.coderStatus.Release(coderName)
-			},
-		}, nil
+		if !available {
+			return codeTarget{}, fmt.Errorf("%s route requested but %s is unavailable", route, name)
+		}
 	}
-	log.Printf("[CodeExecutor] coder selected route=%s target=%s mode=default", route, coderName)
+	if !e.coderStatus.Acquire(name) {
+		return codeTarget{}, fmt.Errorf("%s route requested but %s is busy", route, name)
+	}
+	log.Printf("[CodeExecutor] coder selected route=%s target=%s mode=explicit", route, name)
 	return codeTarget{
-		name:         coderName,
-		coder:        e.coder1,
-		systemPrompt: "You are a code generation assistant.",
+		name:         name,
+		coder:        coder,
+		systemPrompt: prompt,
+		release:      func() { e.coderStatus.Release(name) },
 	}, nil
 }
 
-// systemPromptForRoute はルートに対応するシステムプロンプトを返す
-func systemPromptForRoute(route routing.Route) string {
-	switch route {
-	case routing.RouteCODE1:
-		return "You are a specification design assistant."
-	case routing.RouteCODE2:
-		return "You are an implementation assistant."
-	case routing.RouteCODE3:
-		return "You are a high-quality code review and reasoning assistant."
-	case routing.RouteCODE4:
-		return "You are a fast prototyping and experimental coding assistant."
-	default:
-		return "You are a code generation assistant."
+func (e *DefaultCodeExecutor) selectDefaultCoderForGenericRoute(route routing.Route) (codeTarget, error) {
+	available := make(map[string]bool, len(e.coderCaps))
+	for _, cap := range e.coderCaps {
+		name := normalizeCoderStatusName(cap.Name)
+		if name != "" && cap.Available {
+			available[name] = true
+		}
 	}
+
+	candidates := make([]string, 0, len(coderStatusSlotOrder))
+	externalCandidates := make([]string, 0)
+	for _, name := range coderStatusSlotOrder {
+		if !available[name] || e.coderByName(name) == nil {
+			continue
+		}
+		if e.externalCoders[name] {
+			externalCandidates = append(externalCandidates, name)
+			log.Printf("[CodeExecutor] coder skip route=%s target=%s reason=external_requires_explicit_route", route, name)
+			continue
+		}
+		candidates = append(candidates, name)
+	}
+	if len(candidates) == 0 {
+		if len(externalCandidates) > 0 {
+			return codeTarget{}, fmt.Errorf("CODE route requested but %s uses an external provider; use CODE1/CODE2/CODE3/CODE4 explicitly to use an external coder", externalCandidates[0])
+		}
+		return codeTarget{}, fmt.Errorf("CODE route requested but no enabled, probe-ready local coder is available")
+	}
+
+	name, ok := e.coderStatus.AcquireNext(candidates)
+	if !ok {
+		log.Printf("[CodeExecutor] coder skip route=%s reason=all_ready_candidates_busy candidates=%d", route, len(candidates))
+		return codeTarget{}, fmt.Errorf("CODE route requested but all ready coders are busy")
+	}
+	coder := e.coderByName(name)
+	log.Printf("[CodeExecutor] coder selected route=%s target=%s mode=round_robin candidates=%d", route, name, len(candidates))
+	return codeTarget{
+		name:         name,
+		coder:        coder,
+		systemPrompt: coderSelectionPrompt(route),
+		release:      func() { e.coderStatus.Release(name) },
+	}, nil
+}
+
+// coderSelectionPrompt はrouteによるCoderの役割差を追加しない。
+func coderSelectionPrompt(_ routing.Route) string {
+	return ""
 }
 
 // coderByName は名前からCoderAgentを取得
 func (e *DefaultCodeExecutor) coderByName(name string) CoderAgent {
-	switch name {
+	switch normalizeCoderStatusName(name) {
 	case "coder1":
 		return e.coder1
 	case "coder2":
@@ -103,17 +123,17 @@ func (e *DefaultCodeExecutor) coderByName(name string) CoderAgent {
 	}
 }
 
-// explicitCodeRouteTarget はCODE1/CODE2/CODE3/CODE4の明示的ルートを判定
+// explicitCodeRouteTarget は明示code routeから指定Coderと共通promptを返す。
 func explicitCodeRouteTarget(route routing.Route) (name, prompt string, ok bool) {
 	switch route {
 	case routing.RouteCODE1:
-		return "coder1", "You are a specification design assistant.", true
+		return "coder1", coderSelectionPrompt(route), true
 	case routing.RouteCODE2:
-		return "coder2", "You are an implementation assistant.", true
+		return "coder2", coderSelectionPrompt(route), true
 	case routing.RouteCODE3:
-		return "coder3", "You are a high-quality code review and reasoning assistant.", true
+		return "coder3", coderSelectionPrompt(route), true
 	case routing.RouteCODE4:
-		return "coder4", "You are a fast prototyping and experimental coding assistant.", true
+		return "coder4", coderSelectionPrompt(route), true
 	default:
 		return "", "", false
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -140,6 +141,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_GenericCODE(t *testing.T) 
 	shiro := &mockShiroAgent{response: "unused"}
 	coder1 := &mockCoderAgent{response: "generic code response\n```go\nfunc generated() {}\n```"}
 	orch := NewMessageOrchestrator(repo, mio, shiro, coder1, nil, nil, nil, nil)
+	orch.SetCoderCapabilities([]capability.CoderCapability{{Name: "coder1", Available: true}})
 	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)

@@ -10,6 +10,40 @@ type TaskStoreConfig struct {
 	Rotation TaskStoreRotationConfig `yaml:"rotation"`
 }
 
+// TaskParallelLimitsConfig configures the canonical Task owner's admission
+// limits. When this optional block is omitted, the Task owner keeps its
+// application defaults.
+type TaskParallelLimitsConfig struct {
+	Global            int `yaml:"global"`
+	PerModule         int `yaml:"per_module"`
+	CodingTasks       int `yaml:"coding_tasks"`
+	LongResearchTasks int `yaml:"long_research_tasks"`
+	DestructiveTasks  int `yaml:"destructive_tasks"`
+}
+
+func (c TaskParallelLimitsConfig) validate() error {
+	if c.Global < 1 {
+		return fmt.Errorf("task_parallel_limits.global must be positive")
+	}
+	for _, limit := range []struct {
+		key   string
+		value int
+	}{
+		{"per_module", c.PerModule},
+		{"coding_tasks", c.CodingTasks},
+		{"long_research_tasks", c.LongResearchTasks},
+		{"destructive_tasks", c.DestructiveTasks},
+	} {
+		if limit.value < 1 {
+			return fmt.Errorf("task_parallel_limits.%s must be positive", limit.key)
+		}
+		if limit.value > c.Global {
+			return fmt.Errorf("task_parallel_limits.%s must not exceed task_parallel_limits.global", limit.key)
+		}
+	}
+	return nil
+}
+
 // MinTaskStoreRotationSizeValve is the smallest size valve the configuration
 // accepts. Below it a store would open a segment every few transactions.
 const MinTaskStoreRotationSizeValve int64 = 1 << 20

@@ -167,6 +167,7 @@ type GenerateResponse struct {
 	TokensUsed      int
 	TokensPerSecond float64
 	FinishReason    string
+	HasToolCalls    bool
 	RequestID       modulecore.RequestID
 	ResponseID      modulecore.ResponseID
 }

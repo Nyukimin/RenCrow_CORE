@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,8 @@ type ParallelLimits struct {
 	LongResearchTasks int
 	DestructiveTasks  int
 }
+
+const taskAdmissionRunningScanLimit = 10000
 
 func DefaultParallelLimits() ParallelLimits {
 	return ParallelLimits{Global: 3, PerModule: 1, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 1}
@@ -977,23 +981,41 @@ func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintas
 			return false, "dependency task is not succeeded", nil
 		}
 	}
-	running, err := m.store.ListTasks(ctx, domaintask.Filter{Status: domaintask.StatusRunning, Limit: 10000})
+	running, err := m.store.ListTasks(ctx, domaintask.Filter{Status: domaintask.StatusRunning, Limit: taskAdmissionRunningScanLimit})
+	if err != nil {
+		return false, "", err
+	}
+	if len(running) >= taskAdmissionRunningScanLimit {
+		return false, "", fmt.Errorf("running Task scan reached admission limit %d", taskAdmissionRunningScanLimit)
+	}
+	coordinationParents, err := runningTaskCoordinationParents(running, candidate)
 	if err != nil {
 		return false, "", err
 	}
 	global, sameModule, coding, research, operations := 0, 0, 0, 0, 0
 	for _, item := range running {
-		// A running parent is the coordination container for this candidate,
-		// not a second execution consuming the same parallel capacity.
-		if candidate.ParentTaskID != "" && item.TaskID == candidate.ParentTaskID {
+		if _, coordinationOnly := coordinationParents[item.TaskID]; coordinationOnly {
 			continue
 		}
 		global++
-		if candidate.ModuleID != "" && item.ModuleID == candidate.ModuleID && !candidate.ReadOnly {
-			sameModule++
+		if !candidate.ReadOnly {
+			sameModuleScope := candidate.ModuleID != "" && item.ModuleID == candidate.ModuleID
+			if !sameModuleScope && candidate.ModuleRoot != "" && item.ModuleRoot != "" {
+				var err error
+				sameModuleScope, err = moduleRootsOverlap(candidate.ModuleRoot, item.ModuleRoot)
+				if err != nil {
+					return false, "", fmt.Errorf("compare Task module roots: %w", err)
+				}
+			}
+			if sameModuleScope {
+				if !item.ReadOnly {
+					return false, "module write scope is already running", nil
+				}
+				sameModule++
+			}
 		}
 		switch item.Route {
-		case domaintask.RouteCode:
+		case domaintask.RouteCode, domaintask.RouteCODE1, domaintask.RouteCODE2, domaintask.RouteCODE3, domaintask.RouteCODE4:
 			coding++
 		case domaintask.RouteResearch:
 			research++
@@ -1008,7 +1030,7 @@ func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintas
 		return false, "module running task limit reached", nil
 	}
 	switch candidate.Route {
-	case domaintask.RouteCode:
+	case domaintask.RouteCode, domaintask.RouteCODE1, domaintask.RouteCODE2, domaintask.RouteCODE3, domaintask.RouteCODE4:
 		if m.limits.CodingTasks > 0 && coding >= m.limits.CodingTasks {
 			return false, "coding task limit reached", nil
 		}
@@ -1022,6 +1044,112 @@ func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintas
 		}
 	}
 	return true, "", nil
+}
+
+func runningTaskCoordinationParents(running []domaintask.Task, candidate domaintask.Task) (map[modulecore.TaskID]struct{}, error) {
+	runningByID := make(map[modulecore.TaskID]domaintask.Task, len(running))
+	for _, item := range running {
+		if _, exists := runningByID[item.TaskID]; exists {
+			return nil, errors.New("running Task list contains duplicate IDs")
+		}
+		runningByID[item.TaskID] = item
+	}
+
+	visited := make(map[modulecore.TaskID]struct{}, len(runningByID))
+	for taskID := range runningByID {
+		path := make([]modulecore.TaskID, 0)
+		inPath := make(map[modulecore.TaskID]struct{})
+		current := taskID
+		for current != "" {
+			if _, done := visited[current]; done {
+				break
+			}
+			if _, cycle := inPath[current]; cycle {
+				return nil, errors.New("running Task parent cycle detected")
+			}
+			item, isRunning := runningByID[current]
+			if !isRunning {
+				break
+			}
+			inPath[current] = struct{}{}
+			path = append(path, current)
+			current = item.ParentTaskID
+		}
+		for _, pathTaskID := range path {
+			visited[pathTaskID] = struct{}{}
+		}
+	}
+
+	coordinationParents := make(map[modulecore.TaskID]struct{})
+	for _, item := range running {
+		if item.ParentTaskID == "" {
+			continue
+		}
+		if _, parentIsRunning := runningByID[item.ParentTaskID]; parentIsRunning {
+			coordinationParents[item.ParentTaskID] = struct{}{}
+		}
+	}
+	if candidate.ParentTaskID != "" {
+		if _, parentIsRunning := runningByID[candidate.ParentTaskID]; parentIsRunning {
+			coordinationParents[candidate.ParentTaskID] = struct{}{}
+		}
+	}
+	return coordinationParents, nil
+}
+
+func moduleRootsOverlap(left, right string) (bool, error) {
+	left, err := canonicalTaskModuleRoot(left)
+	if err != nil {
+		return false, err
+	}
+	right, err = canonicalTaskModuleRoot(right)
+	if err != nil {
+		return false, err
+	}
+	return taskModuleRootContains(left, right) || taskModuleRootContains(right, left), nil
+}
+
+func canonicalTaskModuleRoot(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("make module root absolute: %w", err)
+	}
+	current := filepath.Clean(absolute)
+	missing := make([]string, 0)
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			canonical := filepath.Clean(resolved)
+			for index := len(missing) - 1; index >= 0; index-- {
+				canonical = filepath.Join(canonical, missing[index])
+			}
+			return filepath.Clean(canonical), nil
+		}
+		if !errors.Is(resolveErr, fs.ErrNotExist) {
+			return "", fmt.Errorf("resolve module root %q: %w", value, resolveErr)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("resolve module root %q: no existing ancestor", value)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func taskModuleRootContains(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	if relative == "." {
+		return true
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (m *Manager) validateRelationships(ctx context.Context, value domaintask.Task) error {
