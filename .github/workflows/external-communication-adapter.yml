@@ -1,0 +1,53 @@
+name: External communication adapter
+
+on:
+  push:
+    branches:
+      - verify/external-communication-20261106
+    paths:
+      - '.github/workflows/external-communication-adapter.yml'
+      - 'internal/adapter/boardcommunication/**'
+      - 'go.mod'
+      - 'go.sum'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/external-communication-adapter.yml'
+      - 'internal/adapter/boardcommunication/**'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  contents: read
+
+jobs:
+  boardcommunication:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare test runtime directories
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/Tmp/test-runtime/_tmp" \
+                   "$GITHUB_WORKSPACE/Tmp/test-runtime/_cache/go-build" \
+                   "$GITHUB_WORKSPACE/Tmp/test-runtime/_cache/go-mod"
+          {
+            echo "TEMP=$GITHUB_WORKSPACE/Tmp/test-runtime/_tmp"
+            echo "TMP=$GITHUB_WORKSPACE/Tmp/test-runtime/_tmp"
+            echo "TMPDIR=$GITHUB_WORKSPACE/Tmp/test-runtime/_tmp"
+            echo "GOTMPDIR=$GITHUB_WORKSPACE/Tmp/test-runtime/_tmp"
+            echo "GOCACHE=$GITHUB_WORKSPACE/Tmp/test-runtime/_cache/go-build"
+            echo "GOMODCACHE=$GITHUB_WORKSPACE/Tmp/test-runtime/_cache/go-mod"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go tests
+        run: go test -count=1 -v -timeout=5m ./internal/adapter/boardcommunication
+      - name: Go vet
+        run: go vet ./internal/adapter/boardcommunication
