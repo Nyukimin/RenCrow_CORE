@@ -217,6 +217,62 @@ func TestAcceptBoardPeerRequestUsesScopedResponderAndPersistsItAcrossReplay(t *t
 	}
 }
 
+func TestAcceptBoardPeerRequestUsesBoardCharacterTargetKindAcrossReplay(t *testing.T) {
+	for _, actorID := range []string{"aka", "ao", "kin", "gin", "lumina"} {
+		t.Run(actorID, func(t *testing.T) {
+			fixture := newBoardPeerIngressFixture(t)
+			ctx := context.Background()
+			source := fixture.source
+			source.Scope.PrincipalID = actorID
+			source.Binding.RecipientPrincipalID = actorID
+			source.Binding.ResponderActorID = actorID
+			source.Recipients = []string{actorID}
+			source.Mentions = []string{actorID}
+			fixture.source = source
+
+			scopedPin := fixture.pin
+			scopedPin.PrincipalID = actorID
+			if _, err := fixture.store.PinBoardConnectionForPrincipal(ctx, scopedPin); err != nil {
+				t.Fatalf("PinBoardConnectionForPrincipal(%s): %v", actorID, err)
+			}
+			if _, err := fixture.store.BindBoardPeerThreadSession(ctx, BoardPeerThreadSessionBinding{
+				Key: boardPeerThreadSessionKeyForSource(source), SessionID: fixture.sessionID,
+			}); err != nil {
+				t.Fatalf("BindBoardPeerThreadSession(%s): %v", actorID, err)
+			}
+
+			input := BoardPeerRequestAcceptInput{Source: source, SessionID: fixture.sessionID, RuntimeVersion: "v2", GenerationEpoch: fixture.generationEpoch}
+			accepted, err := fixture.store.AcceptBoardPeerRequest(ctx, input)
+			if err != nil {
+				t.Fatalf("AcceptBoardPeerRequest(%s): %v", actorID, err)
+			}
+			if err := assertBoardPeerAcceptedInput(accepted, input); err != nil {
+				t.Fatalf("accepted %s input: %v", actorID, err)
+			}
+
+			fixture.reopen(t)
+			replayed, err := fixture.store.AcceptBoardPeerRequest(ctx, input)
+			if err != nil || !sameBoardPeerJSON(replayed, accepted) {
+				t.Fatalf("AcceptBoardPeerRequest(%s replay) = %#v, err %v; want exact accepted receipt", actorID, replayed, err)
+			}
+			tail, err := fixture.store.ReadCompleteSessionTail(ctx, accepted.SessionID, 0)
+			if err != nil || !tail.Complete {
+				t.Fatalf("ReadCompleteSessionTail(%s) = complete %t, err %v", actorID, tail.Complete, err)
+			}
+			for _, message := range tail.Messages {
+				if message.Index.MessageID != accepted.InputMessageID {
+					continue
+				}
+				if message.Index.ToKind != "board_character" || message.Index.ToActor != actorID || message.Event.Payload["to"] != actorID {
+					t.Fatalf("canonical %s request provenance = %#v; want board_character target", actorID, message)
+				}
+				return
+			}
+			t.Fatalf("canonical session tail omitted %s BOARD character input", actorID)
+		})
+	}
+}
+
 func TestAcceptBoardKuroRequestUsesOnlyKuroPrincipalPinAndReplaysExactSource(t *testing.T) {
 	fixture := newBoardPeerIngressFixture(t)
 	ctx := context.Background()

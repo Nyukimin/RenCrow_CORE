@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	llmmiddleware "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/middleware"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
@@ -21,7 +22,7 @@ type primaryLLMProviders struct {
 	Heavy                   llm.LLMProvider
 	Wild                    llm.LLMProvider
 	Conversation            *llmmiddleware.ConversationProvider
-	BoardChat               *llmmiddleware.ConversationProvider
+	BoardChats              map[string]*llmmiddleware.ConversationProvider
 	Readback                map[string]*llmmiddleware.ConversationProvider
 	GatewayWriteDiagnostics map[string]modulellm.GatewayRequestWriteDiagnosticsProvider
 }
@@ -60,6 +61,20 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 		return llmmiddleware.NewConversationProvider(
 			gatewayProvider(role, alias, agentID, false), agentID+"-readback", contextBudgetPolicyForConfig(cfg))
 	}
+	// Construct CHAT-only providers only for explicitly configured responders.
+	// Each actor has a deterministic alias and matching Gateway provenance.
+	boardChats := make(map[string]*llmmiddleware.ConversationProvider)
+	if cfg.BoardCommunication.Enabled {
+		for _, responder := range cfg.BoardCommunication.Responders {
+			actorID := responder.ActorID
+			if actorID != "kuro" && !domainconversation.IsBoardSpeechCharacter(actorID) {
+				continue
+			}
+			alias := actorID + "-board-chat"
+			boardChats[actorID] = llmmiddleware.NewConversationProvider(
+				gatewayProvider("board-chat", alias, actorID, false), alias, contextBudgetPolicyForConfig(cfg))
+		}
+	}
 	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
 	return primaryLLMProviders{
 		Chat:       provider("chat", "mio", "mio", true),
@@ -69,8 +84,7 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 		Wild:       provider("wild", "midori", "midori", false),
 		Conversation: llmmiddleware.NewConversationProvider(
 			gatewayProvider("chat", "mio", "mio", false), "mio-conversation", contextBudgetPolicyForConfig(cfg)),
-		BoardChat: llmmiddleware.NewConversationProvider(
-			gatewayProvider("board-chat", "kuro-board-chat", "kuro", false), "kuro-board-chat", contextBudgetPolicyForConfig(cfg)),
+		BoardChats: boardChats,
 		Readback: map[string]*llmmiddleware.ConversationProvider{
 			"shiro":  conversationProvider("shiro", "chatworker", "shiro"),
 			"kuro":   conversationProvider("kuro", "heavy", "kuro"),

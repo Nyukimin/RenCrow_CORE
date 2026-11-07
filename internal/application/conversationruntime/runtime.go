@@ -636,7 +636,7 @@ func validateExternalCommittedBundle(bundle ExternalCommittedBundle, expected Ex
 		return errors.New("external invocation receipt does not match its committed bundle")
 	}
 	responderActorID := expected.SourceBinding.EffectiveResponderActorID()
-	expectedActorKind, expectedActorID, expectedKind, expectedIndexKind := "agent", responderActorID, "reply", "assistant_message"
+	expectedActorKind, expectedActorID, expectedKind, expectedIndexKind := expected.SourceBinding.ResponderActorKind(), responderActorID, "reply", "assistant_message"
 	if bundle.SafeError {
 		expectedActorKind, expectedActorID, expectedKind, expectedIndexKind = "", "", "turn_error", "turn_error"
 	}
@@ -868,7 +868,7 @@ func (r *Runtime) externalPeerMessage(input AcceptedTurnInput, kind, indexKind, 
 	event := modulecore.NewEventEnvelope(accepted.InputEvent.TraceID, accepted.InputEvent.EventID, nil, "conversation_runtime", "agent.response", time.Now().UTC(), payload)
 	event.SessionID, event.TurnID, event.MessageID = accepted.SessionID, accepted.TurnID, messageID
 	if kind != "turn_error" {
-		event.ActorKind, event.ActorID = "agent", responderActorID
+		event.ActorKind, event.ActorID = binding.ResponderActorKind(), responderActorID
 	}
 	index := MessageIndex{
 		MessageID: messageID, EventID: event.EventID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,

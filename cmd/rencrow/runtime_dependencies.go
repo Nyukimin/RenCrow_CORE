@@ -2058,13 +2058,15 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			boardPeerChatProviders[actorID] = responseFirstConversationProvider{provider: provider, name: actorID}
 		}
 	}
-	var boardChatProvider domainagent.ConversationGenerationProvider
-	if llmRuntime.BoardChat != nil {
-		boardChatProvider = responseFirstConversationProvider{provider: llmRuntime.BoardChat, name: "kuro-board-chat"}
+	boardChatProviders := make(map[string]domainagent.ConversationGenerationProvider, len(llmRuntime.Primary.BoardChats))
+	for actorID, provider := range llmRuntime.Primary.BoardChats {
+		if provider != nil {
+			boardChatProviders[actorID] = responseFirstConversationProvider{provider: provider, name: actorID + "-board-chat"}
+		}
 	}
 	responderWiring := boardCommunicationResponderWiring{
 		Readback: responseFirstReadbackWiringFor(cfg, boardPeerChatProviders),
-		PeerChat: boardPeerChatWiringFor(cfg, boardChatProvider),
+		PeerChat: boardPeerChatWiringFor(cfg, boardChatProviders),
 	}
 	buildBoardCommunicationRuntime(
 		cfg, deps, canonicalEventStore, sessionRuntime.SessionRepo, agents.Mio, llmRuntime.Conversation,

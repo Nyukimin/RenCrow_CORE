@@ -16,20 +16,27 @@ type boardCommunicationResponderWiring struct {
 
 type boardPeerChatWiring map[string]agent.ReadbackAssigneeConfig
 
-// boardPeerChatWiringFor reads only Kuro's authored character bundle and the
-// dedicated CHAT-only Gateway provider. It deliberately ignores Heavy and
-// ordinary Readback provider configuration.
-func boardPeerChatWiringFor(cfg *config.Config, provider agent.ConversationGenerationProvider) boardPeerChatWiring {
-	if cfg == nil || cfg.Prompts == nil || provider == nil {
+// boardPeerChatWiringFor reads exact authored bundles and dedicated CHAT-only
+// Gateway providers for explicitly configured Kuro/BOARD-character responders.
+// It deliberately ignores Heavy, Coder, and ordinary Readback providers.
+func boardPeerChatWiringFor(cfg *config.Config, providers map[string]agent.ConversationGenerationProvider) boardPeerChatWiring {
+	if cfg == nil || !cfg.BoardCommunication.Enabled || cfg.Prompts == nil || len(providers) == 0 {
 		return nil
 	}
-	prompt := strings.TrimSpace(cfg.Prompts.CharacterPrompts[string(agent.BoardPeerChatActorKuro)])
-	if prompt == "" {
-		return nil
+	wiring := make(boardPeerChatWiring)
+	for _, responder := range cfg.BoardCommunication.Responders {
+		actorID := responder.ActorID
+		if actorID != string(agent.BoardPeerChatActorKuro) && !domainconversation.IsBoardSpeechCharacter(actorID) {
+			continue
+		}
+		provider := providers[actorID]
+		prompt := strings.TrimSpace(cfg.Prompts.CharacterPrompts[actorID])
+		if provider == nil || prompt == "" {
+			continue
+		}
+		wiring[actorID] = agent.ReadbackAssigneeConfig{Provider: provider, SystemPrompt: prompt}
 	}
-	return boardPeerChatWiring{
-		string(agent.BoardPeerChatActorKuro): {Provider: provider, SystemPrompt: prompt},
-	}
+	return wiring
 }
 
 // newBoardPeerChatRuntime selects the reviewed authored prompt and real
@@ -41,7 +48,7 @@ func newBoardPeerChatRuntime(actor string, wiring boardCommunicationResponderWir
 	}
 	var configured agent.ReadbackAssigneeConfig
 	var ok bool
-	if actor == string(agent.BoardPeerChatActorKuro) {
+	if actor == string(agent.BoardPeerChatActorKuro) || domainconversation.IsBoardSpeechCharacter(actor) {
 		configured, ok = wiring.PeerChat[actor]
 	} else {
 		configured, ok = wiring.Readback.Assignees[actor]

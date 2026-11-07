@@ -28,6 +28,17 @@ const (
 	ExternalPeerResponderActorKuro   = "kuro"
 )
 
+// IsBoardSpeechCharacter recognizes the BOARD-only speech characters. These
+// names identify a constrained BOARD chat responder, not a CORE Agent role.
+func IsBoardSpeechCharacter(id string) bool {
+	switch id {
+	case "aka", "ao", "kin", "gin", "lumina":
+		return true
+	default:
+		return false
+	}
+}
+
 // IsExternalPeerResponderActor is the single allowlist for explicitly
 // configured BOARD CHAT responders. Mio remains the legacy default and is not
 // an explicit responder; Kuro here is a CHAT-only capability, not Heavy.
@@ -36,7 +47,7 @@ func IsExternalPeerResponderActor(actorID string) bool {
 	case ExternalPeerResponderActorShiro, ExternalPeerResponderActorMidori, ExternalPeerResponderActorKuro:
 		return true
 	default:
-		return false
+		return IsBoardSpeechCharacter(actorID)
 	}
 }
 
@@ -211,6 +222,15 @@ func (binding ExternalPeerBinding) EffectiveResponderActorID() string {
 		return "mio"
 	}
 	return binding.ResponderActorID
+}
+
+// ResponderActorKind returns the BOARD-specific provenance kind for a speech
+// character and preserves the existing CORE agent kind for other responders.
+func (binding ExternalPeerBinding) ResponderActorKind() string {
+	if IsBoardSpeechCharacter(binding.EffectiveResponderActorID()) {
+		return "board_character"
+	}
+	return "agent"
 }
 
 // SameContext compares the tuple that bounds an authorized thread view.

@@ -168,10 +168,18 @@ func BuildIdleChatAgentPrompts(p *LoadedPrompts) map[string]string {
 	}
 	out := make(map[string]string, len(p.IdleChatAgents)+len(p.CharacterPrompts)*2)
 	for name, content := range p.IdleChatAgents {
+		if strings.EqualFold(strings.TrimSpace(name), "lumina") {
+			continue
+		}
 		setPromptAliases(out, name, strings.TrimSpace(content))
 	}
 	for name, characterPrompt := range p.CharacterPrompts {
 		key := strings.ToLower(strings.TrimSpace(name))
+		// Lumina is a BOARD-only speech character; a workspace authored bundle
+		// must not silently add a new IdleChat speaker.
+		if key == "lumina" {
+			continue
+		}
 		characterPrompt = strings.TrimSpace(characterPrompt)
 		if key == "" || characterPrompt == "" {
 			continue

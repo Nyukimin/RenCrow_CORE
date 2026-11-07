@@ -65,6 +65,32 @@ func TestBuildReadViewScopesExternalHistoryAndRepliesToResponderActor(t *testing
 	}
 }
 
+func TestBuildReadViewAcceptsBoardCharacterInputTargetKind(t *testing.T) {
+	request, tail, _ := externalPeerReadViewFixture(t)
+	request = externalPeerRequestWithResponderActor(t, request, "aka")
+
+	prior := tail.Messages[1]
+	priorEvent := prior.Event
+	setExternalPeerResponderActor(t, &priorEvent, "aka")
+	prior.Event = priorEvent
+	prior.Index.ToKind, prior.Index.ToActor = "board_character", "aka"
+	priorResponse := externalPeerReplyEvent(priorEvent, "peer-a", 7, "Earlier Aka answer.")
+	priorResponse.Event.ActorKind, priorResponse.Event.ActorID = "board_character", "aka"
+	priorResponse.Index.FromActor = "aka"
+
+	accepted := canonicalMessage(request.Accepted.InputEvent, request.Accepted.ActorID, "board_character", "aka", "external_peer_message")
+	tail.Messages = []CanonicalMessage{prior, priorResponse, accepted}
+
+	view, err := NewReadViewService(&fakeTailReader{tail: tail}).BuildReadView(context.Background(), request)
+	if err != nil {
+		t.Fatalf("BuildReadView(BOARD character request): %v", err)
+	}
+	if len(view.Messages) != 3 || view.Messages[0].Text != "Earlier question in this thread." ||
+		view.Messages[1].Text != "Earlier Aka answer." || view.Messages[2].Text != payloadString(request.Accepted.InputEvent.Payload, "text") {
+		t.Fatalf("BOARD character view messages = %#v; want the bound request, character response, and accepted request", view.Messages)
+	}
+}
+
 func externalPeerReadViewFixture(t *testing.T) (ReadViewRequest, CanonicalTail, []string) {
 	t.Helper()
 	request, _ := runtimeInput(t, modulecore.NewSessionID(), 9, "unused user input")
@@ -642,6 +668,42 @@ func TestExternalOnlyRuntimeSupportsKuroBoardChatWithReplyProvenance(t *testing.
 	replayed := runtime.RunAcceptedTurn(context.Background(), AcceptedTurnInput{ReadViewRequest: request})
 	if replayed.Status != TurnStatusPublicationPending || !replayed.Committed || provider.callCount() != 1 || journal.commitCalls != 1 || journal.loadCalls != 2 {
 		t.Fatalf("Kuro BOARD reply replay=%#v generation=%d commits=%d; want persisted reply without regeneration", replayed, provider.callCount(), journal.commitCalls)
+	}
+}
+
+func TestExternalOnlyRuntimeUsesBoardCharacterProvenanceAndReplays(t *testing.T) {
+	for _, actorID := range []string{"aka", "ao", "kin", "gin", "lumina"} {
+		t.Run(actorID, func(t *testing.T) {
+			request, _, _ := externalPeerReadViewFixture(t)
+			request = externalPeerRequestWithResponderActor(t, request, actorID)
+			view := ReadView{SessionID: request.Session.SessionID, Messages: []PromptMessage{{
+				Role: "user", Text: payloadString(request.Accepted.InputEvent.Payload, "text"),
+				MessageID: string(request.Accepted.InputMessageID), TurnID: request.Accepted.TurnID, EventSeq: request.Accepted.AdmissionSeq,
+			}}}
+			provider := &fakeConversationProvider{response: `{"schema_version":"mio.turn.v1","kind":"reply","user_message":{"to":"external_peer","text":"A BOARD character response."}}`}
+			journal := &fakeExternalTurnJournal{}
+			runtime, err := NewExternalRuntime(RuntimeDependencies{
+				ReadViews: externalReadViewBuilder{view: view}, Composer: identityPromptComposer{},
+				Generator: agent.NewMioEmissionGenerator(provider), ExternalJournal: journal,
+				ExternalResponderActorID: actorID, Config: RuntimeConfig{PolicyVersion: "policy-board-character-test-v1"},
+			})
+			if err != nil {
+				t.Fatalf("NewExternalRuntime(%s): %v", actorID, err)
+			}
+			result := runtime.RunAcceptedTurn(context.Background(), AcceptedTurnInput{ReadViewRequest: request})
+			if result.Status != TurnStatusPublicationPending || !result.Committed || journal.commitCalls != 1 || provider.callCount() != 1 {
+				t.Fatalf("BOARD character result=%#v generation=%d commits=%d", result, provider.callCount(), journal.commitCalls)
+			}
+			response, index := journal.commit.CanonicalEvents[0], journal.commit.MessageIndexes[0]
+			if response.ActorKind != "board_character" || response.ActorID != actorID || payloadString(response.Payload, "from") != actorID ||
+				index.FromActor != actorID || index.ToKind != "external_peer" || index.ToActor != "peer-a" {
+				t.Fatalf("BOARD character response provenance = event=%#v index=%#v", response, index)
+			}
+			replayed := runtime.RunAcceptedTurn(context.Background(), AcceptedTurnInput{ReadViewRequest: request})
+			if replayed.Status != TurnStatusPublicationPending || !replayed.Committed || provider.callCount() != 1 || journal.commitCalls != 1 || journal.loadCalls != 2 {
+				t.Fatalf("BOARD character replay=%#v generation=%d commits=%d loads=%d", replayed, provider.callCount(), journal.commitCalls, journal.loadCalls)
+			}
+		})
 	}
 }
 

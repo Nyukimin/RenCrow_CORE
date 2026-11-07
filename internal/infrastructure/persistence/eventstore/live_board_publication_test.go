@@ -168,6 +168,67 @@ func TestCommitExternalTurnBundlePersistsCanonicalResponseAndPublicationIntent(t
 	}
 }
 
+func TestCommitExternalTurnBundlePersistsBoardCharacterResponseAcrossReopen(t *testing.T) {
+	for _, actorID := range []string{"aka", "ao", "kin", "gin", "lumina"} {
+		t.Run(actorID, func(t *testing.T) {
+			ctx := context.Background()
+			databasePath := filepath.Join(t.TempDir(), "board-character-publication.sqlite")
+			store, err := NewSQLiteStore(databasePath)
+			if err != nil {
+				t.Fatalf("NewSQLiteStore(): %v", err)
+			}
+			t.Cleanup(func() {
+				if store != nil {
+					if err := store.Close(); err != nil {
+						t.Errorf("Close(): %v", err)
+					}
+				}
+			})
+
+			input := externalPeerAcceptInput(modulecore.NewSessionID(), "board-message-"+actorID, "Synthetic BOARD character request.")
+			input.ExternalPeerBinding.ResponderActorID = actorID
+			input.ExternalPeerBinding.RecipientPrincipalID = actorID
+			input.InputEvent.Payload["to"] = actorID
+			input.InputEvent.Payload["external_peer_binding"] = externalPeerBindingPayload(*input.ExternalPeerBinding)
+			input.InputMessage.ToKind, input.InputMessage.ToActor = "board_character", actorID
+			accepted, err := store.AcceptTurn(ctx, input)
+			if err != nil {
+				t.Fatalf("AcceptTurn(%s BOARD character input): %v", actorID, err)
+			}
+			lookup, bundle := externalPublicationCommitFixture(t, input, accepted)
+			if response := bundle.CanonicalEvents[0]; response.ActorKind != "board_character" || response.ActorID != actorID {
+				t.Fatalf("canonical %s response actor = (%q, %q), want board_character/%s", actorID, response.ActorKind, response.ActorID, actorID)
+			}
+			journal, ok := any(store).(conversationruntime.ExternalTurnJournal)
+			if !ok {
+				t.Fatal("SQLiteStore does not implement the exact ExternalTurnJournal port")
+			}
+			committed, err := journal.CommitExternalTurnBundle(ctx, bundle)
+			if err != nil {
+				t.Fatalf("CommitExternalTurnBundle(%s BOARD character response): %v", actorID, err)
+			}
+
+			if err := store.Close(); err != nil {
+				t.Fatalf("Close(before %s response replay): %v", actorID, err)
+			}
+			store = nil
+			store, err = NewSQLiteStore(databasePath)
+			if err != nil {
+				t.Fatalf("NewSQLiteStore(reopen %s): %v", actorID, err)
+			}
+			journal, ok = any(store).(conversationruntime.ExternalTurnJournal)
+			if !ok {
+				t.Fatal("reopened SQLiteStore does not implement the exact ExternalTurnJournal port")
+			}
+			reloaded, found, err := journal.LoadExternalCommittedOutcome(ctx, lookup)
+			if err != nil || !found {
+				t.Fatalf("LoadExternalCommittedOutcome(%s) = found %t, err %v", actorID, found, err)
+			}
+			assertJSONEqual(t, reloaded, committed)
+		})
+	}
+}
+
 func TestLoadExternalCommittedOutcomeRefusesOccupiedOutputOperationID(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
@@ -408,7 +469,7 @@ func externalPublicationCommitFixture(t *testing.T, input AcceptInput, accepted 
 		accepted.InputEvent.TraceID, accepted.InputEvent.EventID, nil, "conversation_runtime", "agent.response",
 		accepted.InputEvent.OccurredAt.Add(time.Second), responsePayload,
 	)
-	responseEvent.ActorKind, responseEvent.ActorID = "agent", responderActorID
+	responseEvent.ActorKind, responseEvent.ActorID = binding.ResponderActorKind(), responderActorID
 	responseEvent.SessionID, responseEvent.TurnID, responseEvent.MessageID = accepted.SessionID, accepted.TurnID, responseMessageID
 
 	invocation := agent.InvocationReceipt{

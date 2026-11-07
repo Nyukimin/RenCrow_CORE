@@ -1256,17 +1256,17 @@ func validateExternalPeerEnvelopeAndIndex(binding ExternalPeerBinding, actorID s
 			}
 		}
 	}
-	if err := validateExternalPeerMessageIndex(message, event, sessionID, turnID, sourceActorID, responderActorID); err != nil {
+	if err := validateExternalPeerMessageIndex(message, event, sessionID, turnID, sourceActorID, binding.ResponderActorKind(), responderActorID); err != nil {
 		return fmt.Errorf("validate external peer message index: %w", err)
 	}
 	return nil
 }
 
-func validateExternalPeerMessageIndex(message MessageIndex, event modulecore.EventEnvelope, sessionID modulecore.SessionID, turnID modulecore.TurnID, sourceActorID, responderActorID string) error {
+func validateExternalPeerMessageIndex(message MessageIndex, event modulecore.EventEnvelope, sessionID modulecore.SessionID, turnID modulecore.TurnID, sourceActorID, responderActorKind, responderActorID string) error {
 	if err := validateMessageIndexWithExternalPeer(message, event, sessionID, turnID, true); err != nil {
 		return err
 	}
-	if message.FromActor != sourceActorID || message.ToKind != "agent" || message.ToActor != responderActorID ||
+	if message.FromActor != sourceActorID || message.ToKind != responderActorKind || message.ToActor != responderActorID ||
 		message.Kind != "external_peer_message" || message.Visibility != "public" || message.ReplyToMessageID != "" {
 		return errors.New("external peer message index does not match the request contract")
 	}

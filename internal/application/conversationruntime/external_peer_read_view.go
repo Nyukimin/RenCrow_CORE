@@ -234,7 +234,7 @@ func validateExternalPeerRequestMessage(message CanonicalMessage, binding domain
 	sourceActorID, err := binding.SourceActorID()
 	if err != nil || event.EventType != "conversation.external_peer_message" || event.ComponentID != "orchestrator" ||
 		event.ActorKind != "" || event.ActorID != "" || event.CausationEventID != "" || len(event.DependencyEventIDs) != 0 ||
-		index.FromActor != sourceActorID || index.ToKind != "agent" || index.ToActor != binding.EffectiveResponderActorID() ||
+		index.FromActor != sourceActorID || index.ToKind != binding.ResponderActorKind() || index.ToActor != binding.EffectiveResponderActorID() ||
 		index.Kind != "external_peer_message" || index.Visibility != "public" || index.ReplyToMessageID != "" ||
 		payloadString(event.Payload, "from") != "external_peer" || payloadString(event.Payload, "source_actor_id") != sourceActorID ||
 		payloadString(event.Payload, "to") != binding.EffectiveResponderActorID() || payloadString(event.Payload, "visibility") != "public" ||
@@ -261,7 +261,7 @@ func validateExternalPeerResponseMessage(message CanonicalMessage, binding domai
 	event, index := message.Event, message.Index
 	kind, indexKind := payloadString(event.Payload, "kind"), "assistant_message"
 	responderActorID := binding.EffectiveResponderActorID()
-	expectedActorKind, expectedActorID := "agent", responderActorID
+	expectedActorKind, expectedActorID := binding.ResponderActorKind(), responderActorID
 	if kind == "turn_error" {
 		indexKind, expectedActorKind, expectedActorID = "turn_error", "", ""
 	} else if kind != "reply" {

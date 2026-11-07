@@ -306,7 +306,7 @@ func (s *SQLiteStore) AcceptBoardPeerRequest(ctx context.Context, input BoardPee
 		GenerationEpoch: input.GenerationEpoch, InputEvent: event,
 		InputMessage: MessageIndex{
 			MessageID: event.MessageID, EventID: event.EventID, SessionID: input.SessionID, TurnID: event.TurnID,
-			FromActor: actorID, ToKind: "agent", ToActor: responderActorID, Kind: "external_peer_message", Visibility: "public",
+			FromActor: actorID, ToKind: input.Source.Binding.ResponderActorKind(), ToActor: responderActorID, Kind: "external_peer_message", Visibility: "public",
 		},
 		ExternalPeerBinding: &input.Source.Binding,
 		CreateNewSession:    !sessionExists && threadBinding.CreateNewSession,

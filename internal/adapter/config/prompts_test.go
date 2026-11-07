@@ -171,6 +171,28 @@ func TestBuildIdleChatAgentPromptsLayersCharacterBundleThenIdleCorrection(t *tes
 	}
 }
 
+func TestBuildIdleChatAgentPromptsKeepsLuminaBoardOnly(t *testing.T) {
+	p := &LoadedPrompts{
+		CharacterPrompts: map[string]string{
+			"aka": "Aka bundle", "ao": "Ao bundle", "kin": "Kin bundle", "gin": "Gin bundle",
+			"Lumina": "Lumina BOARD bundle",
+		},
+		IdleChatAgents: map[string]string{"Lumina": "Lumina IdleChat correction"},
+	}
+
+	got := BuildIdleChatAgentPrompts(p)
+	for _, character := range []string{"aka", "ao", "kin", "gin"} {
+		if got[character] == "" {
+			t.Errorf("existing IdleChat character bundle %q was dropped", character)
+		}
+	}
+	for _, key := range []string{"lumina", "Lumina"} {
+		if _, exists := got[key]; exists {
+			t.Errorf("BOARD-only Lumina prompt leaked into IdleChat key %q", key)
+		}
+	}
+}
+
 func TestApplyAgentControlKeepsCharacterPromptsCanonicalAndBuildsStableRuntimeContexts(t *testing.T) {
 	p := &LoadedPrompts{
 		MioPersona:       "mio system",

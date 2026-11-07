@@ -106,6 +106,26 @@ func TestBoardCommunicationConfigAcceptsDistinctScopedCHATResponderActors(t *tes
 			ActorID: "kuro", TokenFile: filepath.Join(t.TempDir(), "kuro-token"),
 			ChannelIDs: []string{"rencrow"}, PeerIDs: []string{"dots-comm"}, CutoverAt: "2099-01-03T00:00:00Z",
 		},
+		{
+			ActorID: "aka", TokenFile: filepath.Join(t.TempDir(), "aka-token"),
+			ChannelIDs: []string{"rencrow"}, PeerIDs: []string{"dots-comm"}, CutoverAt: "2099-01-04T00:00:00Z",
+		},
+		{
+			ActorID: "ao", TokenFile: filepath.Join(t.TempDir(), "ao-token"),
+			ChannelIDs: []string{"rencrow"}, PeerIDs: []string{"dots-comm"}, CutoverAt: "2099-01-05T00:00:00Z",
+		},
+		{
+			ActorID: "kin", TokenFile: filepath.Join(t.TempDir(), "kin-token"),
+			ChannelIDs: []string{"rencrow"}, PeerIDs: []string{"dots-comm"}, CutoverAt: "2099-01-06T00:00:00Z",
+		},
+		{
+			ActorID: "gin", TokenFile: filepath.Join(t.TempDir(), "gin-token"),
+			ChannelIDs: []string{"rencrow"}, PeerIDs: []string{"dots-comm"}, CutoverAt: "2099-01-07T00:00:00Z",
+		},
+		{
+			ActorID: "lumina", TokenFile: filepath.Join(t.TempDir(), "lumina-token"),
+			ChannelIDs: []string{"rencrow"}, PeerIDs: []string{"dots-comm"}, CutoverAt: "2099-01-08T00:00:00Z",
+		},
 	}
 	cfg.BoardCommunication = board
 	if err := cfg.Validate(); err != nil {

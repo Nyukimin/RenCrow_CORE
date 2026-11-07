@@ -30,9 +30,42 @@ func TestExternalPeerBindingKeepsWireKindSeparateFromClassification(t *testing.T
 	if err := binding.ValidateNewRequest(); err != nil {
 		t.Fatalf("ValidateNewRequest(empty raw kind): %v", err)
 	}
+	if got := binding.ResponderActorKind(); got != "agent" {
+		t.Fatalf("legacy ResponderActorKind() = %q, want agent", got)
+	}
 	actorID, err := binding.SourceActorID()
 	if err != nil || actorID != "board:test-instance:peer-a" {
 		t.Fatalf("SourceActorID() = %q, %v; want board:test-instance:peer-a", actorID, err)
+	}
+}
+
+func TestBoardSpeechCharacterIdentityIsExactAndBOARDScoped(t *testing.T) {
+	for _, id := range []string{"aka", "ao", "kin", "gin", "lumina"} {
+		if !IsBoardSpeechCharacter(id) {
+			t.Errorf("IsBoardSpeechCharacter(%q) = false, want true", id)
+		}
+		if !IsExternalPeerResponderActor(id) {
+			t.Errorf("IsExternalPeerResponderActor(%q) = false, want true", id)
+		}
+		binding := externalPeerBindingFixture("", ExternalPeerClassificationRequest, "")
+		binding.ResponderActorID, binding.RecipientPrincipalID = id, id
+		if got := binding.ResponderActorKind(); got != "board_character" {
+			t.Errorf("ExternalPeerBinding{responder: %q}.ResponderActorKind() = %q, want board_character", id, got)
+		}
+		if err := binding.ValidateNewRequest(); err != nil {
+			t.Errorf("ExternalPeerBinding{responder: %q}.ValidateNewRequest() = %v, want BOARD character support", id, err)
+		}
+	}
+
+	for _, id := range []string{"", "mio", "shiro", "midori", "kuro", "heavy", "aka ", "Aka", "LUMINA", "lucina"} {
+		if IsBoardSpeechCharacter(id) {
+			t.Errorf("IsBoardSpeechCharacter(%q) = true, want false", id)
+		}
+	}
+	for _, id := range []string{"mio", "heavy", "wild", "Aka", "aka ", "lucina"} {
+		if IsExternalPeerResponderActor(id) {
+			t.Errorf("IsExternalPeerResponderActor(%q) = true, want false", id)
+		}
 	}
 }
 
@@ -48,6 +81,11 @@ func TestExternalPeerResponderActorIsExplicitTrustedBindingOnly(t *testing.T) {
 		{name: "shiro", actor: "shiro", recipient: "shiro", wantActor: "shiro", wantEffective: "shiro"},
 		{name: "midori", actor: "midori", recipient: "midori", wantActor: "midori", wantEffective: "midori"},
 		{name: "kuro chat responder", actor: "kuro", recipient: "kuro", wantActor: "kuro", wantEffective: "kuro"},
+		{name: "aka BOARD character", actor: "aka", recipient: "aka", wantActor: "aka", wantEffective: "aka"},
+		{name: "ao BOARD character", actor: "ao", recipient: "ao", wantActor: "ao", wantEffective: "ao"},
+		{name: "kin BOARD character", actor: "kin", recipient: "kin", wantActor: "kin", wantEffective: "kin"},
+		{name: "gin BOARD character", actor: "gin", recipient: "gin", wantActor: "gin", wantEffective: "gin"},
+		{name: "lumina BOARD character", actor: "lumina", recipient: "lumina", wantActor: "lumina", wantEffective: "lumina"},
 		{name: "legacy mio omission", recipient: "rencrow-comm", wantEffective: "mio"},
 		{name: "explicit mio rejected", actor: "mio", recipient: "mio", wantErr: true},
 		{name: "Heavy alias rejected", actor: "heavy", recipient: "heavy", wantErr: true},
