@@ -193,22 +193,13 @@ func (s *JSONLStore) rotationTarget(now time.Time) (name, reason string) {
 }
 
 // rotateIfDue starts the next segment when the next write belongs to one (spec
-// 5.3). Every write entry point calls it before it takes the store's read lock:
-// the rotation needs the exclusive lock, which waits for the transactions in
-// flight and holds off new ones for the few milliseconds it takes. Whether a
-// rotation is due is decided again under that lock, so two writers cannot both
-// rotate, and a failure leaves the store writing to the segment it has.
+// 5.3). The caller must hold the synchronous queue gate, or be the accepted
+// queue writer applying its write. Synchronous callers acquire that gate before
+// taking the store read lock so rotation can take the exclusive lock safely.
 func (s *JSONLStore) rotateIfDue(ctx context.Context) {
 	r := s.rot
 	if r == nil || !r.enabled || s.idx == nil || !s.idx.isLayoutV2() {
 		return
-	}
-	if _, applyingAcceptedWrite := ctx.Value(taskAdmissionWriteContextKey{}).(*taskAdmissionWrite); !applyingAcceptedWrite {
-		release, err := s.taskPersistence.beginSynchronous(ctx)
-		if err != nil {
-			return
-		}
-		defer release()
 	}
 	r.waitGate(ctx)
 	if r.backingOff() {

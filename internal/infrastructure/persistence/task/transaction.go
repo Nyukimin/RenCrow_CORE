@@ -98,7 +98,11 @@ func (s *JSONLStore) transactionWithScope(ctx context.Context, scopeTaskID modul
 	if admission, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
 		return s.admittedTransactionWithScope(ctx, scopeTaskID, lease, fn, admission)
 	}
-	s.rotateIfDue(ctx)
+	releaseSynchronousWrite, err := s.beginSynchronousWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseSynchronousWrite()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
@@ -114,7 +118,7 @@ func (s *JSONLStore) transactionWithScope(ctx context.Context, scopeTaskID modul
 	if scopeTaskID != "" {
 		op = "TaskTransaction"
 	}
-	return s.writeBatch(withTxLabel(ctx, op, scopeTaskID), func() (map[string][]byte, error) {
+	return s.writeBatchNow(withTxLabel(ctx, op, scopeTaskID), func() (map[string][]byte, error) {
 		tx := newTaskTransaction(s, false, scopeTaskID, lease)
 		defer tx.end()
 		err := fn(tx)

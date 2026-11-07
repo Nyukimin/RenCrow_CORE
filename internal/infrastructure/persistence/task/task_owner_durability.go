@@ -142,7 +142,11 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 	}
 	defer lease.release()
 
-	s.rotateIfDue(ctx)
+	releaseSynchronousWrite, err := s.beginSynchronousWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseSynchronousWrite()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
@@ -152,7 +156,7 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 		return nil, errors.New("task store writer is unavailable")
 	}
 	var result json.RawMessage
-	err = s.writeBatch(withTxLabel(ctx, "ExecuteIdempotentTaskOperation", taskID), func() (map[string][]byte, error) {
+	err = s.writeBatchNow(withTxLabel(ctx, "ExecuteIdempotentTaskOperation", taskID), func() (map[string][]byte, error) {
 		previous, ok, err := s.loadReceipt(ctx, operationID)
 		if err != nil {
 			return nil, err
@@ -831,7 +835,11 @@ func (s *JSONLStore) clearProvisionalTaskFence(taskID modulecore.TaskID, fenceID
 }
 
 func (s *JSONLStore) writeTaskFenceEvent(ctx context.Context, callback func() (map[string][]byte, error)) error {
-	s.rotateIfDue(ctx)
+	releaseSynchronousWrite, err := s.beginSynchronousWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseSynchronousWrite()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
@@ -840,5 +848,5 @@ func (s *JSONLStore) writeTaskFenceEvent(ctx context.Context, callback func() (m
 	if s.readOnly || s.writerLock == nil || s.batch == nil {
 		return errors.New("task store writer is unavailable")
 	}
-	return s.writeBatch(ctx, callback)
+	return s.writeBatchNow(ctx, callback)
 }

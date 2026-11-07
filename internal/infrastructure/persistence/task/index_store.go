@@ -75,11 +75,9 @@ func (s *JSONLStore) IndexStats() (IndexStats, bool) {
 	return s.idx.stats(), true
 }
 
-// writeBatch is the one place a Task store transaction reaches jsonlbatch.Write.
-// With an index it first brings the index up to the log (the WAL is settled by
-// then, so every byte on disk is committed), dry-runs the payloads the callback
-// produced so a record the index would refuse never reaches the log, and records
-// a write that ended without a known commit boundary.
+// writeBatch holds the synchronous queue gate for a standalone Task batch.
+// Transactions that also need the store lock use beginSynchronousWrite and
+// writeBatchNow so the queue gate spans rotation, the store lock, and the write.
 func (s *JSONLStore) writeBatch(ctx context.Context, callback func() (map[string][]byte, error)) error {
 	release, err := s.taskPersistence.beginSynchronous(ctx)
 	if err != nil {
@@ -89,9 +87,22 @@ func (s *JSONLStore) writeBatch(ctx context.Context, callback func() (map[string
 	return s.writeBatchNow(ctx, callback)
 }
 
-// writeBatchNow persists one validated batch without waiting for accepted
-// queue entries. It is reserved for the shared persistence queue's own writer;
-// ordinary Task writes must pass through writeBatch so they cannot overtake it.
+// beginSynchronousWrite holds the synchronous queue gate across rotation and
+// the subsequent store-locked write. Callers must release the returned function
+// only after dropping the store lock.
+func (s *JSONLStore) beginSynchronousWrite(ctx context.Context) (func(), error) {
+	release, err := s.taskPersistence.beginSynchronous(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.rotateIfDue(ctx)
+	return release, nil
+}
+
+// writeBatchNow persists one validated batch without acquiring the synchronous
+// queue gate. The caller must already own that gate, or be the shared persistence
+// queue's accepted writer, and must hold the store lock when its transaction
+// requires one.
 func (s *JSONLStore) writeBatchNow(ctx context.Context, callback func() (map[string][]byte, error)) error {
 	wrote := false
 	if s.idx == nil {

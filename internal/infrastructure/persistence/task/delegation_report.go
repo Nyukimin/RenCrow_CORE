@@ -87,7 +87,11 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperationWithReport(
 	}
 	defer lease.release()
 
-	s.rotateIfDue(ctx)
+	releaseSynchronousWrite, err := s.beginSynchronousWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseSynchronousWrite()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
@@ -97,7 +101,7 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperationWithReport(
 		return nil, errors.New("task store writer is unavailable")
 	}
 	var result json.RawMessage
-	err = s.writeBatch(withTxLabel(ctx, "ExecuteIdempotentTaskOperationWithReport", taskID), func() (map[string][]byte, error) {
+	err = s.writeBatchNow(withTxLabel(ctx, "ExecuteIdempotentTaskOperationWithReport", taskID), func() (map[string][]byte, error) {
 		previous, ok, err := s.loadReceipt(ctx, operationID)
 		if err != nil {
 			return nil, err
@@ -250,7 +254,11 @@ func (s *JSONLStore) MarkTaskDelegationReportDelivered(ctx context.Context, repo
 		return err
 	}
 	defer lease.release()
-	s.rotateIfDue(ctx)
+	releaseSynchronousWrite, err := s.beginSynchronousWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseSynchronousWrite()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
@@ -259,7 +267,7 @@ func (s *JSONLStore) MarkTaskDelegationReportDelivered(ctx context.Context, repo
 	if s.readOnly || s.batch == nil || s.writerLock == nil || s.writerGeneration == 0 {
 		return errors.New("task store writer is unavailable")
 	}
-	return s.writeBatch(withTxLabel(ctx, "MarkTaskDelegationReportDelivered", target.TaskID), func() (map[string][]byte, error) {
+	return s.writeBatchNow(withTxLabel(ctx, "MarkTaskDelegationReportDelivered", target.TaskID), func() (map[string][]byte, error) {
 		current, err := s.foldTaskDelegationReports(ctx)
 		if err != nil {
 			return nil, err

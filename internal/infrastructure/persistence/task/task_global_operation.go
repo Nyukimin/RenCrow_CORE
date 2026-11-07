@@ -43,7 +43,11 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 	}
 	defer releaseAdmission()
 
-	s.rotateIfDue(ctx)
+	releaseSynchronousWrite, err := s.beginSynchronousWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseSynchronousWrite()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
@@ -53,7 +57,7 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 		return nil, errors.New("task store writer is unavailable")
 	}
 	var result json.RawMessage
-	err = s.writeBatch(withTxLabel(ctx, "ExecuteIdempotentGlobalTaskOperation", ""), func() (map[string][]byte, error) {
+	err = s.writeBatchNow(withTxLabel(ctx, "ExecuteIdempotentGlobalTaskOperation", ""), func() (map[string][]byte, error) {
 		previous, ok, err := s.loadReceipt(ctx, operationID)
 		if err != nil {
 			return nil, err
