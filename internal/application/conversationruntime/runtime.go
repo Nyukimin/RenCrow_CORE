@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -107,13 +108,17 @@ type RuntimeConfig struct {
 }
 
 type RuntimeDependencies struct {
-	ReadViews            ReadViewBuilder
-	Composer             PromptComposer
-	Generator            EmissionGenerator
-	Journal              TurnJournal
-	Publisher            CommittedEventPublisher
-	ClarificationReplies ClarificationReplyStore
-	Config               RuntimeConfig
+	ReadViews       ReadViewBuilder
+	Composer        PromptComposer
+	Generator       EmissionGenerator
+	Journal         TurnJournal
+	ExternalJournal ExternalTurnJournal
+	// ExternalResponderActorID is trusted CORE runtime provenance. Empty keeps
+	// legacy Mio behavior; explicit values are accepted only by NewExternalRuntime.
+	ExternalResponderActorID string
+	Publisher                CommittedEventPublisher
+	ClarificationReplies     ClarificationReplyStore
+	Config                   RuntimeConfig
 }
 
 type AcceptedTurnInput struct {
@@ -140,19 +145,25 @@ type TurnResult struct {
 }
 
 type Runtime struct {
-	readViews            ReadViewBuilder
-	composer             PromptComposer
-	generator            EmissionGenerator
-	journal              TurnJournal
-	publisher            CommittedEventPublisher
-	clarificationReplies ClarificationReplyStore
-	config               RuntimeConfig
-	locks                sessionLocks
+	readViews                ReadViewBuilder
+	composer                 PromptComposer
+	generator                EmissionGenerator
+	journal                  TurnJournal
+	externalJournal          ExternalTurnJournal
+	externalResponderActorID string
+	publisher                CommittedEventPublisher
+	clarificationReplies     ClarificationReplyStore
+	config                   RuntimeConfig
+	externalOnly             bool
+	locks                    sessionLocks
 }
 
 func NewRuntime(dependencies RuntimeDependencies) (*Runtime, error) {
 	if dependencies.ReadViews == nil || dependencies.Composer == nil || dependencies.Generator == nil || dependencies.Journal == nil || dependencies.Publisher == nil {
 		return nil, errors.New("conversation runtime dependencies are required")
+	}
+	if dependencies.ExternalResponderActorID != "" {
+		return nil, errors.New("external responder actor binding is only supported by NewExternalRuntime")
 	}
 	policyVersion := strings.TrimSpace(dependencies.Config.PolicyVersion)
 	if policyVersion == "" {
@@ -176,6 +187,7 @@ func NewRuntime(dependencies RuntimeDependencies) (*Runtime, error) {
 		composer:             dependencies.Composer,
 		generator:            dependencies.Generator,
 		journal:              dependencies.Journal,
+		externalJournal:      dependencies.ExternalJournal,
 		publisher:            dependencies.Publisher,
 		clarificationReplies: dependencies.ClarificationReplies,
 		config: RuntimeConfig{
@@ -184,7 +196,33 @@ func NewRuntime(dependencies RuntimeDependencies) (*Runtime, error) {
 	}, nil
 }
 
-// RunAcceptedTurn generates one structured Mio emission, commits its complete
+// NewExternalRuntime creates the CHAT-only BOARD peer lane. It deliberately
+// requires the typed atomic external journal and has no generic Viewer journal
+// or publisher dependency. ExternalResponderActorID is a trusted CORE setting;
+// an empty value keeps legacy Mio behavior, and explicit Shiro/Midori/Kuro
+// requests must match both this setting and the accepted binding's recipient principal.
+func NewExternalRuntime(dependencies RuntimeDependencies) (*Runtime, error) {
+	if dependencies.ReadViews == nil || dependencies.Composer == nil || dependencies.Generator == nil || dependencies.ExternalJournal == nil {
+		return nil, errors.New("external conversation runtime dependencies are required")
+	}
+	policyVersion := strings.TrimSpace(dependencies.Config.PolicyVersion)
+	if policyVersion == "" {
+		return nil, errors.New("external conversation runtime policy_version is required")
+	}
+	if len(dependencies.Config.AllowedAssignees) != 0 {
+		return nil, errors.New("external conversation runtime does not accept delegated assignees")
+	}
+	if err := validateConfiguredExternalResponderActorID(dependencies.ExternalResponderActorID); err != nil {
+		return nil, err
+	}
+	return &Runtime{
+		readViews: dependencies.ReadViews, composer: dependencies.Composer, generator: dependencies.Generator,
+		externalJournal: dependencies.ExternalJournal, externalResponderActorID: dependencies.ExternalResponderActorID,
+		config: RuntimeConfig{PolicyVersion: policyVersion}, externalOnly: true,
+	}, nil
+}
+
+// RunAcceptedTurn generates one structured conversation emission, commits its complete
 // public/private result, then publishes only the returned committed batch.
 // The current accepted input is supplied by BuildReadView and is not appended
 // to the prompt a second time.
@@ -192,7 +230,8 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 	if ctx == nil {
 		return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: errors.New("conversation runtime context is required")}
 	}
-	if r == nil || r.readViews == nil || r.composer == nil || r.generator == nil || r.journal == nil || r.publisher == nil {
+	if r == nil || r.readViews == nil || r.composer == nil || r.generator == nil ||
+		(r.externalOnly && r.externalJournal == nil) || (!r.externalOnly && (r.journal == nil || r.publisher == nil)) {
 		err := errors.New("conversation runtime is unavailable")
 		markV2TimingError(ctx, 0, err)
 		return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: err}
@@ -202,6 +241,14 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 		return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: err}
 	}
 	accepted := input.ReadViewRequest.Accepted
+	if r.externalOnly && accepted.TriggerKind != "external_peer_message" {
+		return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: ErrExternalTriggerViewerRefused}
+	}
+	if accepted.TriggerKind == "external_peer_message" {
+		if err := validateRuntimeExternalPeerBinding(input.ReadViewRequest, r.externalResponderActorID); err != nil {
+			return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: err}
+		}
+	}
 	release, err := r.locks.acquire(ctx, accepted.SessionID)
 	if err != nil {
 		markV2TimingError(ctx, 0, err)
@@ -219,24 +266,52 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 	if accepted.TriggerKind == "clarification_reply" {
 		return r.runClarificationReplyTurn(ctx, input)
 	}
-	prior, found, err := r.journal.LoadCommittedOutcome(ctx, accepted.TurnID)
-	if err != nil {
-		if ctx.Err() != nil {
-			markV2TimingError(ctx, 0, ctx.Err())
-			return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: ctx.Err()}
+	externalPeer := accepted.TriggerKind == "external_peer_message"
+	var externalLookup ExternalTurnLookup
+	if externalPeer {
+		if r.externalJournal == nil {
+			return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: ErrExternalTurnJournalRequired}
 		}
-		markV2TimingError(ctx, 0, err)
-		return TurnResult{Status: TurnStatusCommitUncertain, Cause: err}
-	}
-	if found {
-		if err := validateCommittedBundle(prior, accepted.SessionID, accepted.TurnID); err != nil || prior.OperationID != turnOperationID(accepted.TurnID) {
-			if err == nil {
-				err = errors.New("committed replay operation identity is invalid")
+		externalLookup, err = externalTurnLookup(input.ReadViewRequest)
+		if err != nil {
+			return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: err}
+		}
+		prior, found, loadErr := r.externalJournal.LoadExternalCommittedOutcome(ctx, externalLookup)
+		if loadErr != nil {
+			if ctx.Err() != nil {
+				markV2TimingError(ctx, 0, ctx.Err())
+				return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: ctx.Err()}
 			}
-			markV2TimingError(ctx, turntiming.PointV2Commit, err)
-			return TurnResult{Status: TurnStatusCommitUncertain, Cause: err}
+			markV2TimingError(ctx, turntiming.PointV2Commit, loadErr)
+			return TurnResult{Status: TurnStatusCommitUncertain, Cause: loadErr}
 		}
-		return r.publish(ctx, prior, false, nil)
+		if found {
+			if err := validateExternalCommittedBundle(prior, externalLookup, input.ReadViewRequest.Accepted); err != nil {
+				markV2TimingError(ctx, turntiming.PointV2Commit, err)
+				return TurnResult{Status: TurnStatusCommitUncertain, Cause: err}
+			}
+			return externalPublicationPendingResult(prior, nil)
+		}
+	} else {
+		prior, found, loadErr := r.journal.LoadCommittedOutcome(ctx, accepted.TurnID)
+		if loadErr != nil {
+			if ctx.Err() != nil {
+				markV2TimingError(ctx, 0, ctx.Err())
+				return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: ctx.Err()}
+			}
+			markV2TimingError(ctx, 0, loadErr)
+			return TurnResult{Status: TurnStatusCommitUncertain, Cause: loadErr}
+		}
+		if found {
+			if err := validateCommittedBundle(prior, accepted.SessionID, accepted.TurnID); err != nil || prior.OperationID != turnOperationID(accepted.TurnID) {
+				if err == nil {
+					err = errors.New("committed replay operation identity is invalid")
+				}
+				markV2TimingError(ctx, turntiming.PointV2Commit, err)
+				return TurnResult{Status: TurnStatusCommitUncertain, Cause: err}
+			}
+			return r.publish(ctx, prior, false, nil)
+		}
 	}
 
 	readViewTurn, readViewSpan, readViewTimed := beginV2TimingSpan(ctx, turntiming.PointV2ReadView)
@@ -247,14 +322,14 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 		if ctx.Err() != nil {
 			return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: ctx.Err()}
 		}
-		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err)
+		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err, ExternalFailureStageReadView)
 	}
 	promptTurn, promptSpan, promptTimed := beginV2TimingSpan(ctx, turntiming.PointV2PromptComposition)
 	snapshot, err := promptSnapshot(view, accepted)
 	if err != nil {
 		endV2TimingSpan(promptTurn, promptSpan, promptTimed, err)
 		markV2TimingError(ctx, turntiming.PointV2PromptComposition, err)
-		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err)
+		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err, ExternalFailureStagePromptComposition)
 	}
 	if err := ctx.Err(); err != nil {
 		endV2TimingSpan(promptTurn, promptSpan, promptTimed, err)
@@ -276,16 +351,20 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 		if ctx.Err() != nil {
 			return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: ctx.Err()}
 		}
-		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err)
+		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err, ExternalFailureStagePromptComposition)
 	}
 	if err := validateComposedPrompt(snapshot, canonicalSnapshot, accepted, view); err != nil {
 		endV2TimingSpan(promptTurn, promptSpan, promptTimed, err)
 		markV2TimingError(ctx, turntiming.PointV2PromptComposition, err)
-		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err)
+		return r.commitSafeError(ctx, input, agent.InvocationReceipt{}, err, ExternalFailureStagePromptComposition)
 	}
 	endV2TimingSpan(promptTurn, promptSpan, promptTimed, nil)
+	allowedAssignees := append([]string(nil), r.config.AllowedAssignees...)
+	if externalPeer {
+		allowedAssignees = nil
+	}
 	allowlist := conversation.EmissionAllowlist{
-		AllowedAssignees:        append([]string(nil), r.config.AllowedAssignees...),
+		AllowedAssignees:        allowedAssignees,
 		AllowedSourceMessageIDs: append([]modulecore.MessageID(nil), snapshot.AllowedSourceMessageIDs...),
 	}
 	generationTurn, generationSpan, generationTimed := beginV2TimingSpan(ctx, turntiming.PointV2Generation)
@@ -301,35 +380,62 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 	}
 	if generationErr != nil {
 		markV2TimingError(ctx, turntiming.PointV2Generation, generationErr)
-		return r.commitSafeError(ctx, input, receipt, generationErr)
+		return r.commitSafeError(ctx, input, receipt, generationErr, ExternalFailureStageGeneration)
 	}
 	validated, err := validateTypedEmission(scope, allowlist, emission)
 	if err != nil {
 		markV2TimingError(ctx, turntiming.PointV2Generation, err)
-		return r.commitSafeError(ctx, input, receipt, err)
+		return r.commitSafeError(ctx, input, receipt, err, ExternalFailureStageGeneration)
 	}
 	if scope.Purpose == conversation.PurposeReportReply && validated.Kind != conversation.EmissionKindReply {
 		err := errors.New("report reply must be a direct Mio response")
 		markV2TimingError(ctx, turntiming.PointV2Generation, err)
-		return r.commitSafeError(ctx, input, receipt, err)
+		return r.commitSafeError(ctx, input, receipt, err, ExternalFailureStageGeneration)
 	}
 	prepared, err := r.prepareEmission(input, view, snapshot, scope, validated, receipt)
 	if err != nil {
 		markV2TimingError(ctx, turntiming.PointV2Generation, err)
-		return r.commitSafeError(ctx, input, receipt, err)
+		return r.commitSafeError(ctx, input, receipt, err, ExternalFailureStageGeneration)
 	}
 	if err := ctx.Err(); err != nil {
 		markV2TimingError(ctx, turntiming.PointV2Generation, err)
 		return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: err}
 	}
+	if externalPeer {
+		return r.commitExternalTurn(ctx, input, externalLookup, prepared, receipt, false, "", nil)
+	}
 	return r.commitAndPublish(ctx, prepared, accepted.SessionID, accepted.TurnID, false, nil)
 }
 
-func (r *Runtime) commitSafeError(ctx context.Context, input AcceptedTurnInput, receipt agent.InvocationReceipt, cause error) TurnResult {
+func (r *Runtime) commitSafeError(ctx context.Context, input AcceptedTurnInput, receipt agent.InvocationReceipt, cause error, failureStage ...ExternalFailureStage) TurnResult {
 	if err := ctx.Err(); err != nil {
 		return TurnResult{Status: TurnStatusFailedBeforeCommit, SafeError: true, Cause: err}
 	}
 	accepted := input.ReadViewRequest.Accepted
+	if accepted.TriggerKind == "external_peer_message" {
+		lookup, err := externalTurnLookup(input.ReadViewRequest)
+		if err != nil {
+			return TurnResult{Status: TurnStatusFailedBeforeCommit, SafeError: true, Cause: errors.Join(cause, err)}
+		}
+		stage := ExternalFailureStageGeneration
+		if len(failureStage) > 0 && failureStage[0] != "" {
+			stage = failureStage[0]
+		}
+		prepared := CommitBundle{
+			OperationID: lookup.OperationID, SessionID: accepted.SessionID,
+			TurnID: accepted.TurnID, GenerationEpoch: accepted.GenerationEpoch, ResultState: "completed",
+		}
+		publicEvent, index, err := r.publicMessage(input, "turn_error", "turn_error", "available", "", safeTurnErrorText)
+		if err != nil {
+			return TurnResult{Status: TurnStatusFailedBeforeCommit, SafeError: true, Cause: errors.Join(cause, err)}
+		}
+		prepared.Events = append(prepared.Events, publicEvent)
+		prepared.MessageIndexes = append(prepared.MessageIndexes, index)
+		if receipt.Status != "" || receipt.RequestID != "" || receipt.ResponseID != "" {
+			prepared.Events = append(prepared.Events, r.receiptEvent(accepted, receipt))
+		}
+		return r.commitExternalTurn(ctx, input, lookup, prepared, receipt, true, stage, cause)
+	}
 	prepared := CommitBundle{
 		OperationID: turnOperationID(accepted.TurnID), SessionID: accepted.SessionID,
 		TurnID: accepted.TurnID, GenerationEpoch: accepted.GenerationEpoch, ResultState: "completed",
@@ -347,6 +453,216 @@ func (r *Runtime) commitSafeError(ctx context.Context, input AcceptedTurnInput, 
 	}
 	result := r.commitAndPublish(ctx, prepared, accepted.SessionID, accepted.TurnID, true, cause)
 	return result
+}
+
+// ExternalTurnLookupForRequest exposes the exact recovery key used by the
+// external-only runtime so its owning adapter can inspect an already committed
+// result before deciding whether any generation work is needed.
+func ExternalTurnLookupForRequest(request ReadViewRequest) (ExternalTurnLookup, error) {
+	return externalTurnLookup(request)
+}
+
+func externalTurnLookup(request ReadViewRequest) (ExternalTurnLookup, error) {
+	accepted := request.Accepted
+	binding, err := conversation.ParseExternalPeerBinding(accepted.InputEvent.Payload)
+	if err != nil {
+		return ExternalTurnLookup{}, err
+	}
+	if err := binding.ValidateNewRequest(); err != nil {
+		return ExternalTurnLookup{}, err
+	}
+	sourceActorID, err := binding.SourceActorID()
+	if err != nil || sourceActorID != accepted.ActorID {
+		return ExternalTurnLookup{}, errors.New("external turn source does not match its accepted actor")
+	}
+	encoded, err := json.Marshal(accepted.InputEvent.Payload)
+	if err != nil {
+		return ExternalTurnLookup{}, fmt.Errorf("encode accepted external source fingerprint: %w", err)
+	}
+	fingerprint := sha256.Sum256(encoded)
+	return ExternalTurnLookup{
+		OwnerID: request.Session.OwnerID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,
+		GenerationEpoch: accepted.GenerationEpoch, OperationID: turnOperationID(accepted.TurnID),
+		SourceBinding: binding, SourceFingerprint: hex.EncodeToString(fingerprint[:]),
+	}, nil
+}
+
+func externalPublicationIntent(lookup ExternalTurnLookup, responseMessageID modulecore.MessageID) ExternalPublicationIntent {
+	binding := lookup.SourceBinding
+	return ExternalPublicationIntent{
+		CanonicalResponseMessageID: responseMessageID,
+		Target: ExternalReplyTarget{
+			BoardInstanceID: binding.BoardInstanceID, CorePrincipalID: binding.RecipientPrincipalID,
+			PeerPrincipalID: binding.SenderPrincipalID, ChannelID: binding.ChannelID,
+			ThreadID: binding.ThreadID, ReplyTo: binding.MessageID,
+		},
+		StableLogicalKey: "external-publication:" + lookup.OperationID,
+	}
+}
+
+func (r *Runtime) commitExternalTurn(ctx context.Context, input AcceptedTurnInput, lookup ExternalTurnLookup, prepared CommitBundle, receipt agent.InvocationReceipt, safeError bool, failureStage ExternalFailureStage, cause error) TurnResult {
+	if r == nil || r.externalJournal == nil {
+		return TurnResult{Status: TurnStatusFailedBeforeCommit, SafeError: safeError, Cause: errors.Join(cause, ErrExternalTurnJournalRequired)}
+	}
+	if prepared.Delegation != nil || len(prepared.Outbox) != 0 || len(prepared.MessageIndexes) != 1 || len(prepared.Events) == 0 {
+		err := errors.New("external response cannot use delegation or legacy projection work")
+		markV2TimingError(ctx, turntiming.PointV2Commit, err)
+		return TurnResult{Status: TurnStatusFailedBeforeCommit, SafeError: safeError, Cause: errors.Join(cause, err)}
+	}
+	commit := ExternalCommitBundle{
+		ExpectedLookup: lookup, ResultState: prepared.ResultState, SafeError: safeError,
+		FailureStage: failureStage, CanonicalEvents: append([]modulecore.EventEnvelope(nil), prepared.Events...),
+		MessageIndexes: append([]MessageIndex(nil), prepared.MessageIndexes...), InvocationReceipt: receipt,
+		PublicationIntent: externalPublicationIntent(lookup, prepared.MessageIndexes[0].MessageID),
+	}
+	if err := ctx.Err(); err != nil {
+		return TurnResult{Status: TurnStatusFailedBeforeCommit, SafeError: safeError, Cause: err}
+	}
+	commitTurn, commitSpan, commitTimed := beginV2TimingSpan(ctx, turntiming.PointV2Commit)
+	committed, err := r.externalJournal.CommitExternalTurnBundle(ctx, commit)
+	endV2TimingSpan(commitTurn, commitSpan, commitTimed, err)
+	if err != nil {
+		lookupCtx := context.WithoutCancel(ctx)
+		saved, found, lookupErr := r.externalJournal.LoadExternalCommittedOutcome(lookupCtx, lookup)
+		if lookupErr != nil {
+			markV2TimingError(ctx, turntiming.PointV2Commit, lookupErr)
+			return TurnResult{Status: TurnStatusCommitUncertain, SafeError: safeError, Cause: errors.Join(cause, err, lookupErr)}
+		}
+		if !found {
+			markV2TimingError(ctx, turntiming.PointV2Commit, err)
+			return TurnResult{Status: TurnStatusCommitUncertain, SafeError: safeError, Cause: errors.Join(cause, err)}
+		}
+		if validationErr := validateExternalCommittedBundle(saved, lookup, input.ReadViewRequest.Accepted); validationErr != nil {
+			markV2TimingError(ctx, turntiming.PointV2Commit, validationErr)
+			return TurnResult{Status: TurnStatusCommitUncertain, SafeError: safeError, Cause: errors.Join(cause, err, validationErr)}
+		}
+		return externalPublicationPendingResult(saved, cause)
+	}
+	if err := validateExternalCommittedBundle(committed, lookup, input.ReadViewRequest.Accepted); err != nil {
+		markV2TimingError(ctx, turntiming.PointV2Commit, err)
+		return TurnResult{Status: TurnStatusCommitUncertain, SafeError: safeError, Cause: errors.Join(cause, err)}
+	}
+	if !sameExternalCommitOutcome(committed, commit) {
+		err := errors.New("external committed outcome does not match the atomic commit request")
+		markV2TimingError(ctx, turntiming.PointV2Commit, err)
+		return TurnResult{Status: TurnStatusCommitUncertain, SafeError: safeError, Cause: errors.Join(cause, err)}
+	}
+	return externalPublicationPendingResult(committed, cause)
+}
+
+func externalPublicationPendingResult(bundle ExternalCommittedBundle, cause error) TurnResult {
+	return TurnResult{
+		Status: TurnStatusPublicationPending, ResultState: bundle.ResultState,
+		Committed: true, SafeError: bundle.SafeError, Cause: cause,
+	}
+}
+
+func sameExternalCommitOutcome(committed ExternalCommittedBundle, request ExternalCommitBundle) bool {
+	if committed.Lookup != request.ExpectedLookup || committed.ResultState != request.ResultState ||
+		committed.SafeError != request.SafeError || committed.FailureStage != request.FailureStage ||
+		committed.InvocationReceipt != request.InvocationReceipt || committed.PublicationIntent != request.PublicationIntent ||
+		len(committed.CanonicalEvents) != len(request.CanonicalEvents) || len(committed.MessageIndexes) != len(request.MessageIndexes) {
+		return false
+	}
+	for index, event := range request.CanonicalEvents {
+		stored := committed.CanonicalEvents[index]
+		event.EventSeq = stored.EventSeq
+		if !reflect.DeepEqual(event, stored) {
+			return false
+		}
+	}
+	return reflect.DeepEqual(committed.MessageIndexes, request.MessageIndexes)
+}
+
+func validateExternalCommittedBundle(bundle ExternalCommittedBundle, expected ExternalTurnLookup, accepted AcceptedTurn) error {
+	if bundle.Lookup != expected || expected.OwnerID == "" || expected.OperationID != turnOperationID(accepted.TurnID) ||
+		expected.SessionID != accepted.SessionID || expected.TurnID != accepted.TurnID || expected.GenerationEpoch != accepted.GenerationEpoch ||
+		bundle.ResultState != "completed" || len(bundle.CanonicalEvents) < 1 || len(bundle.CanonicalEvents) > 2 || len(bundle.MessageIndexes) != 1 {
+		return errors.New("external committed outcome scope or state is invalid")
+	}
+	if bundle.SafeError && bundle.FailureStage == "" || !bundle.SafeError && bundle.FailureStage != "" {
+		return errors.New("external committed safe-error stage is inconsistent")
+	}
+	if bundle.SafeError {
+		switch bundle.FailureStage {
+		case ExternalFailureStageReadView, ExternalFailureStagePromptComposition, ExternalFailureStageGeneration:
+		default:
+			return errors.New("external committed safe-error stage is unsupported")
+		}
+	}
+	intent := bundle.PublicationIntent
+	if intent.CanonicalResponseMessageID == "" || intent.StableLogicalKey != "external-publication:"+expected.OperationID ||
+		intent.Target != externalPublicationIntent(expected, intent.CanonicalResponseMessageID).Target {
+		return errors.New("external committed publication intent is not bound to the accepted source")
+	}
+	var response *modulecore.EventEnvelope
+	var receiptEvent *modulecore.EventEnvelope
+	var previousSeq modulecore.EventSeq
+	for index := range bundle.CanonicalEvents {
+		event := &bundle.CanonicalEvents[index]
+		if err := modulecore.ValidateEventEnvelope(*event); err != nil {
+			return fmt.Errorf("external committed event is invalid: %w", err)
+		}
+		if event.EventSeq <= accepted.AdmissionSeq || event.SessionID != accepted.SessionID || event.TurnID != accepted.TurnID ||
+			event.TraceID != accepted.InputEvent.TraceID || (index > 0 && event.EventSeq <= previousSeq) {
+			return errors.New("external committed event sequence or identity is invalid")
+		}
+		previousSeq = event.EventSeq
+		if event.MessageID == intent.CanonicalResponseMessageID {
+			if response != nil {
+				return errors.New("external committed bundle contains duplicate canonical responses")
+			}
+			response = event
+			continue
+		}
+		if event.EventType != "conversation.mio_emission_receipt" || event.ComponentID != "conversation_runtime" || event.ActorKind != "" || event.ActorID != "" ||
+			event.CausationEventID != accepted.InputEvent.EventID ||
+			payloadString(event.Payload, "status") != bundle.InvocationReceipt.Status ||
+			payloadString(event.Payload, "request_id") != bundle.InvocationReceipt.RequestID ||
+			payloadString(event.Payload, "response_id") != bundle.InvocationReceipt.ResponseID {
+			return errors.New("external committed bundle contains an unrelated event")
+		}
+		if receiptEvent != nil {
+			return errors.New("external committed bundle contains duplicate invocation receipts")
+		}
+		receiptEvent = event
+	}
+	if response == nil || response.EventType != "agent.response" || response.ComponentID != "conversation_runtime" ||
+		response.CausationEventID != accepted.InputEvent.EventID || response.MessageID == accepted.InputEvent.MessageID {
+		return errors.New("external canonical response does not match its accepted input")
+	}
+	hasReceipt := bundle.InvocationReceipt.Status != "" || bundle.InvocationReceipt.RequestID != "" || bundle.InvocationReceipt.ResponseID != ""
+	if hasReceipt != (receiptEvent != nil) || (receiptEvent != nil && receiptEvent.EventSeq <= response.EventSeq) {
+		return errors.New("external invocation receipt does not match its committed bundle")
+	}
+	responderActorID := expected.SourceBinding.EffectiveResponderActorID()
+	expectedActorKind, expectedActorID, expectedKind, expectedIndexKind := "agent", responderActorID, "reply", "assistant_message"
+	if bundle.SafeError {
+		expectedActorKind, expectedActorID, expectedKind, expectedIndexKind = "", "", "turn_error", "turn_error"
+	}
+	if response.ActorKind != expectedActorKind || response.ActorID != expectedActorID ||
+		payloadString(response.Payload, "kind") != expectedKind || payloadString(response.Payload, "from") != responderActorID ||
+		payloadString(response.Payload, "source_actor_id") != responderActorID || payloadString(response.Payload, "to") != "external_peer" ||
+		payloadString(response.Payload, "visibility") != "public" ||
+		payloadString(response.Payload, "reply_to_message_id") != string(accepted.InputMessageID) {
+		return errors.New("external canonical response actor, target, or correlation is invalid")
+	}
+	text, textOK := response.Payload["text"].(string)
+	content, contentOK := response.Payload["content"].(string)
+	if !textOK || !contentOK || text == "" || text != content {
+		return errors.New("external canonical response text is invalid")
+	}
+	storedBinding, err := conversation.ParseExternalPeerBinding(map[string]any{"external_peer_binding": response.Payload["external_peer_binding"]})
+	if err != nil || !storedBinding.Equal(expected.SourceBinding) {
+		return errors.New("external canonical response binding does not match its accepted source")
+	}
+	index := bundle.MessageIndexes[0]
+	if index.MessageID != response.MessageID || index.EventID != response.EventID || index.SessionID != response.SessionID || index.TurnID != response.TurnID ||
+		index.FromActor != responderActorID || index.ToKind != "external_peer" || index.ToActor != expected.SourceBinding.SenderPrincipalID ||
+		index.Kind != expectedIndexKind || index.ReplyToMessageID != accepted.InputMessageID || index.Visibility != "public" {
+		return errors.New("external canonical response index is invalid")
+	}
+	return nil
 }
 
 func validateTypedEmission(scope conversation.ConversationScope, allowlist conversation.EmissionAllowlist, emission conversation.AgentEmission) (conversation.AgentEmission, error) {
@@ -398,7 +714,9 @@ func (r *Runtime) prepareEmission(input AcceptedTurnInput, view ReadView, snapsh
 	}
 	prepared.Events = append(prepared.Events, publicEvent)
 	prepared.MessageIndexes = append(prepared.MessageIndexes, publicIndex)
-	prepared.Outbox = append(prepared.Outbox, projectionWork(accepted.SessionID, accepted.TurnID, publicEvent.EventID))
+	if accepted.TriggerKind != "external_peer_message" {
+		prepared.Outbox = append(prepared.Outbox, projectionWork(accepted.SessionID, accepted.TurnID, publicEvent.EventID))
+	}
 	if emission.Kind == conversation.EmissionKindDelegate {
 		instructionEvent := r.instructionEvent(accepted, *emission.Delegation, handoff.InstructionMessageID, publicEvent.EventID)
 		instructionIndex := messageIndexFor(instructionEvent, accepted, "agent", emission.Delegation.To, "delegation_instruction", "private")
@@ -483,6 +801,9 @@ func buildDelegationContext(accepted AcceptedTurn, view ReadView, snapshot agent
 
 func (r *Runtime) publicMessage(input AcceptedTurnInput, kind, indexKind, availability, delegationID, text string) (modulecore.EventEnvelope, MessageIndex, error) {
 	accepted := input.ReadViewRequest.Accepted
+	if accepted.TriggerKind == "external_peer_message" {
+		return r.externalPeerMessage(input, kind, indexKind, availability, text)
+	}
 	replyToMessageID := accepted.InputMessageID
 	var report *acceptedReport
 	if accepted.TriggerKind == "report_reply" {
@@ -523,7 +844,44 @@ func (r *Runtime) publicMessage(input AcceptedTurnInput, kind, indexKind, availa
 	return event, index, nil
 }
 
+func (r *Runtime) externalPeerMessage(input AcceptedTurnInput, kind, indexKind, availability, text string) (modulecore.EventEnvelope, MessageIndex, error) {
+	accepted := input.ReadViewRequest.Accepted
+	binding, err := conversation.ParseExternalPeerBinding(accepted.InputEvent.Payload)
+	if err != nil {
+		return modulecore.EventEnvelope{}, MessageIndex{}, err
+	}
+	if err := binding.ValidateNewRequest(); err != nil {
+		return modulecore.EventEnvelope{}, MessageIndex{}, err
+	}
+	sourceActorID, err := binding.SourceActorID()
+	if err != nil || sourceActorID != accepted.ActorID || accepted.InputMessageID != accepted.InputEvent.MessageID {
+		return modulecore.EventEnvelope{}, MessageIndex{}, errors.New("external peer response binding does not match its accepted input")
+	}
+	responderActorID := binding.EffectiveResponderActorID()
+	messageID := modulecore.NewMessageID()
+	payload := map[string]any{
+		"kind": kind, "client_submission_id": accepted.ClientSubmissionID, "availability": availability, "visibility": "public",
+		"from": responderActorID, "source_actor_id": responderActorID, "to": "external_peer",
+		"content": text, "text": text, "reply_to_message_id": string(accepted.InputMessageID),
+		"external_peer_binding": binding.ToPayload(),
+	}
+	event := modulecore.NewEventEnvelope(accepted.InputEvent.TraceID, accepted.InputEvent.EventID, nil, "conversation_runtime", "agent.response", time.Now().UTC(), payload)
+	event.SessionID, event.TurnID, event.MessageID = accepted.SessionID, accepted.TurnID, messageID
+	if kind != "turn_error" {
+		event.ActorKind, event.ActorID = "agent", responderActorID
+	}
+	index := MessageIndex{
+		MessageID: messageID, EventID: event.EventID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,
+		FromActor: responderActorID, ToKind: "external_peer", ToActor: binding.SenderPrincipalID,
+		Kind: indexKind, ReplyToMessageID: accepted.InputMessageID, Visibility: "public",
+	}
+	return event, index, nil
+}
+
 func purposeForAcceptedTurn(accepted AcceptedTurn) conversation.ConversationPurpose {
+	if accepted.TriggerKind == "external_peer_message" {
+		return conversation.PurposeExternalPeer
+	}
 	if accepted.TriggerKind == "report_reply" {
 		return conversation.PurposeReportReply
 	}

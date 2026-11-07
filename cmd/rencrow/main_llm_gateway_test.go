@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestBuildPrimaryLLMProvidersUsesGatewayAgentIDs(t *testing.T) {
@@ -71,6 +73,44 @@ func TestBuildPrimaryLLMProvidersUsesGatewayEvenWhenEnabledFlagIsFalse(t *testin
 	}
 	if got := strings.Join(models, ","); got != "mio" {
 		t.Fatalf("RenCrow_LLM Gateway models = %q", got)
+	}
+}
+
+func TestBuildPrimaryLLMProvidersUsesFixedKuroBoardChatBinding(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	providers := buildPrimaryLLMProviders(&config.Config{
+		LLMGateway: config.LLMGatewayConfig{Enabled: true, BaseURL: server.URL, TimeoutSec: 5},
+	}, nil)
+
+	scope := domainconversation.ConversationScope{
+		TurnID: modulecore.NewTurnID(), SessionID: modulecore.NewSessionID(), TraceID: modulecore.NewTraceID(),
+		ActorID: "board:board-instance:peer-alpha", InputID: modulecore.NewMessageID(),
+		GenerationID: "kuro-board-chat-request-provenance", Purpose: domainconversation.PurposeExternalPeer,
+		PolicyVersion: "board-chat-test-v1",
+	}
+	if _, err := providers.BoardChat.GenerateConversation(context.Background(), scope, llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Content: "Reply in this thread."}},
+	}); err != nil {
+		t.Fatalf("GenerateConversation(Kuro BOARD CHAT): %v", err)
+	}
+	metadata, _ := payload["rencrow"].(map[string]any)
+	for key, want := range map[string]string{
+		"agent_id": "kuro", "execution_role": "board-chat", "execution_alias": "kuro-board-chat",
+	} {
+		if metadata[key] != want {
+			t.Errorf("Kuro BOARD CHAT request metadata[%q] = %#v, want %q; all=%#v", key, metadata[key], want, metadata)
+		}
+	}
+	if payload["model"] != "kuro-board-chat" {
+		t.Fatalf("Kuro BOARD CHAT request model alias = %#v, want fixed alias kuro-board-chat", payload["model"])
 	}
 }
 

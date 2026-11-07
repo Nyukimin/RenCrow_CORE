@@ -2165,3 +2165,24 @@ COREのread clientは`internal/adapter/worldread`にsource実装済みです。�
 PORTAL/browserはWORLDへ直接接続せず、COREの認証・利用者scopeに従うread bridgeだけを利用します。WORLD reader credential、DB path、private Memory参照をbrowserへ渡しません。WORLDからCOREへのcallbackも行いません。現在記載されている`GET /viewer/world/snapshot`と`GET /viewer/world/stream`は前節のR04 Mock PoC専用であり、本番routeとして公開されません。この境界は`internal/adapter/worldread`のarchitecture testで機械的に強制します。R04 Mock PoCのrouteを参照するproduction file、またはsource-level read clientを消費するproduction file（client package自身とR04 PoCのowner fileを除く）を増やすには、read bridge route／DTOとcanonical routeの決定をtestの許可リストへ記載する必要があり、記載のない追加とstaleな許可は失敗します。
 
 本番read bridgeはSnapshotと連続したEvent/Stream cursorを同じscopeで返します。cursorの欠落、期限切れ、順序飛び、scopeまたはTimeline epochの不一致では部分状態を継続せず、最新Snapshotから再同期します。WORLDが返す観測・活動・受理candidateはCOREの認知やMemory確定ではありません。会話・思考・Task/Runの結果をWORLD側で捏造せず、実仕事の終端はCOREのTask/RunとそのReceiptで照合します。
+
+<a id="board-communication"></a>
+## BOARD通信のonline入口とreceipt
+
+Status: 採用済み意味契約（2026-11-05）。以下はCORE通信の設定を有効にしたときのowner向けHTTP契約です。
+
+変更理由: scoped BOARD CLIの送信成功はCORE Agentによる発信を意味しません。CORE起点発信には認証済みownerの依頼を実Mio生成へ渡すonline入口が必要です。外部peer ingressは、通常ViewerやAgent OPSの権限を借りず、別のtyped境界として扱います。
+
+owner online送信は認証主体、request idempotency key、許可BOARD context、明示peer、発信依頼を受けます。callerがCORE Actor、canonical ID、policy許可、生成済みMio本文を自己申告して確定することはできません。接続は認証済みownerの直接loopback入口に限定し、転送元headerをowner証明にしません。既存ownerの保護token読込・定時間Bearer照合・direct-loopback検証を再利用できますが、CMD専用ToolExecutionScope／private data scopeを付与するmiddlewareは流用せず、通信依頼専用のowner provenanceを渡します。COREは権限とscopeを検証してdurable accepted receiptを返し、実Mio生成、BOARD保存、peer返信受領を非同期に追跡します。CLIは同じonline契約のclientとし、DBやBOARDへ直接書いてCORE発信を代替しません。
+
+- `POST /api/board-communication/requests` は `channel_id`、`peer_id`、`title`、`instruction`、`idempotency_key` をJSONで受けます。COREが受付を保存した後だけ `202` を返します。
+- `GET /api/board-communication/requests/{turn}` は同じownerの保存済み受付を読みます。段階は `accepted`、`publication_pending`（Mioの応答をCOREに保存済み）、`completed`（BOARDの保存receiptをCOREが照合済み）です。最後の段階も、外部Agentの本文取得・起動・返信は意味しません。
+- 受付と状態の応答は `owner_id`、`session_id`、`turn_id`、`trace_id`、`input_message_id`、`stage`、`accepted_at` を含みます。状態取得には `updated_at` も含まれます。
+
+typed peer受付は認証済みBOARD clientが取得したmessage／contextとcurrent scopeを検証します。外部senderをCORE Agentと扱わず、任意callerの本文やheaderだけで同入口を利用させません。意味上の入力はBOARD instance、sender／recipient、channel、thread、message、reply_to、mentions、causation／hopと本文です。opaqueなBOARD参照をcanonical ID fieldへ格納しません。
+
+receiptはCORE発行のrequest／turn／trace／message等の相関、BOARD参照、stage、確定時刻、不明状態／拒否理由を必要な範囲で返します。認証情報、claim secret、private本文を診断に含めません。同じ認証namespace・key・payloadの再送は元receiptへ収束し、payload変更をconflictとして拒否します。commit不明をacceptedやrejectedへ丸めません。
+
+観測stageは、CORE durable accepted、BOARD stored、notification attempted／accepted、recipient body read、processing claim、実Agent生成・canonical commit、BOARD reply stored、相関済みpeer reply受領を区別します。未観測時刻は空のまま保持します。配送callback成功やSSE cursor進行を既読・処理成功へ変換しません。
+
+BOARD wireは既存v1のcontexts、threads、send、inbox、receipt、processing-claim、ACK、message statusと認証済みSSEを使用します。接続identityの読取としてGET /api/v1/connectionを追加し、currentなscoped非admin Bearer本人のprincipal_idとjournal_instance_idだけを返します。既存contexts／flat inbox／senderとrecipientの双方が取得できるreceiptでは、期待principalとjournal継続性を観測できないための追加です。GETはidentity初期化を行いません。COREはX-BOARD-Journal-Instance-IDとX-BOARD-Principal-IDを後続要求へ付けます。両header無は既存peer互換、片方だけ・形式不正は400 connection_identity_precondition_invalid、認証後の期待tuple不一致は409 connection_identity_mismatchとし現在値を開示しません。BOARDはSend／新thread／claim／ACKのcanonical mutation lock内で現在credentialと期待tupleをcommit前に検証します。COREはprecondition無しへfallbackせず、mismatchを未commit証明や再pin許可にしません。各操作でchannel／thread／reply_to／mentions／recipient／ACL契約を維持し、旧管理routeへfallbackしません。CORE起点requestへのreplyはreply_to、expected peer、context、causation照合後に終端化し、新たなMio生成を起動しません。詳細は[アーキテクチャ](04_アーキテクチャ概要.md#board-communication)と[安全方針](07_安全・自動実行・データ方針.md#board-communication)を参照します。

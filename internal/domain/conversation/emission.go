@@ -28,6 +28,8 @@ type ConversationPurpose string
 
 const (
 	PurposeMioTurn              ConversationPurpose = "mio_turn"
+	PurposeExternalPeer         ConversationPurpose = "external_peer"
+	PurposeBoardOwnerRequest    ConversationPurpose = "board_owner_request"
 	PurposeReadback             ConversationPurpose = "readback"
 	PurposeReportReply          ConversationPurpose = "report_reply"
 	PurposeClarificationControl ConversationPurpose = "clarification_control"
@@ -92,7 +94,7 @@ func (scope ConversationScope) Validate() error {
 		return errInvalidScope
 	}
 	switch scope.Purpose {
-	case PurposeMioTurn, PurposeReadback, PurposeReportReply, PurposeClarificationControl, PurposeClarificationReply:
+	case PurposeMioTurn, PurposeExternalPeer, PurposeBoardOwnerRequest, PurposeReadback, PurposeReportReply, PurposeClarificationControl, PurposeClarificationReply:
 		return nil
 	default:
 		return errInvalidScope
@@ -279,11 +281,20 @@ func jsonString(raw json.RawMessage) (string, error) {
 }
 
 func validateEmission(emission AgentEmission, purpose ConversationPurpose, allowlist EmissionAllowlist) error {
-	if emission.SchemaVersion != emissionSchemaVersion || emission.UserMessage.To != "user" || strings.TrimSpace(emission.UserMessage.Text) == "" || len([]byte(emission.UserMessage.Text)) > MaxUserMessageBytes {
+	if emission.SchemaVersion != emissionSchemaVersion || strings.TrimSpace(emission.UserMessage.Text) == "" || len([]byte(emission.UserMessage.Text)) > MaxUserMessageBytes {
 		return errInvalidEmission
 	}
 	if err := validateAllowlist(allowlist); err != nil {
 		return err
+	}
+	if purpose == PurposeExternalPeer || purpose == PurposeBoardOwnerRequest {
+		if len(allowlist.AllowedAssignees) != 0 || emission.UserMessage.To != "external_peer" || emission.Kind != EmissionKindReply || emission.Delegation != nil {
+			return errInvalidEmission
+		}
+		return nil
+	}
+	if emission.UserMessage.To != "user" {
+		return errInvalidEmission
 	}
 	switch emission.Kind {
 	case EmissionKindReply:

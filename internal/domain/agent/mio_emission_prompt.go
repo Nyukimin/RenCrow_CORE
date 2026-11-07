@@ -26,7 +26,7 @@ func (m *MioAgent) ComposeConversationPrompt(ctx context.Context, scope conversa
 		return PromptSnapshot{}, fmt.Errorf("validate Mio conversation scope: %w", err)
 	}
 	switch scope.Purpose {
-	case conversation.PurposeMioTurn, conversation.PurposeReportReply, conversation.PurposeClarificationControl, conversation.PurposeClarificationReply:
+	case conversation.PurposeMioTurn, conversation.PurposeExternalPeer, conversation.PurposeBoardOwnerRequest, conversation.PurposeReportReply, conversation.PurposeClarificationControl, conversation.PurposeClarificationReply:
 	default:
 		return PromptSnapshot{}, fmt.Errorf("unsupported Mio prompt purpose %q", scope.Purpose)
 	}
@@ -40,6 +40,27 @@ func (m *MioAgent) ComposeConversationPrompt(ctx context.Context, scope conversa
 	composed := snapshot.Clone()
 	currentUser := composed.Messages[len(composed.Messages)-1]
 	dynamic := make([]llm.Message, 0, len(composed.Messages)+8)
+	if scope.Purpose == conversation.PurposeExternalPeer {
+		for _, message := range composed.Messages[:len(composed.Messages)-1] {
+			message.Type = llm.PromptContextRecall
+			dynamic = append(dynamic, message)
+		}
+		composed.Messages = assemblePromptContext(m.systemPrompt, "", dynamic, currentUser)
+		if err := ctx.Err(); err != nil {
+			return PromptSnapshot{}, err
+		}
+		return composed, nil
+	}
+	if scope.Purpose == conversation.PurposeBoardOwnerRequest {
+		if len(composed.Messages) != 1 || currentUser.Role != "user" {
+			return PromptSnapshot{}, errors.New("board owner request prompt must contain exactly one owner instruction")
+		}
+		composed.Messages = assemblePromptContext(m.systemPrompt, "", nil, currentUser)
+		if err := ctx.Err(); err != nil {
+			return PromptSnapshot{}, err
+		}
+		return composed, nil
+	}
 
 	if m.conversationEngine != nil {
 		recallPack, err := m.conversationEngine.BeginTurn(ctx, string(scope.SessionID), currentUser.Content)

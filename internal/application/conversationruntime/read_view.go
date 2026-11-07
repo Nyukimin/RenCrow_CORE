@@ -193,7 +193,8 @@ func (s *ReadViewService) BuildReadView(ctx context.Context, request ReadViewReq
 	if err := validateReadViewRequest(request); err != nil {
 		return ReadView{}, err
 	}
-	if !request.Legacy.Complete || len(request.Legacy.Gaps) != 0 {
+	externalPeer := request.Accepted.TriggerKind == "external_peer_message"
+	if !externalPeer && (!request.Legacy.Complete || len(request.Legacy.Gaps) != 0) {
 		return ReadView{}, ErrReadViewIncompleteProjection
 	}
 
@@ -207,12 +208,18 @@ func (s *ReadViewService) BuildReadView(ctx context.Context, request ReadViewReq
 		// their canonical context.
 		tailAfter = request.Session.CutoverSeq
 	}
+	if externalPeer {
+		tailAfter = request.Session.CutoverSeq
+	}
 	tail, err := s.reader.ReadCompleteSessionTail(ctx, request.Session.SessionID, tailAfter)
 	if err != nil {
 		return ReadView{}, fmt.Errorf("read canonical conversation tail: %w", err)
 	}
 	if !tail.Complete || tail.ThroughSeq < tailAfter || tail.ThroughSeq < request.Accepted.AdmissionSeq {
 		return ReadView{}, ErrReadViewIncompleteTail
+	}
+	if externalPeer {
+		return buildExternalPeerReadView(ctx, request, tail, tailAfter)
 	}
 	var storedClarification *StoredClarificationControlContext
 	if request.Accepted.TriggerKind == "clarification_control" {
@@ -432,6 +439,8 @@ func validateReadViewRequest(request ReadViewRequest) error {
 			return fmt.Errorf("%w: accepted public input actor or event type is invalid", ErrReadViewInvalid)
 		}
 		return validateAcceptedUserInput(request, event)
+	case "external_peer_message":
+		return validateAcceptedExternalPeerInput(request, event)
 	case "report_reply":
 		_, err := parseAcceptedReport(accepted)
 		return err

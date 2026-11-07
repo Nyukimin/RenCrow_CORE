@@ -382,6 +382,9 @@ func (r *responseFirstConversationRuntime) Process(ctx context.Context, accepted
 		return fmt.Errorf("load committed clarification reply continuation: %w", err)
 	}
 	if replyFound {
+		if isExternalConversationOutcome(clarificationReply.Events) {
+			return conversationruntime.ErrExternalTriggerViewerRefused
+		}
 		bundle := conversationruntime.CommittedBundle{
 			OperationID: clarificationReply.OperationID, SessionID: clarificationReply.SessionID,
 			TurnID: clarificationReply.ReplyTurnID, ResultState: clarificationReply.ResultState,
@@ -396,6 +399,11 @@ func (r *responseFirstConversationRuntime) Process(ctx context.Context, accepted
 	pending, err := r.store.ReadPendingAcceptedTurns(ctx, accepted.SessionID, r.ownerID)
 	if err != nil {
 		return fmt.Errorf("read response-first turn for processing: %w", err)
+	}
+	for _, item := range pending {
+		if item.TurnID == accepted.TurnID && isViewerRefusedTrigger(item.TriggerKind) {
+			return conversationruntime.ErrExternalTriggerViewerRefused
+		}
 	}
 	for _, item := range pending {
 		if item.TurnID != accepted.TurnID {
@@ -445,6 +453,9 @@ func (r *responseFirstConversationRuntime) Process(ctx context.Context, accepted
 		return fmt.Errorf("load committed clarification decision: %w", err)
 	}
 	if clarificationFound {
+		if isExternalConversationOutcome(clarification.Events) {
+			return conversationruntime.ErrExternalTriggerViewerRefused
+		}
 		bundle := conversationruntime.CommittedBundle{
 			OperationID: clarification.OperationID, SessionID: clarification.SessionID,
 			TurnID: clarification.ControlTurnID, ResultState: clarification.ResultState,
@@ -463,6 +474,9 @@ func (r *responseFirstConversationRuntime) Process(ctx context.Context, accepted
 	}
 	if !found {
 		return errors.New("response-first turn is neither accepted nor committed")
+	}
+	if isExternalConversationOutcome(batch.Events) {
+		return conversationruntime.ErrExternalTriggerViewerRefused
 	}
 	if err := r.publisher.PublishCommitted(ctx, toConversationCommittedBundle(batch)); err != nil {
 		return err
@@ -496,6 +510,9 @@ func (r *responseFirstConversationRuntime) ResumePendingAcceptedTurns(ctx contex
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if isViewerRefusedTrigger(item.TriggerKind) {
+			continue
+		}
 		if item.State != "accepted" && !((item.TriggerKind == "clarification_control" || item.TriggerKind == responseFirstClarificationReplyTriggerKind) && item.State == "awaiting_readback") {
 			continue
 		}
@@ -507,6 +524,28 @@ func (r *responseFirstConversationRuntime) ResumePendingAcceptedTurns(ctx contex
 		}
 	}
 	return nil
+}
+
+func isViewerRefusedTrigger(triggerKind string) bool {
+	return triggerKind == "external_peer_message" || triggerKind == "board_owner_request"
+}
+
+func isExternalConversationOutcome(events []modulecore.EventEnvelope) bool {
+	for _, event := range events {
+		if event.EventType == "conversation.external_peer_message" ||
+			externalOutcomePayloadString(event.Payload, "to") == "external_peer" {
+			return true
+		}
+		if _, exists := event.Payload["external_peer_binding"]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func externalOutcomePayloadString(payload map[string]any, key string) string {
+	value, _ := payload[key].(string)
+	return value
 }
 
 type responseFirstCanonicalReader struct{ store responseFirstJournalStore }

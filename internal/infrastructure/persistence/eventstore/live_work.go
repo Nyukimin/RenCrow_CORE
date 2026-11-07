@@ -162,6 +162,7 @@ func (s *SQLiteStore) ClaimWork(ctx context.Context, input WorkClaimInput) ([]Le
 			WHERE ((w.state='pending' AND (w.not_before='' OR julianday(w.not_before) <= julianday(?)))
 			    OR (w.state='leased' AND w.lease_expires_at IS NOT NULL AND julianday(w.lease_expires_at) <= julianday(?)))
 			  AND (? = '' OR w.kind = ?)
+			  AND w.kind <> 'board_publication'
 			  AND (w.kind <> 'conversation_projection' OR EXISTS (
 				SELECT 1 FROM live_conversation_projection_delivery p WHERE p.work_id=w.work_id
 			  ))
@@ -354,6 +355,9 @@ func (s *SQLiteStore) finishWork(ctx context.Context, input WorkLeaseInput, retr
 	work, state, err := readWorkForUpdate(ctx, tx, input.WorkID)
 	if err != nil {
 		return err
+	}
+	if work.Kind == "board_publication" {
+		return ErrWorkConflict
 	}
 	if state == "completed" {
 		if work.LeaseToken == input.LeaseToken && work.Version == input.Version && completedWorkHasOwnerResult(ctx, tx, work) {

@@ -21,6 +21,7 @@ type primaryLLMProviders struct {
 	Heavy                   llm.LLMProvider
 	Wild                    llm.LLMProvider
 	Conversation            *llmmiddleware.ConversationProvider
+	BoardChat               *llmmiddleware.ConversationProvider
 	Readback                map[string]*llmmiddleware.ConversationProvider
 	GatewayWriteDiagnostics map[string]modulellm.GatewayRequestWriteDiagnosticsProvider
 }
@@ -68,6 +69,8 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 		Wild:       provider("wild", "midori", "midori", false),
 		Conversation: llmmiddleware.NewConversationProvider(
 			gatewayProvider("chat", "mio", "mio", false), "mio-conversation", contextBudgetPolicyForConfig(cfg)),
+		BoardChat: llmmiddleware.NewConversationProvider(
+			gatewayProvider("board-chat", "kuro-board-chat", "kuro", false), "kuro-board-chat", contextBudgetPolicyForConfig(cfg)),
 		Readback: map[string]*llmmiddleware.ConversationProvider{
 			"shiro":  conversationProvider("shiro", "chatworker", "shiro"),
 			"kuro":   conversationProvider("kuro", "heavy", "kuro"),

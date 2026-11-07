@@ -96,284 +96,291 @@ type runtimeCanonicalEventStore interface {
 }
 
 type Dependencies struct {
-	persistenceQueue               *persistencequeue.Queue[persistencequeue.PersistenceCommand]
-	transportPersistenceQueue      *persistencequeue.Queue[persistencequeue.PersistenceCommand]
-	combinedChatProcessorEligible  bool
-	combinedChatAdmissionEnabled   bool
-	redisHealthCheck               func(context.Context) error
-	dataCapabilityCatalog          *runtimeDataCapabilityCatalog
-	mioRetrieval                   orchestrator.MioRetrievalPort
-	lineHandler                    http.Handler
-	telegramHandler                http.Handler
-	discordHandler                 http.Handler
-	slackHandler                   http.Handler
-	eventHub                       *viewer.EventHub                            // live viewer
-	sessionRepository              orchestrator.SessionRepository              // canonical Session owner used by Viewer event projections
-	sessionVisibility              *runtimeSessionVisibility                   // shared public/session-owner boundary cache
-	ttsAudioAccessOwner            *ttsAudioAccessOwner                        // canonical Session registration shared by TTS producer and reader
-	monitorStore                   *viewer.MonitorStore                        // viewer monitor snapshots
-	eventLogStore                  *viewer.CanonicalEventLog                   // canonical orchestrator event projection
-	canonicalEventStore            runtimeCanonicalEventStore                  // canonical append-only Event Store
-	reportStore                    *executionpersistence.JSONLReportStore      // execution evidence store
-	eventRelay                     *idleAwareEventListener                     // viewer + idlechat stop relay
-	responseFirst                  *responseFirstConversationRuntime           // direct Viewer response-first v2 runtime
-	viewerStatus                   http.HandlerFunc                            // viewer status API
-	viewerAgents                   http.HandlerFunc                            // viewer agents API
-	viewerAgentDetail              http.HandlerFunc                            // viewer agent detail API
-	tasks                          http.HandlerFunc                            // canonical Task list API
-	taskDetail                     http.HandlerFunc                            // canonical Task detail API
-	identityGraph                  http.HandlerFunc                            // canonical identity graph projection
-	taskNotifications              http.HandlerFunc                            // canonical Task interrupt notification API
-	taskStoreIndex                 bool                                        // task_store.index.enabled: open the local Task store with its ID index
-	taskStorePersist               bool                                        // task_store.index.persist: keep the index in a sidecar file
-	taskStoreRotation              bool                                        // task_store.rotation.enabled: write the Task store to daily segments
-	taskStoreSizeValve             int64                                       // task_store.rotation.size_valve_bytes (0: default)
-	taskParallelLimits             *taskmanager.ParallelLimits                 // canonical Task admission limits, from the loaded config
-	taskStore                      domaintask.Store                            // shared canonical Task persistence owner
-	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
-	worldProjectionCancel          context.CancelFunc                          // stops the outbound WORLD projection loop
-	worldProjectionDone            <-chan struct{}                             // closed when the projection loop exits
-	worldProjectionClose           func() error                                // closes the projection outbox after the loop exits
-	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
-	actionStoreHealth              infrahealth.ActionStoreReporter             // the store actionManager writes through, for /health
-	nativeCoding                   *delegation.Runtime                         // shiro_native_coding_v1 admission and delegate (nil unless the profile is enabled)
-	transportManager               *transportmanager.Manager                   // shared canonical Request Response receipt owner
-	playbackRecorder               *playbackActionRecorder                     // canonical actual-playback receipt owner
-	viewerLogs                     http.HandlerFunc                            // viewer logs API
-	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
-	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
-	viewerSend                     http.HandlerFunc                            // viewer message sender
-	viewerConversationEventsV2     http.HandlerFunc                            // owner/session-scoped response-first v2 public SSE
-	viewerSpeechCancel             http.HandlerFunc                            // per-turn Viewer SpeechPlan cancellation
-	viewerSpeechProgress           http.HandlerFunc                            // turn-scoped Viewer playback pacing progress
-	agentOps                       http.HandlerFunc                            // local authenticated Agent OPS ingress
-	viewerGamesStatus              http.HandlerFunc                            // RenCrow_GAMES bridge status API
-	viewerGamesResult              http.HandlerFunc                            // RenCrow_GAMES result callback API
-	viewerGamesSessions            http.HandlerFunc                            // RenCrow_GAMES recent session observer API
-	viewerGamesEvents              http.HandlerFunc                            // RenCrow_GAMES candidate event observer API
-	viewerGamesDecision            http.HandlerFunc                            // Agent-owned game turn decision API
-	viewerGamesObserverPage        http.HandlerFunc                            // RenCrow_GAMES live observer UI proxy page
-	viewerGamesLaunch              http.HandlerFunc                            // RenCrow_GAMES launch proxy (マルチペルソナ WP5)
-	gameAutoplay                   *viewer.GameAutoplayService                 // ペルソナ自発プレイランナー (マルチペルソナ WP6)
-	viewerGamesObserverProxy       http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
-	viewerTradeStatus              http.HandlerFunc                            // RenCrow_TRADE read-only status projection
-	viewerTradePolicyEvaluation    http.HandlerFunc                            // RenCrow_TRADE pure policy diagnostic evaluation
-	viewerTradeRiskPreview         http.HandlerFunc                            // RenCrow_TRADE non-mutating portfolio risk preview
-	viewerTradeSimulationCommit    http.HandlerFunc                            // RenCrow_TRADE simulation-only atomic portfolio commit
-	viewerTradeShadowObservation   http.HandlerFunc                            // RenCrow_TRADE immutable Shadow observation record
-	viewerTradeShadowOutcome       http.HandlerFunc                            // RenCrow_TRADE immutable Shadow outcome record
-	viewerTradeShadowOutcomeReport http.HandlerFunc                            // RenCrow_TRADE read-only Shadow outcome report
-	viewerTradeShadowReview        http.HandlerFunc                            // RenCrow_TRADE immutable Shadow outcome review record
-	viewerTradeShadowReviewReport  http.HandlerFunc                            // RenCrow_TRADE read-only Shadow review report
-	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
-	packageValidation              http.HandlerFunc                            // viewer package/update validation API
-	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
-	extensionHealth                http.HandlerFunc                            // viewer plugin / extension health API
-	llmOpsNodes                    http.HandlerFunc                            // LLM Ops node overview (llmfit observation)
-	llmOpsNode                     http.HandlerFunc                            // LLM Ops node hardware profile
-	llmOpsNodeModels               http.HandlerFunc                            // LLM Ops node model fit listing
-	llmOpsModelMatrix              http.HandlerFunc                            // LLM Ops model x node fit matrix
-	llmOpsRefresh                  http.HandlerFunc                            // LLM Ops manual refresh (re-read only)
-	otelExport                     http.HandlerFunc                            // viewer OpenTelemetry export API
-	artifactCleanup                http.HandlerFunc                            // viewer stale artifact cleanup API
-	repairRunner                   viewer.RepairTaskRunner                     // viewer repair Task runner
-	voiceDirectHandler             voiceDirectFinalHandler                     // VDS llm.final -> SSE
-	evidenceHandler                http.HandlerFunc                            // viewer evidence API
-	evidenceDetail                 http.HandlerFunc                            // viewer evidence detail API
-	evidenceSummary                http.HandlerFunc                            // viewer evidence summary API
-	glossaryRecent                 http.HandlerFunc                            // viewer glossary API
-	viewerMemorySnapshot           http.HandlerFunc                            // viewer memory/news/recall API
-	viewerMemoryOwner              http.HandlerFunc                            // authenticated CMD memory owner API
-	viewerMemoryChatGPTImportOwner http.HandlerFunc                            // authenticated ChatGPT Common Raw owner API
-	viewerMemoryLayers             http.HandlerFunc                            // viewer memory layer API
-	viewerMemoryEvents             http.HandlerFunc                            // viewer L1 event/search cache API
-	viewerMemoryState              http.HandlerFunc                            // viewer memory state API
-	viewerMemoryPromote            http.HandlerFunc                            // viewer memory promote API
-	viewerMemoryUser               http.HandlerFunc                            // viewer user memory API
-	viewerMemoryUserState          http.HandlerFunc                            // viewer user memory state API
-	viewerMemoryUserForget         http.HandlerFunc                            // viewer user memory forget API
-	viewerMemoryUserSupersede      http.HandlerFunc                            // viewer user memory supersede API
-	viewerMemoryRecallPack         http.HandlerFunc                            // viewer memory recall pack API
-	viewerMemoryProfilePromotions  http.HandlerFunc                            // async ProfilePromotion job API
-	viewerMemoryProfileRetry       http.HandlerFunc                            // explicit ProfilePromotion retry API
-	viewerRecallTraces             http.HandlerFunc                            // viewer recall trace API
-	viewerSourceRegistry           http.HandlerFunc                            // viewer source registry API
-	viewerXBookmarkWorkflow        http.HandlerFunc                            // explicit X Bookmark utilization workflows
-	xBookmarkLinkSummarizer        *knowledgeapp.ExternalLinkSummarizer        // external article summaries
-	viewerDomainGraphAssertions    http.HandlerFunc                            // viewer domain graph assertion API
-	viewerMovieDomainGraphSync     http.HandlerFunc                            // viewer movie domain graph sync API
-	viewerHobbyDomainGraphSync     http.HandlerFunc                            // viewer hobby domain graph sync API
-	verificationRecent             http.HandlerFunc                            // viewer verification recent API
-	verificationDetail             http.HandlerFunc                            // viewer verification detail API
-	verificationSummary            http.HandlerFunc                            // viewer verification summary API
-	toolHarnessRecent              http.HandlerFunc                            // viewer tool harness mediation API
-	globalPolicyStatus             http.HandlerFunc                            // read-only Global Policy Bundle status API
-	globalPolicyStore              *configpolicy.Store                         // immutable active policy snapshot and reload state
-	globalPolicyDecisions          http.HandlerFunc                            // read-only common policy decision evidence API
-	globalPolicyDecisionStore      *policydecisionpersistence.JSONLStore       // append-only common policy decision evidence store
-	dciRecent                      http.HandlerFunc                            // viewer DCI trace API
-	dciSearch                      http.HandlerFunc                            // viewer DCI manual search API
-	dciSearcher                    orchestrator.DCISearcher                    // message orchestrator explicit DCI trigger
-	dciTraceStore                  any                                         // DCI trace store for cross-feature candidate extraction
-	recallTraceStore               orchestrator.RecallTraceStore               // DCI / recall trace API store
-	sandboxStatus                  http.HandlerFunc                            // viewer sandbox promotion API
-	sandboxPromotion               http.HandlerFunc                            // viewer sandbox promotion request API
-	sandboxPromotionApply          http.HandlerFunc                            // viewer sandbox promotion apply checkpoint API
-	sandboxPromotionRollback       http.HandlerFunc                            // viewer sandbox promotion rollback checkpoint API
-	sandboxPromotionPreview        http.HandlerFunc                            // viewer sandbox promotion diff preview API
-	sandboxWorktreeCreate          http.HandlerFunc                            // viewer sandbox code worktree create API
-	sandboxWorktreeClose           http.HandlerFunc                            // viewer sandbox code worktree close API
-	skillGovernanceRecent          http.HandlerFunc                            // viewer skill governance API
-	skillGovernanceBoot            http.HandlerFunc                            // viewer skill governance bootstrap API
-	skillContributionGate          http.HandlerFunc                            // viewer contribution gate API
-	skillChangeGate                http.HandlerFunc                            // viewer skill change gate API
-	skillChangeEval                http.HandlerFunc                            // viewer skill change eval runner API
-	skillExternalPRSubmit          http.HandlerFunc                            // viewer external PR submit audit API
-	skillBootstrap                 *skillapp.BootstrapService                  // runtime skill bootstrap logger
-	coderProposalEvidence          orchestrator.CoderProposalEvidenceRecorder  // Coder proposal evidence files for Skill Change Eval
-	workstreamStatus               http.HandlerFunc                            // viewer workstream status API
-	workstreamGoal                 http.HandlerFunc                            // viewer workstream goal API
-	workstreamArtifact             http.HandlerFunc                            // viewer workstream artifact API
-	workstreamAnnotation           http.HandlerFunc                            // viewer workstream artifact annotation API
-	workstreamSteering             http.HandlerFunc                            // viewer workstream steering API
-	workstreamHeartbeat            http.HandlerFunc                            // viewer workstream heartbeat API
-	workstreamVaultUpdate          http.HandlerFunc                            // viewer workstream vault update log API
-	workstreamVaultReview          http.HandlerFunc                            // viewer workstream vault update review API
-	workstreamVaultPreview         http.HandlerFunc                            // viewer workstream vault update preview API
-	revenueStatus                  http.HandlerFunc                            // viewer revenue status API
-	revenueMarket                  http.HandlerFunc                            // viewer revenue market research API
-	revenueSNSPost                 http.HandlerFunc                            // viewer revenue SNS post metric API
-	revenueProduct                 http.HandlerFunc                            // viewer revenue product API
-	revenueCustomerVoice           http.HandlerFunc                            // viewer revenue customer voice API
-	revenueEvent                   http.HandlerFunc                            // viewer revenue event API
-	revenuePolicyDecision          http.HandlerFunc                            // viewer revenue policy decision API
-	revenueDailyRoutine            http.HandlerFunc                            // viewer revenue daily routine draft report API
-	revenueChannelDraft            http.HandlerFunc                            // viewer revenue channel draft API
-	revenueExternalSendApply       http.HandlerFunc                            // viewer revenue external send apply audit API
-	revenueOpportunities           http.HandlerFunc                            // viewer economic opportunities API
-	revenueEconomicTasks           http.HandlerFunc                            // viewer economic tasks API
-	revenueDeliveries              http.HandlerFunc                            // viewer economic deliveries API
-	revenueEconomicReflections     http.HandlerFunc                            // viewer economic reflections API
-	revenueReflectionFromEvent     http.HandlerFunc                            // viewer reflection from revenue event API
-	revenueOpportunityGoal         http.HandlerFunc                            // viewer opportunity to workstream goal API
-	advisorStatus                  http.HandlerFunc                            // viewer advisor aggregate status API
-	advisorRuns                    http.HandlerFunc                            // viewer advisor run records API
-	advisorScores                  http.HandlerFunc                            // viewer advisor score snapshots API
-	agentProfiles                  http.HandlerFunc                            // viewer agent profiles API
-	agentPolicyDecisions           http.HandlerFunc                            // viewer agent policy decision traces API
-	knowledgeRelations             http.HandlerFunc                            // viewer knowledge relation expansion API
-	knowledgeRelationSummary       http.HandlerFunc                            // viewer knowledge relation summary API
-	personaObservation             http.HandlerFunc                            // viewer persona observation status API
-	personaDiscomfort              http.HandlerFunc                            // viewer persona discomfort log API
-	personaTrigger                 http.HandlerFunc                            // viewer persona trigger log API
-	personaCanonical               http.HandlerFunc                            // viewer persona canonical response log API
-	personaObservationLog          http.HandlerFunc                            // viewer persona observation log API
-	personaObservationAggregate    http.HandlerFunc                            // viewer persona daily/weekly/monthly observation aggregate API
-	personaMetaUpdate              http.HandlerFunc                            // viewer persona meta profile update API
-	personaMetaUpdateReview        http.HandlerFunc                            // viewer persona meta profile update review API
-	personaSession                 http.HandlerFunc                            // viewer persona interface session API
-	personaRuntimeStore            orchestrator.PersonaRuntimeRecorder         // Chat runtime persona observation recorder
-	personaTriggerDefinitions      []domainpersona.TriggerDefinition           // Chat runtime trigger matcher definitions
-	personaCanonicalResponses      []domainpersona.CanonicalResponseDefinition // Chat runtime canonical response definitions
-	browserTraceAPIStatus          http.HandlerFunc                            // viewer browser trace to API status API
-	browserTraceAPIDiscover        http.HandlerFunc                            // viewer browser trace to API discover API
-	browserTraceAPIValidation      http.HandlerFunc                            // viewer browser trace API validation review API
-	browserTraceAPIFetcherProposal http.HandlerFunc                            // viewer browser trace to API fetcher proposal API
-	browserTraceAPISupersede       http.HandlerFunc                            // viewer browser trace to API artifact supersede API
-	complexityHotspotStatus        http.HandlerFunc                            // viewer complexity hotspot status API
-	complexityHotspotScan          http.HandlerFunc                            // viewer complexity hotspot scan API
-	complexityHotspotProposal      http.HandlerFunc                            // viewer complexity hotspot proposal mode API
-	complexityHotspotConcreteDiff  http.HandlerFunc                            // viewer complexity concrete diff proposal API
-	complexityHotspotCoderDiff     http.HandlerFunc                            // viewer complexity Coder-generated concrete diff API
-	superAgentStatus               http.HandlerFunc                            // viewer superagent harness status API
-	superAgentRunPause             http.HandlerFunc                            // viewer superagent run pause API
-	superAgentRunResume            http.HandlerFunc                            // viewer superagent run resume API
-	superAgentMessageChannel       http.HandlerFunc                            // viewer message channel API
-	superAgentStore                viewer.SuperAgentStore                      // SuperAgent runtime telemetry store
-	superAgentStateCloser          interface{ Close() error }                  // queued SuperAgent state owner
-	superAgentRunController        *superagentapp.RunController                // SuperAgent runtime pause/resume controller
-	aiWorkflowStatus               http.HandlerFunc                            // viewer AI workflow status API
-	aiWorkflowProjectMemory        http.HandlerFunc                            // viewer project memory index API
-	aiWorkflowWorktree             http.HandlerFunc                            // viewer worktree registry API
-	aiWorkflowCommand              http.HandlerFunc                            // viewer command registry API
-	aiWorkflowCommandRun           http.HandlerFunc                            // viewer command run API
-	aiWorkflowContextUsage         http.HandlerFunc                            // viewer context usage API
-	aiWorkflowContextBudget        http.HandlerFunc                            // viewer context budget check API
-	aiWorkflowExternalControl      http.HandlerFunc                            // viewer external control policy check API
-	aiWorkflowHeavyWorker          http.HandlerFunc                            // viewer heavy worker policy API
-	aiWorkflowHeavyRuntime         http.HandlerFunc                            // viewer heavy worker runtime diagnostics API
-	aiWorkflowProjectInit          http.HandlerFunc                            // viewer project init pack API
-	aiWorkflowWorktreeCreate       http.HandlerFunc                            // viewer git worktree create API
-	aiWorkflowWorktreeClose        http.HandlerFunc                            // viewer git worktree close API
-	aiWorkflowStateStore           viewer.AIWorkflowStateStore                 // underlying state owner (separate from canonical event store)
-	aiWorkflowStore                viewer.AIWorkflowStore                      // workflow telemetry store
-	schedulerStatus                http.HandlerFunc                            // viewer in-app scheduler API
-	schedulerStore                 viewer.SchedulerStore                       // in-app scheduler persistent store
-	pronunciationCheckCancel       context.CancelFunc                          // TTS pronunciation CORE task
-	knowledgeMemoryStatus          http.HandlerFunc                            // viewer knowledge memory status API
-	personalArchiveCreate          http.HandlerFunc                            // viewer personal archive API
-	creativeKnowledgeCreate        http.HandlerFunc                            // viewer creative knowledge API
-	newsKnowledgeCreate            http.HandlerFunc                            // viewer news knowledge API
-	dailyIntakeRuleCreate          http.HandlerFunc                            // viewer daily intake rule API
-	temporalMemoryCreate           http.HandlerFunc                            // viewer temporal memory marker API
-	knowledgeMemoryReview          http.HandlerFunc                            // viewer knowledge memory review API
-	dreamConsolidationCreate       http.HandlerFunc                            // viewer dream consolidation run API
-	dreamConsolidationProposal     http.HandlerFunc                            // viewer dream consolidation proposal API
-	dreamConsolidationReview       http.HandlerFunc                            // viewer dream consolidation review API
-	backlogStore                   *viewer.BacklogStore                        // Backlog intake store shared by Viewer and Heartbeat
-	atlasService                   *backlogapp.Service                         // Atlas lifecycle owner service
-	atlasHandler                   http.HandlerFunc                            // Atlas read projection + authenticated owner API
-	workstreamStore                heartbeat.WorkstreamHeartbeatStore          // Workstream heartbeat draft runner
-	revenueStore                   heartbeat.RevenueDailyRoutineStore          // Revenue daily routine draft runner
-	entryHandler                   http.HandlerFunc                            // unified entry endpoint
-	chromeBridge                   http.HandlerFunc                            // chrome bridge endpoint
-	chromeBridgeStatus             http.HandlerFunc                            // chrome bridge status endpoint
-	chromeBridgeEvents             http.HandlerFunc                            // chrome bridge SSE endpoint
-	distOrch                       *orchestrator.DistributedOrchestrator       // v4 distributed orchestrator
-	router                         *transport.MessageRouter                    // v4 distributed mode
-	localTransports                map[string]*transport.LocalTransport        // v4 local transports
-	idleChatOrch                   *idlechat.IdleChatOrchestrator              // v4 idle chat
-	surfacePresence                *surfacePresenceController                  // PORTAL Chat/IdleChat shared surface lease arbitration
-	dailyNewsBriefReader           domainnews.DailyNewsBriefReader             // scheduled cache with persistent L1 fallback
-	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
-	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
-	gmailIntake                    *gmailapp.GmailIntake                       // scheduled Gmail source intake
-	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
-	durableStoreWorkflow           orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
-	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
-	conversationArchiveCloser      interface{ Close() error }                  // CORE-owned L2 archive and request receipts
-	conversationCloser             interface{ Close() error }                  // primary conversation manager or L1 store
-	conversationBackgroundStop     func()                                      // Conversation-owned source and memory background jobs
-	knowledgeMemoryToolStore       interface{ Close() error }                  // indexed Tool search store
-	knowledgeMemoryViewerStore     interface{ Close() error }                  // writable Viewer store, when configured
-	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
-	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
-	personRelatedSummaryCancel     context.CancelFunc                          // fixed-ID related-work summary worker
-	personRelatedIdentityCancel    context.CancelFunc                          // fixed-authority person identity worker
-	personRelatedCollectionCancel  context.CancelFunc                          // positive movie/person D1 category collector
-	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
-	glossaryStore                  *storagehost.GlossaryStoreClient            // typed remote owner for direct database Viewer reads
-	movieCatalogStore              *storagehost.MovieCatalogClient             // typed remote owner for runtime and Viewer reads
-	hobbyGraphStore                *storagehost.HobbyGraphClient               // typed remote owner for runtime and Viewer reads
-	workerToolRunner               domaintool.RunnerV2                         // production Worker tool execution/listing boundary
-	personRelatedCatalogLookup     viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
-	personRelatedCatalogPeople     viewer.PersonRelatedCatalogPeopleProvider   // indexed explicitly assessed people projection
-	serenaMCPClient                serenaMCPClient                             // lifecycle owner for the connected Serena MCP process
-	runtimeCapabilityRefreshCancel context.CancelFunc                          // stops the periodic prompt capability discovery loop
-	runtimeCapabilityRefreshDone   <-chan struct{}                             // joined before runtime MCP clients are stopped
-	moduleChatService              chatModuleService                           // module contract view of Chat service
-	moduleLLMProviders             map[string]modulellm.Provider               // module contract view of LLM providers
-	moduleTTSProvider              moduletts.Provider                          // module contract view of primary TTS provider
-	moduleTTSPlayback              moduletts.PlaybackStateObserver             // module contract view of Viewer playback state
-	moduleSTTViewerInput           modulestt.ViewerInputObserver               // module contract view of Viewer STT input state
-	moduleWorkerExecutor           moduleworker.Executor                       // module contract view of Worker executor
-	moduleHealth                   http.HandlerFunc                            // module boundary health API
-	sttRecorderClose               func(context.Context) error                 // flushes the STT utterance recorder at shutdown (nil until /stt is wired)
-	classifierShadow               *classifierlab.ShadowClassifier             // observation-only classifier worker, nil in off mode
-	classifierShadowCancel         context.CancelFunc                          // stops classifier shadow workers before joining them
-	llmBusyTracker                 *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
-	llmGatewayProcess              *os.Process                                 // local RenCrow_LLM process started by CORE
-	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
+	persistenceQueue                    *persistencequeue.Queue[persistencequeue.PersistenceCommand]
+	transportPersistenceQueue           *persistencequeue.Queue[persistencequeue.PersistenceCommand]
+	combinedChatProcessorEligible       bool
+	combinedChatAdmissionEnabled        bool
+	redisHealthCheck                    func(context.Context) error
+	dataCapabilityCatalog               *runtimeDataCapabilityCatalog
+	mioRetrieval                        orchestrator.MioRetrievalPort
+	lineHandler                         http.Handler
+	telegramHandler                     http.Handler
+	discordHandler                      http.Handler
+	slackHandler                        http.Handler
+	eventHub                            *viewer.EventHub                            // live viewer
+	sessionRepository                   orchestrator.SessionRepository              // canonical Session owner used by Viewer event projections
+	sessionVisibility                   *runtimeSessionVisibility                   // shared public/session-owner boundary cache
+	ttsAudioAccessOwner                 *ttsAudioAccessOwner                        // canonical Session registration shared by TTS producer and reader
+	monitorStore                        *viewer.MonitorStore                        // viewer monitor snapshots
+	eventLogStore                       *viewer.CanonicalEventLog                   // canonical orchestrator event projection
+	canonicalEventStore                 runtimeCanonicalEventStore                  // canonical append-only Event Store
+	boardCommunication                  *boardCommunicationService                  // optional CORE-owned BOARD communication lifecycle
+	boardCommunicationResponderServices map[string]*boardCommunicationService       // opt-in Shiro/Midori peer-only lifecycles
+	boardCommunicationCancel            context.CancelFunc                          // stops the optional BOARD communication lifecycle
+	boardCommunicationDone              <-chan struct{}                             // joined before persistence and EventStore shutdown
+	boardCommunicationResponderCancels  []context.CancelFunc                        // stops opt-in responder lifecycles
+	boardCommunicationResponderDones    []<-chan struct{}                           // joined before persistence and EventStore shutdown
+	boardOwnerHTTP                      http.Handler                                // authenticated fixed-owner BOARD request API
+	reportStore                         *executionpersistence.JSONLReportStore      // execution evidence store
+	eventRelay                          *idleAwareEventListener                     // viewer + idlechat stop relay
+	responseFirst                       *responseFirstConversationRuntime           // direct Viewer response-first v2 runtime
+	viewerStatus                        http.HandlerFunc                            // viewer status API
+	viewerAgents                        http.HandlerFunc                            // viewer agents API
+	viewerAgentDetail                   http.HandlerFunc                            // viewer agent detail API
+	tasks                               http.HandlerFunc                            // canonical Task list API
+	taskDetail                          http.HandlerFunc                            // canonical Task detail API
+	identityGraph                       http.HandlerFunc                            // canonical identity graph projection
+	taskNotifications                   http.HandlerFunc                            // canonical Task interrupt notification API
+	taskStoreIndex                      bool                                        // task_store.index.enabled: open the local Task store with its ID index
+	taskStorePersist                    bool                                        // task_store.index.persist: keep the index in a sidecar file
+	taskStoreRotation                   bool                                        // task_store.rotation.enabled: write the Task store to daily segments
+	taskStoreSizeValve                  int64                                       // task_store.rotation.size_valve_bytes (0: default)
+	taskParallelLimits                  *taskmanager.ParallelLimits                 // canonical Task admission limits, from the loaded config
+	taskStore                           domaintask.Store                            // shared canonical Task persistence owner
+	taskManager                         *taskmanager.Manager                        // shared canonical Task lifecycle owner
+	worldProjectionCancel               context.CancelFunc                          // stops the outbound WORLD projection loop
+	worldProjectionDone                 <-chan struct{}                             // closed when the projection loop exits
+	worldProjectionClose                func() error                                // closes the projection outbox after the loop exits
+	actionManager                       *actionmanager.Manager                      // shared canonical Action lifecycle owner
+	actionStoreHealth                   infrahealth.ActionStoreReporter             // the store actionManager writes through, for /health
+	nativeCoding                        *delegation.Runtime                         // shiro_native_coding_v1 admission and delegate (nil unless the profile is enabled)
+	transportManager                    *transportmanager.Manager                   // shared canonical Request Response receipt owner
+	playbackRecorder                    *playbackActionRecorder                     // canonical actual-playback receipt owner
+	viewerLogs                          http.HandlerFunc                            // viewer logs API
+	viewerPromptDebug                   http.HandlerFunc                            // LLM prompt boundary debug API
+	viewerAuditSummary                  http.HandlerFunc                            // viewer audit summary API
+	viewerSend                          http.HandlerFunc                            // viewer message sender
+	viewerConversationEventsV2          http.HandlerFunc                            // owner/session-scoped response-first v2 public SSE
+	viewerSpeechCancel                  http.HandlerFunc                            // per-turn Viewer SpeechPlan cancellation
+	viewerSpeechProgress                http.HandlerFunc                            // turn-scoped Viewer playback pacing progress
+	agentOps                            http.HandlerFunc                            // local authenticated Agent OPS ingress
+	viewerGamesStatus                   http.HandlerFunc                            // RenCrow_GAMES bridge status API
+	viewerGamesResult                   http.HandlerFunc                            // RenCrow_GAMES result callback API
+	viewerGamesSessions                 http.HandlerFunc                            // RenCrow_GAMES recent session observer API
+	viewerGamesEvents                   http.HandlerFunc                            // RenCrow_GAMES candidate event observer API
+	viewerGamesDecision                 http.HandlerFunc                            // Agent-owned game turn decision API
+	viewerGamesObserverPage             http.HandlerFunc                            // RenCrow_GAMES live observer UI proxy page
+	viewerGamesLaunch                   http.HandlerFunc                            // RenCrow_GAMES launch proxy (マルチペルソナ WP5)
+	gameAutoplay                        *viewer.GameAutoplayService                 // ペルソナ自発プレイランナー (マルチペルソナ WP6)
+	viewerGamesObserverProxy            http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
+	viewerTradeStatus                   http.HandlerFunc                            // RenCrow_TRADE read-only status projection
+	viewerTradePolicyEvaluation         http.HandlerFunc                            // RenCrow_TRADE pure policy diagnostic evaluation
+	viewerTradeRiskPreview              http.HandlerFunc                            // RenCrow_TRADE non-mutating portfolio risk preview
+	viewerTradeSimulationCommit         http.HandlerFunc                            // RenCrow_TRADE simulation-only atomic portfolio commit
+	viewerTradeShadowObservation        http.HandlerFunc                            // RenCrow_TRADE immutable Shadow observation record
+	viewerTradeShadowOutcome            http.HandlerFunc                            // RenCrow_TRADE immutable Shadow outcome record
+	viewerTradeShadowOutcomeReport      http.HandlerFunc                            // RenCrow_TRADE read-only Shadow outcome report
+	viewerTradeShadowReview             http.HandlerFunc                            // RenCrow_TRADE immutable Shadow outcome review record
+	viewerTradeShadowReviewReport       http.HandlerFunc                            // RenCrow_TRADE read-only Shadow review report
+	historyRepairJSONL                  http.HandlerFunc                            // viewer JSONL history repair API
+	packageValidation                   http.HandlerFunc                            // viewer package/update validation API
+	characterRuntime                    http.HandlerFunc                            // viewer six-character conversation runtime API
+	extensionHealth                     http.HandlerFunc                            // viewer plugin / extension health API
+	llmOpsNodes                         http.HandlerFunc                            // LLM Ops node overview (llmfit observation)
+	llmOpsNode                          http.HandlerFunc                            // LLM Ops node hardware profile
+	llmOpsNodeModels                    http.HandlerFunc                            // LLM Ops node model fit listing
+	llmOpsModelMatrix                   http.HandlerFunc                            // LLM Ops model x node fit matrix
+	llmOpsRefresh                       http.HandlerFunc                            // LLM Ops manual refresh (re-read only)
+	otelExport                          http.HandlerFunc                            // viewer OpenTelemetry export API
+	artifactCleanup                     http.HandlerFunc                            // viewer stale artifact cleanup API
+	repairRunner                        viewer.RepairTaskRunner                     // viewer repair Task runner
+	voiceDirectHandler                  voiceDirectFinalHandler                     // VDS llm.final -> SSE
+	evidenceHandler                     http.HandlerFunc                            // viewer evidence API
+	evidenceDetail                      http.HandlerFunc                            // viewer evidence detail API
+	evidenceSummary                     http.HandlerFunc                            // viewer evidence summary API
+	glossaryRecent                      http.HandlerFunc                            // viewer glossary API
+	viewerMemorySnapshot                http.HandlerFunc                            // viewer memory/news/recall API
+	viewerMemoryOwner                   http.HandlerFunc                            // authenticated CMD memory owner API
+	viewerMemoryChatGPTImportOwner      http.HandlerFunc                            // authenticated ChatGPT Common Raw owner API
+	viewerMemoryLayers                  http.HandlerFunc                            // viewer memory layer API
+	viewerMemoryEvents                  http.HandlerFunc                            // viewer L1 event/search cache API
+	viewerMemoryState                   http.HandlerFunc                            // viewer memory state API
+	viewerMemoryPromote                 http.HandlerFunc                            // viewer memory promote API
+	viewerMemoryUser                    http.HandlerFunc                            // viewer user memory API
+	viewerMemoryUserState               http.HandlerFunc                            // viewer user memory state API
+	viewerMemoryUserForget              http.HandlerFunc                            // viewer user memory forget API
+	viewerMemoryUserSupersede           http.HandlerFunc                            // viewer user memory supersede API
+	viewerMemoryRecallPack              http.HandlerFunc                            // viewer memory recall pack API
+	viewerMemoryProfilePromotions       http.HandlerFunc                            // async ProfilePromotion job API
+	viewerMemoryProfileRetry            http.HandlerFunc                            // explicit ProfilePromotion retry API
+	viewerRecallTraces                  http.HandlerFunc                            // viewer recall trace API
+	viewerSourceRegistry                http.HandlerFunc                            // viewer source registry API
+	viewerXBookmarkWorkflow             http.HandlerFunc                            // explicit X Bookmark utilization workflows
+	xBookmarkLinkSummarizer             *knowledgeapp.ExternalLinkSummarizer        // external article summaries
+	viewerDomainGraphAssertions         http.HandlerFunc                            // viewer domain graph assertion API
+	viewerMovieDomainGraphSync          http.HandlerFunc                            // viewer movie domain graph sync API
+	viewerHobbyDomainGraphSync          http.HandlerFunc                            // viewer hobby domain graph sync API
+	verificationRecent                  http.HandlerFunc                            // viewer verification recent API
+	verificationDetail                  http.HandlerFunc                            // viewer verification detail API
+	verificationSummary                 http.HandlerFunc                            // viewer verification summary API
+	toolHarnessRecent                   http.HandlerFunc                            // viewer tool harness mediation API
+	globalPolicyStatus                  http.HandlerFunc                            // read-only Global Policy Bundle status API
+	globalPolicyStore                   *configpolicy.Store                         // immutable active policy snapshot and reload state
+	globalPolicyDecisions               http.HandlerFunc                            // read-only common policy decision evidence API
+	globalPolicyDecisionStore           *policydecisionpersistence.JSONLStore       // append-only common policy decision evidence store
+	dciRecent                           http.HandlerFunc                            // viewer DCI trace API
+	dciSearch                           http.HandlerFunc                            // viewer DCI manual search API
+	dciSearcher                         orchestrator.DCISearcher                    // message orchestrator explicit DCI trigger
+	dciTraceStore                       any                                         // DCI trace store for cross-feature candidate extraction
+	recallTraceStore                    orchestrator.RecallTraceStore               // DCI / recall trace API store
+	sandboxStatus                       http.HandlerFunc                            // viewer sandbox promotion API
+	sandboxPromotion                    http.HandlerFunc                            // viewer sandbox promotion request API
+	sandboxPromotionApply               http.HandlerFunc                            // viewer sandbox promotion apply checkpoint API
+	sandboxPromotionRollback            http.HandlerFunc                            // viewer sandbox promotion rollback checkpoint API
+	sandboxPromotionPreview             http.HandlerFunc                            // viewer sandbox promotion diff preview API
+	sandboxWorktreeCreate               http.HandlerFunc                            // viewer sandbox code worktree create API
+	sandboxWorktreeClose                http.HandlerFunc                            // viewer sandbox code worktree close API
+	skillGovernanceRecent               http.HandlerFunc                            // viewer skill governance API
+	skillGovernanceBoot                 http.HandlerFunc                            // viewer skill governance bootstrap API
+	skillContributionGate               http.HandlerFunc                            // viewer contribution gate API
+	skillChangeGate                     http.HandlerFunc                            // viewer skill change gate API
+	skillChangeEval                     http.HandlerFunc                            // viewer skill change eval runner API
+	skillExternalPRSubmit               http.HandlerFunc                            // viewer external PR submit audit API
+	skillBootstrap                      *skillapp.BootstrapService                  // runtime skill bootstrap logger
+	coderProposalEvidence               orchestrator.CoderProposalEvidenceRecorder  // Coder proposal evidence files for Skill Change Eval
+	workstreamStatus                    http.HandlerFunc                            // viewer workstream status API
+	workstreamGoal                      http.HandlerFunc                            // viewer workstream goal API
+	workstreamArtifact                  http.HandlerFunc                            // viewer workstream artifact API
+	workstreamAnnotation                http.HandlerFunc                            // viewer workstream artifact annotation API
+	workstreamSteering                  http.HandlerFunc                            // viewer workstream steering API
+	workstreamHeartbeat                 http.HandlerFunc                            // viewer workstream heartbeat API
+	workstreamVaultUpdate               http.HandlerFunc                            // viewer workstream vault update log API
+	workstreamVaultReview               http.HandlerFunc                            // viewer workstream vault update review API
+	workstreamVaultPreview              http.HandlerFunc                            // viewer workstream vault update preview API
+	revenueStatus                       http.HandlerFunc                            // viewer revenue status API
+	revenueMarket                       http.HandlerFunc                            // viewer revenue market research API
+	revenueSNSPost                      http.HandlerFunc                            // viewer revenue SNS post metric API
+	revenueProduct                      http.HandlerFunc                            // viewer revenue product API
+	revenueCustomerVoice                http.HandlerFunc                            // viewer revenue customer voice API
+	revenueEvent                        http.HandlerFunc                            // viewer revenue event API
+	revenuePolicyDecision               http.HandlerFunc                            // viewer revenue policy decision API
+	revenueDailyRoutine                 http.HandlerFunc                            // viewer revenue daily routine draft report API
+	revenueChannelDraft                 http.HandlerFunc                            // viewer revenue channel draft API
+	revenueExternalSendApply            http.HandlerFunc                            // viewer revenue external send apply audit API
+	revenueOpportunities                http.HandlerFunc                            // viewer economic opportunities API
+	revenueEconomicTasks                http.HandlerFunc                            // viewer economic tasks API
+	revenueDeliveries                   http.HandlerFunc                            // viewer economic deliveries API
+	revenueEconomicReflections          http.HandlerFunc                            // viewer economic reflections API
+	revenueReflectionFromEvent          http.HandlerFunc                            // viewer reflection from revenue event API
+	revenueOpportunityGoal              http.HandlerFunc                            // viewer opportunity to workstream goal API
+	advisorStatus                       http.HandlerFunc                            // viewer advisor aggregate status API
+	advisorRuns                         http.HandlerFunc                            // viewer advisor run records API
+	advisorScores                       http.HandlerFunc                            // viewer advisor score snapshots API
+	agentProfiles                       http.HandlerFunc                            // viewer agent profiles API
+	agentPolicyDecisions                http.HandlerFunc                            // viewer agent policy decision traces API
+	knowledgeRelations                  http.HandlerFunc                            // viewer knowledge relation expansion API
+	knowledgeRelationSummary            http.HandlerFunc                            // viewer knowledge relation summary API
+	personaObservation                  http.HandlerFunc                            // viewer persona observation status API
+	personaDiscomfort                   http.HandlerFunc                            // viewer persona discomfort log API
+	personaTrigger                      http.HandlerFunc                            // viewer persona trigger log API
+	personaCanonical                    http.HandlerFunc                            // viewer persona canonical response log API
+	personaObservationLog               http.HandlerFunc                            // viewer persona observation log API
+	personaObservationAggregate         http.HandlerFunc                            // viewer persona daily/weekly/monthly observation aggregate API
+	personaMetaUpdate                   http.HandlerFunc                            // viewer persona meta profile update API
+	personaMetaUpdateReview             http.HandlerFunc                            // viewer persona meta profile update review API
+	personaSession                      http.HandlerFunc                            // viewer persona interface session API
+	personaRuntimeStore                 orchestrator.PersonaRuntimeRecorder         // Chat runtime persona observation recorder
+	personaTriggerDefinitions           []domainpersona.TriggerDefinition           // Chat runtime trigger matcher definitions
+	personaCanonicalResponses           []domainpersona.CanonicalResponseDefinition // Chat runtime canonical response definitions
+	browserTraceAPIStatus               http.HandlerFunc                            // viewer browser trace to API status API
+	browserTraceAPIDiscover             http.HandlerFunc                            // viewer browser trace to API discover API
+	browserTraceAPIValidation           http.HandlerFunc                            // viewer browser trace API validation review API
+	browserTraceAPIFetcherProposal      http.HandlerFunc                            // viewer browser trace to API fetcher proposal API
+	browserTraceAPISupersede            http.HandlerFunc                            // viewer browser trace to API artifact supersede API
+	complexityHotspotStatus             http.HandlerFunc                            // viewer complexity hotspot status API
+	complexityHotspotScan               http.HandlerFunc                            // viewer complexity hotspot scan API
+	complexityHotspotProposal           http.HandlerFunc                            // viewer complexity hotspot proposal mode API
+	complexityHotspotConcreteDiff       http.HandlerFunc                            // viewer complexity concrete diff proposal API
+	complexityHotspotCoderDiff          http.HandlerFunc                            // viewer complexity Coder-generated concrete diff API
+	superAgentStatus                    http.HandlerFunc                            // viewer superagent harness status API
+	superAgentRunPause                  http.HandlerFunc                            // viewer superagent run pause API
+	superAgentRunResume                 http.HandlerFunc                            // viewer superagent run resume API
+	superAgentMessageChannel            http.HandlerFunc                            // viewer message channel API
+	superAgentStore                     viewer.SuperAgentStore                      // SuperAgent runtime telemetry store
+	superAgentStateCloser               interface{ Close() error }                  // queued SuperAgent state owner
+	superAgentRunController             *superagentapp.RunController                // SuperAgent runtime pause/resume controller
+	aiWorkflowStatus                    http.HandlerFunc                            // viewer AI workflow status API
+	aiWorkflowProjectMemory             http.HandlerFunc                            // viewer project memory index API
+	aiWorkflowWorktree                  http.HandlerFunc                            // viewer worktree registry API
+	aiWorkflowCommand                   http.HandlerFunc                            // viewer command registry API
+	aiWorkflowCommandRun                http.HandlerFunc                            // viewer command run API
+	aiWorkflowContextUsage              http.HandlerFunc                            // viewer context usage API
+	aiWorkflowContextBudget             http.HandlerFunc                            // viewer context budget check API
+	aiWorkflowExternalControl           http.HandlerFunc                            // viewer external control policy check API
+	aiWorkflowHeavyWorker               http.HandlerFunc                            // viewer heavy worker policy API
+	aiWorkflowHeavyRuntime              http.HandlerFunc                            // viewer heavy worker runtime diagnostics API
+	aiWorkflowProjectInit               http.HandlerFunc                            // viewer project init pack API
+	aiWorkflowWorktreeCreate            http.HandlerFunc                            // viewer git worktree create API
+	aiWorkflowWorktreeClose             http.HandlerFunc                            // viewer git worktree close API
+	aiWorkflowStateStore                viewer.AIWorkflowStateStore                 // underlying state owner (separate from canonical event store)
+	aiWorkflowStore                     viewer.AIWorkflowStore                      // workflow telemetry store
+	schedulerStatus                     http.HandlerFunc                            // viewer in-app scheduler API
+	schedulerStore                      viewer.SchedulerStore                       // in-app scheduler persistent store
+	pronunciationCheckCancel            context.CancelFunc                          // TTS pronunciation CORE task
+	knowledgeMemoryStatus               http.HandlerFunc                            // viewer knowledge memory status API
+	personalArchiveCreate               http.HandlerFunc                            // viewer personal archive API
+	creativeKnowledgeCreate             http.HandlerFunc                            // viewer creative knowledge API
+	newsKnowledgeCreate                 http.HandlerFunc                            // viewer news knowledge API
+	dailyIntakeRuleCreate               http.HandlerFunc                            // viewer daily intake rule API
+	temporalMemoryCreate                http.HandlerFunc                            // viewer temporal memory marker API
+	knowledgeMemoryReview               http.HandlerFunc                            // viewer knowledge memory review API
+	dreamConsolidationCreate            http.HandlerFunc                            // viewer dream consolidation run API
+	dreamConsolidationProposal          http.HandlerFunc                            // viewer dream consolidation proposal API
+	dreamConsolidationReview            http.HandlerFunc                            // viewer dream consolidation review API
+	backlogStore                        *viewer.BacklogStore                        // Backlog intake store shared by Viewer and Heartbeat
+	atlasService                        *backlogapp.Service                         // Atlas lifecycle owner service
+	atlasHandler                        http.HandlerFunc                            // Atlas read projection + authenticated owner API
+	workstreamStore                     heartbeat.WorkstreamHeartbeatStore          // Workstream heartbeat draft runner
+	revenueStore                        heartbeat.RevenueDailyRoutineStore          // Revenue daily routine draft runner
+	entryHandler                        http.HandlerFunc                            // unified entry endpoint
+	chromeBridge                        http.HandlerFunc                            // chrome bridge endpoint
+	chromeBridgeStatus                  http.HandlerFunc                            // chrome bridge status endpoint
+	chromeBridgeEvents                  http.HandlerFunc                            // chrome bridge SSE endpoint
+	distOrch                            *orchestrator.DistributedOrchestrator       // v4 distributed orchestrator
+	router                              *transport.MessageRouter                    // v4 distributed mode
+	localTransports                     map[string]*transport.LocalTransport        // v4 local transports
+	idleChatOrch                        *idlechat.IdleChatOrchestrator              // v4 idle chat
+	surfacePresence                     *surfacePresenceController                  // PORTAL Chat/IdleChat shared surface lease arbitration
+	dailyNewsBriefReader                domainnews.DailyNewsBriefReader             // scheduled cache with persistent L1 fallback
+	sshTransports                       map[string]domaintransport.Transport        // v4 SSH transports
+	heartbeatSvc                        *heartbeat.HeartbeatService                 // heartbeat service
+	gmailIntake                         *gmailapp.GmailIntake                       // scheduled Gmail source intake
+	advisorCloser                       interface{ Close() error }                  // advisor SQLite store, when configured
+	durableStoreWorkflow                orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
+	durableStoreCloser                  interface{ Close() error }                  // workflow decision SQLite store
+	conversationArchiveCloser           interface{ Close() error }                  // CORE-owned L2 archive and request receipts
+	conversationCloser                  interface{ Close() error }                  // primary conversation manager or L1 store
+	conversationBackgroundStop          func()                                      // Conversation-owned source and memory background jobs
+	knowledgeMemoryToolStore            interface{ Close() error }                  // indexed Tool search store
+	knowledgeMemoryViewerStore          interface{ Close() error }                  // writable Viewer store, when configured
+	advisorScoreCancel                  context.CancelFunc                          // Advisor daily score job
+	memoryPromotionCancel               context.CancelFunc                          // async ProfilePromotion worker
+	personRelatedSummaryCancel          context.CancelFunc                          // fixed-ID related-work summary worker
+	personRelatedIdentityCancel         context.CancelFunc                          // fixed-authority person identity worker
+	personRelatedCollectionCancel       context.CancelFunc                          // positive movie/person D1 category collector
+	toolRegistry                        capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
+	glossaryStore                       *storagehost.GlossaryStoreClient            // typed remote owner for direct database Viewer reads
+	movieCatalogStore                   *storagehost.MovieCatalogClient             // typed remote owner for runtime and Viewer reads
+	hobbyGraphStore                     *storagehost.HobbyGraphClient               // typed remote owner for runtime and Viewer reads
+	workerToolRunner                    domaintool.RunnerV2                         // production Worker tool execution/listing boundary
+	personRelatedCatalogLookup          viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
+	personRelatedCatalogPeople          viewer.PersonRelatedCatalogPeopleProvider   // indexed explicitly assessed people projection
+	serenaMCPClient                     serenaMCPClient                             // lifecycle owner for the connected Serena MCP process
+	runtimeCapabilityRefreshCancel      context.CancelFunc                          // stops the periodic prompt capability discovery loop
+	runtimeCapabilityRefreshDone        <-chan struct{}                             // joined before runtime MCP clients are stopped
+	moduleChatService                   chatModuleService                           // module contract view of Chat service
+	moduleLLMProviders                  map[string]modulellm.Provider               // module contract view of LLM providers
+	moduleTTSProvider                   moduletts.Provider                          // module contract view of primary TTS provider
+	moduleTTSPlayback                   moduletts.PlaybackStateObserver             // module contract view of Viewer playback state
+	moduleSTTViewerInput                modulestt.ViewerInputObserver               // module contract view of Viewer STT input state
+	moduleWorkerExecutor                moduleworker.Executor                       // module contract view of Worker executor
+	moduleHealth                        http.HandlerFunc                            // module boundary health API
+	sttRecorderClose                    func(context.Context) error                 // flushes the STT utterance recorder at shutdown (nil until /stt is wired)
+	classifierShadow                    *classifierlab.ShadowClassifier             // observation-only classifier worker, nil in off mode
+	classifierShadowCancel              context.CancelFunc                          // stops classifier shadow workers before joining them
+	llmBusyTracker                      *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
+	llmGatewayProcess                   *os.Process                                 // local RenCrow_LLM process started by CORE
+	webGatherDeps                       func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
 }
 
 func newConfiguredTTSAudioAccessOwner(cfg *config.Config, visibility *runtimeSessionVisibility) *ttsAudioAccessOwner {
@@ -397,6 +404,24 @@ func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Run
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
 	queueOwnersSafeToClose := true
+	if d.boardCommunicationCancel != nil {
+		d.boardCommunicationCancel()
+	}
+	for _, cancel := range d.boardCommunicationResponderCancels {
+		if cancel != nil {
+			cancel()
+		}
+	}
+	if d.boardCommunicationCancel != nil {
+		if d.boardCommunicationDone != nil {
+			<-d.boardCommunicationDone
+		}
+	}
+	for _, done := range d.boardCommunicationResponderDones {
+		if done != nil {
+			<-done
+		}
+	}
 	if d.runtimeCapabilityRefreshCancel != nil {
 		d.runtimeCapabilityRefreshCancel()
 		if d.runtimeCapabilityRefreshDone != nil {
@@ -2026,6 +2051,25 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	buildPronunciationCheckRuntime(cfg, deps)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)
 	buildLLMOpsHandlers(cfg, deps)
+	boardPeerChatProviders := make(map[string]domainagent.ConversationGenerationProvider, len(responseFirstReadbackAssigneeOrder))
+	for _, actorID := range responseFirstReadbackAssigneeOrder {
+		provider := llmRuntime.Readback[actorID]
+		if provider != nil {
+			boardPeerChatProviders[actorID] = responseFirstConversationProvider{provider: provider, name: actorID}
+		}
+	}
+	var boardChatProvider domainagent.ConversationGenerationProvider
+	if llmRuntime.BoardChat != nil {
+		boardChatProvider = responseFirstConversationProvider{provider: llmRuntime.BoardChat, name: "kuro-board-chat"}
+	}
+	responderWiring := boardCommunicationResponderWiring{
+		Readback: responseFirstReadbackWiringFor(cfg, boardPeerChatProviders),
+		PeerChat: boardPeerChatWiringFor(cfg, boardChatProvider),
+	}
+	buildBoardCommunicationRuntime(
+		cfg, deps, canonicalEventStore, sessionRuntime.SessionRepo, agents.Mio, llmRuntime.Conversation,
+		responderWiring,
+	)
 
 	log.Println("Dependency injection complete")
 	return deps

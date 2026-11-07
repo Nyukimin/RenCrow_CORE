@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -22,6 +24,10 @@ var (
 	ErrConversationTurnConflict    = errors.New("conversation turn is not in a state that accepts this operation")
 	ErrClarificationReplyConflict  = errors.New("clarification reply prompt or delegation revision conflicts with current state")
 )
+
+// ExternalPeerBinding is a compatibility alias for the shared conversation
+// source model. EventStore owns persistence, not a second binding schema.
+type ExternalPeerBinding = domainconversation.ExternalPeerBinding
 
 // AcceptInput is the trusted runtime's minimum durable input-acceptance unit.
 // OperationID and ClientSubmissionID must be stable across HTTP retries.
@@ -35,9 +41,11 @@ type AcceptInput struct {
 	GenerationEpoch    int64
 	// CreateNewSession is a trusted assertion that SessionID was freshly
 	// minted for this request. Existing v1 sessions cannot be auto-cut over.
-	CreateNewSession bool
-	InputEvent       modulecore.EventEnvelope
-	InputMessage     MessageIndex
+	CreateNewSession             bool
+	InputEvent                   modulecore.EventEnvelope
+	InputMessage                 MessageIndex
+	ExternalPeerBinding          *ExternalPeerBinding          `json:"external_peer_binding,omitempty"`
+	BoardOwnerRequestReservation *BoardOwnerRequestReservation `json:"board_owner_request_reservation,omitempty"`
 }
 
 // AcceptedTurn is the persisted input and the durable identity needed to
@@ -158,6 +166,9 @@ func (s *SQLiteStore) migrateLiveJournal() error {
 			return err
 		}
 	}
+	if err := migrateBoardOwnerRequestPublicationSchema(context.Background(), tx); err != nil {
+		return fmt.Errorf("migrate BOARD new-root publication target: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -260,6 +271,110 @@ func liveJournalSchemaStatements() []string {
 			FOREIGN KEY (source_event_id) REFERENCES event_envelope(event_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
 			FOREIGN KEY (session_id) REFERENCES live_conversation_session(session_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 		)`,
+		liveBoardPublicationTableDDL(),
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_insert_binding
+			BEFORE INSERT ON live_board_publication
+			WHEN NOT EXISTS (
+				SELECT 1 FROM live_work_outbox w
+				JOIN live_message_index m ON m.message_id = NEW.response_message_id
+				WHERE w.work_id = NEW.work_id AND w.kind = 'board_publication'
+				  AND w.source_event_id = m.event_id AND w.session_id = m.session_id AND m.visibility = 'public'
+			)
+			BEGIN
+				SELECT RAISE(ABORT, 'board publication target must bind its work row to a public canonical response');
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_append_only_update
+			BEFORE UPDATE ON live_board_publication
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication is append-only');
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_append_only_delete
+			BEFORE DELETE ON live_board_publication
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication is append-only');
+			END`,
+		`CREATE TABLE IF NOT EXISTS live_board_publication_attempt (
+			work_id TEXT NOT NULL,
+			attempt_ordinal INTEGER NOT NULL CHECK(attempt_ordinal > 0),
+			logical_key TEXT NOT NULL,
+			prepared_bytes BLOB NOT NULL,
+			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256)=64),
+			processing_claim_id TEXT NOT NULL,
+			processing_claim_receipt_sha256 TEXT NOT NULL CHECK(length(processing_claim_receipt_sha256)=64),
+			processing_claim_lease_until TEXT NOT NULL,
+			prior_attempt_ordinal INTEGER NOT NULL DEFAULT 0 CHECK(prior_attempt_ordinal >= 0),
+			fence_receipt_sha256 TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (work_id, attempt_ordinal),
+			FOREIGN KEY (work_id) REFERENCES live_board_publication(work_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_attempt_append_only_update
+			BEFORE UPDATE ON live_board_publication_attempt
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication_attempt is append-only');
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_attempt_append_only_delete
+			BEFORE DELETE ON live_board_publication_attempt
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication_attempt is append-only');
+			END`,
+		`CREATE TABLE IF NOT EXISTS live_board_publication_claim_fence (
+			work_id TEXT NOT NULL,
+			prior_attempt_ordinal INTEGER NOT NULL CHECK(prior_attempt_ordinal > 0),
+			prior_attempt_sha256 TEXT NOT NULL CHECK(length(prior_attempt_sha256)=64),
+			lease_version INTEGER NOT NULL CHECK(lease_version > 0),
+			prior_claim_id TEXT NOT NULL,
+			fresh_claim_id TEXT NOT NULL,
+			fresh_receipt_sha256 TEXT NOT NULL CHECK(length(fresh_receipt_sha256)=64),
+			fresh_lease_until TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (work_id, prior_attempt_ordinal, fresh_receipt_sha256),
+			FOREIGN KEY (work_id, prior_attempt_ordinal) REFERENCES live_board_publication_attempt(work_id, attempt_ordinal) ON UPDATE RESTRICT ON DELETE RESTRICT
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_claim_fence_append_only_update
+			BEFORE UPDATE ON live_board_publication_claim_fence
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication_claim_fence is append-only');
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_claim_fence_append_only_delete
+			BEFORE DELETE ON live_board_publication_claim_fence
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication_claim_fence is append-only');
+			END`,
+		`CREATE TABLE IF NOT EXISTS live_board_publication_outcome (
+			work_id TEXT PRIMARY KEY NOT NULL,
+			owner_id TEXT NOT NULL,
+			journal_instance_id TEXT NOT NULL,
+			principal_id TEXT NOT NULL,
+			logical_key TEXT NOT NULL,
+			attempt_ordinal INTEGER NOT NULL CHECK(attempt_ordinal > 0),
+			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256)=64),
+			board_message_id TEXT NOT NULL UNIQUE,
+			board_thread_id TEXT NOT NULL,
+			stored_at TEXT NOT NULL,
+			status TEXT NOT NULL CHECK(status='stored'),
+			channel_id TEXT NOT NULL,
+			sender_principal_id TEXT NOT NULL,
+			recipients_json TEXT NOT NULL,
+			reply_to TEXT NOT NULL DEFAULT '',
+			causation_id TEXT NOT NULL,
+			hop_count INTEGER NOT NULL CHECK(hop_count >= 0),
+			expected_peer_principal_id TEXT NOT NULL,
+			FOREIGN KEY (work_id, attempt_ordinal) REFERENCES live_board_publication_attempt(work_id, attempt_ordinal) ON UPDATE RESTRICT ON DELETE RESTRICT
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_outcome_append_only_update
+			BEFORE UPDATE ON live_board_publication_outcome
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication_outcome is append-only');
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS live_board_publication_outcome_append_only_delete
+			BEFORE DELETE ON live_board_publication_outcome
+			BEGIN
+				SELECT RAISE(ABORT, 'live_board_publication_outcome is append-only');
+			END`,
+		`CREATE INDEX IF NOT EXISTS live_board_publication_attempt_order_idx
+			ON live_board_publication_attempt(work_id, attempt_ordinal)`,
+		`CREATE INDEX IF NOT EXISTS live_board_publication_claim_fence_order_idx
+			ON live_board_publication_claim_fence(work_id, prior_attempt_ordinal, created_at)`,
 		`CREATE TABLE IF NOT EXISTS live_operation_receipt (
 			operation_id TEXT PRIMARY KEY NOT NULL,
 			operation_kind TEXT NOT NULL,
@@ -502,6 +617,11 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 			_ = tx.Rollback()
 		}
 	}()
+	if input.TriggerKind == "board_owner_request" {
+		if err := validateBoardOwnerRequestAcceptTx(ctx, tx, input); err != nil {
+			return AcceptedTurn{}, err
+		}
+	}
 
 	if receipt, found, err := readOperationReceipt(ctx, tx, input.OperationID); err != nil {
 		return AcceptedTurn{}, err
@@ -512,6 +632,11 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 		var accepted AcceptedTurn
 		if err := json.Unmarshal([]byte(receipt.resultJSON), &accepted); err != nil {
 			return AcceptedTurn{}, fmt.Errorf("decode accepted turn receipt: %w", err)
+		}
+		if input.TriggerKind == "board_owner_request" {
+			if err := validateBoardOwnerRequestAcceptanceReceiptTx(ctx, tx, input, accepted); err != nil {
+				return AcceptedTurn{}, err
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return AcceptedTurn{}, err
@@ -539,6 +664,11 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 		}
 		if err := json.Unmarshal([]byte(resultJSON), &accepted); err != nil {
 			return AcceptedTurn{}, fmt.Errorf("decode acceptance receipt for turn %q: %w", existingTurnID, err)
+		}
+		if input.TriggerKind == "board_owner_request" {
+			if err := validateBoardOwnerRequestAcceptanceReceiptTx(ctx, tx, input, accepted); err != nil {
+				return AcceptedTurn{}, err
+			}
 		}
 		if err := insertOperationReceipt(ctx, tx, input.OperationID, "accept_turn", inputHash, accepted); err != nil {
 			return AcceptedTurn{}, err
@@ -785,6 +915,9 @@ func (s *SQLiteStore) commitTurnBundleInline(ctx context.Context, input CommitIn
 	if turnSessionID != string(input.SessionID) || turnState != "accepted" || generationEpoch != input.GenerationEpoch {
 		return CommittedBatch{}, ErrConversationTurnConflict
 	}
+	if turnTriggerKind == "external_peer_message" || turnTriggerKind == "board_owner_request" {
+		return CommittedBatch{}, conversationruntime.ErrExternalTurnJournalRequired
+	}
 	if turnTriggerKind == "report_reply" {
 		if err := validateReportReplyCommitFence(ctx, tx, input.TurnID, input.SessionID); err != nil {
 			var staleRevision *staleReportRevisionConflict
@@ -931,12 +1064,19 @@ func (s *SQLiteStore) LoadCommittedOutcome(ctx context.Context, turnID modulecor
 		return CommittedBatch{}, false, fmt.Errorf("turn_id: %w", err)
 	}
 	var sessionID, receiptID sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT session_id, result_receipt_id FROM live_conversation_turn WHERE turn_id = ?`, string(turnID)).Scan(&sessionID, &receiptID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !receiptID.Valid) {
+	var triggerKind string
+	err := s.db.QueryRowContext(ctx, `SELECT session_id, trigger_kind, result_receipt_id FROM live_conversation_turn WHERE turn_id = ?`, string(turnID)).Scan(&sessionID, &triggerKind, &receiptID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return CommittedBatch{}, false, nil
 	}
 	if err != nil {
 		return CommittedBatch{}, false, err
+	}
+	if triggerKind == "external_peer_message" || triggerKind == "board_owner_request" {
+		return CommittedBatch{}, false, conversationruntime.ErrExternalTurnJournalRequired
+	}
+	if !receiptID.Valid {
+		return CommittedBatch{}, false, nil
 	}
 	var operationKind, resultJSON string
 	if err := s.db.QueryRowContext(ctx, `SELECT operation_kind, result_json FROM live_operation_receipt WHERE operation_id = ?`, receiptID.String).Scan(&operationKind, &resultJSON); err != nil {
@@ -1014,14 +1154,35 @@ func validateAcceptInput(input AcceptInput) error {
 	if input.InputEvent.ActorKind != "" || input.InputEvent.ActorID != "" {
 		return errors.New("public conversation event cannot carry execution actor identity")
 	}
-	if payloadString(input.InputEvent.Payload, "from") != "user" || payloadString(input.InputEvent.Payload, "source_actor_id") != input.ActorID {
-		return errors.New("accepted user event payload does not match the authenticated actor")
-	}
-	if err := validateMessageIndex(input.InputMessage, input.InputEvent, input.InputEvent.SessionID, input.InputEvent.TurnID); err != nil {
-		return fmt.Errorf("validate input message index: %w", err)
-	}
-	if input.InputMessage.Visibility != "public" {
-		return errors.New("accepted user input message must be public")
+	if input.TriggerKind == "external_peer_message" {
+		if input.BoardOwnerRequestReservation != nil {
+			return errors.New("external peer input cannot carry BOARD owner request reservation proof")
+		}
+		if input.ExternalPeerBinding == nil {
+			return errors.New("external peer trigger requires a typed binding")
+		}
+		if err := validateExternalPeerAcceptInput(input); err != nil {
+			return err
+		}
+	} else if input.TriggerKind == "board_owner_request" {
+		if err := validateBoardOwnerRequestAcceptInput(input); err != nil {
+			return err
+		}
+	} else {
+		if input.ExternalPeerBinding != nil || input.BoardOwnerRequestReservation != nil ||
+			input.InputEvent.EventType == "conversation.external_peer_message" || input.InputEvent.EventType == "conversation.board_owner_request" ||
+			payloadString(input.InputEvent.Payload, "from") == "external_peer" || hasExternalPeerBindingPayload(input.InputEvent.Payload) {
+			return errors.New("external peer input requires its dedicated trigger and typed binding")
+		}
+		if payloadString(input.InputEvent.Payload, "from") != "user" || payloadString(input.InputEvent.Payload, "source_actor_id") != input.ActorID {
+			return errors.New("accepted user event payload does not match the authenticated actor")
+		}
+		if err := validateMessageIndex(input.InputMessage, input.InputEvent, input.InputEvent.SessionID, input.InputEvent.TurnID); err != nil {
+			return fmt.Errorf("validate input message index: %w", err)
+		}
+		if input.InputMessage.Visibility != "public" {
+			return errors.New("accepted user input message must be public")
+		}
 	}
 	if input.TriggerKind == "clarification_reply" {
 		if input.InputMessage.ReplyToMessageID == "" || payloadString(input.InputEvent.Payload, "reply_to_message_id") != string(input.InputMessage.ReplyToMessageID) ||
@@ -1030,6 +1191,100 @@ func validateAcceptInput(input AcceptInput) error {
 		}
 	}
 	return nil
+}
+
+func validateExternalPeerAcceptInput(input AcceptInput) error {
+	binding := *input.ExternalPeerBinding
+	return validateExternalPeerEnvelopeAndIndex(binding, input.ActorID, input.InputEvent, input.InputMessage, input.InputEvent.SessionID, input.InputEvent.TurnID)
+}
+
+func validateExternalPeerEnvelopeAndIndex(binding ExternalPeerBinding, actorID string, event modulecore.EventEnvelope, message MessageIndex, sessionID modulecore.SessionID, turnID modulecore.TurnID) error {
+	if err := binding.ValidateNewRequest(); err != nil {
+		return err
+	}
+	sourceActorID, err := binding.SourceActorID()
+	if err != nil {
+		return err
+	}
+	if actorID != sourceActorID {
+		return errors.New("external peer actor identity does not match the trusted binding")
+	}
+	if event.EventType != "conversation.external_peer_message" || event.ComponentID != "orchestrator" || event.ActorKind != "" || event.ActorID != "" {
+		return errors.New("external peer input must use the dedicated public event without execution actor identity")
+	}
+	// This accepted-only unit has no CORE-owned execution lineage binding yet.
+	if event.TaskID != "" || event.RunID != "" || event.ActionID != "" || event.AttemptID != "" {
+		return errors.New("external peer input cannot carry task or execution identity")
+	}
+	// The accepted-only lane does not create the CORE-owner binding required for auxiliary IDs.
+	if event.WorkstreamID != "" || event.GoalID != "" ||
+		event.UtteranceID != "" || event.RequestID != "" ||
+		event.ResponseID != "" || event.ArtifactID != "" ||
+		event.EvidenceID != "" || event.MemoryID != "" ||
+		event.RelationID != "" || event.ScheduleID != "" ||
+		event.QueueItemID != "" || event.CheckpointID != "" || event.ReceiptID != "" {
+		return errors.New("external peer input cannot carry unbound auxiliary CORE identity")
+	}
+	if event.CausationEventID != "" || len(event.DependencyEventIDs) != 0 || payloadString(event.Payload, "reply_to_message_id") != "" {
+		return errors.New("external peer request cannot carry an unbound reply or CORE causation")
+	}
+	responderActorID := binding.EffectiveResponderActorID()
+	if !externalPeerBindingPayloadMatches(event.Payload, binding) || payloadString(event.Payload, "from") != "external_peer" ||
+		payloadString(event.Payload, "source_actor_id") != sourceActorID || payloadString(event.Payload, "to") != responderActorID ||
+		payloadString(event.Payload, "visibility") != "public" {
+		return errors.New("external peer event provenance does not match the trusted binding")
+	}
+	text, textOK := event.Payload["text"].(string)
+	content, contentOK := event.Payload["content"].(string)
+	body, bodyOK := event.Payload["body"].(map[string]any)
+	bodyText, bodyTextOK := body["text"].(string)
+	if !textOK || !contentOK || !bodyOK || !bodyTextOK || strings.TrimSpace(text) == "" || text != content || text != bodyText {
+		return errors.New("external peer input text, content, and raw body must match")
+	}
+	externalIDs := []string{
+		binding.BoardInstanceID, binding.RecipientPrincipalID, binding.ChannelID,
+		binding.ThreadID, binding.MessageID, binding.SenderPrincipalID,
+	}
+	coreIDs := []string{
+		string(event.SessionID), string(event.ThreadID), string(event.TurnID), string(event.MessageID),
+		string(event.EventID), string(event.TraceID), string(event.TaskID),
+	}
+	for _, coreID := range coreIDs {
+		for _, externalID := range externalIDs {
+			if coreID != "" && coreID == externalID {
+				return fmt.Errorf("CORE identity %q reuses a BOARD reference", coreID)
+			}
+		}
+	}
+	if err := validateExternalPeerMessageIndex(message, event, sessionID, turnID, sourceActorID, responderActorID); err != nil {
+		return fmt.Errorf("validate external peer message index: %w", err)
+	}
+	return nil
+}
+
+func validateExternalPeerMessageIndex(message MessageIndex, event modulecore.EventEnvelope, sessionID modulecore.SessionID, turnID modulecore.TurnID, sourceActorID, responderActorID string) error {
+	if err := validateMessageIndexWithExternalPeer(message, event, sessionID, turnID, true); err != nil {
+		return err
+	}
+	if message.FromActor != sourceActorID || message.ToKind != "agent" || message.ToActor != responderActorID ||
+		message.Kind != "external_peer_message" || message.Visibility != "public" || message.ReplyToMessageID != "" {
+		return errors.New("external peer message index does not match the request contract")
+	}
+	return nil
+}
+
+func externalPeerBindingPayloadMatches(payload map[string]any, binding ExternalPeerBinding) bool {
+	stored, err := externalPeerBindingFromPayload(payload)
+	return err == nil && binding.Equal(stored)
+}
+
+func externalPeerBindingFromPayload(payload map[string]any) (ExternalPeerBinding, error) {
+	return domainconversation.ParseExternalPeerBinding(payload)
+}
+
+func hasExternalPeerBindingPayload(payload map[string]any) bool {
+	_, exists := payload["external_peer_binding"]
+	return exists
 }
 
 func validateCommitInput(input CommitInput) error {
@@ -1143,6 +1398,9 @@ func validateCommitInput(input CommitInput) error {
 		if strings.TrimSpace(item.WorkID) == "" || strings.TrimSpace(item.DedupeKey) == "" || strings.TrimSpace(item.Kind) == "" || item.SourceEventID == "" {
 			return errors.New("outbox work_id, dedupe_key, kind, and source_event_id are required")
 		}
+		if item.Kind == "board_publication" {
+			return errors.New("board_publication work requires the typed external journal")
+		}
 		if _, exists := seenWorkIDs[item.WorkID]; exists {
 			return fmt.Errorf("duplicate work_id %q", item.WorkID)
 		}
@@ -1156,6 +1414,10 @@ func validateCommitInput(input CommitInput) error {
 }
 
 func validateMessageIndex(message MessageIndex, event modulecore.EventEnvelope, sessionID modulecore.SessionID, turnID modulecore.TurnID) error {
+	return validateMessageIndexWithExternalPeer(message, event, sessionID, turnID, false)
+}
+
+func validateMessageIndexWithExternalPeer(message MessageIndex, event modulecore.EventEnvelope, sessionID modulecore.SessionID, turnID modulecore.TurnID, allowExternalPeer bool) error {
 	if err := message.MessageID.Validate(); err != nil {
 		return fmt.Errorf("message_id: %w", err)
 	}
@@ -1173,12 +1435,22 @@ func validateMessageIndex(message MessageIndex, event modulecore.EventEnvelope, 
 			return errors.New("message index from_actor does not match trusted payload source_actor_id")
 		}
 		from := payloadString(event.Payload, "from")
-		if event.EventType == "conversation.user_message" {
+		switch event.EventType {
+		case "conversation.user_message":
 			if from != "user" {
 				return errors.New("accepted public input must use the user display role")
 			}
-		} else if from != message.FromActor {
-			return errors.New("public message from does not match its indexed actor")
+		case "conversation.external_peer_message":
+			if !allowExternalPeer {
+				return errors.New("external peer message requires typed external peer acceptance")
+			}
+			if from != "external_peer" {
+				return errors.New("accepted external peer input must use the external_peer display role")
+			}
+		default:
+			if from != message.FromActor {
+				return errors.New("public message from does not match its indexed actor")
+			}
 		}
 	} else {
 		if (event.ActorKind == "") != (event.ActorID == "") {
@@ -1222,19 +1494,21 @@ func payloadString(payload map[string]any, key string) string {
 
 func acceptInputHash(input AcceptInput) (string, error) {
 	material := struct {
-		OwnerID            string         `json:"owner_id"`
-		RuntimeVersion     string         `json:"runtime_version"`
-		ClientSubmissionID string         `json:"client_submission_id"`
-		SessionID          string         `json:"session_id"`
-		ActorID            string         `json:"actor_id"`
-		TriggerKind        string         `json:"trigger_kind"`
-		GenerationEpoch    int64          `json:"generation_epoch"`
-		EventType          string         `json:"event_type"`
-		ComponentID        string         `json:"component_id"`
-		ActorKind          string         `json:"actor_kind"`
-		EventActorID       string         `json:"event_actor_id"`
-		Payload            map[string]any `json:"payload,omitempty"`
-		Message            struct {
+		OwnerID                      string                        `json:"owner_id"`
+		RuntimeVersion               string                        `json:"runtime_version"`
+		ClientSubmissionID           string                        `json:"client_submission_id"`
+		SessionID                    string                        `json:"session_id"`
+		ActorID                      string                        `json:"actor_id"`
+		TriggerKind                  string                        `json:"trigger_kind"`
+		GenerationEpoch              int64                         `json:"generation_epoch"`
+		EventType                    string                        `json:"event_type"`
+		ComponentID                  string                        `json:"component_id"`
+		ActorKind                    string                        `json:"actor_kind"`
+		EventActorID                 string                        `json:"event_actor_id"`
+		ExternalPeerBinding          *ExternalPeerBinding          `json:"external_peer_binding,omitempty"`
+		BoardOwnerRequestReservation *BoardOwnerRequestReservation `json:"board_owner_request_reservation,omitempty"`
+		Payload                      map[string]any                `json:"payload,omitempty"`
+		Message                      struct {
 			FromActor        string               `json:"from_actor"`
 			ToKind           string               `json:"to_kind"`
 			ToActor          string               `json:"to_actor"`
@@ -1246,7 +1520,9 @@ func acceptInputHash(input AcceptInput) (string, error) {
 		OwnerID: input.OwnerID, RuntimeVersion: input.RuntimeVersion, ClientSubmissionID: input.ClientSubmissionID,
 		SessionID: string(input.InputEvent.SessionID), ActorID: input.ActorID, TriggerKind: input.TriggerKind,
 		GenerationEpoch: input.GenerationEpoch, EventType: input.InputEvent.EventType, ComponentID: input.InputEvent.ComponentID,
-		ActorKind: input.InputEvent.ActorKind, EventActorID: input.InputEvent.ActorID, Payload: input.InputEvent.Payload,
+		ActorKind: input.InputEvent.ActorKind, EventActorID: input.InputEvent.ActorID,
+		ExternalPeerBinding: input.ExternalPeerBinding, BoardOwnerRequestReservation: input.BoardOwnerRequestReservation,
+		Payload: input.InputEvent.Payload,
 	}
 	material.Message.FromActor = input.InputMessage.FromActor
 	material.Message.ToKind = input.InputMessage.ToKind

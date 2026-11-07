@@ -25,6 +25,9 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("conversation_runtime.version must be 'legacy' or 'v2'")
 	}
+	if err := c.validateBoardCommunicationConfig(); err != nil {
+		return err
+	}
 	if c.Distributed.Enabled && c.TTS.SpeechPlanEnabled {
 		return fmt.Errorf("tts.speech_plan_enabled=true is not supported when distributed.enabled=true")
 	}

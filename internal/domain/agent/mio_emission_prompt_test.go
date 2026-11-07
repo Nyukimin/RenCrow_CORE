@@ -327,6 +327,8 @@ func TestMioTextRuneGuidanceRequiresMidoriAndStaysOutOfOtherLanes(t *testing.T) 
 	}
 
 	for _, purpose := range []conversation.ConversationPurpose{
+		conversation.PurposeExternalPeer,
+		conversation.PurposeBoardOwnerRequest,
 		conversation.PurposeReportReply,
 	} {
 		contract := emissionContractMessage(purpose, conversation.EmissionAllowlist{AllowedAssignees: []string{"midori"}})
@@ -346,6 +348,8 @@ func TestMioProductionStageGuidanceRequiresMidoriAndStaysOutOfOtherLanes(t *test
 	}
 
 	for _, purpose := range []conversation.ConversationPurpose{
+		conversation.PurposeExternalPeer,
+		conversation.PurposeBoardOwnerRequest,
 		conversation.PurposeReportReply,
 	} {
 		contract := emissionContractMessage(purpose, conversation.EmissionAllowlist{AllowedAssignees: []string{"midori"}})

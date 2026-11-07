@@ -67,6 +67,9 @@ type Config struct {
 	// === RenCrow_Harness delegation: Human relay issuer ===
 	NativeHarness NativeHarnessConfig `yaml:"native_harness"`
 
+	// === Optional private RenCrow_BOARD communication ===
+	BoardCommunication BoardCommunicationConfig `yaml:"board_communication"`
+
 	// === Advisor execution records and score snapshots ===
 	Advisor AdvisorConfig `yaml:"advisor"`
 

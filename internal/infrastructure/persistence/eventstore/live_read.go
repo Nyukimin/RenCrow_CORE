@@ -429,7 +429,15 @@ func (s *SQLiteStore) ReadCompleteSessionTail(ctx context.Context, sessionID mod
 				_ = rows.Close()
 				return CanonicalTail{}, errors.New("canonical session tail row violates its sequence or session filter")
 			}
-			if err := validateMessageIndex(message, event, sessionID, event.TurnID); err != nil {
+			externalPeerInput := event.EventType == "conversation.external_peer_message" ||
+				(event.ComponentID == "orchestrator" && (hasExternalPeerBindingPayload(event.Payload) ||
+					message.Kind == "external_peer_message" || payloadString(event.Payload, "from") == "external_peer"))
+			if externalPeerInput {
+				if err := validateExternalPeerTailMessage(ctx, tx, state.OwnerID, event, message, sessionID); err != nil {
+					_ = rows.Close()
+					return CanonicalTail{}, fmt.Errorf("validate canonical external peer input %q: %w", message.MessageID, err)
+				}
+			} else if err := validateMessageIndex(message, event, sessionID, event.TurnID); err != nil {
 				_ = rows.Close()
 				return CanonicalTail{}, fmt.Errorf("validate canonical session message %q: %w", message.MessageID, err)
 			}
@@ -454,6 +462,29 @@ func (s *SQLiteStore) ReadCompleteSessionTail(ctx context.Context, sessionID mod
 	}
 	tail.Complete = true
 	return tail, nil
+}
+
+func validateExternalPeerTailMessage(ctx context.Context, tx *sql.Tx, sessionOwnerID string, event modulecore.EventEnvelope, message MessageIndex, sessionID modulecore.SessionID) error {
+	var turnID, turnSessionID, ownerID, actorID, triggerKind, inputMessageID string
+	var admissionSeq int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT turn_id, session_id, owner_id, actor_id, trigger_kind, input_message_id, admission_seq
+		FROM live_conversation_turn WHERE input_message_id = ?`, string(event.MessageID),
+	).Scan(&turnID, &turnSessionID, &ownerID, &actorID, &triggerKind, &inputMessageID, &admissionSeq)
+	if err != nil {
+		return fmt.Errorf("load accepted external peer turn: %w", err)
+	}
+	if ownerID == "" || ownerID != sessionOwnerID || turnSessionID != string(sessionID) || turnSessionID != string(event.SessionID) ||
+		turnID != string(event.TurnID) || turnID != string(message.TurnID) || inputMessageID != string(event.MessageID) ||
+		inputMessageID != string(message.MessageID) || modulecore.EventSeq(admissionSeq) != event.EventSeq ||
+		triggerKind != "external_peer_message" || actorID == "" || actorID != message.FromActor {
+		return errors.New("accepted external peer turn row does not match owner, session, turn, input, trigger, or source actor")
+	}
+	binding, err := externalPeerBindingFromPayload(event.Payload)
+	if err != nil {
+		return err
+	}
+	return validateExternalPeerEnvelopeAndIndex(binding, actorID, event, message, sessionID, modulecore.TurnID(turnID))
 }
 
 // ReadLegacySessionProjection reconstructs read-only legacy messages from the
@@ -655,13 +686,24 @@ func (s *SQLiteStore) ReadPendingAcceptedTurns(ctx context.Context, sessionID mo
 			_ = rows.Close()
 			return nil, errors.New("recoverable turn row does not match its accepted input event")
 		}
-		if err := validateRecoverableTurnActor(turn, receiptID, clientSubmissionID, event, message); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("validate recoverable input actor for turn %q: %w", turn.TurnID, err)
-		}
-		if err := validateMessageIndex(message, event, sessionID, turn.TurnID); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("validate recoverable input message %q: %w", message.MessageID, err)
+		if turn.TriggerKind == "external_peer_message" {
+			binding, err := externalPeerBindingFromPayload(event.Payload)
+			if err == nil {
+				err = validateExternalPeerEnvelopeAndIndex(binding, turn.ActorID, event, message, sessionID, turn.TurnID)
+			}
+			if err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("validate recoverable external peer input for turn %q: %w", turn.TurnID, err)
+			}
+		} else {
+			if err := validateRecoverableTurnActor(turn, receiptID, clientSubmissionID, event, message); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("validate recoverable input actor for turn %q: %w", turn.TurnID, err)
+			}
+			if err := validateMessageIndex(message, event, sessionID, turn.TurnID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("validate recoverable input message %q: %w", message.MessageID, err)
+			}
 		}
 		turn.OperationID = receiptID
 		turn.ClientSubmissionID = clientSubmissionID

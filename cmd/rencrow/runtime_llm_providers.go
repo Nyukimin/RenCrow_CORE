@@ -24,6 +24,7 @@ type llmRuntimeProviders struct {
 	ChatWorker         llm.LLMProvider
 	Heavy              llm.LLMProvider
 	Wild               llm.LLMProvider
+	BoardChat          *llmmiddleware.ConversationProvider
 	WorkerToolProvider llm.ToolCallingProvider
 	Coder1             *coderAdapter
 	Coder2             *coderAdapter
@@ -43,6 +44,9 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 			primaryProviders.Readback[assignee] = provider.WithExecutionSlot(conversationSlot)
 		}
 	}
+	if primaryProviders.BoardChat != nil {
+		primaryProviders.BoardChat = primaryProviders.BoardChat.WithExecutionSlot(conversationSlot)
+	}
 	primaryProviders = primaryLLMProviders{
 		Chat:                    trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
 		Worker:                  trackLLMProvider("worker", primaryProviders.Worker, busyTracker),
@@ -50,6 +54,7 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Heavy:                   trackLLMProvider("heavy", primaryProviders.Heavy, busyTracker),
 		Wild:                    trackLLMProvider("wild", primaryProviders.Wild, busyTracker),
 		Conversation:            primaryProviders.Conversation,
+		BoardChat:               primaryProviders.BoardChat,
 		Readback:                primaryProviders.Readback,
 		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}
@@ -60,6 +65,7 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Heavy:                   requireActionOwnedLLMProvider("heavy", primaryProviders.Heavy, actions, tasks, transport),
 		Wild:                    requireActionOwnedLLMProvider("wild", primaryProviders.Wild, actions, tasks, transport),
 		Conversation:            primaryProviders.Conversation,
+		BoardChat:               primaryProviders.BoardChat,
 		Readback:                primaryProviders.Readback,
 		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}
@@ -76,6 +82,7 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Primary:            primaryProviders,
 		Conversation:       primaryProviders.Conversation,
 		Readback:           primaryProviders.Readback,
+		BoardChat:          primaryProviders.BoardChat,
 		Chat:               primaryProviders.Chat,
 		Worker:             primaryProviders.Worker,
 		ChatWorker:         primaryProviders.ChatWorker,

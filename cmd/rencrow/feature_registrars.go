@@ -16,6 +16,7 @@ func registerFeatureRoutes(
 	voiceChatRuntime voiceChatRuntime,
 	debugSystemOpts viewer.DebugSystemOptions,
 ) {
+	registerBoardCommunicationOwnerRoutes(mux, dependencies)
 	registerChannelRoutes(mux, cfg, dependencies)
 	registerViewerBaseRoutes(mux, cfg, dependencies, debugSystemOpts)
 	dependencies.aiWorkflowHeavyRuntime = viewer.HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(viewer.HeavyWorkerRuntimeDiagnosticsOptions{
