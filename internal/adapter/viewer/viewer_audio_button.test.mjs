@@ -153,6 +153,8 @@ globalThis.__viewerAudioHarness = {
   state,
   ttsPlayback,
   viewerControl,
+  viewerForegroundPresence,
+  buildViewerPresenceReference,
   updateAudioButton,
   enqueueTTSAudio,
   toggleTTSAudio,
@@ -260,6 +262,21 @@ globalThis.__viewerAudioHarness = {
 	context.__viewerAudioHarness.ttsPlayback.audioEnabled = options.audioEnabled !== false;
 	context.__viewerAudioHarness.updateAudioButton();
   return {harness: context.__viewerAudioHarness, elements, timers};
+}
+
+function establishFakeValidViewerForegroundClaim(harness) {
+  Object.assign(harness.viewerForegroundPresence, {
+    runtimeEpoch: 'epoch-1',
+    registrationReceipt: 'receipt-1',
+    claimSeq: 7,
+    ready: true,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.buildViewerPresenceReference())), {
+    protocol_version: 2,
+    runtime_epoch: 'epoch-1',
+    registration_receipt: 'receipt-1',
+    claim_seq: 7,
+  });
 }
 
 function liveTimestamp(offsetMs = 0) {
@@ -1322,6 +1339,7 @@ test('user input rejects a late SpeechPlan chunk with the interrupted turn ID', 
       return Promise.resolve({ok: true, status: 200});
     },
   });
+  establishFakeValidViewerForegroundClaim(harness);
   harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
   await harness.sendViewerMessage('new user input');
   harness.chatAudioSync.handleEvent({
@@ -1420,6 +1438,7 @@ test('a send receipt arriving after user input is cancelled immediately', async 
       return Promise.resolve({ok: true, status: 200});
     },
   });
+  establishFakeValidViewerForegroundClaim(harness);
   harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
 
   const sendPromise = harness.sendViewerMessage('request still in flight');
@@ -1475,6 +1494,7 @@ test('failed speech cancellation retains its token for a later interrupt retry',
       return Promise.resolve({ok: true, status: 200});
     },
   });
+  establishFakeValidViewerForegroundClaim(harness);
   await harness.sendViewerMessage('retry cancellation');
 
   harness.interruptChatOutputForUserInput('user_input');

@@ -38,6 +38,134 @@ function sourceBetween(source, startNeedle, endNeedle) {
   return source.slice(start, end);
 }
 
+function loadViewerSendHarness(viewerJs, fetchHandler) {
+  const requested = [];
+  const timelineEvents = [];
+  const interruptions = [];
+  const sequence = [];
+  const elements = new Map();
+  const source = `
+let sending = false;
+let viewerAttachments = [];
+let speechCancelGeneration = 0;
+const viewerControl = {clientId: 'viewer-tab-test'};
+const viewerForegroundPresence = {
+  protocolVersion: 2,
+  surface: 'other',
+  runtimeEpoch: 'epoch-1',
+  registrationReceipt: 'receipt-1',
+  updateSeq: 1,
+  claimSeq: 7,
+  stateRevision: 2,
+  registered: true,
+  claimed: true,
+  ready: true,
+  requestInFlight: false,
+  requestSettled: null,
+  sendInFlight: false,
+  releasePromise: null,
+  heartbeatTimer: null,
+};
+const inp = globalThis.__sendInput;
+const sendBtn = globalThis.__sendButton;
+const attachBtn = null;
+const cameraBtn = null;
+function buildViewerSendRequest(message) { return {message}; }
+function addMsgToTimeline(ev) { globalThis.__timelineEvents.push(ev); }
+function renderAttachmentTray() {}
+function autoResize() {}
+function interruptChatOutputForUserInput(reason) { const item = 'chat-output:' + reason; globalThis.__interruptions.push(item); globalThis.__sequence.push(item); }
+function interruptIdleChatForUserInput(reason) { const item = 'idlechat:' + reason; globalThis.__interruptions.push(item); globalThis.__sequence.push(item); }
+function acceptSpeechCancelCapability() {}
+` + sourceBetween(viewerJs, 'function coreViewerHeaders(', 'function viewerPageIsVisible') +
+sourceBetween(viewerJs, 'function send()', 'async function requestRepairFromChat') + `
+globalThis.__sendHarness = {send, viewerControl, viewerForegroundPresence};
+`;
+  const sendButton = {disabled: false, title: ''};
+  const sendInput = {value: 'hello', disabled: false, focus() {}};
+  const context = vm.createContext({
+    document: {
+      getElementById(id) {
+        if (id === 'sendBtn') return sendButton;
+        if (!elements.has(id)) elements.set(id, new FakeElement(id));
+        return elements.get(id);
+      },
+    },
+    __sendInput: sendInput,
+    __sendButton: sendButton,
+    __timelineEvents: timelineEvents,
+    __interruptions: interruptions,
+    __sequence: sequence,
+    console: {error() {}, warn() {}},
+    fetch(url, init) {
+      requested.push({url, init});
+      sequence.push('request:' + url);
+      return fetchHandler(url, init);
+    },
+  });
+  vm.runInContext(source, context);
+  return {
+    ...context.__sendHarness,
+    requested,
+    timelineEvents,
+    interruptions,
+    sequence,
+    elements,
+    sendButton,
+    sendInput,
+  };
+}
+
+function loadViewerPresenceHarness(viewerJs, fetchHandler) {
+  const requested = [];
+  const warnings = [];
+  const elements = new Map();
+  const source = `
+const viewerControl = {clientId: 'viewer-tab-test'};
+const viewerForegroundPresence = {
+  protocolVersion: 2,
+  surface: 'other',
+  runtimeEpoch: '',
+  registrationReceipt: '',
+  updateSeq: 0,
+  claimSeq: 0,
+  stateRevision: 0,
+  registered: false,
+  claimed: false,
+  ready: false,
+  requestInFlight: false,
+  requestSettled: null,
+  sendInFlight: false,
+  releasePromise: null,
+  heartbeatTimer: null,
+};
+` + sourceBetween(viewerJs, 'function coreViewerHeaders(', 'function handleViewerActiveControlEvent') + `
+globalThis.__presenceHarness = {viewerControl, viewerForegroundPresence, maintainViewerForegroundPresence, buildViewerPresenceReference, coreViewerHeaders};
+`;
+  const context = vm.createContext({
+    document: {
+      visibilityState: 'visible',
+      getElementById(id) {
+        if (!elements.has(id)) elements.set(id, {disabled: false, title: '', textContent: '', className: ''});
+        return elements.get(id);
+      },
+    },
+    console: {
+      warn(...args) {
+        warnings.push(args.map((arg) => arg && arg.message ? arg.message : String(arg)).join(' '));
+      },
+    },
+    applyIdleChatControlSnapshot() {},
+    invalidateIdleChatControlSnapshot() {},
+    fetch(url, init) {
+      requested.push({url, init});
+      return fetchHandler(url, init);
+    },
+  });
+  vm.runInContext(source, context);
+  return {...context.__presenceHarness, requested, warnings, elements};
+}
+
 test('viewer exposes memory inspector and news pack UI hooks', () => {
   const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
   const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8').replace(/\r\n/g, '\n');
@@ -4522,46 +4650,29 @@ globalThis.__renderHomeDesk = renderHomeDesk;
 
 test('viewer renders send failures with response body in timeline', async () => {
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  const requested = [];
-  const timelineEvents = [];
-  const source = `
-let sending = false;
-let viewerAttachments = [];
-let speechCancelGeneration = 0;
-const inp = {value: 'hello', disabled: false, focus() {}};
-const sendBtn = {disabled: false};
-const attachBtn = null;
-const cameraBtn = null;
-function renderAttachmentTray() {}
-function autoResize() {}
-function buildViewerSendRequest(message) { return {message}; }
-function addMsgToTimeline(ev) { globalThis.__timelineEvents.push(ev); }
-` + sourceBetween(viewerJs, 'function send()', 'function buildViewerStatusSnapshot') + `
-globalThis.__send = send;
-`;
-  const context = vm.createContext({
-    console: {error() {}},
-    __timelineEvents: timelineEvents,
-    fetch(url) {
-      requested.push(url);
-      return Promise.resolve({
-        ok: false,
-        status: 502,
-        text: () => Promise.resolve('viewer send route unavailable'),
-      });
-    },
-  });
-  vm.runInContext(source, context);
-  context.__send();
+  const send = loadViewerSendHarness(viewerJs, () => Promise.resolve({
+    ok: false,
+    status: 502,
+    text: () => Promise.resolve('viewer send route unavailable'),
+  }));
+  send.send();
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(requested[0], '/viewer/send');
-  assert.equal(timelineEvents.length, 1);
-  assert.equal(timelineEvents[0].type, 'agent.response');
-  assert.equal(timelineEvents[0].from, 'mio');
-  assert.equal(timelineEvents[0].to, 'user');
-  assert.match(timelineEvents[0].content, /Viewer send unavailable: HTTP 502: viewer send route unavailable/);
-  assert.doesNotMatch(timelineEvents[0].content, /send failed/);
+  assert.deepEqual(send.requested.map((request) => request.url), ['/viewer/send']);
+  const payload = JSON.parse(send.requested[0].init.body);
+  assert.equal(payload.viewer_client_id, 'viewer-tab-test');
+  assert.deepEqual(payload.presence, {
+    protocol_version: 2,
+    runtime_epoch: 'epoch-1',
+    registration_receipt: 'receipt-1',
+    claim_seq: 7,
+  });
+  assert.equal(send.timelineEvents.length, 1);
+  assert.equal(send.timelineEvents[0].type, 'agent.response');
+  assert.equal(send.timelineEvents[0].from, 'mio');
+  assert.equal(send.timelineEvents[0].to, 'user');
+  assert.match(send.timelineEvents[0].content, /Viewer send unavailable: HTTP 502: viewer send route unavailable/);
+  assert.doesNotMatch(send.timelineEvents[0].content, /send failed/);
 });
 
 test('viewer timeline renders local send failures and complete responses from tts synced speakers', () => {
@@ -4756,107 +4867,105 @@ globalThis.__runSTTAutoTest = runSTTAutoTest;
   assert.deepEqual(requested, ['/viewer/stt/log', '/viewer/stt/wav', '/viewer/stt/autotest']);
 });
 
-test('viewer renders idlechat control failures with response body', async () => {
-  const idleChatJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/idlechat.js', 'utf8');
-  const requested = [];
-  const elements = new Map();
-  const document = {
-    getElementById(id) {
-      if (!elements.has(id)) elements.set(id, new FakeElement(id));
-      return elements.get(id);
-    },
-    createElement() {
-      return new FakeElement();
-    },
-  };
-  const source = `
-const idleStartBtn = {disabled: false};
-const idleModeNormalBtn = null;
-const idleModeForecastBtn = null;
-const idleModeStorySimpleBtn = null;
-const idleStopBtn = {disabled: false};
-const idleStateEl = {textContent: '', className: ''};
-const idlePlaybackPlayBtn = null;
-const idlePlaybackNextBtn = null;
-const idlePlaybackPreviousBtn = null;
-const state = {idleChat: {history: [], openIndex: -1}};
-function esc(s) { return String(s || ''); }
-function fdt(s) { return String(s || '-'); }
-function short(s) { return String(s || ''); }
-function fmt(s) { return String(s || ''); }
-function idleEsc(s) { return esc(s); }
-function copyTextPayload() {}
-function showToast() {}
-` + sourceBetween(idleChatJs, 'function setIdleState', 'async function controlIdle') +
-idleChatJs.slice(idleChatJs.indexOf('async function controlIdle')) + `
-globalThis.__controlIdle = controlIdle;
-`;
+test('viewer fails closed when CORE rejects its V2 foreground presence claim', async () => {
+  const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   const responses = [
+    {
+      ok: true,
+      json: () => Promise.resolve({
+        ok: true,
+        protocol_version: 2,
+        runtime_epoch: 'epoch-1',
+        registration_receipt: 'receipt-1',
+        last_update_seq: 0,
+      }),
+    },
     {
       ok: false,
       status: 409,
-      text: () => Promise.resolve('idlechat already stopping'),
-    },
-    {
-      ok: true,
-      json: () => Promise.resolve({manual_mode: false, chat_active: false, current_topic: ''}),
+      json: () => Promise.resolve({error: 'IdleChat stop owner rejected claim', error_code: 'presence_conflict'}),
     },
   ];
+  const presence = loadViewerPresenceHarness(viewerJs, () => Promise.resolve(responses.shift()));
+
+  await presence.maintainViewerForegroundPresence();
+
+  assert.deepEqual(presence.requested.map((request) => request.url), [
+    '/viewer/surface-presence',
+    '/viewer/surface-presence',
+  ]);
+  assert.deepEqual(presence.requested.map((request) => JSON.parse(request.init.body).action), ['register', 'claim']);
+  const claim = JSON.parse(presence.requested[1].init.body);
+  assert.equal(claim.surface, 'other');
+  assert.equal(claim.protocol_version, 2);
+  assert.equal(presence.viewerForegroundPresence.ready, false);
+  assert.equal(presence.elements.get('sendBtn').disabled, true);
+  assert.equal(presence.elements.get('viewerPresenceState').textContent, 'CORE: unavailable');
+  assert.match(presence.warnings.join('\n'), /IdleChat stop owner rejected claim/);
+});
+
+test('viewer chat input and STT voice start interrupt local IdleChat immediately', () => {
+  const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const requested = [];
+  const actions = [];
+  const source = `
+const state = {idleChat: {mode: 'normal', manualMode: true, chatActive: true, currentTopic: 'topic', interrupted: false, interruptedSessionId: '', history: []}};
+const idleLiveActiveSessionId = 'idle-session-1';
+const chatAudioSync = {resetIdleChat() { globalThis.__actions.push('idle-audio-reset'); }};
+let suppressInputInterrupt = false;
+const sttState = {isRecording: false, isStopping: false, vadSpeechActive: false, utteranceCounter: 0, prerollBuffer: {take() { return []; }}, chunkBuffer: [], capturePCM: [], captureSessionID: ''};
+const vdsState = {isRecording: false};
+function renderIdleChat() { globalThis.__actions.push('idle-render'); }
+function interruptChatOutputForUserInput(reason) { globalThis.__actions.push('chat-output:' + reason); }
+function resetSTTUtteranceState() { globalThis.__actions.push('stt-reset'); }
+function recordSTTCaptureEvent(kind) { globalThis.__actions.push('stt-capture:' + kind); }
+function connectSTTWebSocket() { globalThis.__actions.push('connect-stt'); }
+function updateSTTInputIndicators() {}
+` + sourceBetween(viewerJs, 'function interruptIdleChatForUserInput', 'function acceptSpeechCancelCapability') +
+sourceBetween(viewerJs, 'function handleChatInputIntent(reason)', "inp.addEventListener('beforeinput'") +
+sourceBetween(viewerJs, 'function beginSTTUtterance(reason)', 'function handleSTTVADFrame') + `
+globalThis.__inputHarness = {state, sttState, handleChatInputIntent, beginSTTUtterance};
+`;
   const context = vm.createContext({
-    document,
-    console: {error() {}},
+    __actions: actions,
     fetch(url) {
       requested.push(url);
-      return Promise.resolve(responses.shift());
+      return Promise.resolve({ok: true});
     },
   });
   vm.runInContext(source, context);
-  await context.__controlIdle('/viewer/idlechat/stop');
 
-  assert.deepEqual(requested, ['/viewer/idlechat/stop', '/viewer/idlechat/status']);
-  assert.match(document.getElementById('idlechatBody').innerHTML, /IdleChat control unavailable: HTTP 409: idlechat already stopping/);
-  assert.doesNotMatch(document.getElementById('idlechatBody').innerHTML, /idlechat control failed/);
+  context.__inputHarness.handleChatInputIntent('user_input');
+  assert.deepEqual(actions, ['chat-output:user_input', 'idle-render', 'idle-audio-reset']);
+  assert.equal(context.__inputHarness.state.idleChat.chatActive, false);
+  assert.equal(context.__inputHarness.state.idleChat.interrupted, true);
+  assert.equal(context.__inputHarness.state.idleChat.interruptedSessionId, 'idle-session-1');
+
+  actions.length = 0;
+  Object.assign(context.__inputHarness.state.idleChat, {mode: 'normal', manualMode: true, chatActive: true, currentTopic: 'topic', interrupted: false});
+  context.__inputHarness.sttState.isRecording = true;
+  assert.equal(context.__inputHarness.beginSTTUtterance('vad_voice'), true);
+  assert.deepEqual(actions.slice(0, 4), ['stt-reset', 'chat-output:stt_voice_start', 'idle-render', 'idle-audio-reset']);
+  assert.equal(context.__inputHarness.state.idleChat.chatActive, false);
+  assert.equal(context.__inputHarness.state.idleChat.interrupted, true);
+  assert.deepEqual(requested, []);
 });
 
-test('viewer wires chat input and stt button to idlechat immediate stop', () => {
+test('viewer interrupts once before send and does not call the retired IdleChat stop route', async () => {
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  const routesGo = fs.readFileSync('cmd/rencrow/routes.go', 'utf8');
-  const handlersGo = fs.readFileSync('cmd/rencrow/runtime_idlechat_handlers.go', 'utf8');
-  const idlechatRegistrarGo = fs.readFileSync('internal/features/idlechat/registrar.go', 'utf8');
-  assert.match(viewerJs, /function interruptIdleChatForUserInput/);
-  assert.match(viewerJs, /fetch\('\/viewer\/idlechat\/stop'/);
-  assert.match(viewerJs, /'user_input'[\s\S]*'stt_voice_start'[\s\S]*'vds_voice_start'/);
-  assert.match(viewerJs, /inp\.addEventListener\('beforeinput', \(\) => handleChatInputIntent\('user_input'\)\)/);
-  assert.match(viewerJs, /inp\.addEventListener\('paste', \(\) => handleChatInputIntent\('paste'\)\)/);
-  assert.match(viewerJs, /inp\.addEventListener\('compositionstart', \(\) => handleChatInputIntent\('composition_start'\)\)/);
-  assert.match(viewerJs, /function beginSTTUtterance/);
-  assert.match(viewerJs, /interruptIdleChatForUserInput\('stt_voice_start'\)/);
-  assert.match(viewerJs, /interruptChatOutputForUserInput\('stt_voice_start'\)/);
-  assert.match(viewerJs, /function abortSTTImmediately\(reason\)/);
-  assert.match(viewerJs, /if \(typeof clearSTTFinalWaitTimer === 'function'\) clearSTTFinalWaitTimer\(\)/);
-  assert.match(viewerJs, /if \(chunk\.mode === 'idlechat' && !isIdleChatActiveForTTS\(chunk\.sessionId\)\) return/);
-  assert.match(routesGo, /idlechatfeature\.RegisterRoutes/);
-  assert.match(idlechatRegistrarGo, /\/viewer\/idlechat\/stop/);
-  assert.match(idlechatRegistrarGo, /\/viewer\/idlechat\/interrupt/);
-  assert.match(handlersGo, /handleIdleChatStop/);
-  assert.match(handlersGo, /handleIdleChatInterrupt/);
-});
+  const send = loadViewerSendHarness(viewerJs, () => Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({}),
+  }));
+  send.send();
+  send.send();
+  await new Promise((resolve) => setImmediate(resolve));
 
-test('viewer idlechat stop is fire-and-forget before send', () => {
-  const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  const sendSource = sourceBetween(viewerJs, 'function send()', 'async function sendViewerMessage');
-  assert.ok(
-    sendSource.indexOf("interruptIdleChatForUserInput('chat_send')") >= 0,
-    'send should request idlechat stop before viewer send',
-  );
-  assert.ok(
-    sendSource.indexOf("interruptIdleChatForUserInput('chat_send')") < sendSource.indexOf('sendViewerMessage(message'),
-    'idlechat stop should happen before sendViewerMessage',
-  );
-  const interruptSource = sourceBetween(viewerJs, 'function interruptIdleChatForUserInput', 'function handleChatInputIntent');
-  assert.match(interruptSource, /fetch\('\/viewer\/idlechat\/stop'/);
-  assert.match(interruptSource, /keepalive: true/);
-  assert.doesNotMatch(interruptSource, /await fetch/);
+  assert.deepEqual(send.requested.map((request) => request.url), ['/viewer/send']);
+  assert.deepEqual(send.interruptions, ['chat-output:chat_send', 'idlechat:chat_send']);
+  assert.deepEqual(send.sequence, ['chat-output:chat_send', 'idlechat:chat_send', 'request:/viewer/send']);
+  assert.equal(send.viewerForegroundPresence.sendInFlight, false);
 });
 
 test('viewer interrupts active chat output before accepting new user input', () => {
@@ -4907,22 +5016,18 @@ test('viewer renders idlechat status and logs failures with response bodies', as
     },
   };
   const source = `
-const idleStartBtn = {disabled: false};
-const idleModeNormalBtn = null;
-const idleModeForecastBtn = null;
-const idleModeStorySimpleBtn = null;
-const idleStopBtn = {disabled: false};
-const idleStateEl = {textContent: '', className: ''};
-const state = {idleChat: {history: [{title: 'stale summary'}], openIndex: -1}};
+const state = {idleChat: {history: [{title: 'stale summary'}], openIndex: -1, manualMode: true, chatActive: true, currentTopic: 'old topic'}};
 function esc(s) { return String(s || ''); }
 function fdt(s) { return String(s || '-'); }
 function short(s) { return String(s || ''); }
-function fmt(s) { return String(s || ''); }
-function idleEsc(s) { return esc(s); }
-function updateIdlePlaybackControls() {}
-function copyTextPayload() {}
-function showToast() {}
-` + sourceBetween(idleChatJs, 'function setIdleState', 'async function controlIdle') + `
+function setIdleState() {}
+function renderIdleTopicStocks() {}
+function renderIdleEpisodes() {}
+function renderIdleSummaryReview() {}
+` + sourceBetween(idleChatJs, 'function setBadge(el, enabled)', 'function stripIdleTopicCategory') +
+sourceBetween(idleChatJs, 'function stripIdleTopicCategory', 'function setIdleSelectedView') +
+sourceBetween(idleChatJs, 'function renderIdleChat()', 'function renderIdleWordTopicStock') +
+sourceBetween(idleChatJs, 'async function refreshIdleStatus()', 'function resetIdleChatLiveForControlChange') + `
 globalThis.__refreshIdleStatus = refreshIdleStatus;
 globalThis.__refreshIdleLogs = refreshIdleLogs;
 `;
