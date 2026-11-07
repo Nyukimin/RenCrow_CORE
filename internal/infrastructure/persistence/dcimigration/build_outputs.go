@@ -3,6 +3,7 @@ package dcimigration
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -114,10 +115,31 @@ func materializeBuildOutputs(ctx context.Context, prepared preparedBuild) (evide
 		return buildOutputsEvidence{}, err
 	}
 
-	eventStoreEvidence, err := createBuiltEventStore(ctx, prepared.paths.sources.eventStore, targets[1].path, prepared.snapshot, prepared.plan)
+	eventStoreScratchRoot, err := os.MkdirTemp(buildRoot, ".event-store-")
+	if err != nil {
+		return buildOutputsEvidence{}, buildOutputsError("event_store_output")
+	}
+	eventStoreScratchOwned := true
+	defer func() {
+		if eventStoreScratchOwned {
+			_ = os.RemoveAll(eventStoreScratchRoot)
+		}
+	}()
+	if err := os.Chmod(eventStoreScratchRoot, 0o700); err != nil {
+		return buildOutputsEvidence{}, buildOutputsError("event_store_output")
+	}
+	eventStoreScratchPath := filepath.Join(eventStoreScratchRoot, buildOutputEventStoreFilename)
+	eventStoreEvidence, err := createBuiltEventStore(ctx, prepared.paths.sources.eventStore, eventStoreScratchPath, prepared.snapshot, prepared.plan)
 	if err != nil {
 		return buildOutputsEvidence{}, buildOutputsCauseError(err, "event_store_output")
 	}
+	if err := copyBuildOutputFile(ctx, eventStoreScratchPath, targets[1].path); err != nil {
+		return buildOutputsEvidence{}, buildOutputsCauseError(err, "event_store_output")
+	}
+	if err := os.RemoveAll(eventStoreScratchRoot); err != nil {
+		return buildOutputsEvidence{}, buildOutputsError("event_store_output")
+	}
+	eventStoreScratchOwned = false
 	targets[1].quickCheckOK = eventStoreEvidence.QuickCheckOK
 	targets[1].sidecarZero = eventStoreEvidence.SidecarZero
 	if err := buildOutputsAfterOutput(targets[1].path); err != nil {
@@ -197,6 +219,95 @@ func materializeBuildOutputs(ctx context.Context, prepared preparedBuild) (evide
 	}
 	createdRoot = false
 	return evidence, nil
+}
+
+func copyBuildOutputFile(ctx context.Context, source, target string) (err error) {
+	if ctx == nil {
+		return errors.New("build output copy context is invalid")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sourceInfo, err := os.Lstat(source)
+	if err != nil || sourceInfo.Mode()&os.ModeSymlink != 0 || !sourceInfo.Mode().IsRegular() {
+		return errors.New("build output copy source is unsafe")
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	inputInfo, err := input.Stat()
+	if err != nil || !os.SameFile(sourceInfo, inputInfo) || inputInfo.Mode()&os.ModeSymlink != 0 || !inputInfo.Mode().IsRegular() {
+		_ = input.Close()
+		return errors.New("build output copy source changed")
+	}
+	output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		_ = input.Close()
+		return err
+	}
+	outputInfo, err := output.Stat()
+	if err != nil || !outputInfo.Mode().IsRegular() {
+		_ = output.Close()
+		_ = input.Close()
+		return errors.New("build output copy target is unsafe")
+	}
+	defer func() {
+		if err != nil {
+			_ = output.Close()
+			_ = input.Close()
+			if current, statErr := os.Lstat(target); statErr == nil && current.Mode()&os.ModeSymlink == 0 && current.Mode().IsRegular() && os.SameFile(outputInfo, current) {
+				_ = os.Remove(target)
+			}
+		}
+	}()
+	if err := output.Chmod(0o600); err != nil {
+		return err
+	}
+	buffer := make([]byte, 128*1024)
+	var copied int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		readBytes, readErr := input.Read(buffer)
+		if readBytes > 0 {
+			written, writeErr := output.Write(buffer[:readBytes])
+			copied += int64(written)
+			if writeErr != nil || written != readBytes {
+				if writeErr == nil {
+					writeErr = io.ErrShortWrite
+				}
+				return writeErr
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return readErr
+		}
+	}
+	if copied != inputInfo.Size() {
+		return errors.New("build output copy size differs from source")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	currentOutputInfo, err := output.Stat()
+	if err != nil || !os.SameFile(outputInfo, currentOutputInfo) || currentOutputInfo.Size() != copied {
+		return errors.New("build output copy size differs from target")
+	}
+	if err := output.Sync(); err != nil {
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	if err := input.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func buildOutputTargets(root string) []buildOutputFile {

@@ -192,6 +192,7 @@ func TestPublishAPIArtifactSupersessionFactsAppendsOnceAndRerunsConfirm(t *testi
 		t.Errorf("rerun recovery report = %+v, want 1 scanned, 1 confirmed, 0 published", rerun)
 	}
 
+	closePublicationStores(t, stores)
 	reopenedArtifacts := mustOpenArtifactStore(t, stores.artifactDir)
 	defer reopenedArtifacts.Close()
 	reopenedEvents := mustOpenEventStore(t, stores.eventPath)
@@ -203,7 +204,7 @@ func TestPublishAPIArtifactSupersessionFactsAppendsOnceAndRerunsConfirm(t *testi
 	if restarted.Scanned != 1 || restarted.Published != 0 || restarted.Confirmed != 1 || restarted.Failed != 0 {
 		t.Errorf("restart recovery report = %+v, want 1 scanned, 1 confirmed, 0 published", restarted)
 	}
-	if held := publishedSupersessionFacts(t, stores.events); len(held) != 1 {
+	if held := publishedSupersessionFacts(t, reopenedEvents); len(held) != 1 {
 		t.Errorf("canonical event store holds %d browsertrace supersession facts after two recovery passes, want 1: %v",
 			len(held), eventIDList(held))
 	}

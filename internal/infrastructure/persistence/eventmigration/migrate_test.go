@@ -98,6 +98,9 @@ func TestRunJSONLSnapshotDryRunApplyAndSecondRunNoop(t *testing.T) {
 			t.Fatalf("event %s JSON = %s, want %s", event.EventID, gotJSON, wantJSON)
 		}
 	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close applied event store before second apply: %v", err)
+	}
 
 	noopManifestPath := filepath.Join(root, "noop.json")
 	noopManifest, err := Run(context.Background(), Options{

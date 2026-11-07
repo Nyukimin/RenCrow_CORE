@@ -80,6 +80,20 @@ func newPublicationStores(t *testing.T) publicationStores {
 	return stores
 }
 
+func closePublicationStores(t *testing.T, stores publicationStores) {
+	t.Helper()
+	if stores.events != nil {
+		if err := stores.events.Close(); err != nil {
+			t.Fatalf("close canonical event store before simulated restart: %v", err)
+		}
+	}
+	if stores.artifacts != nil {
+		if err := stores.artifacts.Close(); err != nil {
+			t.Fatalf("close artifact store before simulated restart: %v", err)
+		}
+	}
+}
+
 func mustOpenArtifactStore(t *testing.T, dir string) *artifactstore.SQLiteStore {
 	t.Helper()
 	store, err := artifactstore.NewSQLiteStore(dir + "/api_artifact.db")
@@ -210,6 +224,7 @@ func TestPublishAPIArtifactCreationIntentsAppendsOnceAndRerunsConfirm(t *testing
 		t.Errorf("rerun recovery report = %+v, want 3 scanned, 3 confirmed, 0 published", rerun)
 	}
 
+	closePublicationStores(t, stores)
 	reopenedArtifacts := mustOpenArtifactStore(t, stores.artifactDir)
 	defer reopenedArtifacts.Close()
 	reopenedEvents := mustOpenEventStore(t, stores.eventPath)
@@ -222,7 +237,7 @@ func TestPublishAPIArtifactCreationIntentsAppendsOnceAndRerunsConfirm(t *testing
 		t.Errorf("restart recovery report = %+v, want 3 scanned, 3 confirmed, 0 published", restarted)
 	}
 
-	if storedEvents := publishedCreationFacts(t, stores.events); len(storedEvents) != 3 {
+	if storedEvents := publishedCreationFacts(t, reopenedEvents); len(storedEvents) != 3 {
 		t.Errorf("canonical event store holds %d browsertrace creation facts after two recovery passes, want 3: %v",
 			len(storedEvents), eventIDList(storedEvents))
 	}
