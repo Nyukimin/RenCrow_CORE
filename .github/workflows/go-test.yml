@@ -57,7 +57,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    # Playwright 1.59.1 does not support ubuntu-latest's ubuntu-26.04 image yet.
+    # Keep matrix.os for the existing canonical artifact label.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/source/Tmp/test-runtime/_cache/playwright
       GOCACHE: ${{ github.workspace }}/source/Tmp/test-runtime/_cache/go-build

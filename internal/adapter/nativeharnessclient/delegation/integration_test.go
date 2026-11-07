@@ -906,18 +906,10 @@ func (s *entrySessions) Save(_ context.Context, sess *session.Session) error {
 func (s *entrySessions) Load(_ context.Context, id string) (*session.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sess, ok := s.m[id]; ok {
-		return sess, nil
+	sess, ok := s.m[id]
+	if !ok {
+		return nil, errors.New("entry fixture session was not seeded")
 	}
-	address, err := conversation.NewChannelAddress("test", "test")
-	if err != nil {
-		return nil, err
-	}
-	sess, err := session.NewCanonicalSession(modulecore.NewSessionID(), "2026-10-08", address, time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC))
-	if err != nil {
-		return nil, err
-	}
-	s.m[id] = sess
 	return sess, nil
 }
 
@@ -988,13 +980,22 @@ func (entryMCP) CallTool(context.Context, string, string, map[string]interface{}
 }
 func (entryMCP) ListTools(context.Context, string) ([]string, error) { return nil, nil }
 
-func newEntryOrchestrator(t *testing.T, it *integration, route routing.Route, withAdmission bool) (*orchestrator.MessageOrchestrator, *legacyRoutes) {
+func newEntryOrchestrator(t *testing.T, it *integration, route routing.Route, withAdmission bool, sessionID, channel, chatID string) (*orchestrator.MessageOrchestrator, *legacyRoutes) {
 	t.Helper()
 	legacy := &legacyRoutes{}
+	address, err := conversation.NewChannelAddress(channel, chatID)
+	if err != nil {
+		t.Fatalf("NewChannelAddress: %v", err)
+	}
+	sess, err := session.NewCanonicalSession(modulecore.SessionID(sessionID), "2026-10-08", address, time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewCanonicalSession: %v", err)
+	}
+	sessions := &entrySessions{m: map[string]*session.Session{sess.ID(): sess}}
 	shiro := agent.NewShiroAgent(entryLLM{legacy}, entryTools{legacy}, entryMCP{}, "character prompt", entrySubagents{legacy}).
 		WithAdvisorService(entryAdvisor{legacy}).
 		WithNativeCodingDelegate(it.runtime)
-	orch := orchestrator.NewMessageOrchestrator(&entrySessions{m: map[string]*session.Session{}}, entryMio{route: route}, shiro, nil, nil, nil, nil, nil)
+	orch := orchestrator.NewMessageOrchestrator(sessions, entryMio{route: route}, shiro, nil, nil, nil, nil, nil)
 	orch.SetTaskLifecycleManager(it.tasks)
 	orch.SetMaxRepair(3)
 	if withAdmission {
@@ -1008,12 +1009,13 @@ func TestIntegrationRealEntryReachesTheRealHarnessAndNoOldRoute(t *testing.T) {
 	// advisor and a codex tool all available: none of them is reached.
 	it := newIntegration(t, nil, nil)
 	it.deploy.Gateway.SetScript(harnessdeploy.Reply{Text: "描画の作業を完了しました"})
-	orch, legacy := newEntryOrchestrator(t, it, routing.RouteOPS, true)
+	sessionID := string(modulecore.NewSessionID())
+	orch, legacy := newEntryOrchestrator(t, it, routing.RouteOPS, true, sessionID, "line", "U1")
 	rootTaskID := modulecore.NewTaskID()
 
 	_, err := orch.ProcessMessage(context.Background(), orchestrator.ProcessMessageRequest{
 		RootTaskID: rootTaskID.String(),
-		SessionID:  "20261008-line-U1", Channel: "line", ChatID: "U1", UserMessage: "この場面を描画して",
+		SessionID:  sessionID, Channel: "line", ChatID: "U1", UserMessage: "この場面を描画して",
 	})
 	var nativeErr *agent.NativeCodingError
 	if !errors.As(err, &nativeErr) {
@@ -1052,9 +1054,10 @@ func TestIntegrationRealEntryReachesTheRealHarnessAndNoOldRoute(t *testing.T) {
 
 func TestIntegrationRealEntryWithoutAdmissionKeepsTheExistingRoute(t *testing.T) {
 	it := newIntegration(t, nil, nil)
-	orch, legacy := newEntryOrchestrator(t, it, routing.RouteOPS, false)
+	sessionID := string(modulecore.NewSessionID())
+	orch, legacy := newEntryOrchestrator(t, it, routing.RouteOPS, false, sessionID, "line", "U2")
 	resp, err := orch.ProcessMessage(context.Background(), orchestrator.ProcessMessageRequest{
-		SessionID: "20261008-line-U2", Channel: "line", ChatID: "U2", UserMessage: "整理して",
+		SessionID: sessionID, Channel: "line", ChatID: "U2", UserMessage: "整理して",
 	})
 	if err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -1069,9 +1072,10 @@ func TestIntegrationRealEntryWithoutAdmissionKeepsTheExistingRoute(t *testing.T)
 
 func TestIntegrationRealEntryWithAnUnavailableHarnessEndsBlockedWithoutFallback(t *testing.T) {
 	it := newIntegration(t, func(s *Settings) { s.HarnessBinary = filepath.Join(filepath.Dir(s.HarnessBinary), "missing-harness") }, nil)
-	orch, legacy := newEntryOrchestrator(t, it, routing.RouteOPS, true)
+	sessionID := string(modulecore.NewSessionID())
+	orch, legacy := newEntryOrchestrator(t, it, routing.RouteOPS, true, sessionID, "line", "U3")
 	_, err := orch.ProcessMessage(context.Background(), orchestrator.ProcessMessageRequest{
-		SessionID: "20261008-line-U3", Channel: "line", ChatID: "U3", UserMessage: "この場面を描画して",
+		SessionID: sessionID, Channel: "line", ChatID: "U3", UserMessage: "この場面を描画して",
 	})
 	if !errors.Is(err, agent.ErrNativeCodingBlocked) {
 		t.Fatalf("an unavailable Harness must end the turn blocked: %v", err)
