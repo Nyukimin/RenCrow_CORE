@@ -4906,6 +4906,9 @@ test('viewer fails closed when CORE rejects its V2 foreground presence claim', a
 
 test('viewer chat input and STT voice start interrupt local IdleChat immediately', () => {
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  assert.match(viewerJs, /inp\.addEventListener\('beforeinput', \(\) => handleChatInputIntent\('user_input'\)\)/);
+  assert.match(viewerJs, /inp\.addEventListener\('paste', \(\) => handleChatInputIntent\('paste'\)\)/);
+  assert.match(viewerJs, /inp\.addEventListener\('compositionstart', \(\) => handleChatInputIntent\('composition_start'\)\)/);
   const requested = [];
   const actions = [];
   const source = `
