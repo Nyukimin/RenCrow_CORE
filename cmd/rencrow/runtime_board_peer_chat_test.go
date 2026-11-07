@@ -31,7 +31,7 @@ func TestBoardPeerChatWiringRequiresExplicitResponderAndExactAuthoredPrompt(t *t
 	aoProvider := &boardPeerChatRuntimeProviderFake{}
 	cfg := &config.Config{
 		BoardCommunication: config.BoardCommunicationConfig{Enabled: true, Responders: []config.BoardCommunicationResponderConfig{{ActorID: "aka"}}},
-		Prompts: &config.LoadedPrompts{CharacterPrompts: map[string]string{"aka": "exact Aka workspace bundle", "ao": "unconfigured Ao bundle"}},
+		Prompts:            &config.LoadedPrompts{CharacterPrompts: map[string]string{"aka": "exact Aka workspace bundle", "ao": "unconfigured Ao bundle"}},
 	}
 	wiring := boardPeerChatWiringFor(cfg, map[string]agent.ConversationGenerationProvider{"aka": akaProvider, "ao": aoProvider})
 	if len(wiring) != 1 || wiring["aka"].Provider != akaProvider || wiring["aka"].SystemPrompt != "exact Aka workspace bundle" {

@@ -176,7 +176,7 @@ func TestBoardChatUnknownGatewayAliasFailsWithoutFallback(t *testing.T) {
 	}))
 	defer server.Close()
 	providers := buildPrimaryLLMProviders(&config.Config{
-		LLMGateway: config.LLMGatewayConfig{BaseURL: server.URL, TimeoutSec: 5},
+		LLMGateway:         config.LLMGatewayConfig{BaseURL: server.URL, TimeoutSec: 5},
 		BoardCommunication: config.BoardCommunicationConfig{Enabled: true, Responders: []config.BoardCommunicationResponderConfig{{ActorID: "aka"}}},
 	}, nil)
 	scope := domainconversation.ConversationScope{
