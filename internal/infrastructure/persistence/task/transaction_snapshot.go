@@ -188,6 +188,14 @@ func cloneTransactionTask(value domaintask.Task) domaintask.Task {
 		originPublication := *value.OriginPublication
 		value.OriginPublication = &originPublication
 	}
+	if value.Production != nil {
+		production := *value.Production
+		if production.TextRunes != nil {
+			textRunes := *production.TextRunes
+			production.TextRunes = &textRunes
+		}
+		value.Production = &production
+	}
 	value.NextActions = append([]string(nil), value.NextActions...)
 	value.Evidence = append([]string(nil), value.Evidence...)
 	value.Artifacts = append([]string(nil), value.Artifacts...)

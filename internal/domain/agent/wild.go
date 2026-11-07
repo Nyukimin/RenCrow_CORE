@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/imagegeneration"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
@@ -29,6 +31,12 @@ type WildAgent struct {
 
 type ImageGenerator interface {
 	GenerateImage(ctx context.Context, prompt string) (ImageGenerationResult, error)
+}
+
+// EngineConstrainedImageGenerator is an optional extension for explicit
+// engine requests. Existing ImageGenerator implementations remain compatible.
+type EngineConstrainedImageGenerator interface {
+	GenerateImageWithEngine(ctx context.Context, prompt string, engine domainimage.EngineConstraint) (ImageGenerationResult, error)
 }
 
 type ImageGenerationResult struct {
@@ -97,11 +105,31 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 
 func (w *WildAgent) generate(ctx context.Context, t conversation.TurnInput, allowImageGeneration bool) (string, error) {
 	userMessage := stripWildCommand(t.MessageText())
-	if allowImageGeneration && isImageGenerationRequest(userMessage) {
+	engine, hasEngineConstraint := domainimage.ParseEngineConstraint(userMessage)
+	if allowImageGeneration && isImageGenerationRequest(userMessage) && !(hasEngineConstraint && isNonExecutionEngineRequest(userMessage)) {
+		if hasEngineConstraint && engine == "" {
+			return "", fmt.Errorf("%w: conflicting explicit image engines were requested", ErrImageGeneratorUnavailable)
+		}
+		if hasEngineConstraint && engine == domainimage.EngineConstraintImageGen {
+			return "", fmt.Errorf("%w: ImageGen is unavailable in the normal image-generation route", ErrImageGeneratorUnavailable)
+		}
 		if w.imageGenerator == nil {
+			if hasEngineConstraint {
+				return "", fmt.Errorf("%w: requested engine %s has no available RenCrow_Image profile", ErrImageGeneratorUnavailable, engine)
+			}
 			return "", ErrImageGeneratorUnavailable
 		}
-		result, err := w.imageGenerator.GenerateImage(ctx, userMessage)
+		var result ImageGenerationResult
+		var err error
+		if hasEngineConstraint {
+			generator, ok := w.imageGenerator.(EngineConstrainedImageGenerator)
+			if !ok {
+				return "", fmt.Errorf("%w: image generator cannot verify requested engine %s", ErrImageGeneratorUnavailable, engine)
+			}
+			result, err = generator.GenerateImageWithEngine(ctx, userMessage, engine)
+		} else {
+			result, err = w.imageGenerator.GenerateImage(ctx, userMessage)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -191,6 +219,9 @@ func isImageGenerationRequest(message string) bool {
 	if strings.Contains(msg, "画像プロンプト") || strings.Contains(msg, "prompt only") || strings.Contains(msg, "プロンプトを作") {
 		return false
 	}
+	if domainimage.IsBareEngineRequest(msg) {
+		return true
+	}
 	generationKeywords := []string{
 		"画像生成",
 		"画像を生成",
@@ -211,6 +242,79 @@ func isImageGenerationRequest(message string) bool {
 		strings.Contains(msg, "rencrowimage")
 	for _, keyword := range generationKeywords {
 		if strings.Contains(msg, keyword) && hasImageContext {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonExecutionEngineRequest(message string) bool {
+	msg := strings.ToLower(strings.TrimSpace(message))
+	if domainimage.IsBareEngineRequest(msg) {
+		return false
+	}
+	hasGenerationAction := false
+	for _, phrase := range []string{
+		"画像を生成",
+		"画像生成して",
+		"画像生成し",
+		"画像生成をして",
+		"画像生成をお願い",
+		"絵を生成",
+		"絵を描いて",
+		"生成して",
+		"描いて",
+		"描画して",
+		"イラストにして",
+		"generate image",
+		"text-to-image",
+		"create image",
+		"draw",
+	} {
+		if strings.Contains(msg, phrase) {
+			hasGenerationAction = true
+			break
+		}
+	}
+	if !hasGenerationAction {
+		return true
+	}
+	for _, phrase := range []string{
+		"画像生成プロンプト",
+		"image prompt",
+		"prompt generation",
+		"generate prompt",
+		"prompt only",
+		"プロンプトを作",
+		"プロンプト作成",
+		"promptを作",
+		"promptを生成",
+		"生成する方法",
+		"生成の方法",
+		"生成するやり方",
+		"生成方法",
+		"使い方",
+		"やり方",
+		"仕方",
+		"どうやって",
+		"how to",
+		"how do i",
+		"how can i",
+		"what is",
+		"tutorial",
+		"手順",
+		"について教えて",
+		"について説明",
+		"とは何",
+		"って何",
+		"できる?",
+		"できる？",
+		"できますか",
+		"可能か",
+		"可能?",
+		"可能？",
+	} {
+		if strings.Contains(msg, phrase) {
 			return true
 		}
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -134,7 +135,24 @@ func (g *MioEmissionGenerator) GenerateEmission(ctx context.Context, scope conve
 		receipt.Status = "invalid_output"
 		return conversation.AgentEmission{}, receipt, fmt.Errorf("validate Mio emission: %w", err)
 	}
+	if scope.Purpose == conversation.PurposeMioTurn && emission.Kind == conversation.EmissionKindDelegate {
+		if err := validateMioProductionStage(emission.Delegation); err != nil {
+			receipt.Status = "invalid_output"
+			return conversation.AgentEmission{}, receipt, fmt.Errorf("validate Mio production stage metadata: %w", err)
+		}
+	}
 	return emission, receipt, nil
+}
+
+func validateMioProductionStage(delegation *conversation.AgentDelegation) error {
+	if delegation == nil {
+		return errors.New("delegation is missing")
+	}
+	_, err := domaintask.ProductionFromAgentConstraints(delegation.Constraints, delegation.To)
+	if err != nil {
+		return fmt.Errorf("production metadata is invalid: %w", err)
+	}
+	return nil
 }
 
 func validateEmissionSnapshot(snapshot PromptSnapshot, allowlist conversation.EmissionAllowlist) error {
@@ -255,8 +273,28 @@ For one handoff, use this complete shape, with no fields beyond those shown:
 user_message.to must be "user". delegation.to must exactly match an assignee; use the exact lowercase spelling from this assignee list: %s.
 For delegation.source_message_ids and each constraint's source_message_ids, use only IDs from this source_message_ids list; never invent IDs, and use [] when none apply: %s.
 Each constraint object may contain only key, text, and source_message_ids. Do not add fields beyond those shown.
-Never produce tool calls, actions, or a second response.`, purpose, string(assigneesJSON), string(sourcesJSON)),
+Never produce tool calls, actions, or a second response.%s%s`, purpose, string(assigneesJSON), string(sourcesJSON), mioProductionStageGuidance(allowlist), mioProductionTextRunesGuidance(allowlist)),
 	}}
+}
+
+func mioProductionStageGuidance(allowlist conversation.EmissionAllowlist) string {
+	for _, assignee := range allowlist.AllowedAssignees {
+		if assignee == "midori" {
+			return fmt.Sprintf(`
+When delegating text production to Midori, include one constraint with key %q. Set its text to "ideate" for ideation, "author" for drafting, or "verify" for review. Keep the user's goal, expected output, and other constraints in their existing fields.`, domaintask.ProductionStageConstraintKey)
+		}
+	}
+	return ""
+}
+
+func mioProductionTextRunesGuidance(allowlist conversation.EmissionAllowlist) string {
+	for _, assignee := range allowlist.AllowedAssignees {
+		if assignee == "midori" {
+			return fmt.Sprintf(`
+Only when the user's source message explicitly states an exact text count or an inclusive count range, include one constraint with key %q. Encode its text as canonical decimal "MIN..MAX" with both endpoints included; for an exact count, repeat the same value at both ends. Do not infer a range from approximate wording such as about, around, or roughly.`, domaintask.ProductionTextRunesConstraintKey)
+		}
+	}
+	return ""
 }
 
 func cloneFloatPointer(value *float64) *float64 {

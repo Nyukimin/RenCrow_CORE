@@ -114,6 +114,47 @@ func TestTransactionSnapshotDefensiveCopiesTaskAndRun(t *testing.T) {
 	}
 }
 
+func TestTransactionSnapshotDefensiveCopiesProductionMetadata(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 14, 10, 25, 0, 0, time.UTC)
+	task := snapshotTestTask(now)
+	production, err := domaintask.NewProductionWithTextRunes(domaintask.ProductionStageAuthor, domaintask.TextRuneRange{Min: 60, Max: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Production = &production
+
+	err = store.Transaction(ctx, func(tx domaintask.Store) error {
+		if err := tx.SaveTask(ctx, task); err != nil {
+			return err
+		}
+		got, err := tx.GetTask(ctx, task.TaskID)
+		if err != nil {
+			return err
+		}
+		got.Production.SchemaVersion = ""
+		got.Production.TextRunes.Min = 40
+
+		again, err := tx.GetTask(ctx, task.TaskID)
+		if err != nil {
+			return err
+		}
+		if again.Production == nil || again.Production.SchemaVersion != domaintask.CreativeTaskV02SchemaVersion ||
+			again.Production.TextRunes == nil || again.Production.TextRunes.Min != 60 || again.Production.TextRunes.Max != 100 {
+			return errors.New("mutating returned production metadata changed the transaction snapshot")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTaskCriteriaRevisionIsImmutableAcrossSaveAndReopen(t *testing.T) {
 	root := t.TempDir()
 	ctx := context.Background()

@@ -345,7 +345,7 @@ func (e *DelegatedTaskExecutor) executeLease(ctx context.Context, lease Delegate
 		return fail(fmt.Errorf("%w: active delegated Run start reason is unsupported", ErrDelegatedExecutionInvalid))
 	}
 	result.RunID = run.RunID
-	input, err := delegatedTurnInput(source, shared)
+	input, err := delegatedTurnInput(source, shared, task.Production)
 	if err != nil {
 		return fail(err)
 	}
@@ -387,6 +387,16 @@ func (e *DelegatedTaskExecutor) executeLease(ctx context.Context, lease Delegate
 		workerErr = errors.New("worker result is empty, invalid UTF-8, or exceeds the report limit")
 		output = ""
 	}
+	verifiedTextRuneCount, hasVerifiedTextRuneCount := 0, false
+	if workerErr == nil && task.Production != nil && task.Production.TextRunes != nil {
+		actual := utf8.RuneCountInString(strings.TrimSpace(output))
+		condition := task.Production.TextRunes
+		if actual < condition.Min || actual > condition.Max {
+			workerErr = delegatedTextRuneRangeFailure{actual: actual, minimum: condition.Min, maximum: condition.Max}
+		} else {
+			verifiedTextRuneCount, hasVerifiedTextRuneCount = actual, true
+		}
+	}
 	result.Generated = workerErr == nil
 	if err := ctx.Err(); err != nil {
 		return fail(err)
@@ -403,11 +413,20 @@ func (e *DelegatedTaskExecutor) executeLease(ctx context.Context, lease Delegate
 	}
 	status, reportStatus := domaintask.StatusSucceeded, conversation.ReportStatusSucceeded
 	summary, reportText := delegatedExecutionSummarySucceeded, output
+	if hasVerifiedTextRuneCount {
+		condition := task.Production.TextRunes
+		summary = fmt.Sprintf("%s Text length verified: %d Unicode code points; required %d..%d inclusive.",
+			summary, verifiedTextRuneCount, condition.Min, condition.Max)
+	}
 	limitations := []string{}
 	if workerErr != nil {
 		status, reportStatus = domaintask.StatusFailed, conversation.ReportStatusFailed
 		summary, reportText = delegatedExecutionSummaryFailed, delegatedExecutionFailureText
 		limitations = []string{"No external capabilities were granted; the requested text result was not produced."}
+		var lengthFailure delegatedTextRuneRangeFailure
+		if errors.As(workerErr, &lengthFailure) {
+			limitations = append(limitations, lengthFailure.Error())
+		}
 	}
 	report := conversation.ReportEnvelope{
 		ReportID: modulecore.NewResponseID(), ReportRevision: 1,
@@ -700,6 +719,10 @@ func validateDelegatedTask(task domaintask.Task, source DelegatedExecutionSource
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("%w: Task record is invalid: %v", ErrDelegatedExecutionInvalid, err)
 	}
+	expectedProduction, err := delegatedTaskProduction(source.Handoff, actorID)
+	if err != nil {
+		return fmt.Errorf("%w: accepted production stage metadata is invalid: %v", ErrDelegatedExecutionInvalid, err)
+	}
 	if task.TaskID != source.TaskID || task.Title != source.Handoff.Goal || task.Route != domaintask.RouteGeneral ||
 		task.OwnerID != source.OwnerID || task.Assignee != actorID || !task.ReadOnly ||
 		task.OriginSessionID != source.Handoff.SessionID || task.OriginTurnID != source.Handoff.OriginTurnID ||
@@ -707,7 +730,7 @@ func validateDelegatedTask(task domaintask.Task, source DelegatedExecutionSource
 		task.RoutingEventID != "" || task.AssignmentEventID != "" || task.AcceptedOPSClaim != nil ||
 		task.ExpectedCriteriaRevision != "" || len(task.NativeResumeClaims) != 0 || len(task.CoderRoles) != 0 ||
 		task.WorkstreamID != "" || task.GoalID != "" || task.ParentTaskID != "" || len(task.DependencyTaskIDs) != 0 ||
-		shared.TaskID != source.TaskID {
+		!reflect.DeepEqual(task.Production, expectedProduction) || shared.TaskID != source.TaskID {
 		return fmt.Errorf("%w: Task is not the current read-only delegated Task", ErrDelegatedExecutionInvalid)
 	}
 	return nil
@@ -771,7 +794,7 @@ func delegatedExecutionCheckpointHash(source DelegatedExecutionSource, shared do
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func delegatedTurnInput(source DelegatedExecutionSource, shared domaintask.SharedRoleContext) (conversation.TurnInput, error) {
+func delegatedTurnInput(source DelegatedExecutionSource, shared domaintask.SharedRoleContext, production *domaintask.Production) (conversation.TurnInput, error) {
 	address, err := conversation.NewChannelAddress("delegated", string(source.Handoff.SessionID))
 	if err != nil {
 		return conversation.TurnInput{}, err
@@ -783,6 +806,9 @@ func delegatedTurnInput(source DelegatedExecutionSource, shared domaintask.Share
 		text += "- " + constraint.Key + ": " + constraint.Text + "\n"
 	}
 	text += "\n" + shared.HandoffNotes + "\nProduce the requested text only. Do not use tools or claim external actions."
+	if production != nil && production.TextRunes != nil {
+		text += fmt.Sprintf("\n\nText length condition: After trimming leading and trailing whitespace, the body must contain %d..%d Unicode code points inclusive. Return only text that meets this condition.", production.TextRunes.Min, production.TextRunes.Max)
+	}
 	input, err := conversation.ReconstructTurnInput(source.TaskID, source.Handoff.OriginTurnID,
 		source.Handoff.SourceTraceID, source.Handoff.OriginUserMessageID, source.Handoff.InstructionMessageID, text, address)
 	if err != nil {
@@ -793,4 +819,14 @@ func delegatedTurnInput(source DelegatedExecutionSource, shared domaintask.Share
 
 func utf8ReportText(value string) bool {
 	return value != "" && strings.TrimSpace(value) != "" && len(value) <= conversation.MaxReportResultBytes && utf8.ValidString(value)
+}
+
+type delegatedTextRuneRangeFailure struct {
+	actual  int
+	minimum int
+	maximum int
+}
+
+func (failure delegatedTextRuneRangeFailure) Error() string {
+	return fmt.Sprintf("text body length is %d Unicode code points after trimming; required %d..%d inclusive", failure.actual, failure.minimum, failure.maximum)
 }

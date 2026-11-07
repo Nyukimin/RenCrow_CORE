@@ -3,6 +3,7 @@ package task
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +69,184 @@ const (
 	RouteCODE3      Route = "CODE3"
 	RouteCODE4      Route = "CODE4"
 )
+
+type ProductionStage string
+
+const ProductionStageConstraintKey = "rencrow_production_stage_v1"
+const ProductionTextRunesConstraintKey = "rencrow_production_text_runes_v2"
+const CreativeTaskV02SchemaVersion = "creative-task.v0.2"
+
+const MaxProductionTextRunes = 16000
+
+const (
+	ProductionStageIdeate ProductionStage = "ideate"
+	ProductionStageAuthor ProductionStage = "author"
+	ProductionStageVerify ProductionStage = "verify"
+)
+
+type ProductionActivity string
+
+const (
+	ProductionActivityCreativeIdeation ProductionActivity = "creative_ideation"
+	ProductionActivityTextDraft        ProductionActivity = "text_draft"
+	ProductionActivityCreativeReview   ProductionActivity = "creative_review"
+)
+
+// TextRuneRange bounds the number of Unicode code points in a generated text
+// body after leading and trailing whitespace are excluded.
+type TextRuneRange struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
+func (r TextRuneRange) Validate() error {
+	if r.Min < 1 || r.Max < r.Min || r.Max > MaxProductionTextRunes {
+		return errors.New("text rune range is outside the supported bounds")
+	}
+	return nil
+}
+
+// ParseTextRuneRange accepts only the canonical decimal MIN..MAX form. An
+// exact count is represented by repeating the same endpoint on both sides.
+func ParseTextRuneRange(value string) (TextRuneRange, error) {
+	if strings.TrimSpace(value) != value {
+		return TextRuneRange{}, errors.New("text rune range is not canonical")
+	}
+	parts := strings.Split(value, "..")
+	if len(parts) != 2 {
+		return TextRuneRange{}, errors.New("text rune range is not canonical")
+	}
+	minimum, minErr := strconv.Atoi(parts[0])
+	maximum, maxErr := strconv.Atoi(parts[1])
+	if minErr != nil || maxErr != nil || strconv.Itoa(minimum) != parts[0] || strconv.Itoa(maximum) != parts[1] {
+		return TextRuneRange{}, errors.New("text rune range is not canonical")
+	}
+	rangeValue := TextRuneRange{Min: minimum, Max: maximum}
+	if err := rangeValue.Validate(); err != nil {
+		return TextRuneRange{}, err
+	}
+	return rangeValue, nil
+}
+
+// Production associates a read-only Task with its text-production stage.
+// It carries no execution capability; the accepted delegation remains the
+// trusted source for the stage and activity values.
+type Production struct {
+	Stage         ProductionStage    `json:"stage"`
+	Activity      ProductionActivity `json:"activity"`
+	SchemaVersion string             `json:"schema_version,omitempty"`
+	TextRunes     *TextRuneRange     `json:"text_runes,omitempty"`
+}
+
+func NewProduction(stage ProductionStage) (Production, error) {
+	production := Production{Stage: stage}
+	switch stage {
+	case ProductionStageIdeate:
+		production.Activity = ProductionActivityCreativeIdeation
+	case ProductionStageAuthor:
+		production.Activity = ProductionActivityTextDraft
+	case ProductionStageVerify:
+		production.Activity = ProductionActivityCreativeReview
+	default:
+		return Production{}, errors.New("invalid production stage")
+	}
+	return production, nil
+}
+
+func NewProductionWithTextRunes(stage ProductionStage, textRunes TextRuneRange) (Production, error) {
+	if stage != ProductionStageAuthor {
+		return Production{}, errors.New("text rune conditions require the author production stage")
+	}
+	production, err := NewProduction(stage)
+	if err != nil {
+		return Production{}, err
+	}
+	production.SchemaVersion = CreativeTaskV02SchemaVersion
+	production.TextRunes = &textRunes
+	if err := production.Validate(); err != nil {
+		return Production{}, err
+	}
+	return production, nil
+}
+
+// ProductionFromAgentConstraints converts only the reserved production
+// constraints. Other handoff constraints remain part of the delegation but
+// do not alter Task metadata.
+func ProductionFromAgentConstraints(constraints []conversation.AgentConstraint, actorID string) (*Production, error) {
+	var stage ProductionStage
+	var textRunesText string
+	stageFound, textRunesFound := false, false
+	for _, constraint := range constraints {
+		switch constraint.Key {
+		case ProductionStageConstraintKey:
+			if stageFound {
+				return nil, errors.New("production stage metadata is duplicated")
+			}
+			stageFound = true
+			stage = ProductionStage(constraint.Text)
+		case ProductionTextRunesConstraintKey:
+			if textRunesFound {
+				return nil, errors.New("text rune condition is duplicated")
+			}
+			textRunesFound = true
+			textRunesText = constraint.Text
+		}
+	}
+	if !stageFound && !textRunesFound {
+		return nil, nil
+	}
+	if actorID != "midori" {
+		return nil, errors.New("production metadata is only supported for Midori")
+	}
+	if !stageFound {
+		return nil, errors.New("text rune condition requires production stage metadata")
+	}
+	production, err := NewProduction(stage)
+	if err != nil {
+		return nil, errors.New("invalid production stage")
+	}
+	if !textRunesFound {
+		return &production, nil
+	}
+	if stage != ProductionStageAuthor {
+		return nil, errors.New("text rune condition requires the author production stage")
+	}
+	textRunes, err := ParseTextRuneRange(textRunesText)
+	if err != nil {
+		return nil, errors.New("text rune condition is invalid")
+	}
+	production, err = NewProductionWithTextRunes(stage, textRunes)
+	if err != nil {
+		return nil, errors.New("versioned text production metadata is invalid")
+	}
+	return &production, nil
+}
+
+func (p Production) Validate() error {
+	expected, err := NewProduction(p.Stage)
+	if err != nil {
+		return err
+	}
+	if p.Activity != expected.Activity {
+		return errors.New("production activity does not match stage")
+	}
+	switch p.SchemaVersion {
+	case "":
+		if p.TextRunes != nil {
+			return errors.New("versionless production cannot contain text rune conditions")
+		}
+	case CreativeTaskV02SchemaVersion:
+		if p.Stage != ProductionStageAuthor || p.TextRunes == nil {
+			return errors.New("creative-task.v0.2 requires author stage text rune conditions")
+		}
+		if err := p.TextRunes.Validate(); err != nil {
+			return fmt.Errorf("text rune range is invalid: %w", err)
+		}
+	default:
+		return errors.New("production schema version is unsupported")
+	}
+	return nil
+}
 
 // OriginPublicationProvenance freezes the canonical Session publication
 // identity that authorized a root Task's public origin. Task.OwnerID remains
@@ -161,6 +340,7 @@ type Task struct {
 	NativeResumeClaims       []NativeOPSResumeClaim       `json:"native_resume_claims,omitempty"`
 	WorkstreamID             modulecore.WorkstreamID      `json:"workstream_id,omitempty"`
 	GoalID                   modulecore.GoalID            `json:"goal_id,omitempty"`
+	Production               *Production                  `json:"production,omitempty"`
 	SupersedesTaskID         modulecore.TaskID            `json:"supersedes_task_id,omitempty"`
 	InterruptPolicy          InterruptPolicy              `json:"interrupt_policy"`
 	ReadOnly                 bool                         `json:"read_only"`
@@ -302,6 +482,11 @@ func (t Task) Validate() error {
 	if t.AcceptedOPSClaim != nil {
 		if err := t.AcceptedOPSClaim.Validate(t); err != nil {
 			return fmt.Errorf("accepted_ops_claim is invalid: %w", err)
+		}
+	}
+	if t.Production != nil {
+		if err := t.Production.Validate(); err != nil {
+			return fmt.Errorf("production is invalid: %w", err)
 		}
 	}
 	if t.ExpectedCriteriaRevision != "" && !ValidCriteriaRevision(t.ExpectedCriteriaRevision) {

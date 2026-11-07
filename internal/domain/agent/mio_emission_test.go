@@ -135,6 +135,57 @@ func TestMioEmissionGeneratorRejectsInvalidOutputWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestMioEmissionGeneratorRejectsInvalidReservedProductionStage(t *testing.T) {
+	calls := 0
+	provider := conversationGenerateFunc(func(context.Context, conversation.ConversationScope, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		calls++
+		return llm.GenerateResponse{Content: `{"schema_version":"mio.turn.v1","kind":"delegate","user_message":{"to":"user","text":"I will ask Midori to draft this."},"delegation":{"to":"midori","goal":"Draft an introduction","instruction":"Write a concise draft.","constraints":[{"key":"rencrow_production_stage_v1","text":"UNTRUSTED_INVALID_STAGE","source_message_ids":[]}],"expected_output":"A short draft","source_message_ids":[]}}`}, nil
+	})
+	snapshot := emissionTestSnapshot()
+	allowlist := conversation.EmissionAllowlist{
+		AllowedAssignees:        []string{"midori"},
+		AllowedSourceMessageIDs: append([]core.MessageID(nil), snapshot.AllowedSourceMessageIDs...),
+	}
+
+	_, receipt, err := NewMioEmissionGenerator(provider).GenerateEmission(context.Background(), emissionTestScope(), snapshot, allowlist)
+	if err == nil || receipt.Status != "invalid_output" || calls != 1 {
+		t.Fatalf("GenerateEmission() error=%v receipt=%+v calls=%d; want bounded invalid-output rejection after one provider call", err, receipt, calls)
+	}
+	if strings.Contains(err.Error(), "UNTRUSTED_INVALID_STAGE") {
+		t.Fatalf("validation error echoed untrusted stage text: %v", err)
+	}
+}
+
+func TestMioEmissionGeneratorRejectsMalformedOrDuplicateTextRuneConstraint(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		constraints string
+	}{
+		{name: "approximate", constraints: `{"key":"rencrow_production_stage_v1","text":"author","source_message_ids":[]},{"key":"rencrow_production_text_runes_v2","text":"about 300","source_message_ids":[]}`},
+		{name: "duplicate", constraints: `{"key":"rencrow_production_stage_v1","text":"author","source_message_ids":[]},{"key":"rencrow_production_text_runes_v2","text":"160..160","source_message_ids":[]},{"key":"rencrow_production_text_runes_v2","text":"160..160","source_message_ids":[]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			provider := conversationGenerateFunc(func(context.Context, conversation.ConversationScope, llm.GenerateRequest) (llm.GenerateResponse, error) {
+				calls++
+				return llm.GenerateResponse{Content: `{"schema_version":"mio.turn.v1","kind":"delegate","user_message":{"to":"user","text":"I will ask Midori to draft this."},"delegation":{"to":"midori","goal":"Draft an introduction","instruction":"Write a concise draft.","constraints":[` + test.constraints + `],"expected_output":"A short draft","source_message_ids":[]}}`}, nil
+			})
+			snapshot := emissionTestSnapshot()
+			allowlist := conversation.EmissionAllowlist{
+				AllowedAssignees:        []string{"midori"},
+				AllowedSourceMessageIDs: append([]core.MessageID(nil), snapshot.AllowedSourceMessageIDs...),
+			}
+			_, receipt, err := NewMioEmissionGenerator(provider).GenerateEmission(context.Background(), emissionTestScope(), snapshot, allowlist)
+			if err == nil || receipt.Status != "invalid_output" || calls != 1 {
+				t.Fatalf("GenerateEmission() error=%v receipt=%+v calls=%d; want malformed constraint rejected before accepted handoff", err, receipt, calls)
+			}
+			if strings.Contains(err.Error(), "about 300") || strings.Contains(err.Error(), "160..160") {
+				t.Fatalf("validation error echoed untrusted constraint text: %v", err)
+			}
+		})
+	}
+}
+
 func TestMioEmissionGeneratorDoesNotGenerateWhenSnapshotAndAllowlistDisagree(t *testing.T) {
 	calls := 0
 	provider := conversationGenerateFunc(func(context.Context, conversation.ConversationScope, llm.GenerateRequest) (llm.GenerateResponse, error) {

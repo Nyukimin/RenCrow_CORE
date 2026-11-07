@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -307,9 +308,49 @@ func TestMioConversationEmissionContractShowsCompleteDelegationShapeAndLimits(t 
 		`use the exact lowercase spelling from this assignee list: ["shiro","midori"]`,
 		`use only IDs from this source_message_ids list; never invent IDs, and use [] when none apply: ["` + string(sourceID) + `"]`,
 		`Each constraint object may contain only key, text, and source_message_ids. Do not add fields beyond those shown.`,
+		`When delegating text production to Midori, include one constraint with key "` + domaintask.ProductionStageConstraintKey + `". Set its text to "ideate" for ideation, "author" for drafting, or "verify" for review. Keep the user's goal, expected output, and other constraints in their existing fields.`,
+		`Only when the user's source message explicitly states an exact text count or an inclusive count range, include one constraint with key "rencrow_production_text_runes_v2". Encode its text as canonical decimal "MIN..MAX" with both endpoints included; for an exact count, repeat the same value at both ends. Do not infer a range from approximate wording such as about, around, or roughly.`,
 	} {
 		if !strings.Contains(content, required) {
 			t.Errorf("conversation emission contract is missing %q:\n%s", required, content)
+		}
+	}
+}
+
+func TestMioTextRuneGuidanceRequiresMidoriAndStaysOutOfOtherLanes(t *testing.T) {
+	const textRunesTag = "rencrow_production_text_runes_v2"
+	withoutMidori := emissionContractMessage(conversation.PurposeMioTurn, conversation.EmissionAllowlist{
+		AllowedAssignees: []string{"shiro"},
+	})
+	if len(withoutMidori) != 1 || strings.Contains(withoutMidori[0].Content, textRunesTag) {
+		t.Fatalf("Shiro-only emission contract contains text rune guidance: %+v", withoutMidori)
+	}
+
+	for _, purpose := range []conversation.ConversationPurpose{
+		conversation.PurposeReportReply,
+	} {
+		contract := emissionContractMessage(purpose, conversation.EmissionAllowlist{AllowedAssignees: []string{"midori"}})
+		if len(contract) != 1 || strings.Contains(contract[0].Content, textRunesTag) {
+			t.Errorf("%s emission contract contains text rune guidance: %+v", purpose, contract)
+		}
+	}
+}
+
+func TestMioProductionStageGuidanceRequiresMidoriAndStaysOutOfOtherLanes(t *testing.T) {
+	productionTag := domaintask.ProductionStageConstraintKey
+	withoutMidori := emissionContractMessage(conversation.PurposeMioTurn, conversation.EmissionAllowlist{
+		AllowedAssignees: []string{"shiro"},
+	})
+	if len(withoutMidori) != 1 || strings.Contains(withoutMidori[0].Content, productionTag) {
+		t.Fatalf("Shiro-only emission contract contains Midori production guidance: %+v", withoutMidori)
+	}
+
+	for _, purpose := range []conversation.ConversationPurpose{
+		conversation.PurposeReportReply,
+	} {
+		contract := emissionContractMessage(purpose, conversation.EmissionAllowlist{AllowedAssignees: []string{"midori"}})
+		if len(contract) != 1 || strings.Contains(contract[0].Content, productionTag) {
+			t.Errorf("%s emission contract contains Midori production guidance: %+v", purpose, contract)
 		}
 	}
 }

@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/imagegeneration"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
@@ -218,6 +220,31 @@ func TestIsImageGenerationRequestRecognizesNaturalJapaneseRequests(t *testing.T)
 			want:    false,
 		},
 		{
+			name:    "bare ComfyUI shorthand",
+			message: "画像をComfyUIで",
+			want:    true,
+		},
+		{
+			name:    "bare ComfyUI shorthand with sentence punctuation",
+			message: "画像をComfyUIで。",
+			want:    true,
+		},
+		{
+			name:    "bare ForgeNeo shorthand",
+			message: "画像をForgeNeoで",
+			want:    true,
+		},
+		{
+			name:    "bare ImageGen shorthand",
+			message: "画像をImageGenで",
+			want:    true,
+		},
+		{
+			name:    "engine comparison mention",
+			message: "ForgeNeoとComfyUIの違いを説明して",
+			want:    false,
+		},
+		{
 			name:    "generic generation without visual context",
 			message: "旅行計画を生成して",
 			want:    false,
@@ -230,6 +257,112 @@ func TestIsImageGenerationRequestRecognizesNaturalJapaneseRequests(t *testing.T)
 				t.Fatalf("isImageGenerationRequest(%q) = %v, want %v", tt.message, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWildAgentPassesExplicitImageEngineOnlyForGenerationRequests(t *testing.T) {
+	tests := []struct {
+		name       string
+		message    string
+		wantEngine domainimage.EngineConstraint
+		wantError  bool
+	}{
+		{name: "ComfyUI", message: "ComfyUIで灯台の画像を生成して", wantEngine: domainimage.EngineConstraintComfyUI},
+		{name: "engine-named generation", message: "ComfyUIの画像生成をして", wantEngine: domainimage.EngineConstraintComfyUI},
+		{name: "ForgeNeo", message: "灯台の画像をForgeNeoで生成して", wantEngine: domainimage.EngineConstraintForgeNeo},
+		{name: "ImageGen normal route is unavailable", message: "画像をImageGenで", wantEngine: domainimage.EngineConstraintImageGen, wantError: true},
+		{name: "bare ComfyUI shorthand", message: "画像をComfyUIで", wantEngine: domainimage.EngineConstraintComfyUI},
+		{name: "bare ComfyUI shorthand with punctuation", message: "画像をComfyUIで。", wantEngine: domainimage.EngineConstraintComfyUI},
+		{name: "generation with URL follow-up", message: "ComfyUIで灯台の画像を生成して、URLを教えて", wantEngine: domainimage.EngineConstraintComfyUI},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+				t.Fatal("LLM provider should not handle an explicit image generation request")
+				return llm.GenerateResponse{}, nil
+			}}
+			generator := &mockWildImageGenerator{result: ImageGenerationResult{ImageURL: "/image.png"}}
+			wild := NewWildAgent(provider, "creative system").WithImageGenerator(generator)
+			_, err := wild.Generate(context.Background(), newAgentTurnInput(t, tt.message, "viewer", "viewer-user"))
+			if tt.wantError {
+				if !errors.Is(err, ErrImageGeneratorUnavailable) {
+					t.Fatalf("error = %v, want ErrImageGeneratorUnavailable", err)
+				}
+				if err == ErrImageGeneratorUnavailable {
+					t.Fatal("unavailability error must include the requested engine reason")
+				}
+			} else if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			if tt.wantError {
+				if generator.engineCalls != 0 || generator.called {
+					t.Fatalf("ImageGen calls: constrained=%d default=%v, want no adapter or fallback calls", generator.engineCalls, generator.called)
+				}
+			} else if generator.engineCalls != 1 || generator.engine != tt.wantEngine {
+				t.Fatalf("engine calls=%d engine=%q, want 1 and %q", generator.engineCalls, generator.engine, tt.wantEngine)
+			}
+			if generator.called {
+				t.Fatal("explicit engine request must not call the unconstrained generation method")
+			}
+		})
+	}
+}
+
+func TestWildAgentKeepsPromptOnlyAndHowToRequestsOutOfImageExecution(t *testing.T) {
+	for _, message := range []string{
+		"ComfyUIで画像を生成する方法を教えて",
+		"ComfyUIで画像生成プロンプトを考えて",
+		"ComfyUIの画像生成について教えて",
+		"ForgeNeoとComfyUIの違いを説明して",
+	} {
+		t.Run(message, func(t *testing.T) {
+			provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+				return llm.GenerateResponse{Content: "text answer"}, nil
+			}}
+			generator := &mockWildImageGenerator{result: ImageGenerationResult{ImageURL: "/image.png"}}
+			wild := NewWildAgent(provider, "creative system").WithImageGenerator(generator)
+			if _, err := wild.Generate(context.Background(), newAgentTurnInput(t, message, "viewer", "viewer-user")); err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+			if generator.called || generator.engineCalls != 0 {
+				t.Fatalf("image generation calls: default=%v engine=%d, want none", generator.called, generator.engineCalls)
+			}
+		})
+	}
+}
+
+func TestWildAgentKeepsExistingDefaultGenerationWithURLFollowUp(t *testing.T) {
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		t.Fatal("LLM provider should not handle an image generation request")
+		return llm.GenerateResponse{}, nil
+	}}
+	generator := &mockWildImageGenerator{result: ImageGenerationResult{ImageURL: "/image.png"}}
+	wild := NewWildAgent(provider, "creative system").WithImageGenerator(generator)
+	_, err := wild.Generate(context.Background(), newAgentTurnInput(t, "灯台の画像を生成して、URLを教えて", "viewer", "viewer-user"))
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if !generator.called || generator.engineCalls != 0 {
+		t.Fatalf("image calls: default=%v engine=%d, want default generation only", generator.called, generator.engineCalls)
+	}
+}
+
+func TestWildAgentDoesNotFallbackForUnverifiableExplicitEngine(t *testing.T) {
+	legacy := &legacyOnlyWildImageGenerator{}
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		t.Fatal("LLM provider should not handle an explicit image generation request")
+		return llm.GenerateResponse{}, nil
+	}}
+	wild := NewWildAgent(provider, "creative system").WithImageGenerator(legacy)
+	_, err := wild.Generate(context.Background(), newAgentTurnInput(t, "ComfyUIで灯台の画像を生成して", "viewer", "viewer-user"))
+	if !errors.Is(err, ErrImageGeneratorUnavailable) {
+		t.Fatalf("Generate() error = %v, want ErrImageGeneratorUnavailable", err)
+	}
+	if err == ErrImageGeneratorUnavailable {
+		t.Fatal("unavailability error must include the reason")
+	}
+	if legacy.calls != 0 {
+		t.Fatalf("unconstrained GenerateImage calls = %d, want 0", legacy.calls)
 	}
 }
 
@@ -319,15 +452,42 @@ func TestWildAgentGenerateFallsBackToLLMForImageInterfaceDocumentQuestion(t *tes
 }
 
 type mockWildImageGenerator struct {
-	called bool
-	prompt string
-	result ImageGenerationResult
-	err    error
+	called      bool
+	prompt      string
+	engineCalls int
+	engine      domainimage.EngineConstraint
+	result      ImageGenerationResult
+	err         error
+}
+
+type legacyOnlyWildImageGenerator struct {
+	calls int
+}
+
+func (g *legacyOnlyWildImageGenerator) GenerateImage(context.Context, string) (ImageGenerationResult, error) {
+	g.calls++
+	return ImageGenerationResult{ImageURL: "/image.png"}, nil
 }
 
 func (m *mockWildImageGenerator) GenerateImage(ctx context.Context, prompt string) (ImageGenerationResult, error) {
 	m.called = true
 	m.prompt = prompt
+	if m.err != nil {
+		return ImageGenerationResult{}, m.err
+	}
+	if m.result.ImageURL == "" {
+		return ImageGenerationResult{}, errors.New("missing result")
+	}
+	return m.result, nil
+}
+
+func (m *mockWildImageGenerator) GenerateImageWithEngine(ctx context.Context, prompt string, engine domainimage.EngineConstraint) (ImageGenerationResult, error) {
+	m.engineCalls++
+	m.engine = engine
+	m.prompt = prompt
+	if engine == domainimage.EngineConstraintImageGen {
+		return ImageGenerationResult{}, fmt.Errorf("%w: ImageGen is unavailable in the normal image route", ErrImageGeneratorUnavailable)
+	}
 	if m.err != nil {
 		return ImageGenerationResult{}, m.err
 	}

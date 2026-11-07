@@ -209,6 +209,9 @@ func (a *DelegationTaskAdmission) admitLease(ctx context.Context, lease Delegate
 	}
 	result.DelegationID, result.Revision, result.TaskID, result.RunID = source.Handoff.DelegationID, source.Handoff.Revision, task.TaskID, run.RunID
 	result.TaskEnsured = true
+	if !reflect.DeepEqual(task.Production, draft.Production) {
+		return fail(fmt.Errorf("%w: persisted Task production metadata differs from accepted source", ErrDelegationTaskAdmissionInvalid))
+	}
 	if err := a.store.BindDelegationTask(ctx, DelegatedTaskBindRequest{
 		Lease: lease, DelegationID: source.Handoff.DelegationID, Revision: source.Handoff.Revision,
 		TaskID: task.TaskID, TaskOperationID: taskmanager.DelegationTaskOperationID(source.Handoff.DelegationID, source.Handoff.Revision),
@@ -252,6 +255,9 @@ func validateDelegatedTaskSource(source DelegatedTaskSource, lease DelegatedTask
 	if err := conversation.ValidateHandoffEnvelope(source.Handoff); err != nil {
 		return fmt.Errorf("%w: invalid HandoffEnvelope: %v", ErrDelegationTaskAdmissionInvalid, err)
 	}
+	if _, err := delegatedTaskProduction(source.Handoff, actorID); err != nil {
+		return fmt.Errorf("%w: invalid production stage metadata: %v", ErrDelegationTaskAdmissionInvalid, err)
+	}
 	if err := conversation.ValidateReadbackEnvelope(source.Readback, source.Handoff, conversation.TrustedReadbackMetadata{
 		DelegationID: source.Handoff.DelegationID, Revision: source.Handoff.Revision, Sender: actorID,
 	}); err != nil {
@@ -284,6 +290,10 @@ func validateDelegatedTaskSource(source DelegatedTaskSource, lease DelegatedTask
 }
 
 func delegatedTaskDraft(source DelegatedTaskSource, actorID string) (domaintask.Task, domaintask.SharedRoleContext, error) {
+	production, err := delegatedTaskProduction(source.Handoff, actorID)
+	if err != nil {
+		return domaintask.Task{}, domaintask.SharedRoleContext{}, fmt.Errorf("build delegated Task production metadata: %w", err)
+	}
 	contextText := strings.Builder{}
 	for _, message := range source.Context {
 		label := "Assistant"
@@ -310,8 +320,8 @@ func delegatedTaskDraft(source DelegatedTaskSource, actorID string) (domaintask.
 		Title: source.Handoff.Goal, Route: domaintask.RouteGeneral,
 		OwnerID: source.OwnerID, Assignee: actorID,
 		OriginSessionID: source.Handoff.SessionID, OriginTurnID: source.Handoff.OriginTurnID,
-		OriginMessageID: source.Handoff.OriginUserMessageID,
-		ReadOnly:        true,
+		OriginMessageID: source.Handoff.OriginUserMessageID, Production: production,
+		ReadOnly: true,
 	}
 	shared := domaintask.SharedRoleContext{
 		UserIntent: source.Handoff.Goal, CurrentPlan: source.Handoff.Instruction,
@@ -319,4 +329,8 @@ func delegatedTaskDraft(source DelegatedTaskSource, actorID string) (domaintask.
 		HandoffNotes: notes,
 	}
 	return task, shared, nil
+}
+
+func delegatedTaskProduction(handoff conversation.HandoffEnvelope, actorID string) (*domaintask.Production, error) {
+	return domaintask.ProductionFromAgentConstraints(handoff.Constraints, actorID)
 }

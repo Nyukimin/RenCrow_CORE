@@ -74,6 +74,135 @@ func TestDelegatedTaskExecutorPersistsTextOnlyReportWithTrustedIdentity(t *testi
 	}
 }
 
+func TestDelegatedTaskExecutorRejectsMismatchedProductionMetadataBeforeMidoriWork(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 22, 12, 1, 0, 0, time.UTC)
+	manager, closeManager := openDelegatedTaskManager(t, t.TempDir())
+	defer closeManager()
+	admissionSource := newDelegatedTaskAdmissionStore(now)
+	setDelegatedProductionStage(admissionSource, "midori", "author")
+	admission := newDelegatedTaskAdmission(t, admissionSource, manager, now, "midori")
+	admitted, err := admission.StartOne(ctx)
+	if err != nil || !admitted.Bound {
+		t.Fatalf("admit Midori production Task: result=%+v err=%v", admitted, err)
+	}
+
+	store := newDelegatedExecutionStoreFake(admissionSource.source, admitted.TaskID, now)
+	for index := range store.source.Handoff.Constraints {
+		if store.source.Handoff.Constraints[index].Key == domaintask.ProductionStageConstraintKey {
+			store.source.Handoff.Constraints[index].Text = "verify"
+		}
+	}
+	_, changedShared, err := delegatedTaskDraft(store.source, "midori")
+	if err != nil {
+		t.Fatalf("build matching general Task context for changed accepted source: %v", err)
+	}
+	changedShared.TaskID = admitted.TaskID
+	if err := manager.UpdateContext(ctx, changedShared); err != nil {
+		t.Fatalf("update SharedRoleContext to isolate production metadata mismatch: %v", err)
+	}
+	worker := &privateWorkerFake{result: "must not run for mismatched production metadata"}
+	executor := newTestDelegatedTaskExecutor(t, store, manager, nil, worker, now)
+
+	result, err := executor.StartOne(ctx)
+	if !errors.Is(err, ErrDelegatedExecutionInvalid) || result.ReportSaved || worker.calls != 0 || store.retryCount != 1 {
+		t.Fatalf("StartOne()=(%+v,%v) worker_calls=%d retries=%d, want production metadata mismatch rejected before private work", result, err, worker.calls, store.retryCount)
+	}
+}
+
+func TestDelegatedTaskExecutorCountsTrimmedUnicodeCodePointsAtInclusiveBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		output         string
+		wantCountProof string
+	}{
+		{name: "minimum", output: "  A𠮷🙂  ", wantCountProof: "3 Unicode code points"},
+		{name: "maximum", output: " A𠮷🙂Z ", wantCountProof: "4 Unicode code points"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Date(2026, 10, 22, 12, 1, 30, 0, time.UTC)
+			manager, closeManager := openDelegatedTaskManager(t, t.TempDir())
+			defer closeManager()
+			admissionStore := newDelegatedTaskAdmissionStore(now)
+			setDelegatedProductionStage(admissionStore, "midori", "author")
+			appendDelegatedTextRuneConstraint(admissionStore, "3..4")
+			admission := newDelegatedTaskAdmission(t, admissionStore, manager, now, "midori")
+			admitted, err := admission.StartOne(ctx)
+			if err != nil || !admitted.Bound {
+				t.Fatalf("admit text-constrained Task: result=%+v err=%v", admitted, err)
+			}
+
+			store := newDelegatedExecutionStoreFake(admissionStore.source, admitted.TaskID, now)
+			worker := &privateWorkerFake{result: test.output}
+			executor := newTestDelegatedTaskExecutor(t, store, manager, nil, worker, now)
+			result, err := executor.StartOne(ctx)
+			if err != nil || !result.Generated || !result.ReportSaved {
+				t.Fatalf("StartOne()=(%+v,%v), want successful inclusive Unicode count", result, err)
+			}
+			reports, err := manager.ListPendingReports(ctx)
+			if err != nil || len(reports) != 1 {
+				t.Fatalf("ListPendingReports()=%+v err=%v, want one durable report", reports, err)
+			}
+			report := reports[0]
+			if report.TaskStatus != domaintask.StatusSucceeded || report.Envelope.Status != conversation.ReportStatusSucceeded || report.Envelope.Result != test.output {
+				t.Fatalf("boundary report task_status=%s report_status=%s report_id=%s, want success with the original body persisted", report.TaskStatus, report.Envelope.Status, report.Envelope.ReportID)
+			}
+			if !strings.Contains(report.Envelope.Summary, test.wantCountProof) || !strings.Contains(report.Envelope.Summary, "3..4") {
+				t.Fatalf("boundary report summary=%q, want explicit measured count and required range", report.Envelope.Summary)
+			}
+			if !strings.Contains(worker.input.MessageText(), "3..4 Unicode code points inclusive") {
+				t.Fatalf("Midori input omitted the explicit text length instruction: %q", worker.input.MessageText())
+			}
+		})
+	}
+}
+
+func TestDelegatedTaskExecutorStoresOutOfRangeTextAsFailedReportWithCounts(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 22, 12, 1, 45, 0, time.UTC)
+	manager, closeManager := openDelegatedTaskManager(t, t.TempDir())
+	defer closeManager()
+	admissionStore := newDelegatedTaskAdmissionStore(now)
+	setDelegatedProductionStage(admissionStore, "midori", "author")
+	appendDelegatedTextRuneConstraint(admissionStore, "3..4")
+	admission := newDelegatedTaskAdmission(t, admissionStore, manager, now, "midori")
+	admitted, err := admission.StartOne(ctx)
+	if err != nil || !admitted.Bound {
+		t.Fatalf("admit text-constrained Task: result=%+v err=%v", admitted, err)
+	}
+
+	const body = " A😀 "
+	store := newDelegatedExecutionStoreFake(admissionStore.source, admitted.TaskID, now)
+	worker := &privateWorkerFake{result: body}
+	executor := newTestDelegatedTaskExecutor(t, store, manager, nil, worker, now)
+	result, err := executor.StartOne(ctx)
+	if err != nil || result.Generated || !result.ReportSaved || !result.ReportPending {
+		t.Fatalf("StartOne()=(%+v,%v), want durable failed report for out-of-range text", result, err)
+	}
+	reports, err := manager.ListPendingReports(ctx)
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("ListPendingReports()=%+v err=%v, want one durable failed report", reports, err)
+	}
+	if reports[0].TaskStatus != domaintask.StatusFailed || reports[0].Envelope.Status != conversation.ReportStatusFailed ||
+		reports[0].Envelope.Result != delegatedExecutionFailureText || len(reports[0].Envelope.Limitations) < 2 {
+		t.Fatalf("out-of-range report=%+v, want safe failed result and count reason", reports[0])
+	}
+	reason := reports[0].Envelope.Limitations[1]
+	if !strings.Contains(reason, "2 Unicode code points") || !strings.Contains(reason, "3..4") ||
+		strings.Contains(reason, body) || strings.Contains(reports[0].Envelope.Result, body) {
+		t.Fatalf("out-of-range failure reason=%q result=%q, want actual/required counts without body", reason, reports[0].Envelope.Result)
+	}
+	task, err := manager.Get(ctx, admitted.TaskID)
+	if err != nil || task.Status != domaintask.StatusFailed {
+		t.Fatalf("failed text Task=%+v err=%v, want durable failed Task", task, err)
+	}
+	run, err := manager.GetRun(ctx, result.RunID)
+	if err != nil || run.TaskID != admitted.TaskID || run.Status != domaintask.RunStatusFailed {
+		t.Fatalf("failed text Run id=%s task_id=%s status=%s err=%v, want durable failed Run", result.RunID, run.TaskID, run.Status, err)
+	}
+}
+
 func TestDelegatedTaskExecutorAcceptsEmptyConstraintsAfterTaskStoreReload(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 10, 22, 12, 2, 0, 0, time.UTC)

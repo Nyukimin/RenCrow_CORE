@@ -139,6 +139,9 @@ Step 08のdurable Task ownerは`internal/domain/task`である。`GET /viewer/ta
 `JobID`、`job_id`、旧`/viewer/parallel-jobs`、旧`/viewer/parallel-job/detail`、
 旧`/viewer/job-notifications`を受理・投影しない。
 
+表示が許可されたTaskの一覧と詳細は、対応する文章委譲に限って`production.stage`と`production.activity`を返す。対応付けと省略条件は[制作タスクと実行経路](04_アーキテクチャ概要.md#制作タスクと実行経路)に従う。
+文字数条件を受理した草稿Taskに限り、`production.schema_version`（`creative-task.v0.2`）と `production.text_runes`（包含範囲の整数 `min`・`max`）も返す。Task一覧・詳細の認証と可視性は既存契約に従う。
+
 `/viewer/jobs`と`/viewer/job/detail`は退役済みです。Canonical Taskは`/viewer/tasks`と
 `/viewer/task/detail?task_id=...`、Orchestrator Eventは`/viewer/logs?task_id=...`または
 `/viewer/logs?event_id=...`で参照します。routingとAgent assignmentはEventIDを持つ

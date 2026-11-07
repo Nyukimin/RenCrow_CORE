@@ -2,6 +2,7 @@ package conversationruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -157,6 +158,170 @@ func TestDelegationTaskAdmissionRejectsWrongActorAndUnsupportedCapabilities(t *t
 	}
 }
 
+func TestDelegationTaskAdmissionPersistsProductionAndTaskRunAcrossReload(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 22, 16, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	store := newDelegatedTaskAdmissionStore(now)
+	setDelegatedProductionStage(store, "midori", "author")
+	manager, closeManager := openDelegatedTaskManager(t, root)
+	defer func() {
+		if err := closeManager(); err != nil {
+			t.Errorf("close Task owner: %v", err)
+		}
+	}()
+	admission := newDelegatedTaskAdmission(t, store, manager, now, "midori")
+	result, err := admission.StartOne(ctx)
+	if err != nil || !result.TaskEnsured || !result.Bound || result.TaskID == "" || result.RunID == "" {
+		t.Fatalf("StartOne()=(%+v,%v), want a bound Midori production Task and Run", result, err)
+	}
+	assertTaskProductionJSON(t, manager, result.TaskID, "author", "text_draft")
+	firstRun, err := manager.GetRun(ctx, result.RunID)
+	if err != nil || firstRun.TaskID != result.TaskID || firstRun.Assignee != "midori" || firstRun.Status != domaintask.RunStatusRunning {
+		t.Fatalf("first Run=%+v err=%v, want persisted running Run bound to the production Task", firstRun, err)
+	}
+	if err := closeManager(); err != nil {
+		t.Fatalf("close Task owner before reload: %v", err)
+	}
+	manager, closeManager = openDelegatedTaskManager(t, root)
+
+	reloaded, err := manager.Get(ctx, result.TaskID)
+	if err != nil || reloaded.Title != store.source.Handoff.Goal || reloaded.Assignee != "midori" || !reloaded.ReadOnly {
+		t.Fatalf("reloaded Task=%+v err=%v, want original read-only Midori Task", reloaded, err)
+	}
+	assertTaskProductionJSON(t, manager, result.TaskID, "author", "text_draft")
+	reloadedRun, err := manager.GetRun(ctx, result.RunID)
+	if err != nil || reloadedRun.RunID != firstRun.RunID || reloadedRun.TaskID != result.TaskID || reloadedRun.Status != domaintask.RunStatusRunning {
+		t.Fatalf("reloaded Run=%+v err=%v, want the same persisted Task/Run identity", reloadedRun, err)
+	}
+	shared, err := manager.Context(ctx, result.TaskID)
+	if err != nil || shared.UserIntent != store.source.Handoff.Goal || !strings.Contains(shared.HandoffNotes, store.source.Handoff.ExpectedOutput) {
+		t.Fatalf("reloaded SharedRoleContext=%+v err=%v, want canonical goal and expected output", shared, err)
+	}
+}
+
+func TestDelegationTaskAdmissionPersistsExplicitTextRuneRangeAcrossReload(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 22, 16, 2, 0, 0, time.UTC)
+	root := t.TempDir()
+	store := newDelegatedTaskAdmissionStore(now)
+	setDelegatedProductionStage(store, "midori", "author")
+	appendDelegatedTextRuneConstraint(store, "160..160")
+	manager, closeManager := openDelegatedTaskManager(t, root)
+	defer func() {
+		if err := closeManager(); err != nil {
+			t.Errorf("close Task owner: %v", err)
+		}
+	}()
+
+	admission := newDelegatedTaskAdmission(t, store, manager, now, "midori")
+	result, err := admission.StartOne(ctx)
+	if err != nil || !result.Bound || result.TaskID == "" || result.RunID == "" {
+		t.Fatalf("StartOne()=(%+v,%v), want bound versioned text Task", result, err)
+	}
+	assertTaskTextRunesJSON(t, manager, result.TaskID, 160, 160)
+	if err := closeManager(); err != nil {
+		t.Fatalf("close Task owner before reload: %v", err)
+	}
+	manager, closeManager = openDelegatedTaskManager(t, root)
+	assertTaskTextRunesJSON(t, manager, result.TaskID, 160, 160)
+	reloadedRun, err := manager.GetRun(ctx, result.RunID)
+	if err != nil || reloadedRun.TaskID != result.TaskID || reloadedRun.Status != domaintask.RunStatusRunning {
+		t.Fatalf("reloaded Run=%+v err=%v, want same durable running Task/Run", reloadedRun, err)
+	}
+}
+
+func TestDelegationTaskAdmissionRejectsInvalidOrNonMidoriProductionMetadata(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		actorID string
+		stage   string
+	}{
+		{name: "invalid stage", actorID: "midori", stage: "draft"},
+		{name: "non-Midori actor", actorID: "shiro", stage: "author"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 10, 22, 16, 5, 0, 0, time.UTC)
+			store := newDelegatedTaskAdmissionStore(now)
+			setDelegatedProductionStage(store, test.actorID, test.stage)
+			manager, closeManager := openDelegatedTaskManager(t, t.TempDir())
+			defer closeManager()
+			admission := newDelegatedTaskAdmission(t, store, manager, now, test.actorID)
+			result, err := admission.StartOne(context.Background())
+			if !errors.Is(err, ErrDelegationTaskAdmissionInvalid) || !result.Claimed || result.TaskEnsured {
+				t.Fatalf("StartOne()=(%+v,%v), want tagged production metadata rejected before Task persistence", result, err)
+			}
+			tasks, listErr := manager.List(context.Background(), domaintask.Filter{Limit: 10})
+			if listErr != nil || len(tasks) != 0 {
+				t.Fatalf("Tasks after production metadata rejection=%+v err=%v, want no Task", tasks, listErr)
+			}
+		})
+	}
+}
+
+func TestDelegationTaskAdmissionRejectsMalformedOrDuplicateTextRuneConstraintBeforeTask(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "approximate", values: []string{"about 300"}},
+		{name: "leading zero", values: []string{"0160..160"}},
+		{name: "reversed range", values: []string{"200..100"}},
+		{name: "below minimum", values: []string{"0..1"}},
+		{name: "above maximum", values: []string{"1..16001"}},
+		{name: "duplicate", values: []string{"160..160", "160..160"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 10, 22, 16, 4, 0, 0, time.UTC)
+			store := newDelegatedTaskAdmissionStore(now)
+			setDelegatedProductionStage(store, "midori", "author")
+			for _, value := range test.values {
+				appendDelegatedTextRuneConstraint(store, value)
+			}
+			manager, closeManager := openDelegatedTaskManager(t, t.TempDir())
+			defer closeManager()
+			admission := newDelegatedTaskAdmission(t, store, manager, now, "midori")
+			result, err := admission.StartOne(context.Background())
+			if !errors.Is(err, ErrDelegationTaskAdmissionInvalid) || !result.Claimed || result.TaskEnsured || result.Bound {
+				t.Fatalf("StartOne()=(%+v,%v), want malformed text constraint rejected before Task persistence", result, err)
+			}
+			tasks, listErr := manager.List(context.Background(), domaintask.Filter{Limit: 10})
+			if listErr != nil || len(tasks) != 0 {
+				t.Fatalf("Tasks after rejected constraint=%+v err=%v, want no Task", tasks, listErr)
+			}
+		})
+	}
+}
+
+func TestDelegationTaskAdmissionRejectsMismatchedProductionOnReceiptReplay(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 22, 16, 10, 0, 0, time.UTC)
+	store := newDelegatedTaskAdmissionStore(now)
+	setDelegatedProductionStage(store, "midori", "author")
+	manager, closeManager := openDelegatedTaskManager(t, t.TempDir())
+	defer closeManager()
+
+	firstAdmission := newDelegatedTaskAdmission(t, store, manager, now, "midori")
+	first, err := firstAdmission.StartOne(ctx)
+	if err != nil || !first.Bound {
+		t.Fatalf("first StartOne()=(%+v,%v), want bound Task before receipt replay", first, err)
+	}
+	if len(store.binds) != 1 {
+		t.Fatalf("first bind count=%d, want one", len(store.binds))
+	}
+
+	owner := productionMismatchDelegatedTaskOwner{inner: manager}
+	replayedAdmission := newDelegatedTaskAdmission(t, store, owner, now, "midori")
+	replayed, err := replayedAdmission.StartOne(ctx)
+	if !errors.Is(err, ErrDelegationTaskAdmissionInvalid) || !replayed.TaskEnsured || replayed.Bound || replayed.TaskID != first.TaskID || replayed.RunID != first.RunID {
+		t.Fatalf("replayed StartOne()=(%+v,%v), want persisted Task metadata mismatch rejected before bind", replayed, err)
+	}
+	if len(store.binds) != 1 {
+		t.Fatalf("bind count after mismatched receipt replay=%d, want no second bind", len(store.binds))
+	}
+	assertTaskProductionJSON(t, manager, first.TaskID, "author", "text_draft")
+}
+
 type delegatedTaskAdmissionStoreFake struct {
 	now          time.Time
 	lease        DelegatedTaskLease
@@ -200,6 +365,101 @@ func newDelegatedTaskAdmissionStore(now time.Time) *delegatedTaskAdmissionStoreF
 			Context: []DelegatedTaskContextMessage{{MessageID: messageID, Role: "user", Text: "Please inspect this behavior"}},
 		},
 	}
+}
+
+func setDelegatedProductionStage(store *delegatedTaskAdmissionStoreFake, actorID, stage string) {
+	store.lease.Assignee = actorID
+	store.source.Handoff.ToActor = actorID
+	store.source.Readback.Sender = actorID
+	store.source.Handoff.Constraints = append(store.source.Handoff.Constraints, conversation.AgentConstraint{
+		Key: domaintask.ProductionStageConstraintKey, Text: stage,
+		SourceMessageIDs: []modulecore.MessageID{store.source.Handoff.OriginUserMessageID},
+	})
+	store.source.Readback.AcknowledgedConstraintKeys = append(store.source.Readback.AcknowledgedConstraintKeys, domaintask.ProductionStageConstraintKey)
+}
+
+func appendDelegatedTextRuneConstraint(store *delegatedTaskAdmissionStoreFake, value string) {
+	store.source.Handoff.Constraints = append(store.source.Handoff.Constraints, conversation.AgentConstraint{
+		Key: "rencrow_production_text_runes_v2", Text: value,
+		SourceMessageIDs: []modulecore.MessageID{store.source.Handoff.OriginUserMessageID},
+	})
+	store.source.Readback.AcknowledgedConstraintKeys = append(store.source.Readback.AcknowledgedConstraintKeys, "rencrow_production_text_runes_v2")
+}
+
+func assertTaskTextRunesJSON(t *testing.T, manager *taskmanager.Manager, taskID modulecore.TaskID, wantMin, wantMax int) {
+	t.Helper()
+	task, err := manager.Get(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("read Task for text rune assertion: %v", err)
+	}
+	encoded, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("marshal persisted Task: %v", err)
+	}
+	var persisted struct {
+		Production *struct {
+			SchemaVersion string `json:"schema_version"`
+			TextRunes     *struct {
+				Min int `json:"min"`
+				Max int `json:"max"`
+			} `json:"text_runes"`
+		} `json:"production"`
+	}
+	if err := json.Unmarshal(encoded, &persisted); err != nil {
+		t.Fatalf("decode Task text rune metadata: %v", err)
+	}
+	if persisted.Production == nil || persisted.Production.SchemaVersion != "creative-task.v0.2" || persisted.Production.TextRunes == nil ||
+		persisted.Production.TextRunes.Min != wantMin || persisted.Production.TextRunes.Max != wantMax {
+		t.Fatalf("persisted Task production=%+v, want creative-task.v0.2 text_runes=%d..%d; Task JSON=%s", persisted.Production, wantMin, wantMax, encoded)
+	}
+}
+
+func assertTaskProductionJSON(t *testing.T, manager *taskmanager.Manager, taskID modulecore.TaskID, wantStage, wantActivity string) {
+	t.Helper()
+	task, err := manager.Get(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("read Task for production JSON assertion: %v", err)
+	}
+	encoded, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("marshal persisted Task: %v", err)
+	}
+	var persisted struct {
+		Production *struct {
+			Stage    string `json:"stage"`
+			Activity string `json:"activity"`
+		} `json:"production"`
+	}
+	if err := json.Unmarshal(encoded, &persisted); err != nil {
+		t.Fatalf("decode persisted Task production metadata: %v", err)
+	}
+	if persisted.Production == nil || persisted.Production.Stage != wantStage || persisted.Production.Activity != wantActivity {
+		t.Fatalf("persisted Task production=%+v, want stage=%q activity=%q; Task JSON=%s", persisted.Production, wantStage, wantActivity, encoded)
+	}
+}
+
+type productionMismatchDelegatedTaskOwner struct {
+	inner DelegatedTaskOwner
+}
+
+func (owner productionMismatchDelegatedTaskOwner) EnsureTaskForDelegation(
+	ctx context.Context,
+	delegationID modulecore.RequestID,
+	revision uint64,
+	draft domaintask.Task,
+	shared domaintask.SharedRoleContext,
+	check taskmanager.DelegationAdmissionCheck,
+) (domaintask.Task, domaintask.Run, error) {
+	task, run, err := owner.inner.EnsureTaskForDelegation(ctx, delegationID, revision, draft, shared, check)
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	production, err := domaintask.NewProduction(domaintask.ProductionStageVerify)
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	task.Production = &production
+	return task, run, nil
 }
 
 func (s *delegatedTaskAdmissionStoreFake) ClaimDelegatedTaskWork(_ context.Context, request DelegatedTaskClaimRequest) ([]DelegatedTaskLease, error) {
@@ -251,10 +511,10 @@ func (s *delegatedTaskAdmissionStoreFake) RetryDelegatedTaskWork(_ context.Conte
 	return nil
 }
 
-func newDelegatedTaskAdmission(t *testing.T, store *delegatedTaskAdmissionStoreFake, manager *taskmanager.Manager, now time.Time, actorID string) *DelegationTaskAdmission {
+func newDelegatedTaskAdmission(t *testing.T, store *delegatedTaskAdmissionStoreFake, tasks DelegatedTaskOwner, now time.Time, actorID string) *DelegationTaskAdmission {
 	t.Helper()
 	admission, err := NewDelegationTaskAdmission(DelegationTaskAdmissionDependencies{
-		Store: store, Tasks: manager,
+		Store: store, Tasks: tasks,
 		Config: DelegationTaskAdmissionConfig{ActorID: actorID, Now: func() time.Time { return now }},
 	})
 	if err != nil {

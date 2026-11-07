@@ -20,6 +20,108 @@ func TestTaskDefaultsAndCanonicalIdentity(t *testing.T) {
 	if value.TaskID.Validate() != nil || value.Status != StatusQueued || value.Priority != PriorityNormal || value.Route != RouteGeneral || !value.UpdatedAt.Equal(now) {
 		t.Fatalf("defaults = %#v", value)
 	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal legacy Task: %v", err)
+	}
+	var legacy map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &legacy); err != nil {
+		t.Fatalf("decode legacy Task JSON: %v", err)
+	}
+	if _, exists := legacy["production"]; exists {
+		t.Fatalf("Task without production stage changed its canonical JSON: %s", encoded)
+	}
+}
+
+func TestTaskProductionStageAndActivityMustMatch(t *testing.T) {
+	for _, test := range []struct {
+		stage    ProductionStage
+		activity ProductionActivity
+	}{
+		{stage: ProductionStageIdeate, activity: ProductionActivityCreativeIdeation},
+		{stage: ProductionStageAuthor, activity: ProductionActivityTextDraft},
+		{stage: ProductionStageVerify, activity: ProductionActivityCreativeReview},
+	} {
+		production, err := NewProduction(test.stage)
+		if err != nil || production.Stage != test.stage || production.Activity != test.activity {
+			t.Fatalf("NewProduction(%q)=(%+v,%v), want activity %q", test.stage, production, err, test.activity)
+		}
+		value := validTask()
+		value.Production = &production
+		if err := value.Validate(); err != nil {
+			t.Fatalf("Task with valid production %+v is invalid: %v", production, err)
+		}
+	}
+
+	value := validTask()
+	invalid := Production{Stage: ProductionStageAuthor, Activity: ProductionActivityCreativeReview}
+	value.Production = &invalid
+	if err := value.Validate(); err == nil {
+		t.Fatal("Task accepted a production activity that does not match its stage")
+	}
+	value = validTask()
+	invalid = Production{Stage: ProductionStage("draft"), Activity: ProductionActivityTextDraft}
+	value.Production = &invalid
+	if err := value.Validate(); err == nil {
+		t.Fatal("Task accepted an unknown production stage")
+	}
+}
+
+func TestTaskVersionedTextRuneProductionJSONRoundTrips(t *testing.T) {
+	legacy := validTask()
+	legacyProduction := Production{Stage: ProductionStageAuthor, Activity: ProductionActivityTextDraft}
+	legacy.Production = &legacyProduction
+	legacyJSON, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy production Task: %v", err)
+	}
+	var legacyObject map[string]json.RawMessage
+	if err := json.Unmarshal(legacyJSON, &legacyObject); err != nil {
+		t.Fatalf("decode legacy Task: %v", err)
+	}
+	var legacyProductionObject map[string]json.RawMessage
+	if err := json.Unmarshal(legacyObject["production"], &legacyProductionObject); err != nil {
+		t.Fatalf("decode legacy production metadata: %v", err)
+	}
+	if _, exists := legacyProductionObject["schema_version"]; exists {
+		t.Fatalf("versionless production metadata changed: %s", legacyJSON)
+	}
+	if _, exists := legacyProductionObject["text_runes"]; exists {
+		t.Fatalf("versionless production metadata gained text constraints: %s", legacyJSON)
+	}
+
+	var taskObject map[string]json.RawMessage
+	if err := json.Unmarshal(legacyJSON, &taskObject); err != nil {
+		t.Fatalf("decode Task fixture: %v", err)
+	}
+	taskObject["production"] = json.RawMessage(`{"schema_version":"creative-task.v0.2","stage":"author","activity":"text_draft","text_runes":{"min":128,"max":256}}`)
+	versionedJSON, err := json.Marshal(taskObject)
+	if err != nil {
+		t.Fatalf("marshal versioned Task fixture: %v", err)
+	}
+	var versioned Task
+	if err := json.Unmarshal(versionedJSON, &versioned); err != nil {
+		t.Fatalf("unmarshal versioned Task: %v", err)
+	}
+	if err := versioned.Validate(); err != nil {
+		t.Fatalf("validate versioned Task: %v", err)
+	}
+	reloadedJSON, err := json.Marshal(versioned)
+	if err != nil {
+		t.Fatalf("marshal reloaded versioned Task: %v", err)
+	}
+	var reloadedObject map[string]json.RawMessage
+	if err := json.Unmarshal(reloadedJSON, &reloadedObject); err != nil {
+		t.Fatalf("decode reloaded Task: %v", err)
+	}
+	var reloadedProduction map[string]json.RawMessage
+	if err := json.Unmarshal(reloadedObject["production"], &reloadedProduction); err != nil {
+		t.Fatalf("decode reloaded production metadata: %v", err)
+	}
+	if string(reloadedProduction["schema_version"]) != `"creative-task.v0.2"` ||
+		string(reloadedProduction["text_runes"]) != `{"min":128,"max":256}` {
+		t.Fatalf("versioned production metadata did not survive Task JSON reload: %s", reloadedJSON)
+	}
 }
 
 func TestTaskWaitingRequiresMachineReasonAndHasNoHumanStatus(t *testing.T) {
