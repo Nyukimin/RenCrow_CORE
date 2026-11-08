@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -77,6 +78,7 @@ func TestRuntimeMusicGatewayIntegration(t *testing.T) {
 	}
 	unauthorizedSnapshot := capdomain.Normalize(buildRuntimeCapabilitySnapshotWithSkills(unauthorizedMetadata, nil, nil, nil))
 	assertRuntimeMusicProjectToolAvailability(t, unauthorizedMetadata, unauthorizedSnapshot, false)
+	assertRuntimeMusicPlanToolAvailability(t, unauthorizedMetadata, unauthorizedSnapshot, false)
 
 	wrongActorRuntime := buildRuntimeMusicGatewayToolRuntime(t, taskOwner, baseURL, "different-configured-actor", runtimeMusicGatewayTokenEnv)
 	wrongActorMetadata, err := wrongActorRuntime.WorkerRuntimeRunnerV2.ListTools(context.Background())
@@ -85,6 +87,7 @@ func TestRuntimeMusicGatewayIntegration(t *testing.T) {
 	}
 	wrongActorSnapshot := capdomain.Normalize(buildRuntimeCapabilitySnapshotWithSkills(wrongActorMetadata, nil, nil, nil))
 	assertRuntimeMusicProjectToolAvailability(t, wrongActorMetadata, wrongActorSnapshot, false)
+	assertRuntimeMusicPlanToolAvailability(t, wrongActorMetadata, wrongActorSnapshot, false)
 
 	runtime := buildRuntimeMusicGatewayToolRuntime(t, taskOwner, baseURL, runtimeMusicGatewayUserID, runtimeMusicGatewayTokenEnv)
 	metadata, err := runtime.WorkerRuntimeRunnerV2.ListTools(context.Background())
@@ -93,6 +96,7 @@ func TestRuntimeMusicGatewayIntegration(t *testing.T) {
 	}
 	snapshot := capdomain.Normalize(buildRuntimeCapabilitySnapshotWithSkills(metadata, nil, nil, nil))
 	assertRuntimeMusicProjectToolAvailability(t, metadata, snapshot, true)
+	assertRuntimeMusicPlanToolAvailability(t, metadata, snapshot, true)
 
 	requestID := "music-project-create-integration-1"
 	workerContext := runtimeMusicGatewayDelegatedWorkerContext(t, taskExecutionContext, runtimeMusicGatewayUserID, requestID)
@@ -147,8 +151,59 @@ func TestRuntimeMusicGatewayIntegration(t *testing.T) {
 		t.Fatalf("real Music HTTP readback differs from CORE result: created=%+v readback=%+v", project, httpReadback)
 	}
 
+	// Store a production plan through the same Worker/Task/Run boundary. The
+	// text deliberately includes leading/trailing spaces and CRLF to verify
+	// that the immutable plan snapshot preserves the supplied lyrics exactly.
+	planRequestID := "music-plan-create-integration-1"
+	planContext := runtimeMusicGatewayDelegatedWorkerContext(t, taskExecutionContext, runtimeMusicGatewayUserID, planRequestID)
+	briefText := "  雨上がりの夜に聴く静かな歌。  "
+	verseText := "  雨音が窓をたたく。\r\n灯りが道に揺れる。  "
+	chorusText := "  まだ名前のない朝へ歩き出す。  "
+	planArgs := map[string]any{
+		"project_id": project.ID,
+		"brief_text": briefText,
+		"language":   "ja",
+		"song_kind":  "vocal",
+		"lyrics": []any{
+			map[string]any{"section": "verse", "text": verseText},
+			map[string]any{"section": "chorus", "text": chorusText},
+		},
+		"lyrics_lock": true,
+		"structure":   []any{"verse", "chorus"},
+		"assumptions": []any{"テンポ未指定のため中速を仮定"},
+	}
+	createdPlanResponse := executeRuntimeMusicProjectTool(t, runtime.WorkerRuntimeRunnerV2, planContext, "music.plan.create", planArgs)
+	if createdPlanResponse.IsError() {
+		t.Fatalf("Worker music.plan.create returned an error: %s", createdPlanResponse.String())
+	}
+	plan, ok := createdPlanResponse.Result.(toolsinfra.MusicProductionPlan)
+	if !ok {
+		t.Fatalf("created plan result has type %T, want tools.MusicProductionPlan", createdPlanResponse.Result)
+	}
+	assertRuntimeMusicProductionPlan(t, plan, project.ID, planRequestID, briefText, verseText, chorusText)
+
+	// Reusing the same trusted request ID must replay the stored immutable plan.
+	replayedPlanResponse := executeRuntimeMusicProjectTool(t, runtime.WorkerRuntimeRunnerV2, planContext, "music.plan.create", planArgs)
+	if replayedPlanResponse.IsError() {
+		t.Fatalf("Worker music.plan.create replay returned an error: %s", replayedPlanResponse.String())
+	}
+	replayedPlan, ok := replayedPlanResponse.Result.(toolsinfra.MusicProductionPlan)
+	if !ok || !reflect.DeepEqual(replayedPlan, plan) {
+		t.Fatalf("same-request plan replay = (%T) %+v, want original immutable plan %+v", replayedPlanResponse.Result, replayedPlan, plan)
+	}
+
+	readPlanResponse := executeRuntimeMusicProjectTool(t, runtime.WorkerRuntimeRunnerV2, planContext, "music.plan.get", map[string]any{"plan_id": plan.PlanID})
+	if readPlanResponse.IsError() {
+		t.Fatalf("Worker music.plan.get returned an error: %s", readPlanResponse.String())
+	}
+	readPlan, ok := readPlanResponse.Result.(toolsinfra.MusicProductionPlan)
+	if !ok || !reflect.DeepEqual(readPlan, plan) {
+		t.Fatalf("Worker plan readback = (%T) %+v, want exact persisted plan %+v", readPlanResponse.Result, readPlan, plan)
+	}
+
 	otherUserContext := runtimeMusicGatewayDelegatedWorkerContext(t, taskExecutionContext, "other-music-test-user", "music-other-user-request")
 	assertRuntimeMusicProjectToolDenied(t, runtime.WorkerRuntimeRunnerV2, otherUserContext, "music.project.create", createArgs)
+	assertRuntimeMusicProjectToolDenied(t, runtime.WorkerRuntimeRunnerV2, otherUserContext, "music.plan.create", planArgs)
 
 	publicAgentContext, err := domaintool.DeriveAgentToolExecutionScope(
 		taskExecutionContext, "music-public-agent-request", "music-worker-agent", "worker", "integration test", false,
@@ -160,6 +215,7 @@ func TestRuntimeMusicGatewayIntegration(t *testing.T) {
 		t.Fatal("public Agent unexpectedly has authenticated HTTP User proof")
 	}
 	assertRuntimeMusicProjectToolDenied(t, runtime.WorkerRuntimeRunnerV2, publicAgentContext, "music.project.create", createArgs)
+	assertRuntimeMusicProjectToolDenied(t, runtime.WorkerRuntimeRunnerV2, publicAgentContext, "music.plan.create", planArgs)
 }
 
 func buildRuntimeMusicGatewayToolRuntime(t *testing.T, owner *taskmanager.Manager, endpoint, actorID, tokenEnv string) toolRuntime {
@@ -190,6 +246,53 @@ func assertRuntimeMusicProjectToolAvailability(
 		if got != wantAvailable {
 			t.Fatalf("Music capability probe snapshot tool %q available=%v, want %v; snapshot=%+v", toolID, got, wantAvailable, snapshot.Entries)
 		}
+	}
+}
+
+func assertRuntimeMusicPlanToolAvailability(
+	t *testing.T,
+	metadata []domaintool.ToolMetadata,
+	snapshot capdomain.RuntimeCapabilitySnapshot,
+	wantAvailable bool,
+) {
+	t.Helper()
+	for _, toolID := range []string{"music.plan.create", "music.plan.get"} {
+		if got := hasToolMetadata(metadata, toolID); got != wantAvailable {
+			t.Fatalf("Music production-plan capability probe tool %q available=%v, want %v", toolID, got, wantAvailable)
+		}
+		entry, ok := findRuntimeCapability(snapshot, capdomain.CapabilityKindTool, toolID)
+		got := ok && entry.Status == capdomain.CapabilityStatusAvailable
+		if got != wantAvailable {
+			t.Fatalf("Music production-plan snapshot tool %q available=%v, want %v; snapshot=%+v", toolID, got, wantAvailable, snapshot.Entries)
+		}
+	}
+	if hasToolMetadata(metadata, "music.plan.generate") {
+		t.Fatal("plan storage capability must not expose a generation tool")
+	}
+}
+
+func assertRuntimeMusicProductionPlan(
+	t *testing.T,
+	plan toolsinfra.MusicProductionPlan,
+	projectID, requestID, briefText, verseText, chorusText string,
+) {
+	t.Helper()
+	if plan.PlanID == "" || plan.ProjectID != projectID || plan.Kind != "production" || plan.SchemaVersion != "1.0" {
+		t.Fatalf("created Music production plan identity = %+v", plan)
+	}
+	if plan.SourceRequestID != requestID || plan.BriefText != briefText || plan.Language != "ja" || plan.SongKind != "vocal" {
+		t.Fatalf("created Music production plan source fields = %+v", plan)
+	}
+	if len(plan.Lyrics) != 2 || plan.Lyrics[0].Section != "verse" || plan.Lyrics[0].Text != verseText ||
+		plan.Lyrics[1].Section != "chorus" || plan.Lyrics[1].Text != chorusText || plan.LyricsLock == nil || !*plan.LyricsLock {
+		t.Fatalf("created Music production plan did not preserve locked lyrics exactly: %+v", plan)
+	}
+	if plan.Executable || plan.ExecutionReason != "MUSIC_BACKEND_UNAVAILABLE" {
+		t.Fatalf("plan execution status = (%v, %q), want non-executable backend-unavailable", plan.Executable, plan.ExecutionReason)
+	}
+	hash, err := hex.DecodeString(strings.TrimPrefix(plan.PlanHash, "sha256:"))
+	if !strings.HasPrefix(plan.PlanHash, "sha256:") || err != nil || len(hash) != 32 {
+		t.Fatalf("server plan hash = %q, want sha256 plus 64 lowercase hex digits", plan.PlanHash)
 	}
 }
 

@@ -97,6 +97,9 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.MusicProjects != nil {
 		r.registerMusicProjectTools()
 	}
+	if r.config.MusicPlans != nil {
+		r.registerMusicPlanTools()
+	}
 	if r.config.LyricsCatalogLookup != nil {
 		r.registerLyricsCatalogLookupTool()
 	}
@@ -341,6 +344,10 @@ func (r *ToolRunner) registerToolMetadata() {
 	if r.config.MusicProjects != nil {
 		r.metadata["music.project.create"] = musicProjectCreateMetadata()
 		r.metadata["music.project.get"] = musicProjectGetMetadata()
+	}
+	if r.config.MusicPlans != nil {
+		r.metadata["music.plan.create"] = musicPlanCreateMetadata()
+		r.metadata["music.plan.get"] = musicPlanGetMetadata()
 	}
 	if r.config.LyricsCatalogLookup != nil {
 		r.metadata["lyrics_catalog.lookup"] = lyricsCatalogLookupMetadata()

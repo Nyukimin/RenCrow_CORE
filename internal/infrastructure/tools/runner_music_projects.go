@@ -63,7 +63,7 @@ func (r *ToolRunner) executeMusicProjectCreateV2(ctx context.Context, args map[s
 	idempotencyKey := "rencrow-core-" + hex.EncodeToString(requestHash[:])
 	project, err := r.config.MusicProjects.CreateProject(ctx, input, idempotencyKey)
 	if err != nil {
-		return musicProjectGatewayToolError(err), nil
+		return musicGatewayToolError(err), nil
 	}
 	return tool.NewSuccess(project), nil
 }
@@ -81,7 +81,7 @@ func (r *ToolRunner) executeMusicProjectGetV2(ctx context.Context, args map[stri
 	}
 	project, err := r.config.MusicProjects.GetProject(ctx, projectID)
 	if err != nil {
-		return musicProjectGatewayToolError(err), nil
+		return musicGatewayToolError(err), nil
 	}
 	return tool.NewSuccess(project), nil
 }
@@ -158,22 +158,22 @@ func authorizeMusicProjectRequest(ctx context.Context, configuredActorID string)
 	return proof, nil
 }
 
-func musicProjectGatewayToolError(err error) *tool.ToolResponse {
+func musicGatewayToolError(err error) *tool.ToolResponse {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return tool.NewError(tool.ErrTimeout, "Music project gateway request timed out", nil)
+		return tool.NewError(tool.ErrTimeout, "Music gateway request timed out", nil)
 	}
 	var statusErr *MusicGatewayStatusError
 	if errors.As(err, &statusErr) {
 		switch statusErr.StatusCode {
 		case 400, 413, 415, 422:
-			return tool.NewError(tool.ErrValidationFailed, "Music project gateway rejected the request", nil)
+			return tool.NewError(tool.ErrValidationFailed, "Music gateway rejected the request", nil)
 		case 401, 403:
-			return tool.NewError(tool.ErrPermissionDenied, "Music project gateway rejected its configured credential", nil)
+			return tool.NewError(tool.ErrPermissionDenied, "Music gateway rejected its configured credential", nil)
 		case 404:
-			return tool.NewError(tool.ErrNotFound, "Music project was not found for this actor", nil)
+			return tool.NewError(tool.ErrNotFound, "Music resource was not found for this actor", nil)
 		case 409:
-			return tool.NewError(tool.ErrConflict, "Music project request conflicts with an earlier request", nil)
+			return tool.NewError(tool.ErrConflict, "Music request conflicts with an earlier request", nil)
 		}
 	}
-	return tool.NewError(tool.ErrInternalError, "Music project gateway is unavailable", nil)
+	return tool.NewError(tool.ErrInternalError, "Music gateway is unavailable", nil)
 }

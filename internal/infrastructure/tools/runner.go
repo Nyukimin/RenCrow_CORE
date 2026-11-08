@@ -62,6 +62,14 @@ type MusicProjectGateway interface {
 	GetProject(ctx context.Context, projectID string) (MusicProject, error)
 }
 
+// MusicPlanGateway is the separate authenticated production-plan storage
+// boundary. Plan readiness does not imply a generation capability.
+type MusicPlanGateway interface {
+	ActorID() string
+	CreateProductionPlan(ctx context.Context, projectID string, input MusicProductionPlanInput, idempotencyKey string) (MusicProductionPlan, error)
+	GetProductionPlan(ctx context.Context, planID string) (MusicProductionPlan, error)
+}
+
 type MusicProjectCreateInput struct {
 	Title       string `json:"title,omitempty"`
 	Brief       string `json:"brief"`
@@ -78,6 +86,50 @@ type MusicProject struct {
 	HeadVersionID *string `json:"head_version_id"`
 	HeadRevision  int64   `json:"head_revision"`
 	State         string  `json:"state"`
+}
+
+type MusicPlanLyricsSection struct {
+	Section string `json:"section"`
+	Text    string `json:"text"`
+}
+
+// MusicProductionPlanInput holds only CORE-approved schema 1.0 plan fields.
+// Kind, schema version, and source request ID are assigned by CORE before use.
+type MusicProductionPlanInput struct {
+	Kind              string                   `json:"kind"`
+	SchemaVersion     string                   `json:"schema_version"`
+	SourceRequestID   string                   `json:"source_request_id"`
+	BriefText         string                   `json:"brief_text"`
+	Language          string                   `json:"language,omitempty"`
+	SongKind          string                   `json:"song_kind"`
+	Mood              string                   `json:"mood,omitempty"`
+	Genre             string                   `json:"genre,omitempty"`
+	Era               string                   `json:"era,omitempty"`
+	UseCase           string                   `json:"use_case,omitempty"`
+	Lyrics            []MusicPlanLyricsSection `json:"lyrics,omitempty"`
+	LyricsLock        *bool                    `json:"lyrics_lock,omitempty"`
+	Structure         []string                 `json:"structure,omitempty"`
+	DurationTargetS   int                      `json:"duration_target_s,omitempty"`
+	Tempo             *float64                 `json:"tempo,omitempty"`
+	Key               string                   `json:"key,omitempty"`
+	Vocal             string                   `json:"vocal,omitempty"`
+	Instruments       []string                 `json:"instruments,omitempty"`
+	CandidateCount    int                      `json:"candidate_count,omitempty"`
+	VariationAxes     []string                 `json:"variation_axes,omitempty"`
+	Constraints       []string                 `json:"constraints,omitempty"`
+	ProtectedFeatures []string                 `json:"protected_features,omitempty"`
+	Assumptions       []string                 `json:"assumptions,omitempty"`
+}
+
+type MusicProductionPlan struct {
+	PlanID    string `json:"plan_id"`
+	ProjectID string `json:"project_id"`
+	MusicProductionPlanInput
+	IntendedUse     string `json:"intended_use"`
+	BudgetPolicyID  string `json:"budget_policy_id,omitempty"`
+	PlanHash        string `json:"plan_hash"`
+	Executable      bool   `json:"executable"`
+	ExecutionReason string `json:"execution_reason"`
 }
 
 type MusicCapabilityStatus struct {
@@ -203,6 +255,7 @@ type ToolRunnerConfig struct {
 	MovieCatalogLookup            MovieCatalogLookup            // nil = movie_catalog.lookup 無効
 	MusicCatalogLookup            MusicCatalogLookup            // nil = music_catalog.lookup 無効
 	MusicProjects                 MusicProjectGateway           // nil = RenCrow_Music project Tools 無効
+	MusicPlans                    MusicPlanGateway              // nil = RenCrow_Music production-plan Tools 無効
 	LyricsCatalogLookup           LyricsCatalogLookup           // nil = lyrics_catalog.lookup 無効
 	PersonRelatedCatalogLookup    PersonRelatedCatalogLookup    // nil = person_related_catalog.lookup 無効
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効

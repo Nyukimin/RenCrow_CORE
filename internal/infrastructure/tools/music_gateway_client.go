@@ -20,6 +20,7 @@ import (
 const (
 	musicGatewayRequestTimeout = 8 * time.Second
 	maxMusicGatewayResponse    = 128 << 10
+	maxMusicPlanRequest        = 96 << 10
 )
 
 // MusicGatewayClientConfig binds one local Music endpoint, operator actor, and
@@ -51,6 +52,7 @@ type MusicProjectGatewayClient struct {
 }
 
 var _ MusicProjectGateway = (*MusicProjectGatewayClient)(nil)
+var _ MusicPlanGateway = (*MusicProjectGatewayClient)(nil)
 
 func NewMusicProjectGatewayClient(cfg MusicGatewayClientConfig) (*MusicProjectGatewayClient, error) {
 	endpoint, err := parseMusicGatewayEndpoint(cfg.Endpoint)
@@ -147,6 +149,55 @@ func (c *MusicProjectGatewayClient) GetProject(ctx context.Context, projectID st
 	return project, nil
 }
 
+func (c *MusicProjectGatewayClient) CreateProductionPlan(ctx context.Context, projectID string, input MusicProductionPlanInput, idempotencyKey string) (MusicProductionPlan, error) {
+	if err := validateMusicProjectID(projectID); err != nil {
+		return MusicProductionPlan{}, err
+	}
+	if len(idempotencyKey) == 0 || len(idempotencyKey) > 200 || strings.TrimSpace(idempotencyKey) != idempotencyKey {
+		return MusicProductionPlan{}, errors.New("music idempotency key is invalid")
+	}
+	if input.Kind != "production" || input.SchemaVersion != "1.0" || input.SourceRequestID == "" || len(input.SourceRequestID) > 200 {
+		return MusicProductionPlan{}, errors.New("music production plan identity is invalid")
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return MusicProductionPlan{}, fmt.Errorf("encode music production plan request: %w", err)
+	}
+	if len(body) > maxMusicPlanRequest {
+		return MusicProductionPlan{}, errors.New("music production plan request exceeds the configured limit")
+	}
+	var plan MusicProductionPlan
+	path := "/v1/music/projects/" + url.PathEscape(projectID) + "/plans"
+	if err := c.doJSON(ctx, http.MethodPost, path, body, idempotencyKey, http.StatusCreated, false, &plan); err != nil {
+		return MusicProductionPlan{}, err
+	}
+	if err := validateMusicProductionPlan(plan); err != nil {
+		return MusicProductionPlan{}, err
+	}
+	if plan.ProjectID != projectID || plan.SourceRequestID != input.SourceRequestID {
+		return MusicProductionPlan{}, errors.New("music production plan response identity does not match the request")
+	}
+	return plan, nil
+}
+
+func (c *MusicProjectGatewayClient) GetProductionPlan(ctx context.Context, planID string) (MusicProductionPlan, error) {
+	if err := validateMusicPlanID(planID); err != nil {
+		return MusicProductionPlan{}, err
+	}
+	var plan MusicProductionPlan
+	path := "/v1/music/plans/" + url.PathEscape(planID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, "", http.StatusOK, false, &plan); err != nil {
+		return MusicProductionPlan{}, err
+	}
+	if err := validateMusicProductionPlan(plan); err != nil {
+		return MusicProductionPlan{}, err
+	}
+	if plan.PlanID != planID {
+		return MusicProductionPlan{}, errors.New("music production plan response ID does not match the requested plan")
+	}
+	return plan, nil
+}
+
 func (c *MusicProjectGatewayClient) doJSON(ctx context.Context, method, path string, body []byte, idempotencyKey string, expectedStatus int, allowUnknown bool, target any) error {
 	endpoint := *c.endpoint
 	endpoint.Path = path
@@ -220,4 +271,28 @@ func validateMusicProjectID(projectID string) error {
 	return nil
 }
 
+func validateMusicPlanID(planID string) error {
+	if planID == "" || len(planID) > 256 || !musicProjectIDPattern.MatchString(planID) {
+		return errors.New("music production plan ID is invalid")
+	}
+	return nil
+}
+
+func validateMusicProductionPlan(plan MusicProductionPlan) error {
+	if err := validateMusicPlanID(plan.PlanID); err != nil {
+		return errors.New("music production plan response has no valid opaque ID")
+	}
+	if err := validateMusicProjectID(plan.ProjectID); err != nil {
+		return errors.New("music production plan response has no valid project ID")
+	}
+	if plan.Kind != "production" || plan.SchemaVersion != "1.0" || plan.SourceRequestID == "" || len(plan.SourceRequestID) > 200 || strings.TrimSpace(plan.BriefText) == "" || len([]rune(plan.BriefText)) > 10000 {
+		return errors.New("music production plan response does not match schema 1.0")
+	}
+	if plan.IntendedUse != "personal_noncommercial" || !musicPlanHashPattern.MatchString(plan.PlanHash) || plan.ExecutionReason == "" {
+		return errors.New("music production plan response contains unsupported metadata")
+	}
+	return nil
+}
+
 var musicProjectIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var musicPlanHashPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
