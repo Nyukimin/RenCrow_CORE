@@ -285,12 +285,13 @@ func preserveMusicApproximateBPMPreference(preferences []MusicConstraint, rawTex
 		phrase := strings.TrimSpace(match)
 		bpmNumber := musicBPMNumber(phrase)
 		duplicate := false
-		for _, preference := range preferences {
+		for index, preference := range preferences {
 			if !strings.EqualFold(preference.Property, "tempo") {
 				continue
 			}
 			if strings.EqualFold(strings.TrimSpace(preference.Value), phrase) ||
 				(bpmNumber != "" && musicBPMNumber(preference.Value) == bpmNumber) {
+				preferences[index].Value = phrase
 				duplicate = true
 				break
 			}

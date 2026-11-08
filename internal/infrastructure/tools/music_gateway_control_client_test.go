@@ -48,6 +48,7 @@ func TestMusicGatewayControlClientUsesTypedActorBoundRoutes(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 				t.Error(err)
 			}
+			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(MusicControlRequest{
 				MusicControlRequestInput: MusicControlRequestInput{
 					RawText: "  make a song  ", ExplicitMode: musicControlTestString("DIRECT"), Layers: []string{"L1"}, Operation: "generation",
