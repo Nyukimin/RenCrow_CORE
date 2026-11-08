@@ -18,12 +18,13 @@ import (
 )
 
 type agentRuntime struct {
-	Mio         *agent.MioAgent
-	ShiroChat   *agent.MioAgent
-	Shiro       *agent.ShiroAgent
-	Heavy       *agent.HeavyAgent
-	Wild        *agent.WildAgent
-	WorkerTools agent.ToolRunner
+	Mio                 *agent.MioAgent
+	ShiroChat           *agent.MioAgent
+	Shiro               *agent.ShiroAgent
+	Heavy               *agent.HeavyAgent
+	Wild                *agent.WildAgent
+	WorkerTools         agent.ToolRunner
+	WorkerToolLoopReady bool
 }
 
 // applyRuntimeAgentCapabilityContext runs after all owner routes are
@@ -176,5 +177,5 @@ func buildAgentRuntime(
 		shiroAgent.WithLightMemory(agent.NewLightMemory(cfg.Worker.LightMemory.MaxTurns))
 		log.Printf("Shiro: LightMemory enabled (max_turns=%d)", cfg.Worker.LightMemory.MaxTurns)
 	}
-	return agentRuntime{Mio: mioAgent, ShiroChat: shiroChatAgent, Shiro: shiroAgent, Heavy: heavyAgent, Wild: wildAgent, WorkerTools: workerToolRunner}
+	return agentRuntime{Mio: mioAgent, ShiroChat: shiroChatAgent, Shiro: shiroAgent, Heavy: heavyAgent, Wild: wildAgent, WorkerTools: workerToolRunner, WorkerToolLoopReady: subagentMgr != nil}
 }

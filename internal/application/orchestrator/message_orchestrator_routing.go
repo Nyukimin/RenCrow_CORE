@@ -17,6 +17,7 @@ type routeDecisionCoordinator struct {
 	mio             MioAgent
 	heavyPolicy     domainai.HeavyWorkerPolicy
 	canonicalEvents CanonicalEventRecorder
+	musicRouting    musicWorkflowRouting
 }
 
 type routeDecisionResult struct {
@@ -37,6 +38,12 @@ func (c *routeDecisionCoordinator) SetHeavyWorkerPolicy(policy domainai.HeavyWor
 
 func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalEventRecorder) {
 	c.canonicalEvents = recorder
+}
+
+func (c *routeDecisionCoordinator) SetMusicWorkflowRouting(actorID string, generationReady, remixReady, workerToolLoopReady bool) {
+	if c != nil {
+		c.musicRouting = newMusicWorkflowRouting(actorID, generationReady, remixReady, workerToolLoopReady)
+	}
 }
 
 func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID) (routing.Decision, error) {
@@ -60,6 +67,9 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 	var decision routing.Decision
 	var chatDraft *domainagent.MioChatDraft
 	var err error
+	if c.musicRouting.candidate(ctx, req) {
+		allowCombined = false
+	}
 	if combined, ok := c.mio.(interface {
 		DecideActionWithChatDraft(context.Context, domainconversation.TurnInput, bool) (routing.Decision, *domainagent.MioChatDraft, error)
 		ReleaseChatDraft(context.Context, *domainagent.MioChatDraft)
@@ -80,6 +90,7 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 	if pinnedViewerRecipient {
 		return routeDecisionResult{Decision: decision, Context: ctx}, nil
 	}
+	decision = c.musicRouting.apply(ctx, req, decision)
 	if chatDraft.Failed() {
 		if earlyState := earlyStream.snapshot(); earlyState.policyApplied {
 			if earlyState.policyDecision.Route != routing.RouteCHAT {

@@ -221,17 +221,29 @@ func viewerGlobalEventsHandler(cfg *config.Config, dependencies *Dependencies) h
 }
 
 // isAuthenticatedPrivateMioFinal narrows the response-first exception to a
-// canonical, sequenced private final for the exact already-authenticated CMD
-// owner. Session incarnation, owner/audience, address, and current-binding
-// checks still run through runtimeSessionVisibility below.
+// canonical, sequenced final for the exact already-authenticated CMD owner.
+// Session audience, incarnation, address, and current-binding checks still
+// run through runtimeSessionVisibility below.
 func isAuthenticatedPrivateMioFinal(event orchestrator.OrchestratorEvent, ownerID string) bool {
-	return strings.TrimSpace(ownerID) != "" && strings.TrimSpace(ownerID) == ownerID &&
-		event.Type == "agent.response" && event.From == "mio" && event.To == "user" && event.Route == "CHAT" &&
-		event.Visibility == "private" && event.EventSeq > 0 && event.Channel == "viewer" &&
-		event.ChannelAddress == "cmd:"+ownerID && event.ActorKind == "agent" && event.ActorID == "mio" &&
-		event.EventID.Validate() == nil && event.TraceID.Validate() == nil && event.TaskID.Validate() == nil &&
-		event.RunID.Validate() == nil && event.SessionID.Validate() == nil && event.TurnID.Validate() == nil &&
-		event.MessageID.Validate() == nil && event.Content != ""
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(ownerID) != ownerID ||
+		event.Type != "agent.response" || event.From != "mio" || event.To != "user" || event.EventSeq <= 0 ||
+		event.Channel != "viewer" || event.ChannelAddress != "cmd:"+ownerID ||
+		event.EventID.Validate() != nil || event.TraceID.Validate() != nil || event.TaskID.Validate() != nil ||
+		event.RunID.Validate() != nil || event.SessionID.Validate() != nil || event.TurnID.Validate() != nil ||
+		event.MessageID.Validate() != nil || event.Content == "" {
+		return false
+	}
+	switch event.Route {
+	case "CHAT":
+		return event.Visibility == "private" && event.ActorKind == "agent" && event.ActorID == "mio"
+	case "OPS":
+		// OPS runs under Shiro's Task/Run identity while Mio emits the final.
+		// Older OPS projections omit visibility; ResolveEvent must still prove
+		// the exact private owner-bound Session before this event can pass.
+		return (event.Visibility == "" || event.Visibility == "private") && event.ActorKind == "agent" && event.ActorID == "shiro"
+	default:
+		return false
+	}
 }
 
 // isAuthenticatedPrivateMioTerminalError admits only the terminal failure
@@ -559,6 +571,18 @@ func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {
 		VideoResult:   viewer.HandleVideoResult(videoGateway, videoAccess),
 	})
 	registerCharImageRoutes(mux, cfg, imageGateway)
+}
+
+func registerMusicArtifactRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies) {
+	if mux == nil || cfg == nil || dependencies == nil || !dependencies.musicPlaybackLinkReady || dependencies.musicArtifactPlayback == nil {
+		return
+	}
+	ownerID, ownerToken := viewerEventsCMDOwnerCredentials(cfg)
+	if ownerID == "" || ownerID != dependencies.musicArtifactPlayback.ActorID() || len(ownerToken) == 0 {
+		return
+	}
+	handler := viewer.HandleMusicArtifactDownload(dependencies.musicArtifactPlayback)
+	mux.HandleFunc("/viewer/music/artifacts/", viewer.WithCMDMioOwnerAuthentication(handler, ownerID, ownerToken))
 }
 
 func registerCharImageRoutes(mux *http.ServeMux, cfg *config.Config, gateway appcharimage.ImageGateway) {

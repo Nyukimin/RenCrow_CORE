@@ -363,6 +363,10 @@ type Dependencies struct {
 	movieCatalogStore                   *storagehost.MovieCatalogClient             // typed remote owner for runtime and Viewer reads
 	hobbyGraphStore                     *storagehost.HobbyGraphClient               // typed remote owner for runtime and Viewer reads
 	workerToolRunner                    domaintool.RunnerV2                         // production Worker tool execution/listing boundary
+	musicArtifactPlayback               toolsinfra.MusicArtifactPlaybackGateway     // authenticated Music Range playback proxy
+	musicPlaybackLinkReady              bool                                        // links require the configured CMD owner proof
+	musicGenerationReady                bool                                        // generation routing requires an observed ready Gateway capability
+	musicRemixReady                     bool                                        // remix routing requires an observed ready Gateway capability
 	personRelatedCatalogLookup          viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
 	personRelatedCatalogPeople          viewer.PersonRelatedCatalogPeopleProvider   // indexed explicitly assessed people projection
 	serenaMCPClient                     serenaMCPClient                             // lifecycle owner for the connected Serena MCP process
@@ -1156,6 +1160,10 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	deps.hobbyGraphStore = storageOwners.HobbyGraph
 	deps.knowledgeMemoryToolStore = toolRuntime.KnowledgeMemoryToolStore
 	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
+	deps.musicArtifactPlayback = toolRuntime.MusicArtifactPlayback
+	deps.musicPlaybackLinkReady = toolRuntime.MusicPlaybackLinkReady
+	deps.musicGenerationReady = toolRuntime.MusicGenerationReady
+	deps.musicRemixReady = toolRuntime.MusicRemixReady
 	if toolRuntime.PersonRelatedSummaryWorker != nil {
 		deps.personRelatedSummaryCancel = startRuntimePersonRelatedSummaryWorker(
 			toolRuntime.PersonRelatedSummaryWorker,

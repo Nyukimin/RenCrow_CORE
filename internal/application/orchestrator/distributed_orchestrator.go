@@ -67,6 +67,7 @@ type DistributedOrchestrator struct {
 	visionRequests          *visionRequestProcessor
 	durableStoreWorkflow    DurableStoreWorkflow
 	taskLifecycle           *taskLifecycle
+	musicRouting            musicWorkflowRouting
 }
 
 type ReportStore interface {

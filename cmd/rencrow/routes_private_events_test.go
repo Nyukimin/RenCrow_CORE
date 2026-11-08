@@ -339,13 +339,18 @@ func TestViewerEventsCMDNonMioRecipientKeepsPublicSubscription(t *testing.T) {
 func TestViewerEventsPrivateMioFinalUsesOwnerIncarnationAndVersionPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
+		route   string
 		version string
 		found   bool
 	}{
-		{name: "v2", version: "v2", found: true},
-		{name: "v1", version: "v1", found: true},
-		{name: "legacy", version: "legacy", found: true},
-		{name: "unversioned legacy", found: false},
+		{name: "chat v2", route: "CHAT", version: "v2", found: true},
+		{name: "chat v1", route: "CHAT", version: "v1", found: true},
+		{name: "chat legacy", route: "CHAT", version: "legacy", found: true},
+		{name: "chat unversioned legacy", route: "CHAT", found: false},
+		{name: "ops v2", route: "OPS", version: "v2", found: true},
+		{name: "ops v1", route: "OPS", version: "v1", found: true},
+		{name: "ops legacy", route: "OPS", version: "legacy", found: true},
+		{name: "ops unversioned legacy", route: "OPS", found: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "events.sqlite"))
@@ -373,11 +378,11 @@ func TestViewerEventsPrivateMioFinalUsesOwnerIncarnationAndVersionPolicy(t *test
 				t.Fatal(err)
 			}
 
-			oldEvent, err := archive.AppendSequenced(routeTestPrivateMioFinal(sessionID, "owner-a", oldSession.PublicationIncarnation(), "old private final"))
+			oldEvent, err := archive.AppendSequenced(routeTestPrivateMioFinalForRoute(sessionID, "owner-a", oldSession.PublicationIncarnation(), "old private final", tc.route))
 			if err != nil {
 				t.Fatal(err)
 			}
-			currentEvent, err := archive.AppendSequenced(routeTestPrivateMioFinal(sessionID, "owner-a", currentSession.PublicationIncarnation(), "current private final"))
+			currentEvent, err := archive.AppendSequenced(routeTestPrivateMioFinalForRoute(sessionID, "owner-a", currentSession.PublicationIncarnation(), "current private final", tc.route))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -602,15 +607,56 @@ func routeTestEvent(eventType, content string, sessionID modulecore.SessionID, p
 }
 
 func routeTestPrivateMioFinal(sessionID modulecore.SessionID, ownerID, publicationIncarnation, content string) orchestrator.OrchestratorEvent {
-	event := orchestrator.NewEvent("agent.response", "mio", "user", content, "CHAT", string(modulecore.NewTaskID()), string(sessionID), "viewer", "cmd:"+ownerID)
-	event.Visibility = "private"
+	return routeTestPrivateMioFinalForRoute(sessionID, ownerID, publicationIncarnation, content, "CHAT")
+}
+
+func routeTestPrivateMioFinalForRoute(sessionID modulecore.SessionID, ownerID, publicationIncarnation, content, route string) orchestrator.OrchestratorEvent {
+	event := orchestrator.NewEvent("agent.response", "mio", "user", content, route, string(modulecore.NewTaskID()), string(sessionID), "viewer", "cmd:"+ownerID)
 	event.PublicationIncarnation = publicationIncarnation
 	event.MessageID = modulecore.NewMessageID()
 	event.TurnID = modulecore.NewTurnID()
 	event.RunID = modulecore.NewRunID()
 	event.ActorKind = "agent"
-	event.ActorID = "mio"
+	if route == "OPS" {
+		// Existing OPS emissions retain the exact Shiro Task/Run actor and rely
+		// on the canonical Session audience for privacy; they omit visibility.
+		event.ActorID = "shiro"
+	} else {
+		event.Visibility = "private"
+		event.ActorID = "mio"
+	}
 	return event
+}
+
+func TestAuthenticatedPrivateMioOPSFinalRejectsUntrustedRouteAndExecutionIdentity(t *testing.T) {
+	sessionID, sess := routeTestSession(t, "owner-a", true)
+	valid := routeTestPrivateMioFinalForRoute(sessionID, "owner-a", sess.PublicationIncarnation(), "OPS final", "OPS")
+	valid.EventSeq = 1
+	if !isAuthenticatedPrivateMioFinal(valid, "owner-a") {
+		t.Fatal("canonical Mio-to-user OPS final with Shiro Task identity was rejected")
+	}
+	for _, mutate := range []struct {
+		name string
+		fn   func(*orchestrator.OrchestratorEvent)
+	}{
+		{name: "wrong route", fn: func(event *orchestrator.OrchestratorEvent) { event.Route = "WILD" }},
+		{name: "wrong run actor", fn: func(event *orchestrator.OrchestratorEvent) { event.ActorID = "mio" }},
+		{name: "wrong event speaker", fn: func(event *orchestrator.OrchestratorEvent) { event.From = "shiro" }},
+		{name: "wrong address", fn: func(event *orchestrator.OrchestratorEvent) { event.ChannelAddress = "cmd:owner-b" }},
+		{name: "public visibility claim", fn: func(event *orchestrator.OrchestratorEvent) { event.Visibility = "public" }},
+		{name: "unsequenced", fn: func(event *orchestrator.OrchestratorEvent) { event.EventSeq = 0 }},
+	} {
+		t.Run(mutate.name, func(t *testing.T) {
+			candidate := valid
+			mutate.fn(&candidate)
+			if isAuthenticatedPrivateMioFinal(candidate, "owner-a") {
+				t.Fatal("invalid OPS response-first candidate was accepted")
+			}
+		})
+	}
+	if isAuthenticatedPrivateMioFinal(valid, "owner-b") {
+		t.Fatal("OPS final was accepted for a different authenticated owner")
+	}
 }
 
 func routeTestOwnerConfig(t *testing.T) *config.Config {

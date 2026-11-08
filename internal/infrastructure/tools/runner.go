@@ -70,6 +70,27 @@ type MusicPlanGateway interface {
 	GetProductionPlan(ctx context.Context, planID string) (MusicProductionPlan, error)
 }
 
+// MusicGenerationGateway is the bounded Worker boundary for submitting a
+// validated immutable plan and reading its Music-owned job state.
+type MusicGenerationGateway interface {
+	ActorID() string
+	SubmitMusicGeneration(ctx context.Context, projectID string, input MusicGenerationRequest, idempotencyKey string) (MusicGenerationAccepted, error)
+	GetMusicJob(ctx context.Context, jobID string) (MusicJobStatus, error)
+}
+
+// MusicRemixGateway permits only typed, project-scoped bounded edits.
+type MusicRemixGateway interface {
+	ActorID() string
+	CreateMusicEdit(ctx context.Context, projectID string, input MusicEditInput, idempotencyKey string) (MusicArtifact, error)
+}
+
+// MusicArtifactPlaybackGateway provides an opaque-ID-only Range stream. It
+// exposes no Music backend URL, filesystem path, or bearer credential.
+type MusicArtifactPlaybackGateway interface {
+	ActorID() string
+	OpenMusicArtifact(ctx context.Context, artifactID string, rangeHeader string) (*http.Response, error)
+}
+
 type MusicProjectCreateInput struct {
 	Title       string `json:"title,omitempty"`
 	Brief       string `json:"brief"`
@@ -130,6 +151,65 @@ type MusicProductionPlan struct {
 	PlanHash        string `json:"plan_hash"`
 	Executable      bool   `json:"executable"`
 	ExecutionReason string `json:"execution_reason"`
+}
+
+type MusicGenerationRequest struct {
+	PlanID           string `json:"plan_id"`
+	ExpectedPlanHash string `json:"expected_plan_hash"`
+}
+
+type MusicJobStatus struct {
+	JobID           string  `json:"job_id"`
+	ProjectID       string  `json:"project_id"`
+	PlanID          string  `json:"plan_id"`
+	PlanHash        string  `json:"plan_hash"`
+	State           string  `json:"state"`
+	ArtifactID      string  `json:"artifact_id,omitempty"`
+	DurationFrames  int64   `json:"duration_frames,omitempty"`
+	DurationActualS float64 `json:"duration_actual_s,omitempty"`
+	FailureCode     string  `json:"failure_code,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+// Submission and status return the same safe GenerationJob projection.
+type MusicGenerationAccepted = MusicJobStatus
+
+type MusicEditInput struct {
+	SourceArtifactID string  `json:"source_artifact_id"`
+	StartFrame       int64   `json:"start_frame"`
+	EndFrame         int64   `json:"end_frame"`
+	GainDB           float64 `json:"gain_db"`
+	FadeFrames       int64   `json:"fade_frames"`
+}
+
+type MusicArtifact struct {
+	ID               string  `json:"id"`
+	ProjectID        string  `json:"project_id"`
+	Kind             string  `json:"kind"`
+	SHA256           string  `json:"sha256"`
+	SizeBytes        int64   `json:"size_bytes"`
+	MediaType        string  `json:"media_type"`
+	Format           string  `json:"format"`
+	DurationFrames   int64   `json:"duration_frames"`
+	SampleRate       int     `json:"sample_rate"`
+	Channels         int     `json:"channels"`
+	CreatedAt        string  `json:"created_at"`
+	SourceArtifactID string  `json:"source_artifact_id,omitempty"`
+	StartFrame       int64   `json:"start_frame,omitempty"`
+	EndFrame         int64   `json:"end_frame,omitempty"`
+	GainDB           float64 `json:"gain_db,omitempty"`
+	FadeFrames       int64   `json:"fade_frames,omitempty"`
+}
+
+type MusicGenerationJobResult struct {
+	MusicJobStatus
+	PlaybackURL string `json:"playback_url,omitempty"`
+}
+
+type MusicArtifactResult struct {
+	MusicArtifact
+	PlaybackURL string `json:"playback_url,omitempty"`
 }
 
 type MusicCapabilityStatus struct {
@@ -256,6 +336,10 @@ type ToolRunnerConfig struct {
 	MusicCatalogLookup            MusicCatalogLookup            // nil = music_catalog.lookup 無効
 	MusicProjects                 MusicProjectGateway           // nil = RenCrow_Music project Tools 無効
 	MusicPlans                    MusicPlanGateway              // nil = RenCrow_Music production-plan Tools 無効
+	MusicGeneration               MusicGenerationGateway        // nil = RenCrow_Music generation Tools 無効
+	MusicRemix                    MusicRemixGateway             // nil = RenCrow_Music bounded remix Tool 無効
+	MusicArtifactPlayback         MusicArtifactPlaybackGateway  // nil = RenCrow_Music artifact Range playback 無効
+	MusicPlaybackLinkReady        bool                          // CMD owner-authenticated same-origin proxy is registered
 	LyricsCatalogLookup           LyricsCatalogLookup           // nil = lyrics_catalog.lookup 無効
 	PersonRelatedCatalogLookup    PersonRelatedCatalogLookup    // nil = person_related_catalog.lookup 無効
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効

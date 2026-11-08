@@ -833,6 +833,68 @@ func TestInteractionProfileGuardAllowsPresenceProfilesOnly(t *testing.T) {
 	}
 }
 
+func TestCMDChatMusicArtifactDownloadIsExact(t *testing.T) {
+	handler := withInteractionProfileGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	tests := []struct {
+		name    string
+		client  string
+		profile string
+		method  string
+		path    string
+		want    int
+	}{
+		{
+			name:   "cmd chat can download one opaque artifact for mio",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodGet,
+			path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusNoContent,
+		},
+		{
+			name:   "cmd chat cannot use another method",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodPost,
+			path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "cmd chat cannot use an expanded path",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodGet,
+			path: "/viewer/music/artifacts/art_opaque/download/extra?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "cmd chat cannot use an unsafe artifact path segment",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodGet,
+			path: "/viewer/music/artifacts/%2e%2e/download?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "portal profile cannot download a cmd artifact",
+			client: "RenCrow_PORTAL", profile: "portal-chat", method: http.MethodGet,
+			path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "cmd diagnostics cannot download a music artifact",
+			client: "RenCrow_CMD", profile: "cmd-diagnostics", method: http.MethodGet,
+			path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "cmd chat profile requires the cmd client",
+			client: "RenCrow_PORTAL", profile: "cmd-chat", method: http.MethodGet,
+			path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusForbidden,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("X-RenCrow-Client", tt.client)
+			req.Header.Set(interactionProfileHeader, tt.profile)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
 func TestAssistantCoreViewerSendProfileIsExact(t *testing.T) {
 	handler := withInteractionProfileGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

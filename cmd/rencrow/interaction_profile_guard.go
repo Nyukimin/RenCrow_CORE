@@ -42,7 +42,8 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		allow: func(method, path string) bool {
 			return (method == http.MethodGet && path == "/viewer/events") ||
 				(method == http.MethodPost &&
-					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/stt/chat-input" || path == "/viewer/surface-presence"))
+					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/stt/chat-input" || path == "/viewer/surface-presence")) ||
+				cmdMusicArtifactDownloadInteractionAllowed(method, path)
 		},
 	},
 	"cmd-idlechat": {
@@ -102,6 +103,28 @@ func withInteractionProfileGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func cmdMusicArtifactDownloadInteractionAllowed(method, path string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	const prefix = "/viewer/music/artifacts/"
+	const suffix = "/download"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	artifactID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	if len(artifactID) == 0 || len(artifactID) > 256 {
+		return false
+	}
+	for i := 0; i < len(artifactID); i++ {
+		c := artifactID[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // cmdDiagnosticsInteractionAllowed は CMD の診断・状態取得を許可する

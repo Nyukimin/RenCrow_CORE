@@ -38,6 +38,10 @@ type toolRuntime struct {
 	WorkerRuntimeRunnerV2         domaintool.RunnerV2
 	MovieCatalogLookup            *runtimeMovieCatalogLookup
 	MusicCatalogLookup            *runtimeMusicCatalogLookup
+	MusicArtifactPlayback         tools.MusicArtifactPlaybackGateway
+	MusicPlaybackLinkReady        bool
+	MusicGenerationReady          bool
+	MusicRemixReady               bool
 	PersonRelatedCatalogLookup    *runtimePersonRelatedCatalogLookup
 	PersonRelatedCollectionWorker *runtimePersonRelatedCollectionWorker
 	PersonRelatedSummaryWorker    *runtimePersonRelatedSummaryWorker
@@ -305,6 +309,7 @@ func buildToolRuntimeWithCapabilities(
 		log.Printf("RenCrow_Music project Tools unavailable: %v", err)
 	}
 	cancelMusicProbe()
+	workerToolRunnerCfg.MusicPlaybackLinkReady = musicPlaybackLinkReady(cfg, &workerToolRunnerCfg)
 
 	chatToolRunnerV2 := tools.NewToolRunner(chatToolRunnerCfg)
 	workerToolRunnerV2 := tools.NewToolRunner(workerToolRunnerCfg)
@@ -437,6 +442,10 @@ func buildToolRuntimeWithCapabilities(
 		WorkerRuntimeRunnerV2:         workerRunnerV2,
 		MovieCatalogLookup:            movieCatalogLookup,
 		MusicCatalogLookup:            musicCatalogLookup,
+		MusicArtifactPlayback:         workerToolRunnerCfg.MusicArtifactPlayback,
+		MusicPlaybackLinkReady:        workerToolRunnerCfg.MusicPlaybackLinkReady,
+		MusicGenerationReady:          workerToolRunnerCfg.MusicGeneration != nil,
+		MusicRemixReady:               workerToolRunnerCfg.MusicRemix != nil,
 		PersonRelatedCatalogLookup:    personRelatedCatalogLookup,
 		PersonRelatedCollectionWorker: personRelatedCollectionWorker,
 		PersonRelatedSummaryWorker:    personRelatedSummaryWorker,

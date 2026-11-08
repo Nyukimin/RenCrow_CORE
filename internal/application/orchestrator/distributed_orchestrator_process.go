@@ -261,6 +261,9 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 		decision, pinnedViewerRecipient = pinSelectedViewerRecipientDecision(decision, req)
 	}
+	if !pinnedViewerRecipient {
+		decision = o.applyMusicWorkflowIntentRoute(ctx, req, decision)
+	}
 	log.Printf("[DistributedOrch] routing decision: route=%s confidence=%.2f reason=%q",
 		decision.Route, decision.Confidence, decision.Reason)
 

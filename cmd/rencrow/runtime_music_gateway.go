@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -53,5 +54,35 @@ func configureRuntimeMusicTools(ctx context.Context, cfg config.MusicConfig, wor
 	} else {
 		log.Printf("RenCrow_Music production-plan Tools unavailable: production_plan_storage is not confirmed implemented and ready")
 	}
+	generation, found := capabilities.Capabilities["music_generation"]
+	if found && generation.SupportState == "implemented" && generation.Availability == "ready" {
+		workerConfig.MusicGeneration = gateway
+		log.Printf("RenCrow_Music generation Tools ready for the configured actor")
+	} else {
+		log.Printf("RenCrow_Music generation Tools unavailable: music_generation is not confirmed implemented and ready")
+	}
+	playback, found := capabilities.Capabilities["artifact_playback"]
+	if found && playback.SupportState == "implemented" && playback.Availability == "ready" {
+		workerConfig.MusicArtifactPlayback = gateway
+		log.Printf("RenCrow_Music artifact playback ready for the configured actor")
+	} else {
+		log.Printf("RenCrow_Music artifact playback unavailable: artifact_playback is not confirmed implemented and ready")
+	}
+	remix, found := capabilities.Capabilities["music_remix"]
+	if found && remix.SupportState == "implemented" && remix.Availability == "ready" {
+		workerConfig.MusicRemix = gateway
+		log.Printf("RenCrow_Music bounded remix Tool ready for the configured actor")
+	} else {
+		log.Printf("RenCrow_Music bounded remix Tool unavailable: music_remix is not confirmed implemented and ready")
+	}
 	return nil
+}
+
+func musicPlaybackLinkReady(cfg *config.Config, workerConfig *tools.ToolRunnerConfig) bool {
+	if cfg == nil || workerConfig == nil || workerConfig.MusicArtifactPlayback == nil ||
+		!cfg.LocalAgentOps.Enabled || strings.TrimSpace(cfg.Music.ActorID) == "" {
+		return false
+	}
+	ownerID, token := viewerEventsCMDOwnerCredentials(cfg)
+	return ownerID == cfg.Music.ActorID && len(token) > 0
 }

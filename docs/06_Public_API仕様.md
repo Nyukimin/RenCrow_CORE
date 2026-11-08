@@ -43,6 +43,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /health` | COREと設定済み依存serviceの総合health。`checks[]`のcheckは任意の`details`（件数・名前・フラグ・経過時間・内部sequence・固定error code。IDや本文を含まない）を持てる。Action storeを開いたprocessは名前`action_store`のcheckを返す（`status`は常に`ok`で`/health/ready`を落とさない。[設定リファレンス](05_設定リファレンス.md#action-storeのsnapshotaction_store)）。Event、Persona、AI Workflow storeを開いたprocessは、各storeのcheckpoint状態を`ok`／`degraded`で返す（[SQLite WAL durability](05_設定リファレンス.md#event-persona-and-ai-workflow-sqlite-durability)）。CMD→CORE Mio combined CHATと共有Event writerのhealthは`checks[]`内の`persistence_writer` checkで`ok`／`degraded`を示し、同じprojectionのdetailsに`pending_count`、`oldest_pending_age_ms`、`last_durable_event_seq`、`last_error_code`を表示します。 |
 | `GET /ready` | request受付可否 |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読。購読開始位置は「Viewer event streamの購読開始位置」に従う（`?from=now`は接続時点以降のliveだけ） |
+| `GET /viewer/music/artifacts/{artifact_id}/download?to=mio` | Musicが返したopaque IDの試聴用音声。CMDのMio宛と同じloopback・Bearer・client/profile認証を要求し、Musicの固定Actorと一致する場合に単一Rangeを転送する |
 | `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを実行、または同じnative OPS Taskの明示Resumeを要求 |
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
