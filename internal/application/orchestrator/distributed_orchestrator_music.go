@@ -166,22 +166,29 @@ func musicWorkflowIntentFromText(message string) musicWorkflowIntent {
 	return musicWorkflowIntentNone
 }
 
-var musicProjectReferencePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_-])(prj_[A-Za-z0-9_-]{1,252})(?:$|[^A-Za-z0-9_-])`)
-var musicArtifactReferencePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_-])(art_[A-Za-z0-9_-]{1,252})(?:$|[^A-Za-z0-9_-])`)
-var musicModeReferencePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(DIRECT|AUTO)(?:$|[^A-Za-z0-9_])`)
+var musicReferenceTokenPattern = regexp.MustCompile(`[A-Za-z0-9_-]+`)
+var musicModeReferencePattern = regexp.MustCompile(`(?i)\b(DIRECT|AUTO)\b`)
+
+func musicReferenceCount(message, prefix string) int {
+	count := 0
+	for _, token := range musicReferenceTokenPattern.FindAllString(message, -1) {
+		if len(token) > len(prefix) && len(token) <= 256 && strings.EqualFold(token[:len(prefix)], prefix) {
+			count++
+		}
+	}
+	return count
+}
 
 func musicControlIntentFromText(message string) musicWorkflowIntent {
 	text := strings.ToLower(strings.TrimSpace(message))
 	if text == "" || !containsMusicIntentPhrase(text, "music", "音楽") || containsMusicIntentPhrase(text, "しないで", "しません", "やめて", "禁止", "don't", "do not", "not adopt", "not set") {
 		return musicWorkflowIntentNone
 	}
-	projectIDs := musicProjectReferencePattern.FindAllStringSubmatch(message, -1)
-	if len(projectIDs) != 1 {
+	if musicReferenceCount(message, "prj_") != 1 {
 		return musicWorkflowIntentNone
 	}
 	if containsMusicIntentPhrase(text, "採用して", "採用してください", "を採用", "adopt ", "select version") {
-		artifactIDs := musicArtifactReferencePattern.FindAllStringSubmatch(message, -1)
-		if len(artifactIDs) == 1 {
+		if musicReferenceCount(message, "art_") == 1 {
 			return musicWorkflowIntentAdoption
 		}
 		return musicWorkflowIntentNone
@@ -190,7 +197,7 @@ func musicControlIntentFromText(message string) musicWorkflowIntent {
 	if !modeAction {
 		return musicWorkflowIntentNone
 	}
-	modes := musicModeReferencePattern.FindAllStringSubmatch(message, -1)
+	modes := musicModeReferencePattern.FindAllString(message, -1)
 	if len(modes) != 1 {
 		return musicWorkflowIntentNone
 	}
