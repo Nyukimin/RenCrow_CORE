@@ -43,6 +43,9 @@ type Config struct {
 	// === Optional movie catalog sidecar ===
 	MovieCatalog MovieCatalogConfig `yaml:"movie_catalog"`
 
+	// === Optional RenCrow_Music project gateway ===
+	Music MusicConfig `yaml:"music"`
+
 	// === RenCrow_TRADE private Owner API bridge ===
 	Trade TradeConfig `yaml:"trade"`
 

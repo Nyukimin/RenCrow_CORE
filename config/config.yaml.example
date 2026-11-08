@@ -127,6 +127,14 @@ games:
 # corresponding capability unavailable without changing the CORE process.
 movie_catalog:
   crawler_url: ""
+# Optional RenCrow_Music project gateway. Configure a loopback HTTP origin and
+# the exact authenticated CORE user actor when enabling; the bearer itself is
+# read from this environment variable and never belongs in this file.
+music:
+  enabled: false
+  endpoint: ""
+  actor_id: ""
+  token_env: "REN_CROW_MUSIC_TOKEN"
 person_related_catalog:
   provider_url: ""
 

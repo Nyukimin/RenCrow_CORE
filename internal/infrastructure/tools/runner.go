@@ -52,6 +52,49 @@ type MusicCatalogLookup interface {
 	LookupMusic(ctx context.Context, kind string, name string, artist string, limit int) (any, error)
 }
 
+// MusicProjectGateway is the bounded authenticated project-storage boundary
+// used by Worker-only Music project Tools. Actor identity is configured by the
+// operator and is never supplied by a Tool argument.
+type MusicProjectGateway interface {
+	ActorID() string
+	ProbeCapabilities(ctx context.Context) (MusicCapabilities, error)
+	CreateProject(ctx context.Context, input MusicProjectCreateInput, idempotencyKey string) (MusicProject, error)
+	GetProject(ctx context.Context, projectID string) (MusicProject, error)
+}
+
+type MusicProjectCreateInput struct {
+	Title       string `json:"title,omitempty"`
+	Brief       string `json:"brief"`
+	IntendedUse string `json:"intended_use,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+}
+
+type MusicProject struct {
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	Brief         string  `json:"brief"`
+	IntendedUse   string  `json:"intended_use"`
+	Mode          string  `json:"mode"`
+	HeadVersionID *string `json:"head_version_id"`
+	HeadRevision  int64   `json:"head_revision"`
+	State         string  `json:"state"`
+}
+
+type MusicCapabilityStatus struct {
+	RequirementIDs    []string `json:"requirement_ids"`
+	SupportState      string   `json:"support_state"`
+	VerificationState string   `json:"verification_state"`
+	Availability      string   `json:"availability"`
+	Reason            string   `json:"reason,omitempty"`
+	EvidenceScope     string   `json:"evidence_scope,omitempty"`
+}
+
+type MusicCapabilities struct {
+	ActorID      string                           `json:"actor_id"`
+	Profile      string                           `json:"profile"`
+	Capabilities map[string]MusicCapabilityStatus `json:"capabilities"`
+}
+
 // LyricsCatalogLookup keeps rights-aware lyrics and non-reconstructable
 // syntax lookup separate from general music metadata lookup.
 type LyricsCatalogLookup interface {
@@ -159,6 +202,7 @@ type ToolRunnerConfig struct {
 	MCPToolCatalog                *MCPToolCatalog               // nil/empty = observed MCP tools 無効（Worker専用）
 	MovieCatalogLookup            MovieCatalogLookup            // nil = movie_catalog.lookup 無効
 	MusicCatalogLookup            MusicCatalogLookup            // nil = music_catalog.lookup 無効
+	MusicProjects                 MusicProjectGateway           // nil = RenCrow_Music project Tools 無効
 	LyricsCatalogLookup           LyricsCatalogLookup           // nil = lyrics_catalog.lookup 無効
 	PersonRelatedCatalogLookup    PersonRelatedCatalogLookup    // nil = person_related_catalog.lookup 無効
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効

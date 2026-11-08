@@ -28,6 +28,9 @@ func (c *Config) Validate() error {
 	if err := c.validateBoardCommunicationConfig(); err != nil {
 		return err
 	}
+	if err := c.validateMusicConfig(); err != nil {
+		return err
+	}
 	if c.Distributed.Enabled && c.TTS.SpeechPlanEnabled {
 		return fmt.Errorf("tts.speech_plan_enabled=true is not supported when distributed.enabled=true")
 	}
@@ -1106,6 +1109,37 @@ func validateCatalogEndpoint(name, raw string, loopbackOnly bool) error {
 		if !strings.EqualFold(hostname, "localhost") && (ip == nil || !ip.IsLoopback()) {
 			return fmt.Errorf("%s must use a loopback host", name)
 		}
+	}
+	return nil
+}
+
+var musicTokenEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (c *Config) validateMusicConfig() error {
+	music := c.Music
+	if !music.Enabled {
+		return nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(music.Endpoint))
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return fmt.Errorf("music.endpoint must be an absolute http URL with a numeric loopback host, explicit port, and no path, userinfo, query, or fragment")
+	}
+	ip := net.ParseIP(parsed.Hostname())
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("music.endpoint must use a numeric loopback host")
+	}
+	portText := parsed.Port()
+	port, portErr := strconv.Atoi(portText)
+	if portErr != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("music.endpoint must include a valid port between 1 and 65535")
+	}
+	actorID := strings.TrimSpace(music.ActorID)
+	if actorID == "" || len(actorID) > 200 || strings.ContainsAny(actorID, "\r\n\x00") {
+		return fmt.Errorf("music.actor_id must be a non-empty bounded identifier")
+	}
+	tokenEnv := strings.TrimSpace(music.TokenEnv)
+	if !musicTokenEnvPattern.MatchString(tokenEnv) {
+		return fmt.Errorf("music.token_env must be an environment variable name")
 	}
 	return nil
 }

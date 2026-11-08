@@ -159,6 +159,15 @@ type MovieCatalogConfig struct {
 	CrawlerURL string `yaml:"crawler_url"`
 }
 
+// MusicConfig enables the optional authenticated RenCrow_Music project gateway.
+// The credential itself is read from TokenEnv and is never stored in config.
+type MusicConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Endpoint string `yaml:"endpoint"`
+	ActorID  string `yaml:"actor_id"`
+	TokenEnv string `yaml:"token_env"`
+}
+
 // TradeConfig connects CORE only to RenCrow_TRADE's authenticated read-only control API.
 type TradeConfig struct {
 	Enabled       bool   `yaml:"enabled"`

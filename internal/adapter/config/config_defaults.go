@@ -63,6 +63,9 @@ func (c *Config) setDefaults() {
 		c.Games.ObserverURL = strings.TrimSpace(c.Games.ObserverURL)
 	}
 	c.MovieCatalog.CrawlerURL = strings.TrimSpace(c.MovieCatalog.CrawlerURL)
+	c.Music.Endpoint = strings.TrimSpace(c.Music.Endpoint)
+	c.Music.ActorID = strings.TrimSpace(c.Music.ActorID)
+	c.Music.TokenEnv = strings.TrimSpace(c.Music.TokenEnv)
 	c.PersonRelatedCatalog.ProviderURL = strings.TrimSpace(c.PersonRelatedCatalog.ProviderURL)
 
 	// RenCrow_LLM is mandatory.

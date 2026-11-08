@@ -300,6 +300,11 @@ func buildToolRuntimeWithCapabilities(
 		)
 		log.Printf("Codex runner enabled (sandbox=%s working_dir=%s)", cfg.Codex.Sandbox, workingDir)
 	}
+	musicProbeCtx, cancelMusicProbe := context.WithTimeout(context.Background(), 4*time.Second)
+	if err := configureRuntimeMusicTools(musicProbeCtx, cfg.Music, &workerToolRunnerCfg); err != nil {
+		log.Printf("RenCrow_Music project Tools unavailable: %v", err)
+	}
+	cancelMusicProbe()
 
 	chatToolRunnerV2 := tools.NewToolRunner(chatToolRunnerCfg)
 	workerToolRunnerV2 := tools.NewToolRunner(workerToolRunnerCfg)
