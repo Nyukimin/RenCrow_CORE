@@ -13,6 +13,7 @@ import (
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -34,6 +35,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 	}()
 	preserveOriginalUserMessage(&req)
+	ctx = domaintool.WithOriginalUserMessage(ctx, req.originalUserMessage)
 	rootTaskID := modulecore.TaskID(req.RootTaskID)
 	taskID := rootTaskID
 	executionTaskID := rootTaskID

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -14,19 +15,22 @@ const (
 	musicWorkflowIntentNone musicWorkflowIntent = iota
 	musicWorkflowIntentGeneration
 	musicWorkflowIntentRemix
+	musicWorkflowIntentControl
+	musicWorkflowIntentAdoption
 )
 
 type musicWorkflowRouting struct {
 	actorID             string
 	generationReady     bool
 	remixReady          bool
+	controlReady        bool
 	workerToolLoopReady bool
 }
 
-func newMusicWorkflowRouting(actorID string, generationReady, remixReady, workerToolLoopReady bool) musicWorkflowRouting {
+func newMusicWorkflowRouting(actorID string, generationReady, remixReady, controlReady, workerToolLoopReady bool) musicWorkflowRouting {
 	return musicWorkflowRouting{
 		actorID: strings.TrimSpace(actorID), generationReady: generationReady,
-		remixReady: remixReady, workerToolLoopReady: workerToolLoopReady,
+		remixReady: remixReady, controlReady: controlReady, workerToolLoopReady: workerToolLoopReady,
 	}
 }
 
@@ -66,7 +70,16 @@ func (r musicWorkflowRouting) candidate(ctx context.Context, req ProcessMessageR
 		return false
 	}
 	intent := musicWorkflowIntentFromText(message)
-	return intent == musicWorkflowIntentGeneration && r.generationReady || intent == musicWorkflowIntentRemix && r.remixReady
+	switch intent {
+	case musicWorkflowIntentGeneration:
+		return r.generationReady
+	case musicWorkflowIntentRemix:
+		return r.remixReady
+	case musicWorkflowIntentControl, musicWorkflowIntentAdoption:
+		return r.controlReady
+	default:
+		return false
+	}
 }
 
 func (r musicWorkflowRouting) apply(ctx context.Context, req ProcessMessageRequest, decision routing.Decision) routing.Decision {
@@ -89,18 +102,18 @@ func (r musicWorkflowRouting) apply(ctx context.Context, req ProcessMessageReque
 
 // SetMusicWorkflowRouting exposes natural-language routing only when the
 // authenticated Music capability and Shiro's actual Worker tool loop exist.
-func (o *DistributedOrchestrator) SetMusicWorkflowRouting(actorID string, generationReady, remixReady, workerToolLoopReady bool) {
+func (o *DistributedOrchestrator) SetMusicWorkflowRouting(actorID string, generationReady, remixReady, controlReady, workerToolLoopReady bool) {
 	if o == nil {
 		return
 	}
-	o.musicRouting = newMusicWorkflowRouting(actorID, generationReady, remixReady, workerToolLoopReady)
+	o.musicRouting = newMusicWorkflowRouting(actorID, generationReady, remixReady, controlReady, workerToolLoopReady)
 }
 
-func (o *MessageOrchestrator) SetMusicWorkflowRouting(actorID string, generationReady, remixReady, workerToolLoopReady bool) {
+func (o *MessageOrchestrator) SetMusicWorkflowRouting(actorID string, generationReady, remixReady, controlReady, workerToolLoopReady bool) {
 	if o == nil || o.routeDecisions == nil {
 		return
 	}
-	o.routeDecisions.SetMusicWorkflowRouting(actorID, generationReady, remixReady, workerToolLoopReady)
+	o.routeDecisions.SetMusicWorkflowRouting(actorID, generationReady, remixReady, controlReady, workerToolLoopReady)
 }
 
 func (o *DistributedOrchestrator) applyMusicWorkflowIntentRoute(ctx context.Context, req ProcessMessageRequest, decision routing.Decision) routing.Decision {
@@ -121,6 +134,9 @@ func hasExplicitRouteEvidence(decision routing.Decision) bool {
 
 func musicWorkflowIntentFromText(message string) musicWorkflowIntent {
 	text := strings.ToLower(strings.TrimSpace(message))
+	if intent := musicControlIntentFromText(message); intent != musicWorkflowIntentNone {
+		return intent
+	}
 	if containsMusicIntentPhrase(text, "can you", "could you", "is it possible") {
 		return musicWorkflowIntentNone
 	}
@@ -148,6 +164,37 @@ func musicWorkflowIntentFromText(message string) musicWorkflowIntent {
 		return musicWorkflowIntentNone
 	}
 	return musicWorkflowIntentNone
+}
+
+var musicProjectReferencePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_-])(prj_[A-Za-z0-9_-]{1,252})(?:$|[^A-Za-z0-9_-])`)
+var musicArtifactReferencePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_-])(art_[A-Za-z0-9_-]{1,252})(?:$|[^A-Za-z0-9_-])`)
+var musicModeReferencePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(DIRECT|AUTO)(?:$|[^A-Za-z0-9_])`)
+
+func musicControlIntentFromText(message string) musicWorkflowIntent {
+	text := strings.ToLower(strings.TrimSpace(message))
+	if text == "" || !containsMusicIntentPhrase(text, "music", "音楽") || containsMusicIntentPhrase(text, "しないで", "しません", "やめて", "禁止", "don't", "do not", "not adopt", "not set") {
+		return musicWorkflowIntentNone
+	}
+	projectIDs := musicProjectReferencePattern.FindAllStringSubmatch(message, -1)
+	if len(projectIDs) != 1 {
+		return musicWorkflowIntentNone
+	}
+	if containsMusicIntentPhrase(text, "採用して", "採用してください", "を採用", "adopt ", "select version") {
+		artifactIDs := musicArtifactReferencePattern.FindAllStringSubmatch(message, -1)
+		if len(artifactIDs) == 1 {
+			return musicWorkflowIntentAdoption
+		}
+		return musicWorkflowIntentNone
+	}
+	modeAction := containsMusicIntentPhrase(text, "にしてください", "にして", "modeを", "モードを", "set mode", "change mode")
+	if !modeAction {
+		return musicWorkflowIntentNone
+	}
+	modes := musicModeReferencePattern.FindAllStringSubmatch(message, -1)
+	if len(modes) != 1 {
+		return musicWorkflowIntentNone
+	}
+	return musicWorkflowIntentControl
 }
 
 func containsMusicIntentPhrase(text string, phrases ...string) bool {

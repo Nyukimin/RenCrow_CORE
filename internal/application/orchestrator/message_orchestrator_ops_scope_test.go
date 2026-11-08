@@ -68,6 +68,10 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 	if got.AuthenticatedUserID != "user-a" || !got.Allows(domaintool.DataScopePublic) || !got.Allows(domaintool.DataScopeUser) || !got.Allows(domaintool.DataScopeInternal) {
 		t.Fatalf("Shiro delegated scope = %#v", got)
 	}
+	original, found := domaintool.OriginalUserMessageFromContext(shiro.ctx)
+	if !found || original != tk.MessageText() {
+		t.Fatalf("trusted original user message = %q, found=%t; want exact ingress text %q", original, found, tk.MessageText())
+	}
 }
 
 func TestMessageRouteDispatcherOPSRejectsInvalidParentBeforeShiro(t *testing.T) {

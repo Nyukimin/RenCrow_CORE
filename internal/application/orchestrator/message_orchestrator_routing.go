@@ -40,9 +40,9 @@ func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalE
 	c.canonicalEvents = recorder
 }
 
-func (c *routeDecisionCoordinator) SetMusicWorkflowRouting(actorID string, generationReady, remixReady, workerToolLoopReady bool) {
+func (c *routeDecisionCoordinator) SetMusicWorkflowRouting(actorID string, generationReady, remixReady, controlReady, workerToolLoopReady bool) {
 	if c != nil {
-		c.musicRouting = newMusicWorkflowRouting(actorID, generationReady, remixReady, workerToolLoopReady)
+		c.musicRouting = newMusicWorkflowRouting(actorID, generationReady, remixReady, controlReady, workerToolLoopReady)
 	}
 }
 

@@ -169,6 +169,8 @@ type toolExecutionScopeContextKey struct{}
 
 type authenticatedHTTPUserProofContextKey struct{}
 
+type originalUserMessageContextKey struct{}
+
 type authenticatedHTTPUserProof struct {
 	scope ToolExecutionScope
 }
@@ -213,6 +215,25 @@ func AuthenticatedHTTPUserScopeFromContext(ctx context.Context) (ToolExecutionSc
 		return ToolExecutionScope{}, false
 	}
 	return cloneToolExecutionScope(proof.scope), true
+}
+
+// WithOriginalUserMessage carries the exact ingress text alongside the trusted
+// execution scope so bounded downstream Tools can preserve user wording.
+func WithOriginalUserMessage(ctx context.Context, message string) context.Context {
+	if ctx == nil || message == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, originalUserMessageContextKey{}, message)
+}
+
+// OriginalUserMessageFromContext returns only text installed by a trusted
+// CORE ingress or orchestrator adapter. Tool arguments cannot set this value.
+func OriginalUserMessageFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	message, ok := ctx.Value(originalUserMessageContextKey{}).(string)
+	return message, ok && message != ""
 }
 
 func cloneToolExecutionScope(scope ToolExecutionScope) ToolExecutionScope {

@@ -367,6 +367,7 @@ type Dependencies struct {
 	musicPlaybackLinkReady              bool                                        // links require the configured CMD owner proof
 	musicGenerationReady                bool                                        // generation routing requires an observed ready Gateway capability
 	musicRemixReady                     bool                                        // remix routing requires an observed ready Gateway capability
+	musicControlReady                   bool                                        // control routing requires an observed ready production_control capability
 	personRelatedCatalogLookup          viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
 	personRelatedCatalogPeople          viewer.PersonRelatedCatalogPeopleProvider   // indexed explicitly assessed people projection
 	serenaMCPClient                     serenaMCPClient                             // lifecycle owner for the connected Serena MCP process
@@ -1164,6 +1165,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	deps.musicPlaybackLinkReady = toolRuntime.MusicPlaybackLinkReady
 	deps.musicGenerationReady = toolRuntime.MusicGenerationReady
 	deps.musicRemixReady = toolRuntime.MusicRemixReady
+	deps.musicControlReady = toolRuntime.MusicControlReady
 	if toolRuntime.PersonRelatedSummaryWorker != nil {
 		deps.personRelatedSummaryCancel = startRuntimePersonRelatedSummaryWorker(
 			toolRuntime.PersonRelatedSummaryWorker,

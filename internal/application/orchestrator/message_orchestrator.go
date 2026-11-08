@@ -30,6 +30,7 @@ import (
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
@@ -556,6 +557,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		}
 	}()
 	preserveOriginalUserMessage(&req)
+	ctx = domaintool.WithOriginalUserMessage(ctx, req.originalUserMessage)
 	rootTaskID := modulecore.TaskID(req.RootTaskID)
 	taskID := rootTaskID
 	executionTaskID := rootTaskID

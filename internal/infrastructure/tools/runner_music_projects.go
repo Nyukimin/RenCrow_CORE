@@ -19,7 +19,7 @@ func musicProjectCreateMetadata() tool.ToolMetadata {
 	return tool.ToolMetadata{
 		ToolID: "music.project.create", Version: "1.0.0", Category: "mutation", Origin: tool.OriginCoreRuntime,
 		Description: "RenCrow_Musicに作曲プロジェクトを1件作成する。作成は現在の認証済み利用者の設定済みMusic actorに限定される。",
-		Invariants:  []string{"actor_idとidempotency_keyは認証済みCORE requestから内部導出され、Tool引数で指定できない", "1 requestにつき1つのcreate keyを使い、本文を変えた再利用はConflictになる"},
+		Invariants:  []string{"actor_idとidempotency_keyは認証済みCORE requestから内部導出され、Tool引数で指定できない", "1 requestにつき1つのcreate keyを使い、本文を変えた再利用はConflictになる", "intended_useは専用enumで指定し、production planのconstraintsに重複して記載しない"},
 		Parameters: map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
@@ -165,14 +165,29 @@ func musicGatewayToolError(err error) *tool.ToolResponse {
 	var statusErr *MusicGatewayStatusError
 	if errors.As(err, &statusErr) {
 		switch statusErr.StatusCode {
-		case 400, 413, 415, 422:
+		case 400, 413, 415:
 			return tool.NewError(tool.ErrValidationFailed, "Music gateway rejected the request", nil)
 		case 401, 403:
 			return tool.NewError(tool.ErrPermissionDenied, "Music gateway rejected its configured credential", nil)
 		case 404:
 			return tool.NewError(tool.ErrNotFound, "Music resource was not found for this actor", nil)
 		case 409:
+			switch statusErr.Code {
+			case "MUSIC_NEEDS_CONFIRMATION":
+				return tool.NewError(tool.ErrConflict, "Musicの適用にはbase versionまたは編集範囲の確認が必要です", nil)
+			case "MUSIC_PRESERVATION_CONFLICT":
+				return tool.NewError(tool.ErrConflict, "Musicの保護lockまたはhard constraintと競合しています", nil)
+			case "MUSIC_CONTROL_CONFLICT":
+				return tool.NewError(tool.ErrConflict, "Music control revisionが更新されています。music.control.getで最新状態を取得してください", nil)
+			case "MUSIC_CONTROL_STALE":
+				return tool.NewError(tool.ErrConflict, "Music requestの適用対象revisionが古くなっています。最新状態を確認してからrequestを作り直してください", nil)
+			}
 			return tool.NewError(tool.ErrConflict, "Music request conflicts with an earlier request", nil)
+		case 422:
+			if statusErr.Code == "MUSIC_UNSUPPORTED_OPERATION" {
+				return tool.NewError(tool.ErrValidationFailed, "Musicは指定された操作または保護範囲に対応していません", nil)
+			}
+			return tool.NewError(tool.ErrValidationFailed, "Music gateway rejected the request", nil)
 		}
 	}
 	return tool.NewError(tool.ErrInternalError, "Music gateway is unavailable", nil)

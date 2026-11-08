@@ -47,6 +47,13 @@ func configureRuntimeMusicTools(ctx context.Context, cfg config.MusicConfig, wor
 	} else {
 		log.Printf("RenCrow_Music project Tools unavailable: project_storage is not confirmed implemented and ready")
 	}
+	productionControl, found := capabilities.Capabilities["production_control"]
+	if found && productionControl.SupportState == "implemented" && productionControl.Availability == "ready" {
+		workerConfig.MusicControl = gateway
+		log.Printf("RenCrow_Music production-control Tools ready for the configured actor")
+	} else {
+		log.Printf("RenCrow_Music production-control Tools unavailable: production_control is not confirmed implemented and ready")
+	}
 	planStorage, found := capabilities.Capabilities["production_plan_storage"]
 	if found && planStorage.SupportState == "implemented" && planStorage.Availability == "ready" {
 		workerConfig.MusicPlans = gateway

@@ -21,6 +21,7 @@ func TestMusicWorkflowIntentRoutesToWorkerOnlyWithReadyCapabilityAndDelegatedOwn
 		actorID    string
 		generation bool
 		remix      bool
+		control    bool
 		toolLoop   bool
 		decision   routing.Decision
 		wantRoute  routing.Route
@@ -38,12 +39,18 @@ func TestMusicWorkflowIntentRoutesToWorkerOnlyWithReadyCapabilityAndDelegatedOwn
 		{name: "remix capability unavailable", message: "この曲をリミックスして", ctx: trusted, actorID: "ren", toolLoop: true, decision: routing.NewDecision(routing.RouteWILD, 0.9, "rule dictionary"), wantRoute: routing.RouteWILD},
 		{name: "worker toolloop unavailable", message: "曲を生成して", ctx: trusted, actorID: "ren", generation: true, decision: routing.NewDecision(routing.RoutePLAN, 0.9, "rule dictionary"), wantRoute: routing.RoutePLAN},
 		{name: "explicit slash command wins", message: "/PLAN 曲を生成して", ctx: trusted, actorID: "ren", generation: true, toolLoop: true, decision: routing.NewDecision(routing.RoutePLAN, 0.9, "rule dictionary"), wantRoute: routing.RoutePLAN},
+		{name: "explicit Music mode with exact project ID", message: "Musicのproject prj_track_01をDIRECTにしてください", ctx: trusted, actorID: "ren", control: true, toolLoop: true, decision: routing.NewDecision(routing.RoutePLAN, 0.9, "rule dictionary"), wantRoute: routing.RouteOPS},
+		{name: "adopt explicit artifact in exact project", message: "Music project prj_track_01の音源art_master_02を採用してください", ctx: trusted, actorID: "ren", control: true, toolLoop: true, decision: routing.NewDecision(routing.RouteCHAT, 0.9, "rule dictionary"), wantRoute: routing.RouteOPS},
+		{name: "deictic project without ID fails closed", message: "このMusicプロジェクトの音源art_master_02を採用してください", ctx: trusted, actorID: "ren", control: true, toolLoop: true, decision: routing.NewDecision(routing.RouteCHAT, 0.9, "rule dictionary"), wantRoute: routing.RouteCHAT},
+		{name: "artifact without project ID fails closed", message: "Musicの音源art_master_02を採用してください", ctx: trusted, actorID: "ren", control: true, toolLoop: true, decision: routing.NewDecision(routing.RouteCHAT, 0.9, "rule dictionary"), wantRoute: routing.RouteCHAT},
+		{name: "ambiguous project IDs fail closed", message: "Music project prj_track_01とprj_track_02をDIRECTにしてください", ctx: trusted, actorID: "ren", control: true, toolLoop: true, decision: routing.NewDecision(routing.RouteCHAT, 0.9, "rule dictionary"), wantRoute: routing.RouteCHAT},
+		{name: "control capability unavailable", message: "Music project prj_track_01をDIRECTにしてください", ctx: trusted, actorID: "ren", toolLoop: true, decision: routing.NewDecision(routing.RouteCHAT, 0.9, "rule dictionary"), wantRoute: routing.RouteCHAT},
 		{name: "explicit route evidence wins", message: "曲を生成して", ctx: trusted, actorID: "ren", generation: true, toolLoop: true, decision: routing.NewDecisionWithEvidence(routing.RoutePLAN, 1, "explicit PLAN", routing.DecisionEvidence{Source: routing.EvidenceSourceExplicitCommand, Matched: true, Route: routing.RoutePLAN}), wantRoute: routing.RoutePLAN},
 		{name: "existing OPS decision remains", message: "曲を生成して", ctx: trusted, actorID: "ren", generation: true, toolLoop: true, decision: routing.NewDecision(routing.RouteOPS, 0.9, "explicit OPS"), wantRoute: routing.RouteOPS},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			orch := &DistributedOrchestrator{}
-			orch.SetMusicWorkflowRouting(tc.actorID, tc.generation, tc.remix, tc.toolLoop)
+			orch.SetMusicWorkflowRouting(tc.actorID, tc.generation, tc.remix, tc.control, tc.toolLoop)
 			request := ProcessMessageRequest{Channel: "viewer", To: "mio", UserMessage: tc.message}
 			got := orch.applyMusicWorkflowIntentRoute(tc.ctx, request, tc.decision)
 			if got.Route != tc.wantRoute {
@@ -53,6 +60,24 @@ func TestMusicWorkflowIntentRoutesToWorkerOnlyWithReadyCapabilityAndDelegatedOwn
 				t.Fatal("music Worker override did not record its route reason")
 			}
 		})
+	}
+}
+
+func TestMusicControlIntentMatcherRequiresExplicitResolvableIDs(t *testing.T) {
+	for _, tc := range []struct {
+		message string
+		want    musicWorkflowIntent
+	}{
+		{message: "Music project prj_track_01をDIRECTにしてください", want: musicWorkflowIntentControl},
+		{message: "Music project prj_track_01の音源art_master_02を採用してください", want: musicWorkflowIntentAdoption},
+		{message: "このMusicプロジェクトの音源art_master_02を採用してください", want: musicWorkflowIntentNone},
+		{message: "Music project prj_track_01とprj_track_02をDIRECTにしてください", want: musicWorkflowIntentNone},
+		{message: "Music project prj_track_01をAUTOとDIRECTにしてください", want: musicWorkflowIntentNone},
+		{message: "Music project prj_track_01をDIRECTにしないで", want: musicWorkflowIntentNone},
+	} {
+		if got := musicWorkflowIntentFromText(tc.message); got != tc.want {
+			t.Errorf("musicWorkflowIntentFromText(%q) = %v, want %v", tc.message, got, tc.want)
+		}
 	}
 }
 
@@ -74,7 +99,7 @@ func TestMusicWorkflowIntentMatcherRejectsAdviceAndNegation(t *testing.T) {
 func TestMessageRouteCoordinatorRoutesAuthenticatedMusicIntentBeforeCombinedChat(t *testing.T) {
 	mio := &musicIntentRouteMioStub{decision: routing.NewDecision(routing.RoutePLAN, 0.9, "rule dictionary")}
 	coordinator := newRouteDecisionCoordinator(mio)
-	coordinator.SetMusicWorkflowRouting("ren", true, true, true)
+	coordinator.SetMusicWorkflowRouting("ren", true, true, false, true)
 	input := newOrchestratorTestTurnInput(t, "このプランで歌詞付きの曲を生成して", "viewer", "cmd:ren")
 	decision, err := coordinator.DecideWithChatDraft(
 		trustedMusicRoutingContext(t, "ren"), input,

@@ -97,6 +97,9 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.MusicProjects != nil {
 		r.registerMusicProjectTools()
 	}
+	if r.config.MusicControl != nil {
+		r.registerMusicControlTools()
+	}
 	if r.config.MusicPlans != nil {
 		r.registerMusicPlanTools()
 	}
@@ -351,16 +354,22 @@ func (r *ToolRunner) registerToolMetadata() {
 		r.metadata["music.project.create"] = musicProjectCreateMetadata()
 		r.metadata["music.project.get"] = musicProjectGetMetadata()
 	}
+	if r.config.MusicControl != nil {
+		r.metadata["music.control.get"] = musicControlGetMetadata()
+		r.metadata["music.control.update"] = musicControlUpdateMetadata()
+		r.metadata["music.request.create"] = musicRequestCreateMetadata()
+		r.metadata["music.request.get"] = musicRequestGetMetadata()
+	}
 	if r.config.MusicPlans != nil {
 		r.metadata["music.plan.create"] = musicPlanCreateMetadata()
 		r.metadata["music.plan.get"] = musicPlanGetMetadata()
 	}
 	if r.config.MusicGeneration != nil {
-		r.metadata["music.generation.submit"] = musicGenerationSubmitMetadata()
+		r.metadata["music.generation.submit"] = musicGenerationSubmitMetadata(r.config.MusicControl != nil)
 		r.metadata["music.generation.status"] = musicGenerationStatusMetadata()
 	}
 	if r.config.MusicRemix != nil {
-		r.metadata["music.remix.create"] = musicRemixCreateMetadata()
+		r.metadata["music.remix.create"] = musicRemixCreateMetadata(r.config.MusicControl != nil)
 	}
 	if r.config.LyricsCatalogLookup != nil {
 		r.metadata["lyrics_catalog.lookup"] = lyricsCatalogLookupMetadata()

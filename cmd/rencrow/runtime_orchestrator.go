@@ -111,7 +111,7 @@ func buildOrchestratorRuntime(
 			vtuberBridge,
 			nodeCaps,
 		)
-		deps.distOrch.SetMusicWorkflowRouting(cfg.Music.ActorID, deps.musicGenerationReady, deps.musicRemixReady, agents.WorkerToolLoopReady)
+		deps.distOrch.SetMusicWorkflowRouting(cfg.Music.ActorID, deps.musicGenerationReady, deps.musicRemixReady, deps.musicControlReady, agents.WorkerToolLoopReady)
 		deps.distOrch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 		deps.distOrch.SetDurableStoreWorkflow(deps.durableStoreWorkflow)
 		deps.distOrch.SetShiroChatAgent(agents.ShiroChat)
@@ -148,7 +148,7 @@ func buildOrchestratorRuntime(
 		llmRuntime.Coder4,
 		workerExecutionService,
 	)
-	orch.SetMusicWorkflowRouting(cfg.Music.ActorID, deps.musicGenerationReady, deps.musicRemixReady, agents.WorkerToolLoopReady)
+	orch.SetMusicWorkflowRouting(cfg.Music.ActorID, deps.musicGenerationReady, deps.musicRemixReady, deps.musicControlReady, agents.WorkerToolLoopReady)
 	orch.SetMioRetrievalPort(deps.mioRetrieval)
 	orch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 	orch.SetDurableStoreWorkflow(deps.durableStoreWorkflow)

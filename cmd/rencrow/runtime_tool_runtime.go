@@ -42,6 +42,7 @@ type toolRuntime struct {
 	MusicPlaybackLinkReady        bool
 	MusicGenerationReady          bool
 	MusicRemixReady               bool
+	MusicControlReady             bool
 	PersonRelatedCatalogLookup    *runtimePersonRelatedCatalogLookup
 	PersonRelatedCollectionWorker *runtimePersonRelatedCollectionWorker
 	PersonRelatedSummaryWorker    *runtimePersonRelatedSummaryWorker
@@ -446,6 +447,7 @@ func buildToolRuntimeWithCapabilities(
 		MusicPlaybackLinkReady:        workerToolRunnerCfg.MusicPlaybackLinkReady,
 		MusicGenerationReady:          workerToolRunnerCfg.MusicGeneration != nil,
 		MusicRemixReady:               workerToolRunnerCfg.MusicRemix != nil,
+		MusicControlReady:             workerToolRunnerCfg.MusicControl != nil,
 		PersonRelatedCatalogLookup:    personRelatedCatalogLookup,
 		PersonRelatedCollectionWorker: personRelatedCollectionWorker,
 		PersonRelatedSummaryWorker:    personRelatedSummaryWorker,

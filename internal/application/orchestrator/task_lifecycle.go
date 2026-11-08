@@ -826,6 +826,11 @@ func bindRouteExecutionContext(ctx context.Context, input domainconversation.Tur
 	if err != nil {
 		return nil, fmt.Errorf("bind route Agent scope: %w", err)
 	}
+	if _, verified := domaintool.AuthenticatedHTTPUserScopeFromContext(bound); verified {
+		if _, found := domaintool.OriginalUserMessageFromContext(bound); !found {
+			bound = domaintool.WithOriginalUserMessage(bound, input.MessageText())
+		}
+	}
 	return bound, nil
 }
 

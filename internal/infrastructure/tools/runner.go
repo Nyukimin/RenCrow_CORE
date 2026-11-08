@@ -62,6 +62,16 @@ type MusicProjectGateway interface {
 	GetProject(ctx context.Context, projectID string) (MusicProject, error)
 }
 
+// MusicControlGateway is the authenticated, fixed-actor boundary for project
+// control state and normalized generation/edit requests.
+type MusicControlGateway interface {
+	ActorID() string
+	GetMusicControl(ctx context.Context, projectID string) (MusicControlState, error)
+	UpdateMusicControl(ctx context.Context, projectID string, input MusicControlUpdate, idempotencyKey string) (MusicControlState, error)
+	CreateMusicControlRequest(ctx context.Context, projectID string, input MusicControlRequestInput, idempotencyKey string) (MusicControlRequest, error)
+	GetMusicControlRequest(ctx context.Context, projectID, requestID string) (MusicControlRequest, error)
+}
+
 // MusicPlanGateway is the separate authenticated production-plan storage
 // boundary. Plan readiness does not imply a generation capability.
 type MusicPlanGateway interface {
@@ -153,9 +163,79 @@ type MusicProductionPlan struct {
 	ExecutionReason string `json:"execution_reason"`
 }
 
+// MusicFrameRange uses the Music API's half-open 48 kHz frame convention.
+type MusicFrameRange struct {
+	StartFrame int64 `json:"start_frame"`
+	EndFrame   int64 `json:"end_frame"`
+}
+
+type MusicLock struct {
+	ID                 string           `json:"id,omitempty"`
+	Type               string           `json:"type"`
+	Stage              string           `json:"stage,omitempty"`
+	ReferenceVersionID string           `json:"reference_version_id"`
+	Scope              *MusicFrameRange `json:"scope,omitempty"`
+	Properties         []string         `json:"properties,omitempty"`
+}
+
+type MusicConstraint struct {
+	Property string `json:"property"`
+	Value    string `json:"value"`
+}
+
+type MusicControlState struct {
+	ProjectID            string            `json:"project_id"`
+	Revision             int64             `json:"revision"`
+	Mode                 string            `json:"mode"`
+	ModeSource           string            `json:"mode_source"`
+	Locks                []MusicLock       `json:"locks"`
+	HardConstraints      []MusicConstraint `json:"hard_constraints"`
+	AdoptedVersionID     *string           `json:"adopted_version_id,omitempty"`
+	RecommendedVersionID *string           `json:"recommended_version_id,omitempty"`
+	UpdatedAt            time.Time         `json:"updated_at"`
+}
+
+type MusicControlUpdate struct {
+	ExpectedRevision           int64             `json:"expected_revision"`
+	Mode                       *string           `json:"mode,omitempty"`
+	AddLocks                   []MusicLock       `json:"add_locks,omitempty"`
+	RemoveLockIDs              []string          `json:"remove_lock_ids,omitempty"`
+	SetHardConstraints         []MusicConstraint `json:"set_hard_constraints,omitempty"`
+	RemoveConstraintProperties []string          `json:"remove_constraint_properties,omitempty"`
+	SelectVersionID            *string           `json:"select_version_id,omitempty"`
+}
+
+type MusicControlRequestInput struct {
+	RawText         string            `json:"raw_text"`
+	ExplicitMode    *string           `json:"explicit_mode,omitempty"`
+	InferredMode    *string           `json:"inferred_mode,omitempty"`
+	Layers          []string          `json:"layers"`
+	Operation       string            `json:"operation"`
+	BaseVersionID   *string           `json:"base_version_id,omitempty"`
+	EditScope       *MusicFrameRange  `json:"edit_scope,omitempty"`
+	HardConstraints []MusicConstraint `json:"hard_constraints,omitempty"`
+	SoftPreferences []MusicConstraint `json:"soft_preferences,omitempty"`
+	PreserveLocks   []MusicLock       `json:"preserve_locks,omitempty"`
+	AutoScope       []string          `json:"auto_scope,omitempty"`
+}
+
+type MusicControlRequest struct {
+	MusicControlRequestInput
+	RequestID                string            `json:"request_id"`
+	ProjectID                string            `json:"project_id"`
+	RequestRevision          int64             `json:"request_revision"`
+	ControlRevision          int64             `json:"control_revision"`
+	Mode                     string            `json:"mode"`
+	ModeSource               string            `json:"mode_source"`
+	EffectiveLocks           []MusicLock       `json:"effective_locks"`
+	EffectiveHardConstraints []MusicConstraint `json:"effective_hard_constraints"`
+	CreatedAt                time.Time         `json:"created_at"`
+}
+
 type MusicGenerationRequest struct {
 	PlanID           string `json:"plan_id"`
 	ExpectedPlanHash string `json:"expected_plan_hash"`
+	RequestID        string `json:"request_id,omitempty"`
 }
 
 type MusicJobStatus struct {
@@ -163,6 +243,8 @@ type MusicJobStatus struct {
 	ProjectID       string  `json:"project_id"`
 	PlanID          string  `json:"plan_id"`
 	PlanHash        string  `json:"plan_hash"`
+	RequestID       string  `json:"request_id,omitempty"`
+	ControlRevision int64   `json:"control_revision,omitempty"`
 	State           string  `json:"state"`
 	ArtifactID      string  `json:"artifact_id,omitempty"`
 	DurationFrames  int64   `json:"duration_frames,omitempty"`
@@ -181,6 +263,7 @@ type MusicEditInput struct {
 	EndFrame         int64   `json:"end_frame"`
 	GainDB           float64 `json:"gain_db"`
 	FadeFrames       int64   `json:"fade_frames"`
+	RequestID        string  `json:"request_id,omitempty"`
 }
 
 type MusicArtifact struct {
@@ -335,6 +418,7 @@ type ToolRunnerConfig struct {
 	MovieCatalogLookup            MovieCatalogLookup            // nil = movie_catalog.lookup 無効
 	MusicCatalogLookup            MusicCatalogLookup            // nil = music_catalog.lookup 無効
 	MusicProjects                 MusicProjectGateway           // nil = RenCrow_Music project Tools 無効
+	MusicControl                  MusicControlGateway           // nil = RenCrow_Music production-control Tools 無効
 	MusicPlans                    MusicPlanGateway              // nil = RenCrow_Music production-plan Tools 無効
 	MusicGeneration               MusicGenerationGateway        // nil = RenCrow_Music generation Tools 無効
 	MusicRemix                    MusicRemixGateway             // nil = RenCrow_Music bounded remix Tool 無効

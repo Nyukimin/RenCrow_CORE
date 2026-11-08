@@ -21,14 +21,16 @@ func TestConfigureRuntimeMusicToolsSeparatesProjectAndPlanReadiness(t *testing.T
 		capability  map[string]map[string]string
 		wantProject bool
 		wantPlan    bool
+		wantControl bool
 	}{
 		{
 			name: "both ready",
 			capability: map[string]map[string]string{
 				"project_storage":         {"support_state": "implemented", "availability": "ready"},
 				"production_plan_storage": {"support_state": "implemented", "availability": "ready"},
+				"production_control":      {"support_state": "implemented", "availability": "ready"},
 			},
-			wantProject: true, wantPlan: true,
+			wantProject: true, wantPlan: true, wantControl: true,
 		},
 		{
 			name: "older project-only gateway",
@@ -36,6 +38,19 @@ func TestConfigureRuntimeMusicToolsSeparatesProjectAndPlanReadiness(t *testing.T
 				"project_storage": {"support_state": "implemented", "availability": "ready"},
 			},
 			wantProject: true, wantPlan: false,
+		},
+		{
+			name: "control readiness is independent of storage capabilities",
+			capability: map[string]map[string]string{
+				"production_control": {"support_state": "implemented", "availability": "ready"},
+			},
+			wantControl: true,
+		},
+		{
+			name: "unready control is not registered",
+			capability: map[string]map[string]string{
+				"production_control": {"support_state": "implemented", "availability": "unavailable"},
+			},
 		},
 		{
 			name: "plan readiness independent",
@@ -92,6 +107,9 @@ func TestConfigureRuntimeMusicToolsSeparatesProjectAndPlanReadiness(t *testing.T
 			}
 			if got := worker.MusicPlans != nil; got != tt.wantPlan {
 				t.Errorf("plan gateway configured = %t, want %t", got, tt.wantPlan)
+			}
+			if got := worker.MusicControl != nil; got != tt.wantControl {
+				t.Errorf("production-control gateway configured = %t, want %t", got, tt.wantControl)
 			}
 			if calls != 1 {
 				t.Fatalf("capability probe count = %d, want one", calls)

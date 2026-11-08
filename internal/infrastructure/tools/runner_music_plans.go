@@ -23,10 +23,11 @@ func (r *ToolRunner) registerMusicPlanTools() {
 func musicPlanCreateMetadata() tool.ToolMetadata {
 	return tool.ToolMetadata{
 		ToolID: "music.plan.create", Version: "1.0.0", Category: "mutation", Origin: tool.OriginCoreRuntime,
-		Description: "RenCrow_Musicへschema 1.0のproduction planを保存する。音源生成は行わず、指定projectに紐づく不変planを1件作成する。",
+		Description: "RenCrow_Musicへschema 1.0のproduction planを保存する。音源生成は行わず、指定projectに紐づく不変planを1件作成する。言語・長さ・候補数はlanguage/duration_target_s/candidate_countへ記載し、constraintsには実際の追加条件だけを記載する。",
 		Invariants: []string{
 			"project、actor、request ID、kind、schema version、rights、budget、idempotency keyはTool引数で上書きできない",
 			"明示されたbrief、lyrics、constraints、protected features、assumptionsを保持する",
+			"intended_useはproject作成時の専用field、言語・長さ・候補数は専用plan fieldで指定し、これらをconstraintsへ重複転記しない。実際の追加条件はconstraintsに残す",
 			"認証済みrequest IDごとに同じ作成keyを使い、本文を変更した再利用はConflictになる",
 		},
 		Parameters: map[string]any{

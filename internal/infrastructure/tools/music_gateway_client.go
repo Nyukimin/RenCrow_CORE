@@ -22,6 +22,7 @@ const (
 	musicGatewayRequestTimeout = 8 * time.Second
 	maxMusicGatewayResponse    = 128 << 10
 	maxMusicPlanRequest        = 96 << 10
+	maxMusicControlRequest     = 96 << 10
 	maxMusicGenerationRequest  = 8 << 10
 	maxMusicArtifactBytes      = 64 << 20
 )
@@ -39,6 +40,8 @@ type MusicGatewayClientConfig struct {
 // credentials never enter error text or Tool output.
 type MusicGatewayStatusError struct {
 	StatusCode int
+	Code       string
+	Retryable  bool
 }
 
 func (e *MusicGatewayStatusError) Error() string {
@@ -162,6 +165,92 @@ func (c *MusicProjectGatewayClient) GetProject(ctx context.Context, projectID st
 	return project, nil
 }
 
+func (c *MusicProjectGatewayClient) GetMusicControl(ctx context.Context, projectID string) (MusicControlState, error) {
+	if err := validateMusicProjectID(projectID); err != nil {
+		return MusicControlState{}, err
+	}
+	var state MusicControlState
+	path := "/v1/music/projects/" + url.PathEscape(projectID) + "/control"
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, "", http.StatusOK, false, &state); err != nil {
+		return MusicControlState{}, err
+	}
+	if err := validateMusicControlState(state, projectID); err != nil {
+		return MusicControlState{}, err
+	}
+	return state, nil
+}
+
+func (c *MusicProjectGatewayClient) UpdateMusicControl(ctx context.Context, projectID string, input MusicControlUpdate, idempotencyKey string) (MusicControlState, error) {
+	if err := validateMusicProjectID(projectID); err != nil {
+		return MusicControlState{}, err
+	}
+	if err := validateMusicControlUpdate(input); err != nil {
+		return MusicControlState{}, err
+	}
+	if err := validateMusicIdempotencyKey(idempotencyKey); err != nil {
+		return MusicControlState{}, err
+	}
+	body, err := json.Marshal(input)
+	if err != nil || len(body) > maxMusicControlRequest {
+		return MusicControlState{}, errors.New("music control update is invalid or exceeds the configured limit")
+	}
+	var state MusicControlState
+	path := "/v1/music/projects/" + url.PathEscape(projectID) + "/control"
+	if err := c.doJSON(ctx, http.MethodPost, path, body, idempotencyKey, http.StatusOK, false, &state); err != nil {
+		return MusicControlState{}, err
+	}
+	if err := validateMusicControlState(state, projectID); err != nil {
+		return MusicControlState{}, err
+	}
+	return state, nil
+}
+
+func (c *MusicProjectGatewayClient) CreateMusicControlRequest(ctx context.Context, projectID string, input MusicControlRequestInput, idempotencyKey string) (MusicControlRequest, error) {
+	if err := validateMusicProjectID(projectID); err != nil {
+		return MusicControlRequest{}, err
+	}
+	if err := validateMusicControlRequestInput(input); err != nil {
+		return MusicControlRequest{}, err
+	}
+	if err := validateMusicIdempotencyKey(idempotencyKey); err != nil {
+		return MusicControlRequest{}, err
+	}
+	body, err := json.Marshal(input)
+	if err != nil || len(body) > maxMusicControlRequest {
+		return MusicControlRequest{}, errors.New("music control request is invalid or exceeds the configured limit")
+	}
+	var request MusicControlRequest
+	path := "/v1/music/projects/" + url.PathEscape(projectID) + "/requests"
+	if err := c.doJSON(ctx, http.MethodPost, path, body, idempotencyKey, http.StatusCreated, false, &request); err != nil {
+		return MusicControlRequest{}, err
+	}
+	if err := validateMusicControlRequest(request, projectID, ""); err != nil {
+		return MusicControlRequest{}, err
+	}
+	if request.Operation != input.Operation {
+		return MusicControlRequest{}, errors.New("music control request response operation does not match the request")
+	}
+	return request, nil
+}
+
+func (c *MusicProjectGatewayClient) GetMusicControlRequest(ctx context.Context, projectID, requestID string) (MusicControlRequest, error) {
+	if err := validateMusicProjectID(projectID); err != nil {
+		return MusicControlRequest{}, err
+	}
+	if err := validateMusicRequestID(requestID); err != nil {
+		return MusicControlRequest{}, err
+	}
+	var request MusicControlRequest
+	path := "/v1/music/projects/" + url.PathEscape(projectID) + "/requests/" + url.PathEscape(requestID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, "", http.StatusOK, false, &request); err != nil {
+		return MusicControlRequest{}, err
+	}
+	if err := validateMusicControlRequest(request, projectID, requestID); err != nil {
+		return MusicControlRequest{}, err
+	}
+	return request, nil
+}
+
 func (c *MusicProjectGatewayClient) CreateProductionPlan(ctx context.Context, projectID string, input MusicProductionPlanInput, idempotencyKey string) (MusicProductionPlan, error) {
 	if err := validateMusicProjectID(projectID); err != nil {
 		return MusicProductionPlan{}, err
@@ -218,6 +307,9 @@ func (c *MusicProjectGatewayClient) SubmitMusicGeneration(ctx context.Context, p
 	if err := validateMusicPlanID(input.PlanID); err != nil || !musicPlanHashPattern.MatchString(input.ExpectedPlanHash) {
 		return MusicGenerationAccepted{}, errors.New("music generation plan identity is invalid")
 	}
+	if input.RequestID != "" && validateMusicRequestID(input.RequestID) != nil {
+		return MusicGenerationAccepted{}, errors.New("music generation request ID is invalid")
+	}
 	if err := validateMusicIdempotencyKey(idempotencyKey); err != nil {
 		return MusicGenerationAccepted{}, err
 	}
@@ -230,7 +322,8 @@ func (c *MusicProjectGatewayClient) SubmitMusicGeneration(ctx context.Context, p
 	if err := c.doJSON(ctx, http.MethodPost, path, body, idempotencyKey, http.StatusAccepted, false, &accepted); err != nil {
 		return MusicGenerationAccepted{}, err
 	}
-	if err := validateMusicJobStatus(accepted); err != nil || accepted.ProjectID != projectID || accepted.PlanID != input.PlanID || accepted.PlanHash != input.ExpectedPlanHash {
+	if err := validateMusicJobStatus(accepted); err != nil || accepted.ProjectID != projectID || accepted.PlanID != input.PlanID || accepted.PlanHash != input.ExpectedPlanHash ||
+		(input.RequestID != "" && accepted.RequestID != input.RequestID) {
 		return MusicGenerationAccepted{}, errors.New("music generation acceptance does not match the request")
 	}
 	return accepted, nil
@@ -263,6 +356,9 @@ func (c *MusicProjectGatewayClient) CreateMusicEdit(ctx context.Context, project
 	}
 	if err := validateMusicEditInput(input); err != nil {
 		return MusicArtifact{}, err
+	}
+	if input.RequestID != "" && validateMusicRequestID(input.RequestID) != nil {
+		return MusicArtifact{}, errors.New("music remix request ID is invalid")
 	}
 	if err := validateMusicIdempotencyKey(idempotencyKey); err != nil {
 		return MusicArtifact{}, err
@@ -334,7 +430,7 @@ func (c *MusicProjectGatewayClient) doJSON(ctx context.Context, method, path str
 	}
 	defer response.Body.Close()
 	if response.StatusCode != expectedStatus {
-		return &MusicGatewayStatusError{StatusCode: response.StatusCode}
+		return musicGatewayStatusError(response)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
@@ -360,6 +456,270 @@ func (c *MusicProjectGatewayClient) doJSON(ctx context.Context, method, path str
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return errors.New("music gateway response contains trailing JSON")
+	}
+	return nil
+}
+
+func musicGatewayStatusError(response *http.Response) error {
+	statusErr := &MusicGatewayStatusError{StatusCode: response.StatusCode}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" || response.ContentLength > 4096 {
+		return statusErr
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 4097))
+	if err != nil || len(data) > 4096 {
+		return statusErr
+	}
+	var envelope struct {
+		Error struct {
+			Code      string `json:"code"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &envelope) != nil || !allowlistedMusicGatewayErrorCode(envelope.Error.Code) {
+		return statusErr
+	}
+	statusErr.Code = envelope.Error.Code
+	statusErr.Retryable = envelope.Error.Retryable
+	return statusErr
+}
+
+func allowlistedMusicGatewayErrorCode(code string) bool {
+	switch code {
+	case "MUSIC_NEEDS_CONFIRMATION", "MUSIC_PRESERVATION_CONFLICT", "MUSIC_CONTROL_CONFLICT", "MUSIC_CONTROL_STALE", "MUSIC_UNSUPPORTED_OPERATION":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateMusicControlState(state MusicControlState, projectID string) error {
+	if state.ProjectID != projectID || state.Revision < 0 || !validMusicMode(state.Mode) || !validMusicModeSource(state.ModeSource) ||
+		(state.UpdatedAt.IsZero() && !(state.Revision == 0 && state.ModeSource == "default")) {
+		return errors.New("music control response does not match the supported schema or requested project")
+	}
+	if len(state.Locks) > 128 || len(state.HardConstraints) > 128 {
+		return errors.New("music control response exceeds the supported collection limits")
+	}
+	if err := validateMusicLocks(state.Locks, false); err != nil {
+		return errors.New("music control response contains an invalid lock")
+	}
+	if err := validateMusicConstraints(state.HardConstraints); err != nil {
+		return errors.New("music control response contains an invalid hard constraint")
+	}
+	if err := validateMusicHardConstraints(state.HardConstraints); err != nil {
+		return errors.New("music control response contains an unsupported hard constraint")
+	}
+	for _, versionID := range []*string{state.AdoptedVersionID, state.RecommendedVersionID} {
+		if versionID != nil && validateMusicArtifactID(*versionID) != nil {
+			return errors.New("music control response contains an invalid version ID")
+		}
+	}
+	return nil
+}
+
+func validateMusicControlUpdate(input MusicControlUpdate) error {
+	if input.ExpectedRevision < 0 || len(input.AddLocks) > 128 || len(input.RemoveLockIDs) > 128 ||
+		len(input.SetHardConstraints) > 128 || len(input.RemoveConstraintProperties) > 128 {
+		return errors.New("music control update is outside the supported bounds")
+	}
+	if input.Mode == nil && len(input.AddLocks) == 0 && len(input.RemoveLockIDs) == 0 &&
+		len(input.SetHardConstraints) == 0 && len(input.RemoveConstraintProperties) == 0 && input.SelectVersionID == nil {
+		return errors.New("music control update has no changes")
+	}
+	if input.Mode != nil && !validMusicMode(*input.Mode) {
+		return errors.New("music control mode is unsupported")
+	}
+	if err := validateMusicLocks(input.AddLocks, true); err != nil {
+		return err
+	}
+	for _, lockID := range input.RemoveLockIDs {
+		if !validMusicOpaqueID(lockID) {
+			return errors.New("music control update contains an invalid lock ID")
+		}
+	}
+	if err := validateMusicConstraints(input.SetHardConstraints); err != nil {
+		return err
+	}
+	if err := validateMusicHardConstraints(input.SetHardConstraints); err != nil {
+		return err
+	}
+	for _, property := range input.RemoveConstraintProperties {
+		if !validMusicText(property, 128) {
+			return errors.New("music control update contains an invalid constraint property")
+		}
+	}
+	if input.SelectVersionID != nil && validateMusicArtifactID(*input.SelectVersionID) != nil {
+		return errors.New("music control update contains an invalid version ID")
+	}
+	return nil
+}
+
+func validateMusicControlRequestInput(input MusicControlRequestInput) error {
+	if !validMusicText(input.RawText, 20000) || (input.Operation != "generation" && input.Operation != "gain_remix") ||
+		len(input.HardConstraints) > 128 || len(input.SoftPreferences) > 128 || len(input.PreserveLocks) > 128 || len(input.AutoScope) > 64 {
+		return errors.New("music control request is outside the supported bounds")
+	}
+	if err := validateMusicRequestLayers(input.Layers); err != nil {
+		return err
+	}
+	if input.ExplicitMode != nil && !validMusicMode(*input.ExplicitMode) {
+		return errors.New("music control request explicit mode is unsupported")
+	}
+	if input.InferredMode != nil && !validMusicMode(*input.InferredMode) {
+		return errors.New("music control request inferred mode is unsupported")
+	}
+	for _, layer := range input.Layers {
+		if !validMusicText(layer, 200) {
+			return errors.New("music control request contains an invalid layer")
+		}
+	}
+	if input.BaseVersionID != nil && validateMusicArtifactID(*input.BaseVersionID) != nil {
+		return errors.New("music control request contains an invalid base version ID")
+	}
+	if input.EditScope != nil && !validMusicFrameRange(*input.EditScope) {
+		return errors.New("music control request contains an invalid edit scope")
+	}
+	if err := validateMusicConstraints(input.HardConstraints); err != nil {
+		return err
+	}
+	if err := validateMusicHardConstraints(input.HardConstraints); err != nil {
+		return err
+	}
+	if err := validateMusicConstraints(input.SoftPreferences); err != nil {
+		return err
+	}
+	if err := validateMusicLocks(input.PreserveLocks, false); err != nil {
+		return err
+	}
+	for _, scope := range input.AutoScope {
+		if !validMusicText(scope, 128) {
+			return errors.New("music control request contains an invalid auto scope")
+		}
+	}
+	return nil
+}
+
+func validateMusicRequestLayers(layers []string) error {
+	if len(layers) < 1 || len(layers) > 3 {
+		return errors.New("Music request requires one to three L1/L2/L3 layer identifiers")
+	}
+	seen := make(map[string]struct{}, len(layers))
+	for _, layer := range layers {
+		if layer != "L1" && layer != "L2" && layer != "L3" {
+			return errors.New("Music request layer must be L1, L2, or L3")
+		}
+		if _, exists := seen[layer]; exists {
+			return errors.New("Music request layer identifiers must be unique")
+		}
+		seen[layer] = struct{}{}
+	}
+	return nil
+}
+
+func validateMusicHardConstraints(constraints []MusicConstraint) error {
+	for _, constraint := range constraints {
+		if constraint.Property != "output_format" && constraint.Property != "write_scope" {
+			return errors.New("Music hard constraint property is unsupported")
+		}
+	}
+	return nil
+}
+
+func validateMusicControlRequest(request MusicControlRequest, projectID, requestID string) error {
+	if request.ProjectID != projectID || !validMusicOpaqueID(request.RequestID) || request.RequestID == "" ||
+		(requestID != "" && request.RequestID != requestID) || request.RequestRevision < 1 || request.ControlRevision < 0 ||
+		!validMusicMode(request.Mode) || !validMusicModeSource(request.ModeSource) || request.CreatedAt.IsZero() ||
+		(request.Operation != "generation" && request.Operation != "gain_remix") || !validMusicText(request.RawText, 20000) {
+		return errors.New("music control request response does not match the supported schema or requested identity")
+	}
+	if len(request.Layers) > 64 || len(request.EffectiveLocks) > 128 || len(request.EffectiveHardConstraints) > 128 {
+		return errors.New("music control request response exceeds the supported collection limits")
+	}
+	if err := validateMusicLocks(request.EffectiveLocks, false); err != nil {
+		return errors.New("music control request response contains an invalid effective lock")
+	}
+	if err := validateMusicConstraints(request.EffectiveHardConstraints); err != nil {
+		return errors.New("music control request response contains an invalid effective constraint")
+	}
+	if err := validateMusicHardConstraints(request.EffectiveHardConstraints); err != nil {
+		return errors.New("music control request response contains an unsupported effective constraint")
+	}
+	return nil
+}
+
+func validateMusicLocks(locks []MusicLock, allowMissingID bool) error {
+	for _, lock := range locks {
+		if lock.ID == "" && !allowMissingID || lock.ID != "" && !validMusicOpaqueID(lock.ID) {
+			return errors.New("lock ID is invalid")
+		}
+		if validateMusicArtifactID(lock.ReferenceVersionID) != nil {
+			return errors.New("lock reference version ID is invalid")
+		}
+		switch lock.Type {
+		case "audio_exact", "structure", "perceptual":
+		default:
+			return errors.New("lock type is unsupported")
+		}
+		if lock.Stage != "" && lock.Stage != "final_mix" && lock.Stage != "track_audio" {
+			return errors.New("lock stage is unsupported")
+		}
+		if lock.Type == "audio_exact" && lock.Stage != "" && lock.Stage != "final_mix" && lock.Stage != "track_audio" {
+			return errors.New("exact audio lock stage is unsupported")
+		}
+		if lock.Scope != nil && !validMusicFrameRange(*lock.Scope) {
+			return errors.New("lock scope is invalid")
+		}
+		if len(lock.Properties) > 64 {
+			return errors.New("lock properties exceed the supported limit")
+		}
+		for _, property := range lock.Properties {
+			if !validMusicText(property, 128) {
+				return errors.New("lock property is invalid")
+			}
+		}
+	}
+	return nil
+}
+
+func validateMusicConstraints(constraints []MusicConstraint) error {
+	for _, constraint := range constraints {
+		if !validMusicText(constraint.Property, 128) || !validMusicText(constraint.Value, 2000) {
+			return errors.New("constraint property or value is invalid")
+		}
+	}
+	return nil
+}
+
+func validMusicFrameRange(scope MusicFrameRange) bool {
+	return scope.StartFrame >= 0 && scope.EndFrame > scope.StartFrame && scope.EndFrame <= 60*60*48000
+}
+
+func validMusicMode(mode string) bool {
+	return mode == "DIRECT" || mode == "AUTO"
+}
+
+func validMusicModeSource(source string) bool {
+	switch source {
+	case "explicit", "project", "inferred", "default":
+		return true
+	default:
+		return false
+	}
+}
+
+func validMusicText(value string, maxRunes int) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && len([]rune(value)) <= maxRunes && !strings.ContainsAny(value, "\x00")
+}
+
+func validMusicOpaqueID(value string) bool {
+	return len(value) > 0 && len(value) <= 256 && musicProjectIDPattern.MatchString(value)
+}
+
+func validateMusicRequestID(requestID string) error {
+	if !validMusicOpaqueID(requestID) {
+		return errors.New("music request ID is invalid")
 	}
 	return nil
 }
@@ -414,8 +774,11 @@ func validateMusicIdempotencyKey(idempotencyKey string) error {
 
 func validateMusicJobStatus(status MusicJobStatus) error {
 	if validateMusicJobID(status.JobID) != nil || validateMusicProjectID(status.ProjectID) != nil ||
-		validateMusicPlanID(status.PlanID) != nil || !musicPlanHashPattern.MatchString(status.PlanHash) || !isMusicJobState(status.State) {
+		validateMusicPlanID(status.PlanID) != nil || !musicPlanHashPattern.MatchString(status.PlanHash) || !isMusicJobState(status.State) || status.ControlRevision < 0 {
 		return errors.New("music job response does not match the supported schema")
+	}
+	if status.RequestID != "" && validateMusicRequestID(status.RequestID) != nil {
+		return errors.New("music job response has an invalid request ID")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, status.CreatedAt); err != nil {
 		return errors.New("music job response has an invalid creation time")
