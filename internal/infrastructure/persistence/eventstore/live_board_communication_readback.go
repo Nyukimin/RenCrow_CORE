@@ -927,7 +927,11 @@ func boardTerminalReplySourceFromEvent(event modulecore.EventEnvelope, scope Boa
 	causationID, okCausation := stringValue(sourcePayload, "causation_id")
 	hopCount, okHop := boardTerminalReplyInt(sourcePayload["hop_count"])
 	recipients, okRecipients := boardTerminalReplyStrings(sourcePayload["recipients"])
-	mentions, okMentions := boardTerminalReplyStrings(sourcePayload["mentions"])
+	mentionsValue, mentionsPresent := sourcePayload["mentions"]
+	mentions, okMentions := boardTerminalReplyStrings(mentionsValue)
+	if mentionsPresent && mentionsValue == nil {
+		mentions, okMentions = nil, true
+	}
 	inboxItemID, okInboxItem := stringValue(sourcePayload, "inbox_item_id")
 	inboxCreatedAt, okInboxTime := parseTime("inbox_created_at")
 	messageAt, okMessageTime := parseTime("message_at")

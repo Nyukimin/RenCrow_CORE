@@ -141,6 +141,7 @@ func TestExplicitBoardOwnerRequestStatusReturnsVerifiedPublishedIDsAndTerminalRe
 	source.Binding.MessageID = "board-peer-terminal-reply-shiro"
 	source.Binding.ThreadID = rootThreadID
 	source.CausationID = rootMessageID
+	source.Mentions = nil // BOARD serializes an empty mentions field as explicit JSON null.
 	receipt, recorded, err := fixture.store.RecordBoardTerminalReply(ctx, source)
 	if err != nil || !recorded || receipt.BoardMessageID != source.Binding.MessageID {
 		t.Fatalf("RecordBoardTerminalReply(Shiro correlated reply) = %#v recorded=%t err=%v", receipt, recorded, err)
@@ -154,5 +155,37 @@ func TestExplicitBoardOwnerRequestStatusReturnsVerifiedPublishedIDsAndTerminalRe
 		status.ReplyMessageID != receipt.BoardMessageID {
 		t.Fatalf("ReadBoardOwnerRequestStatusForResponder(after reopen) = %#v found=%t err=%v; want verified root IDs and correlated BOARD reply ID %q",
 			status, found, err, receipt.BoardMessageID)
+	}
+
+	event := readBoardTerminalEventForTest(t, fixture.store, receipt.EventID)
+	boardSource, ok := event.Payload["board_source"].(map[string]any)
+	if !ok {
+		t.Fatalf("terminal event board_source = %#v; want object", event.Payload["board_source"])
+	}
+	if mentions, present := boardSource["mentions"]; !present || mentions != nil {
+		t.Fatalf("terminal event mentions = %#v present=%t; want explicit null", mentions, present)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing mentions", mutate: func(payload map[string]any) { delete(payload, "mentions") }},
+		{name: "malformed mentions", mutate: func(payload map[string]any) { payload["mentions"] = []any{"principal-shiro", 1} }},
+		{name: "null recipients", mutate: func(payload map[string]any) { payload["recipients"] = nil }},
+	} {
+		mutated := event
+		mutated.Payload = make(map[string]any, len(event.Payload))
+		for key, value := range event.Payload {
+			mutated.Payload[key] = value
+		}
+		mutatedBoardSource := make(map[string]any, len(boardSource))
+		for key, value := range boardSource {
+			mutatedBoardSource[key] = value
+		}
+		test.mutate(mutatedBoardSource)
+		mutated.Payload["board_source"] = mutatedBoardSource
+		if _, err := boardTerminalReplySourceFromEvent(mutated, fixture.scope); err == nil {
+			t.Fatalf("boardTerminalReplySourceFromEvent(%s) accepted malformed persisted source", test.name)
+		}
 	}
 }
