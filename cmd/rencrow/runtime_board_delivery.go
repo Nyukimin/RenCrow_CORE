@@ -376,6 +376,9 @@ func prepareAndRecordBoardPublication(ctx context.Context, client *boardcommunic
 		if claim.ClaimID != "" || claim.ClaimReceipt != "" || !claim.LeaseUntil.IsZero() || route.ThreadID != "" || route.ReplyTo != "" || strings.TrimSpace(route.Title) == "" {
 			return eventstore.BoardPublicationAttempt{}, boardcommunication.PreparedSend{}, ErrBoardInboxCanonicalMismatch
 		}
+		if len(mentions) > 0 && (len(mentions) != 1 || mentions[0] != lease.PublicationIntent.Target.PeerPrincipalID) {
+			return eventstore.BoardPublicationAttempt{}, boardcommunication.PreparedSend{}, ErrBoardInboxCanonicalMismatch
+		}
 		request.Title, request.Kind = route.Title, "request"
 	default:
 		return eventstore.BoardPublicationAttempt{}, boardcommunication.PreparedSend{}, ErrBoardInboxCanonicalMismatch

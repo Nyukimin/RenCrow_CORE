@@ -42,10 +42,28 @@ func TestBoardOwnerHTTPRejectsRemoteAndUnauthorizedBeforeCallback(t *testing.T) 
 		t.Fatalf("proxied request status = %d, want 404", got)
 	}
 
+	remoteAgent := boardOwnerHTTPTestRequest(http.MethodPost, boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody("shiro", "kuro"))
+	remoteAgent.RemoteAddr = "203.0.113.8:41000"
+	if got := boardOwnerHTTPDo(handler, remoteAgent).Code; got != http.StatusNotFound {
+		t.Fatalf("remote agent request status = %d, want 404", got)
+	}
+
+	proxiedAgent := boardOwnerHTTPTestRequest(http.MethodPost, boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody("shiro", "kuro"))
+	proxiedAgent.Header.Set("X-Forwarded-For", "203.0.113.8")
+	if got := boardOwnerHTTPDo(handler, proxiedAgent).Code; got != http.StatusNotFound {
+		t.Fatalf("proxied agent request status = %d, want 404", got)
+	}
+
 	unauthorized := boardOwnerHTTPTestRequest(http.MethodPost, boardOwnerRequestsPath, "not-json")
 	unauthorized.Header.Del("Authorization")
 	if got := boardOwnerHTTPDo(handler, unauthorized).Code; got != http.StatusUnauthorized {
 		t.Fatalf("unauthorized request status = %d, want 401", got)
+	}
+
+	unauthorizedAgent := boardOwnerHTTPTestRequest(http.MethodPost, boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody("shiro", "kuro"))
+	unauthorizedAgent.Header.Del("Authorization")
+	if got := boardOwnerHTTPDo(handler, unauthorizedAgent).Code; got != http.StatusUnauthorized {
+		t.Fatalf("unauthorized agent request status = %d, want 401", got)
 	}
 
 	duplicateAuth := boardOwnerHTTPTestRequest(http.MethodGet, boardOwnerRequestsPath+"/"+string(modulecore.NewTurnID()), "")
@@ -266,6 +284,11 @@ func TestBoardOwnerHTTPGETRequiresCanonicalOwnerScopedStatus(t *testing.T) {
 			return value
 		}(), found: true, wantStatus: http.StatusNotFound, wantCode: "not_found"},
 		{name: "unknown stage", receipt: boardOwnerHTTPTestStatusReceipt("future_stage"), found: true, wantStatus: http.StatusServiceUnavailable, wantCode: "request_outcome_unknown"},
+		{name: "agent metadata on legacy receipt", receipt: func() boardOwnerHTTPStatusReceipt {
+			value := boardOwnerHTTPTestStatusReceipt("accepted")
+			value.ActorID = "shiro"
+			return value
+		}(), found: true, wantStatus: http.StatusServiceUnavailable, wantCode: "request_outcome_unknown"},
 		{name: "callback failure", err: errors.New("private publication receipt marker"), wantStatus: http.StatusServiceUnavailable, wantCode: "request_outcome_unknown"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -296,6 +319,227 @@ func TestBoardOwnerHTTPGETRequiresCanonicalOwnerScopedStatus(t *testing.T) {
 	}
 }
 
+func TestBoardOwnerHTTPAgentRequestPathRejectsMissingActorBeforeCallback(t *testing.T) {
+	calls := 0
+	handler := newBoardOwnerHTTPTestHandler(t, boardOwnerHTTPCallbacks{
+		Accept: func(context.Context, string, boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+			calls++
+			return boardOwnerHTTPTestAcceptedReceipt(), nil
+		},
+	})
+	response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodPost,
+		"/api/board-communication/agent-requests", boardOwnerHTTPValidBody()))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("missing actor status = %d body=%s, want 400", response.Code, response.Body.String())
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || payload["error"] != "invalid_request" {
+		t.Fatalf("missing actor error = %s, want invalid_request (decode error %v)", response.Body.String(), err)
+	}
+	if calls != 0 {
+		t.Fatalf("legacy callback calls = %d, want 0 for agent request", calls)
+	}
+}
+
+func TestBoardOwnerHTTPAgentPOSTUsesDedicatedCallbackAndActor(t *testing.T) {
+	legacyCalls, agentCalls := 0, 0
+	var seenOwner string
+	var seenRequest boardOwnerHTTPRequest
+	handler := newBoardOwnerHTTPTestHandler(t, boardOwnerHTTPCallbacks{
+		Accept: func(context.Context, string, boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+			legacyCalls++
+			return boardOwnerHTTPTestAcceptedReceipt(), nil
+		},
+		AgentAccept: func(_ context.Context, ownerID string, request boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+			agentCalls++
+			seenOwner, seenRequest = ownerID, request
+			return boardOwnerHTTPTestAcceptedReceipt(), nil
+		},
+	})
+	response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodPost,
+		boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody("shiro", "kuro")))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("agent POST status = %d body=%s, want 202", response.Code, response.Body.String())
+	}
+	if legacyCalls != 0 || agentCalls != 1 || seenOwner != "owner-7" || seenRequest.ActorID != "shiro" ||
+		seenRequest.ChannelID != "slack_c0c6j86evsr" || seenRequest.PeerID != "kuro" || seenRequest.Title != "Roundtrip" ||
+		seenRequest.Instruction != "Reply with the marker." || seenRequest.IdempotencyKey != "agent-key-1" {
+		t.Fatalf("agent callback calls/owner/request = %d/%d/%q/%+v", legacyCalls, agentCalls, seenOwner, seenRequest)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode agent acceptance: %v", err)
+	}
+	wantKeys := []string{"owner_id", "session_id", "turn_id", "trace_id", "input_message_id", "stage", "accepted_at"}
+	if !boardOwnerHTTPExactKeys(payload, wantKeys...) || payload["stage"] != boardOwnerHTTPStageAccepted {
+		t.Fatalf("agent acceptance shape = %#v, want legacy-compatible accepted fields %v", payload, wantKeys)
+	}
+}
+
+func TestBoardOwnerHTTPAgentPOSTRequiresKnownLowercaseActorAndRejectsSelf(t *testing.T) {
+	calls := 0
+	handler := newBoardOwnerHTTPTestHandler(t, boardOwnerHTTPCallbacks{
+		AgentAccept: func(context.Context, string, boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+			calls++
+			return boardOwnerHTTPTestAcceptedReceipt(), nil
+		},
+	})
+	for _, actorID := range []string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"} {
+		t.Run("known_"+actorID, func(t *testing.T) {
+			response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodPost,
+				boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody(actorID, "peer-external")))
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("known actor %q status = %d body=%s, want 202", actorID, response.Code, response.Body.String())
+			}
+		})
+	}
+	if calls != 8 {
+		t.Fatalf("callback calls for eight known actors = %d, want 8", calls)
+	}
+
+	for _, actorID := range []string{"", "Shiro", "mio ", "ren-browser", "external"} {
+		t.Run("invalid_"+strings.ReplaceAll(actorID, " ", "_"), func(t *testing.T) {
+			response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodPost,
+				boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody(actorID, "peer-external")))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("invalid actor %q status = %d body=%s, want 400", actorID, response.Code, response.Body.String())
+			}
+		})
+	}
+	self := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodPost,
+		boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody("shiro", "shiro")))
+	if self.Code != http.StatusBadRequest {
+		t.Fatalf("self-target status = %d body=%s, want 400", self.Code, self.Body.String())
+	}
+	if calls != 8 {
+		t.Fatalf("callback calls after invalid actors/self-target = %d, want 8", calls)
+	}
+}
+
+func TestBoardOwnerHTTPAgentPOSTFailsClosedWithoutAgentCallback(t *testing.T) {
+	legacyCalls := 0
+	handler := newBoardOwnerHTTPTestHandler(t, boardOwnerHTTPCallbacks{
+		Accept: func(context.Context, string, boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+			legacyCalls++
+			return boardOwnerHTTPTestAcceptedReceipt(), nil
+		},
+	})
+	response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodPost,
+		boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody("shiro", "kuro")))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing agent callback status = %d body=%s, want 503", response.Code, response.Body.String())
+	}
+	if legacyCalls != 0 {
+		t.Fatalf("legacy callback calls = %d, want 0 when agent callback is absent", legacyCalls)
+	}
+}
+
+func TestBoardOwnerHTTPAgentGETUsesDedicatedCallbackAndReceiptFields(t *testing.T) {
+	turnID := modulecore.NewTurnID()
+	legacyCalls, agentCalls := 0, 0
+	var seenOwner string
+	var seenTurn modulecore.TurnID
+	receipt := boardOwnerHTTPTestStatusReceipt("reply_confirmed")
+	receipt.TurnID = turnID
+	receipt.ActorID = "shiro"
+	receipt.BoardMessageID = "m_f86c29ae0967cf1559caf5dd"
+	receipt.ThreadID = "t_0123456789abcdef01234567"
+	receipt.ReplyMessageID = "m_0182bd3c1f33861420c2ce5e"
+	handler := newBoardOwnerHTTPTestHandler(t, boardOwnerHTTPCallbacks{
+		Status: func(context.Context, string, modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+			legacyCalls++
+			return boardOwnerHTTPTestStatusReceipt("accepted"), true, nil
+		},
+		AgentStatus: func(_ context.Context, ownerID string, requestedTurn modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+			agentCalls++
+			seenOwner, seenTurn = ownerID, requestedTurn
+			return receipt, true, nil
+		},
+	})
+	response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodGet,
+		boardOwnerAgentRequestsPath+"/"+string(turnID), ""))
+	if response.Code != http.StatusOK {
+		t.Fatalf("agent GET status = %d body=%s, want 200", response.Code, response.Body.String())
+	}
+	if legacyCalls != 0 || agentCalls != 1 || seenOwner != "owner-7" || seenTurn != turnID {
+		t.Fatalf("agent status callback calls/owner/turn = %d/%d/%q/%q", legacyCalls, agentCalls, seenOwner, seenTurn)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode agent status: %v", err)
+	}
+	wantKeys := []string{"owner_id", "session_id", "turn_id", "trace_id", "input_message_id", "stage", "accepted_at", "updated_at",
+		"actor_id", "board_message_id", "thread_id", "reply_message_id"}
+	if !boardOwnerHTTPExactKeys(payload, wantKeys...) {
+		t.Fatalf("agent status keys = %v, want %v", boardOwnerHTTPKeys(payload), wantKeys)
+	}
+	if payload["actor_id"] != receipt.ActorID || payload["board_message_id"] != receipt.BoardMessageID ||
+		payload["thread_id"] != receipt.ThreadID || payload["reply_message_id"] != receipt.ReplyMessageID ||
+		payload["stage"] != "reply_confirmed" {
+		t.Fatalf("agent status does not match receipt: %#v", payload)
+	}
+}
+
+func TestBoardOwnerHTTPAgentGETRejectsInvalidStatusAndBoardIdentifiers(t *testing.T) {
+	turnID := modulecore.NewTurnID()
+	valid := boardOwnerHTTPTestStatusReceipt(boardOwnerHTTPStagePublicationSaved)
+	valid.TurnID = turnID
+	valid.ActorID = "shiro"
+	valid.BoardMessageID = "m_f86c29ae0967cf1559caf5dd"
+	valid.ThreadID = "t_0123456789abcdef01234567"
+	for _, test := range []struct {
+		name   string
+		mutate func(*boardOwnerHTTPStatusReceipt)
+	}{
+		{name: "unknown actor", mutate: func(receipt *boardOwnerHTTPStatusReceipt) { receipt.ActorID = "Shiro" }},
+		{name: "wrong message prefix", mutate: func(receipt *boardOwnerHTTPStatusReceipt) { receipt.BoardMessageID = "t_f86c29ae0967cf1559caf5dd" }},
+		{name: "wrong thread prefix", mutate: func(receipt *boardOwnerHTTPStatusReceipt) { receipt.ThreadID = "m_0123456789abcdef01234567" }},
+		{name: "malformed board identifier", mutate: func(receipt *boardOwnerHTTPStatusReceipt) { receipt.BoardMessageID = "m_not-a-board-id" }},
+		{name: "missing publication identifiers", mutate: func(receipt *boardOwnerHTTPStatusReceipt) { receipt.ThreadID = "" }},
+		{name: "missing correlated reply", mutate: func(receipt *boardOwnerHTTPStatusReceipt) {
+			receipt.Stage = boardOwnerHTTPStageReplyConfirmed
+			receipt.ReplyMessageID = ""
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := valid
+			test.mutate(&candidate)
+			handler := newBoardOwnerHTTPTestHandler(t, boardOwnerHTTPCallbacks{
+				AgentStatus: func(context.Context, string, modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+					return candidate, true, nil
+				},
+			})
+			response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodGet,
+				boardOwnerAgentRequestsPath+"/"+string(turnID), ""))
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("invalid status receipt = %d body=%s, want 503", response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "f86c29") || strings.Contains(response.Body.String(), "Shiro") {
+				t.Fatalf("invalid status response leaked receipt identifiers: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestBoardOwnerHTTPAgentGETFailsClosedWithoutAgentStatus(t *testing.T) {
+	turnID := modulecore.NewTurnID()
+	legacyCalls := 0
+	handler := newBoardOwnerHTTPTestHandler(t, boardOwnerHTTPCallbacks{
+		Status: func(context.Context, string, modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+			legacyCalls++
+			return boardOwnerHTTPTestStatusReceipt("accepted"), true, nil
+		},
+	})
+	response := boardOwnerHTTPDo(handler, boardOwnerHTTPTestRequest(http.MethodGet,
+		boardOwnerAgentRequestsPath+"/"+string(turnID), ""))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing agent status callback = %d body=%s, want 503", response.Code, response.Body.String())
+	}
+	if legacyCalls != 0 {
+		t.Fatalf("legacy status callback calls = %d, want 0 when agent callback is absent", legacyCalls)
+	}
+}
+
 func newBoardOwnerHTTPTestHandler(t *testing.T, callbacks boardOwnerHTTPCallbacks) http.Handler {
 	t.Helper()
 	handler, err := newBoardOwnerHTTPHandler("owner-7", []byte(boardOwnerHTTPTestToken), callbacks)
@@ -321,6 +565,10 @@ func boardOwnerHTTPDo(handler http.Handler, req *http.Request) *httptest.Respons
 
 func boardOwnerHTTPValidBody() string {
 	return `{"channel_id":"channel-1","peer_id":"peer-2","title":"Title","instruction":"Do work","idempotency_key":"key-1"}`
+}
+
+func boardOwnerHTTPAgentBody(actorID, peerID string) string {
+	return `{"actor_id":"` + actorID + `","channel_id":"slack_c0c6j86evsr","peer_id":"` + peerID + `","title":"Roundtrip","instruction":"Reply with the marker.","idempotency_key":"agent-key-1"}`
 }
 
 func boardOwnerHTTPTestAcceptedReceipt() boardOwnerHTTPAcceptedReceipt {

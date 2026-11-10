@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -232,8 +233,13 @@ func TestRunBoardPublicationDeliveryPublishesAndReplaysNewRootWithoutPeerClaim(t
 		t.Fatalf("after unknown root send: attempts/retries/completions=%d/%d/%d; want 1/1/0", len(journal.attempts), len(journal.retries), len(journal.completions))
 	}
 	first := append([]byte(nil), journal.attempts[0].PreparedBytes...)
+	firstDigest := sha256.Sum256(first)
+	firstHash := hex.EncodeToString(firstDigest[:])
+	if journal.attempts[0].PayloadSHA256 != firstHash {
+		t.Fatalf("new-root recorded payload hash = %q; want SHA-256 %q", journal.attempts[0].PayloadSHA256, firstHash)
+	}
 	_, prepared, err := restoreBoardPublicationAttempt(fixture.wire.client, fixture.lease, journal.attempts[0])
-	if err != nil || prepared.Path() != "/api/v1/threads" || prepared.IdempotencyKey() != fixture.lease.LogicalKey {
+	if err != nil || prepared.Path() != "/api/v1/threads" || prepared.IdempotencyKey() != fixture.lease.LogicalKey || !bytes.Equal(prepared.JSONBytes(), first) {
 		t.Fatalf("restored new-root attempt path/key = %q/%q, err %v; want pinned root endpoint and stable key", prepared.Path(), prepared.IdempotencyKey(), err)
 	}
 
@@ -242,6 +248,9 @@ func TestRunBoardPublicationDeliveryPublishesAndReplaysNewRootWithoutPeerClaim(t
 	}
 	if len(fixture.wire.sendBodies) != 2 || !bytes.Equal(fixture.wire.sendBodies[0], first) || !bytes.Equal(fixture.wire.sendBodies[1], first) {
 		t.Fatalf("new-root replay changed prepared bytes: %q / %q", fixture.wire.sendBodies[0], fixture.wire.sendBodies[1])
+	}
+	if len(journal.attempts) != 1 || journal.attempts[0].PayloadSHA256 != firstHash || !bytes.Equal(journal.attempts[0].PreparedBytes, first) {
+		t.Fatalf("new-root replay changed durable attempt bytes/hash: bytes=%q hash=%q; want original %q/%q", journal.attempts[0].PreparedBytes, journal.attempts[0].PayloadSHA256, first, firstHash)
 	}
 	if !reflect.DeepEqual(fixture.wire.sendPaths, []string{"/api/v1/threads", "/api/v1/threads"}) {
 		t.Fatalf("new-root POST paths = %#v; want only POST /api/v1/threads", fixture.wire.sendPaths)
@@ -285,6 +294,72 @@ func TestRunBoardPublicationDeliveryPublishesAndReplaysNewRootWithoutPeerClaim(t
 	}
 	if fixture.wire.ackCalls != 0 {
 		t.Fatal("new-root C2b delivery ACKed an inbox item; ACK ownership remains with C2a")
+	}
+}
+
+func TestRunBoardPublicationDeliveryKeepsLegacyNewRootUnmentioned(t *testing.T) {
+	fixture := newBoardPublicationDeliveryTestFixture(t)
+	fixture.lease.TargetKind = "new_root"
+	fixture.lease.Title = "Legacy owner request title"
+	fixture.lease.PublicationIntent.Target.ThreadID = ""
+	fixture.lease.PublicationIntent.Target.ReplyTo = ""
+	fixture.lease.CanonicalResponse.Payload["text"] = "A legacy response containing @peer-other as plain text."
+	fixture.lease.CanonicalResponse.Payload["content"] = fixture.lease.CanonicalResponse.Payload["text"]
+	delete(fixture.lease.CanonicalResponse.Payload, "mentions")
+	fixture.target.ThreadID = ""
+	fixture.target.ReplyTo = ""
+	fixture.wire.newRoot = &boardPublicationNewRootTestTarget{
+		ThreadID: "thread-root-legacy", MessageID: "board-root-legacy", Title: fixture.lease.Title,
+		ChannelID: fixture.target.ChannelID, CorePrincipalID: fixture.target.CorePrincipalID,
+		PeerPrincipalID: fixture.target.PeerPrincipalID,
+	}
+	journal := newBoardPublicationDeliveryTestJournal(fixture.lease, fixture.trace)
+
+	progressed, err := runBoardPublicationDelivery(context.Background(), fixture.wire.client, journal, fixture.input)
+	if err != nil || !progressed {
+		t.Fatalf("runBoardPublicationDelivery(legacy new-root) = progressed %t, err %v; want successful delivery", progressed, err)
+	}
+	if len(fixture.wire.sendBodies) != 1 {
+		t.Fatalf("legacy new-root send count = %d; want one", len(fixture.wire.sendBodies))
+	}
+	var request boardPublicationDeliverySendWire
+	if err := json.Unmarshal(fixture.wire.sendBodies[0], &request); err != nil {
+		t.Fatalf("decode legacy new-root send: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(fixture.wire.sendBodies[0], &fields); err != nil {
+		t.Fatalf("decode legacy new-root fields: %v", err)
+	}
+	if !reflect.DeepEqual(request.Recipients, []string{fixture.target.PeerPrincipalID}) || len(request.Mentions) != 0 {
+		t.Fatalf("legacy new-root recipients/mentions = %#v/%#v; want canonical recipient and no structured mentions", request.Recipients, request.Mentions)
+	}
+	if _, exists := fields["mentions"]; exists {
+		t.Fatal("legacy response without a durable explicit recipient gained a mentions field")
+	}
+}
+
+func TestRunBoardPublicationDeliveryRejectsNewRootMentionOutsideCanonicalRecipient(t *testing.T) {
+	fixture := newBoardPublicationDeliveryTestFixture(t)
+	fixture.lease.TargetKind = "new_root"
+	fixture.lease.Title = "Synthetic owner request title"
+	fixture.lease.PublicationIntent.Target.ThreadID = ""
+	fixture.lease.PublicationIntent.Target.ReplyTo = ""
+	fixture.lease.CanonicalResponse.Payload["mentions"] = []string{"peer-other"}
+	fixture.target.ThreadID = ""
+	fixture.target.ReplyTo = ""
+	fixture.wire.newRoot = &boardPublicationNewRootTestTarget{
+		ThreadID: "thread-root-alpha", MessageID: "board-root-alpha", Title: fixture.lease.Title,
+		ChannelID: fixture.target.ChannelID, CorePrincipalID: fixture.target.CorePrincipalID,
+		PeerPrincipalID: fixture.target.PeerPrincipalID,
+	}
+	journal := newBoardPublicationDeliveryTestJournal(fixture.lease, fixture.trace)
+
+	progressed, err := runBoardPublicationDelivery(context.Background(), fixture.wire.client, journal, fixture.input)
+	if progressed || !errors.Is(err, ErrBoardInboxCanonicalMismatch) {
+		t.Fatalf("runBoardPublicationDelivery(new-root recipient mismatch) = progressed %t, err %v; want canonical mismatch", progressed, err)
+	}
+	if len(journal.attempts) != 0 || len(journal.retries) != 1 || len(fixture.wire.sendBodies) != 0 {
+		t.Fatalf("mismatched mention side effects attempts/retries/sends=%d/%d/%d; want 0/1/0", len(journal.attempts), len(journal.retries), len(fixture.wire.sendBodies))
 	}
 }
 

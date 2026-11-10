@@ -18,10 +18,15 @@ import (
 
 const (
 	boardOwnerRequestsPath                = "/api/board-communication/requests"
+	boardOwnerAgentRequestsPath           = "/api/board-communication/agent-requests"
 	boardOwnerHTTPMaxBody                 = 64 << 10
 	boardOwnerHTTPStageAccepted           = "accepted"
 	boardOwnerHTTPStageCompleted          = "completed"
 	boardOwnerHTTPStagePublicationPending = "publication_pending"
+	boardOwnerHTTPStagePublicationSaved   = "publication_saved"
+	boardOwnerHTTPStageReplyConfirmed     = "reply_confirmed"
+	boardOwnerHTTPStageRejected           = "rejected"
+	boardOwnerHTTPStageUnknown            = "unknown"
 )
 
 var (
@@ -31,6 +36,7 @@ var (
 )
 
 type boardOwnerHTTPRequest struct {
+	ActorID        string `json:"actor_id,omitempty"`
 	ChannelID      string `json:"channel_id"`
 	PeerID         string `json:"peer_id"`
 	Title          string `json:"title"`
@@ -54,6 +60,10 @@ type boardOwnerHTTPStatusReceipt struct {
 	TurnID         modulecore.TurnID
 	TraceID        modulecore.TraceID
 	InputMessageID modulecore.MessageID
+	ActorID        string
+	BoardMessageID string
+	ThreadID       string
+	ReplyMessageID string
 	Stage          string
 	AcceptedAt     time.Time
 	UpdatedAt      time.Time
@@ -61,8 +71,10 @@ type boardOwnerHTTPStatusReceipt struct {
 }
 
 type boardOwnerHTTPCallbacks struct {
-	Accept func(context.Context, string, boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error)
-	Status func(context.Context, string, modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error)
+	Accept      func(context.Context, string, boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error)
+	Status      func(context.Context, string, modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error)
+	AgentAccept func(context.Context, string, boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error)
+	AgentStatus func(context.Context, string, modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error)
 }
 
 type boardOwnerHTTPHandler struct {
@@ -91,6 +103,10 @@ type boardOwnerHTTPStatusResponse struct {
 	TurnID         modulecore.TurnID    `json:"turn_id"`
 	TraceID        modulecore.TraceID   `json:"trace_id"`
 	InputMessageID modulecore.MessageID `json:"input_message_id"`
+	ActorID        string               `json:"actor_id,omitempty"`
+	BoardMessageID string               `json:"board_message_id,omitempty"`
+	ThreadID       string               `json:"thread_id,omitempty"`
+	ReplyMessageID string               `json:"reply_message_id,omitempty"`
 	Stage          string               `json:"stage"`
 	AcceptedAt     time.Time            `json:"accepted_at"`
 	UpdatedAt      time.Time            `json:"updated_at"`
@@ -109,6 +125,8 @@ func newBoardOwnerHTTPHandler(ownerID string, protectedBearer []byte, callback b
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+boardOwnerRequestsPath, h.accept)
 	mux.HandleFunc("GET "+boardOwnerRequestsPath+"/{turn}", h.status)
+	mux.HandleFunc("POST "+boardOwnerAgentRequestsPath, h.accept)
+	mux.HandleFunc("GET "+boardOwnerAgentRequestsPath+"/{turn}", h.status)
 	return localOnlyHandler(mux.ServeHTTP), nil
 }
 
@@ -122,16 +140,21 @@ func (h *boardOwnerHTTPHandler) accept(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	request, err := decodeBoardOwnerHTTPRequest(w, r)
+	agentRequest := r.URL.Path == boardOwnerAgentRequestsPath
+	request, err := decodeBoardOwnerHTTPRequest(w, r, agentRequest)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if h.callback.Accept == nil {
+	accept := h.callback.Accept
+	if agentRequest {
+		accept = h.callback.AgentAccept
+	}
+	if accept == nil {
 		h.writeError(w, http.StatusServiceUnavailable, "runtime_unavailable")
 		return
 	}
-	receipt, err := h.callback.Accept(r.Context(), h.ownerID, request)
+	receipt, err := accept(r.Context(), h.ownerID, request)
 	if err != nil {
 		h.writeAcceptError(w, err)
 		return
@@ -162,11 +185,16 @@ func (h *boardOwnerHTTPHandler) status(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if h.callback.Status == nil {
+	agentRequest := strings.HasPrefix(r.URL.Path, boardOwnerAgentRequestsPath+"/")
+	status := h.callback.Status
+	if agentRequest {
+		status = h.callback.AgentStatus
+	}
+	if status == nil {
 		h.writeError(w, http.StatusServiceUnavailable, "runtime_unavailable")
 		return
 	}
-	receipt, found, err := h.callback.Status(r.Context(), h.ownerID, turnID)
+	receipt, found, err := status(r.Context(), h.ownerID, turnID)
 	if err != nil {
 		if errors.Is(err, errBoardOwnerHTTPNotFound) {
 			h.writeError(w, http.StatusNotFound, "not_found")
@@ -179,14 +207,16 @@ func (h *boardOwnerHTTPHandler) status(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	if !validBoardOwnerHTTPStatusReceipt(receipt) {
+	if (agentRequest && !validBoardOwnerHTTPAgentStatusReceipt(receipt)) || (!agentRequest && !validBoardOwnerHTTPStatusReceipt(receipt)) {
 		h.writeError(w, http.StatusServiceUnavailable, "request_outcome_unknown")
 		return
 	}
 	writeJSONStatus(w, http.StatusOK, boardOwnerHTTPStatusResponse{
 		OwnerID: receipt.OwnerID, SessionID: receipt.SessionID, TurnID: receipt.TurnID,
 		TraceID: receipt.TraceID, InputMessageID: receipt.InputMessageID, Stage: receipt.Stage,
-		AcceptedAt: receipt.AcceptedAt, UpdatedAt: receipt.UpdatedAt,
+		ActorID: receipt.ActorID, BoardMessageID: receipt.BoardMessageID, ThreadID: receipt.ThreadID,
+		ReplyMessageID: receipt.ReplyMessageID,
+		AcceptedAt:     receipt.AcceptedAt, UpdatedAt: receipt.UpdatedAt,
 	})
 }
 
@@ -219,7 +249,7 @@ func (h *boardOwnerHTTPHandler) writeError(w http.ResponseWriter, status int, co
 	writeJSONStatus(w, status, boardOwnerHTTPErrorResponse{Error: code})
 }
 
-func decodeBoardOwnerHTTPRequest(w http.ResponseWriter, r *http.Request) (boardOwnerHTTPRequest, error) {
+func decodeBoardOwnerHTTPRequest(w http.ResponseWriter, r *http.Request, agentRequest bool) (boardOwnerHTTPRequest, error) {
 	if r.Body == nil {
 		return boardOwnerHTTPRequest{}, errBoardOwnerHTTPInvalid
 	}
@@ -235,6 +265,9 @@ func decodeBoardOwnerHTTPRequest(w http.ResponseWriter, r *http.Request) (boardO
 	}
 	allowed := map[string]bool{
 		"channel_id": true, "peer_id": true, "title": true, "instruction": true, "idempotency_key": true,
+	}
+	if agentRequest {
+		allowed["actor_id"] = true
 	}
 	values := make(map[string]string, len(allowed))
 	for decoder.More() {
@@ -261,8 +294,11 @@ func decodeBoardOwnerHTTPRequest(w http.ResponseWriter, r *http.Request) (boardO
 		return boardOwnerHTTPRequest{}, errBoardOwnerHTTPInvalid
 	}
 	request := boardOwnerHTTPRequest{
-		ChannelID: values["channel_id"], PeerID: values["peer_id"], Title: values["title"],
+		ActorID: values["actor_id"], ChannelID: values["channel_id"], PeerID: values["peer_id"], Title: values["title"],
 		Instruction: values["instruction"], IdempotencyKey: values["idempotency_key"],
+	}
+	if agentRequest && (!validBoardOwnerHTTPActorID(request.ActorID) || request.PeerID == request.ActorID) {
+		return boardOwnerHTTPRequest{}, errBoardOwnerHTTPInvalid
 	}
 	if !validBoardOwnerHTTPValue(request.ChannelID, 512) || !validBoardOwnerHTTPValue(request.PeerID, 512) ||
 		!validBoardOwnerHTTPValue(request.Title, 2048) || !validBoardOwnerHTTPValue(request.IdempotencyKey, 512) ||
@@ -270,6 +306,15 @@ func decodeBoardOwnerHTTPRequest(w http.ResponseWriter, r *http.Request) (boardO
 		return boardOwnerHTTPRequest{}, errBoardOwnerHTTPInvalid
 	}
 	return request, nil
+}
+
+func validBoardOwnerHTTPActorID(actorID string) bool {
+	switch actorID {
+	case "mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin":
+		return true
+	default:
+		return false
+	}
 }
 
 func validBoardOwnerHTTPValue(value string, maxBytes int) bool {
@@ -288,9 +333,60 @@ func validBoardOwnerHTTPAcceptedReceipt(receipt boardOwnerHTTPAcceptedReceipt, o
 }
 
 func validBoardOwnerHTTPStatusReceipt(receipt boardOwnerHTTPStatusReceipt) bool {
-	return receipt.Durable && receipt.SessionID.Validate() == nil && receipt.TurnID.Validate() == nil &&
+	return receipt.ActorID == "" && receipt.BoardMessageID == "" && receipt.ThreadID == "" && receipt.ReplyMessageID == "" &&
+		receipt.Durable && receipt.SessionID.Validate() == nil && receipt.TurnID.Validate() == nil &&
 		receipt.TraceID.Validate() == nil && receipt.InputMessageID.Validate() == nil && boardOwnerHTTPStageValid(receipt.Stage) &&
 		validBoardOwnerHTTPTime(receipt.AcceptedAt) && validBoardOwnerHTTPTime(receipt.UpdatedAt) && !receipt.UpdatedAt.Before(receipt.AcceptedAt)
+}
+
+func validBoardOwnerHTTPAgentStatusReceipt(receipt boardOwnerHTTPStatusReceipt) bool {
+	if !receipt.Durable || receipt.SessionID.Validate() != nil || receipt.TurnID.Validate() != nil ||
+		receipt.TraceID.Validate() != nil || receipt.InputMessageID.Validate() != nil || !boardOwnerHTTPAgentStageValid(receipt.Stage) ||
+		!validBoardOwnerHTTPTime(receipt.AcceptedAt) || !validBoardOwnerHTTPTime(receipt.UpdatedAt) || receipt.UpdatedAt.Before(receipt.AcceptedAt) ||
+		!validBoardOwnerHTTPActorID(receipt.ActorID) {
+		return false
+	}
+	if receipt.BoardMessageID != "" && !validBoardOwnerHTTPBoardID(receipt.BoardMessageID, "m_") {
+		return false
+	}
+	if receipt.ThreadID != "" && !validBoardOwnerHTTPBoardID(receipt.ThreadID, "t_") {
+		return false
+	}
+	if receipt.ReplyMessageID != "" && !validBoardOwnerHTTPBoardID(receipt.ReplyMessageID, "m_") {
+		return false
+	}
+	switch receipt.Stage {
+	case boardOwnerHTTPStagePublicationSaved:
+		return receipt.BoardMessageID != "" && receipt.ThreadID != ""
+	case boardOwnerHTTPStageReplyConfirmed:
+		return receipt.BoardMessageID != "" && receipt.ThreadID != "" && receipt.ReplyMessageID != ""
+	default:
+		return true
+	}
+}
+
+func validBoardOwnerHTTPBoardID(value, prefix string) bool {
+	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+24 {
+		return false
+	}
+	for _, character := range value[len(prefix):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func boardOwnerHTTPAgentStageValid(stage string) bool {
+	if boardOwnerHTTPStageValid(stage) {
+		return true
+	}
+	switch stage {
+	case boardOwnerHTTPStagePublicationSaved, boardOwnerHTTPStageReplyConfirmed, boardOwnerHTTPStageRejected, boardOwnerHTTPStageUnknown:
+		return true
+	default:
+		return false
+	}
 }
 
 func boardOwnerHTTPStageValid(stage string) bool {
