@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type boardBootCloseObservedStore struct {
@@ -73,6 +74,47 @@ func TestBoardCommunicationBootKeepsDefaultOffAndEnabledUnavailableOwnerRequestP
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), token) {
 		t.Fatalf("protected BOARD owner POST status=%d body=%q; want redacted 503", response.Code, response.Body.String())
+	}
+}
+
+func TestRegisterBoardCommunicationOwnerRoutesWiresAgentRequestCallbacks(t *testing.T) {
+	acceptedCalls, statusCalls := 0, 0
+	turnID := modulecore.NewTurnID()
+	status := boardOwnerHTTPTestStatusReceipt(boardOwnerHTTPStageReplyConfirmed)
+	status.TurnID = turnID
+	status.ActorID = "shiro"
+	status.BoardMessageID = "m_f86c29ae0967cf1559caf5dd"
+	status.ThreadID = "t_0123456789abcdef01234567"
+	status.ReplyMessageID = "m_0182bd3c1f33861420c2ce5e"
+	handler, err := newBoardOwnerHTTPHandler("owner-7", []byte(boardOwnerHTTPTestToken), boardOwnerHTTPCallbacks{
+		AgentAccept: func(_ context.Context, ownerID string, request boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+			acceptedCalls++
+			if ownerID != "owner-7" || request.ActorID != "shiro" {
+				t.Fatalf("outer mux agent POST callback owner/request = %q/%+v", ownerID, request)
+			}
+			return boardOwnerHTTPTestAcceptedReceipt(), nil
+		},
+		AgentStatus: func(_ context.Context, ownerID string, requestedTurn modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+			statusCalls++
+			if ownerID != "owner-7" || requestedTurn != turnID {
+				t.Fatalf("outer mux agent GET callback owner/turn = %q/%q", ownerID, requestedTurn)
+			}
+			return status, true, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("newBoardOwnerHTTPHandler: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerBoardCommunicationOwnerRoutes(mux, &Dependencies{boardOwnerHTTP: handler})
+
+	post := boardOwnerHTTPDo(mux, boardOwnerHTTPTestRequest(http.MethodPost, boardOwnerAgentRequestsPath, boardOwnerHTTPAgentBody("shiro", "kuro")))
+	if post.Code != http.StatusAccepted || acceptedCalls != 1 {
+		t.Fatalf("outer mux agent POST status/calls = %d/%d body=%s; want 202/1", post.Code, acceptedCalls, post.Body.String())
+	}
+	get := boardOwnerHTTPDo(mux, boardOwnerHTTPTestRequest(http.MethodGet, boardOwnerAgentRequestsPath+"/"+string(turnID), ""))
+	if get.Code != http.StatusOK || statusCalls != 1 {
+		t.Fatalf("outer mux agent GET status/calls = %d/%d body=%s; want 200/1", get.Code, statusCalls, get.Body.String())
 	}
 }
 
