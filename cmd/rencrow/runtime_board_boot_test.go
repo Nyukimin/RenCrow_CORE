@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -165,5 +167,47 @@ func TestBoardCommunicationShutdownJoinsBeforeCanonicalStoreClose(t *testing.T) 
 		}
 	default:
 		t.Fatal("canonical EventStore was not closed after BOARD lifecycle join")
+	}
+}
+
+type boardBootGenerateOnlyConversationProvider struct{}
+
+func (boardBootGenerateOnlyConversationProvider) GenerateConversation(context.Context, domainconversation.ConversationScope, llm.GenerateRequest) (llm.GenerateResponse, error) {
+	return llm.GenerateResponse{}, nil
+}
+
+func TestBoardCommunicationBootRoutesMioOwnerRequestsWithGenerateOnlyConversationProvider(t *testing.T) {
+	token := boardOwnerHTTPTestToken
+	tokenPath := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatalf("write synthetic protected owner token: %v", err)
+	}
+	cfg := &config.Config{
+		BoardCommunication: config.BoardCommunicationConfig{
+			Enabled:     true,
+			PrincipalID: domainconversation.BoardCommunicationMeetingMioPrincipalID,
+			MeetingRoutes: []domainconversation.BoardCommunicationMeetingRoute{{
+				ChannelID:            domainconversation.BoardCommunicationMeetingChannelID,
+				SenderPrincipalID:    domainconversation.BoardCommunicationMeetingMioPrincipalID,
+				RecipientPrincipalID: "muse-comm",
+			}},
+		},
+		LocalAgentOps: config.LocalAgentOpsConfig{
+			Enabled: true, UserID: "owner-alpha", AuthTokenFile: tokenPath,
+		},
+		Prompts: &config.LoadedPrompts{MioPersona: "Mio test persona"},
+	}
+	deps := &Dependencies{}
+	conversation := boardBootGenerateOnlyConversationProvider{}
+	buildBoardCommunicationRuntime(cfg, deps, nil, nil, nil, conversation)
+	if deps.boardOwnerHTTP == nil {
+		t.Fatal("Mio owner request route was not registered")
+	}
+	mux := http.NewServeMux()
+	registerBoardCommunicationOwnerRoutes(mux, deps)
+	response := boardOwnerHTTPDo(mux, boardOwnerHTTPTestRequest(http.MethodPost, boardOwnerAgentRequestsPath,
+		boardOwnerHTTPAgentBody("mio", "muse-comm")))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Mio agent POST status=%d body=%s; want mapped route to reach unavailable boot (503), not 404", response.Code, response.Body.String())
 	}
 }

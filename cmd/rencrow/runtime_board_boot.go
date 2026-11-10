@@ -59,10 +59,10 @@ func buildBoardCommunicationRuntime(
 	service := newBoardCommunicationService(boardCommunicationServiceDeps{enabled: true})
 	deps.boardCommunication = service
 	var mioOwnerRequestChat *agent.BoardPeerChatRuntime
-	ownerRequestProvider, hasOwnerRequestProvider := conversation.(agent.ConversationGenerationProvider)
 	if actorID, ok := domainconversation.BoardCommunicationMeetingInternalActorID(cfg.BoardCommunication.PrincipalID); ok &&
 		actorID == "mio" && hasBoardCommunicationMeetingSenderRoute(cfg.BoardCommunication.MeetingRoutes, cfg.BoardCommunication.PrincipalID) &&
-		cfg.Prompts != nil && hasOwnerRequestProvider {
+		cfg.Prompts != nil && conversation != nil {
+		ownerRequestProvider := responseFirstConversationProvider{provider: conversation}
 		mioOwnerRequestChat, _ = agent.NewBoardPeerChatOwnerRequestRuntime(agent.BoardPeerChatActorMio, cfg.Prompts.MioPersona, ownerRequestProvider)
 	}
 	agentRequestBoots := make(map[string]*boardCommunicationBoot, len(cfg.BoardCommunication.Responders)+1)
