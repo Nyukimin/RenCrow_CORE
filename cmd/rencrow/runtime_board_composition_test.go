@@ -275,7 +275,7 @@ func boardCompositionMeetingTestDependencies(t *testing.T, steps *[]string) (boa
 	deps.InboxScope.AllowedChannelIDs = []string{domainconversation.BoardCommunicationMeetingChannelID}
 	deps.InboxScope.AllowedPeerIDs = []string{"peer-alpha"} // legacy peer scope deliberately excludes the routed peer
 	deps.InboxScope.MeetingRoutes = []domainconversation.BoardCommunicationMeetingRoute{{
-		ChannelID: domainconversation.BoardCommunicationMeetingChannelID,
+		ChannelID:         domainconversation.BoardCommunicationMeetingChannelID,
 		SenderPrincipalID: pin.PrincipalID, RecipientPrincipalID: "dots-comm",
 	}}
 	wire := newBoardInboxWireHarness(t, pin)

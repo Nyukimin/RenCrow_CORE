@@ -85,7 +85,7 @@ func TestMioBoundBoardOwnerRequestRuntimeKeepsLegacySourceAndHash(t *testing.T) 
 	provider, generator := boardOwnerActorResponse(t)
 	journal := &boardOwnerRequestJournalFake{}
 	runtime, err := NewBoardOwnerRequestRuntime(BoardOwnerRequestRuntimeDependencies{
-		Composer: agent.NewMioAgent(nil, nil, nil, nil, nil, nil), Generator: generator,
+		Composer: agent.NewMioAgent(nil, nil, nil, nil, nil, nil).WithSystemPrompt("Mio owner request persona"), Generator: generator,
 		Journal: journal, PolicyVersion: "board-owner-request-v1", TargetActorID: "mio",
 	})
 	if err != nil {

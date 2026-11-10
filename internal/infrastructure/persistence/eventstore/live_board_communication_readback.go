@@ -544,7 +544,7 @@ func (s *SQLiteStore) LoadBoardPublicationByTurn(ctx context.Context, input Boar
 		return BoardPublicationOutcome{}, false, err
 	}
 	defer tx.Rollback()
-	if err := requireBoardPublicationPinForResponderTx(ctx, tx, input.Scope, input.ResponderActorID); err != nil {
+	if _, err := requireBoardCommunicationPinForResponderTx(ctx, tx, input.Scope, input.ResponderActorID); err != nil {
 		return BoardPublicationOutcome{}, false, err
 	}
 	var sessionOwner string
@@ -991,7 +991,7 @@ func (s *SQLiteStore) NextBoardPublicationDueForResponder(ctx context.Context, s
 		return time.Time{}, err
 	}
 	defer tx.Rollback()
-	if err := requireBoardPublicationPinForResponderTx(ctx, tx, scope, responderActorID); err != nil {
+	if _, err := requireBoardCommunicationPinForResponderTx(ctx, tx, scope, responderActorID); err != nil {
 		return time.Time{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `

@@ -23,8 +23,8 @@ const (
 // BoardPeerChatRuntime groups the two components used by the shared-thread
 // runtime. Its composer and generator accept external-peer purpose only.
 type BoardPeerChatRuntime struct {
-	actor               BoardPeerChatActor
-	purpose             conversation.ConversationPurpose
+	actor                BoardPeerChatActor
+	purpose              conversation.ConversationPurpose
 	authoredSystemPrompt string
 	provider             ConversationGenerationProvider
 	Composer             *BoardPeerChatComposer
