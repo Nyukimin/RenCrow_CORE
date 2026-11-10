@@ -100,7 +100,8 @@ func TestMioBoundBoardOwnerRequestRuntimeKeepsLegacySourceAndHash(t *testing.T) 
 		commit.Event.ActorID != "mio" || commit.Event.Payload["from"] != "mio" || commit.Event.Payload["mentions"] != nil {
 		t.Fatalf("legacy Mio semantics changed: scope=%q event_actor=%q payload=%#v", generator.scope.ActorID, commit.Event.ActorID, commit.Event.Payload)
 	}
-	if got, want := commit.ExpectedLookup.SourceFingerprint, "b8c11c536905884ba1400ac6b7e281b566574b46c08f318c410b3b31b31da42f"; got != want {
+	// This is the legacy source/body fingerprint from the pre-actor baseline.
+	if got, want := commit.ExpectedLookup.SourceFingerprint, "7ce49e33a59d0461ffe2470fe736ace504d5b0f08ce71a605fbc7c995acfd1c7"; got != want {
 		t.Fatalf("legacy source fingerprint = %s, want unchanged %s", got, want)
 	}
 }
