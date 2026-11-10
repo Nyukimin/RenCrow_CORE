@@ -28,6 +28,11 @@ type BoardOwnerRequestReadback struct {
 	TurnID         modulecore.TurnID     `json:"turn_id"`
 	TraceID        modulecore.TraceID    `json:"trace_id"`
 	InputMessageID modulecore.MessageID  `json:"input_message_id"`
+	TargetActorID  string                `json:"target_actor_id,omitempty"`
+	BoardMessageID string                `json:"board_message_id,omitempty"`
+	BoardThreadID  string                `json:"board_thread_id,omitempty"`
+	BoardReplyTo   string                `json:"board_reply_to"`
+	ReplyMessageID string                `json:"reply_message_id,omitempty"`
 	Stage          string                `json:"stage"`
 	AcceptedAt     time.Time             `json:"accepted_at"`
 	UpdatedAt      time.Time             `json:"updated_at"`
@@ -37,6 +42,19 @@ type BoardOwnerRequestReadback struct {
 // A false found result is intentionally shared by unknown and out-of-scope
 // requests so callers cannot use the status route to enumerate other owners.
 func (s *SQLiteStore) ReadBoardOwnerRequestStatus(ctx context.Context, scope BoardPublicationScope, turnID modulecore.TurnID) (BoardOwnerRequestReadback, bool, error) {
+	return s.readBoardOwnerRequestStatus(ctx, scope, turnID, "")
+}
+
+// ReadBoardOwnerRequestStatusForResponder returns one verified status only for
+// the fixed target actor and that actor's pinned BOARD principal.
+func (s *SQLiteStore) ReadBoardOwnerRequestStatusForResponder(ctx context.Context, scope BoardPublicationScope, turnID modulecore.TurnID, responderActorID string) (BoardOwnerRequestReadback, bool, error) {
+	if responderActorID == "" {
+		return BoardOwnerRequestReadback{}, false, ErrBoardCommunicationReadbackScopeMismatch
+	}
+	return s.readBoardOwnerRequestStatus(ctx, scope, turnID, responderActorID)
+}
+
+func (s *SQLiteStore) readBoardOwnerRequestStatus(ctx context.Context, scope BoardPublicationScope, turnID modulecore.TurnID, responderActorID string) (BoardOwnerRequestReadback, bool, error) {
 	if err := s.ensureOpen(); err != nil {
 		return BoardOwnerRequestReadback{}, false, err
 	}
@@ -52,12 +70,11 @@ func (s *SQLiteStore) ReadBoardOwnerRequestStatus(ctx context.Context, scope Boa
 	}
 	defer tx.Rollback()
 
-	pin, found, err := readBoardConnectionPinTx(ctx, tx)
-	if err != nil {
+	if err := requireBoardOwnerRequestPinForResponderTx(ctx, tx, scope, responderActorID); err != nil {
+		if errors.Is(err, ErrBoardCommunicationReadbackScopeMismatch) || errors.Is(err, ErrBoardPublicationScopeMismatch) {
+			return BoardOwnerRequestReadback{}, false, nil
+		}
 		return BoardOwnerRequestReadback{}, false, err
-	}
-	if !found || pin.OwnerID != scope.OwnerID || pin.JournalInstanceID != scope.JournalInstanceID || pin.PrincipalID != scope.PrincipalID {
-		return BoardOwnerRequestReadback{}, false, nil
 	}
 	var turnOwner, triggerKind string
 	err = tx.QueryRowContext(ctx, `SELECT owner_id,trigger_kind FROM live_conversation_turn WHERE turn_id=?`, string(turnID)).
@@ -81,6 +98,9 @@ func (s *SQLiteStore) ReadBoardOwnerRequestStatus(ctx context.Context, scope Boa
 		return BoardOwnerRequestReadback{}, false, fmt.Errorf("%w: derive source from canonical input", ErrBoardOwnerRequestStatusCorrupt)
 	}
 	if source.OwnerID != scope.OwnerID || source.BoardInstanceID != scope.JournalInstanceID || source.CorePrincipalID != scope.PrincipalID {
+		return BoardOwnerRequestReadback{}, false, nil
+	}
+	if !boardOwnerRequestTargetMatchesResponder(source.TargetActorID, responderActorID) {
 		return BoardOwnerRequestReadback{}, false, nil
 	}
 	reservation, err := loadBoardOwnerRequestReservationTx(ctx, tx, source)
@@ -145,7 +165,7 @@ func (s *SQLiteStore) ReadBoardOwnerRequestStatus(ctx context.Context, scope Boa
 	acceptedAt := accepted.InputEvent.OccurredAt
 	readback := BoardOwnerRequestReadback{
 		Scope: scope, OwnerID: ownerID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,
-		TraceID: accepted.InputEvent.TraceID, InputMessageID: accepted.InputMessageID,
+		TraceID: accepted.InputEvent.TraceID, InputMessageID: accepted.InputMessageID, TargetActorID: source.TargetActorID,
 		AcceptedAt: acceptedAt, UpdatedAt: acceptedAt, Stage: BoardOwnerRequestStageAccepted,
 	}
 	if ownerOutcomeFound {
@@ -155,6 +175,13 @@ func (s *SQLiteStore) ReadBoardOwnerRequestStatus(ctx context.Context, scope Boa
 	if boardOutcomeFound {
 		readback.Stage = BoardOwnerRequestStageCompleted
 		readback.UpdatedAt = boardOutcome.SendReceipt.StoredAt
+		readback.BoardMessageID = boardOutcome.CanonicalMessage.MessageID
+		readback.BoardThreadID = boardOutcome.CanonicalMessage.ThreadID
+		readback.BoardReplyTo = boardOutcome.CanonicalMessage.ReplyTo
+		readback.ReplyMessageID, err = loadBoardOwnerRequestReplyMessageIDTx(ctx, tx, scope, accepted, ownerOutcome, boardOutcome)
+		if err != nil {
+			return BoardOwnerRequestReadback{}, false, fmt.Errorf("%w: verify correlated BOARD reply: %v", ErrBoardOwnerRequestStatusCorrupt, err)
+		}
 	}
 	if !validBoardOwnerRequestStatusTime(readback.AcceptedAt) || !validBoardOwnerRequestStatusTime(readback.UpdatedAt) ||
 		readback.UpdatedAt.Before(readback.AcceptedAt) {

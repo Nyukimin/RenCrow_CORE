@@ -292,6 +292,9 @@ func (s *SQLiteStore) AcceptBoardOwnerRequest(ctx context.Context, input BoardOw
 			"title": reservation.Source.Title, "idempotency_key": reservation.Source.IdempotencyKey,
 		},
 	}
+	if reservation.Source.TargetActorID != "" {
+		payload["board_owner_request_binding"].(map[string]any)["target_actor_id"] = reservation.Source.TargetActorID
+	}
 	event := modulecore.NewEventEnvelope(modulecore.NewTraceID(), "", nil, "orchestrator", "conversation.board_owner_request", reservation.AdmittedAt, payload)
 	event.SessionID, event.TurnID, event.MessageID = input.SessionID, modulecore.NewTurnID(), modulecore.NewMessageID()
 	accept := AcceptInput{
@@ -393,6 +396,9 @@ func validBoardOwnerRequestSource(source conversationruntime.BoardOwnerRequestSo
 		!validBoardOwnerRequestValue(source.PeerPrincipalID, 512) || !validBoardOwnerRequestValue(source.Title, 2048) {
 		return false
 	}
+	if source.TargetActorID != "" && conversationruntime.ValidateBoardOwnerRequestTargetActorID(source.TargetActorID) != nil {
+		return false
+	}
 	if requireNamespacedKey {
 		_, err := boardOwnerRequestReservationIdentityFromStableKey(source.IdempotencyKey)
 		return err == nil
@@ -401,6 +407,19 @@ func validBoardOwnerRequestSource(source conversationruntime.BoardOwnerRequestSo
 }
 
 func requireBoardOwnerRequestPinTx(ctx context.Context, tx *sql.Tx, source conversationruntime.BoardOwnerRequestSource) (BoardConnectionPin, error) {
+	if source.TargetActorID != "" && source.TargetActorID != "mio" {
+		if source.TargetActorID != source.CorePrincipalID {
+			return BoardConnectionPin{}, ErrBoardOwnerRequestPinMismatch
+		}
+		pin, found, err := readBoardConnectionPinForPrincipalTx(ctx, tx, source.CorePrincipalID)
+		if err != nil {
+			return BoardConnectionPin{}, err
+		}
+		if !found || pin.OwnerID != source.OwnerID || pin.JournalInstanceID != source.BoardInstanceID || pin.PrincipalID != source.CorePrincipalID {
+			return BoardConnectionPin{}, ErrBoardOwnerRequestPinMismatch
+		}
+		return pin, nil
+	}
 	pin, found, err := readBoardConnectionPinTx(ctx, tx)
 	if err != nil {
 		return BoardConnectionPin{}, err
@@ -506,7 +525,13 @@ func validateBoardOwnerRequestEventAndIndex(event modulecore.EventEnvelope, mess
 		return ErrBoardOwnerRequestConflict
 	}
 	binding, ok := payload["board_owner_request_binding"].(map[string]any)
-	if !ok || !boardOwnerRequestExactStringKeys(binding, "board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key") ||
+	legacyBindingKeys := []string{"board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key"}
+	explicitBindingKeys := []string{"board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key", "target_actor_id"}
+	validBindingShape := boardOwnerRequestExactStringKeys(binding, legacyBindingKeys...)
+	if source.TargetActorID != "" {
+		validBindingShape = boardOwnerRequestExactStringKeys(binding, explicitBindingKeys...) && binding["target_actor_id"] == source.TargetActorID
+	}
+	if !ok || !validBindingShape ||
 		binding["board_instance_id"] != source.BoardInstanceID || binding["core_principal_id"] != source.CorePrincipalID ||
 		binding["channel_id"] != source.ChannelID || binding["peer_principal_id"] != source.PeerPrincipalID ||
 		binding["title"] != source.Title || binding["idempotency_key"] != source.IdempotencyKey {
@@ -907,18 +932,25 @@ func validateBoardOwnerRequestCommitInput(input conversationruntime.BoardOwnerRe
 	if err != nil || fingerprint != lookup.SourceFingerprint {
 		return ErrBoardOwnerRequestScopeMismatch
 	}
+	actorID := boardOwnerRequestCanonicalActorID(lookup.Source)
 	event, index := input.Event, eventStoreMessageIndex(input.MessageIndex)
+	validPayloadShape := boardOwnerRequestExactStringKeys(event.Payload,
+		"kind", "visibility", "from", "source_actor_id", "to", "text", "content")
+	if lookup.Source.TargetActorID != "" {
+		validPayloadShape = boardOwnerRequestExactStringKeys(event.Payload,
+			"kind", "visibility", "from", "source_actor_id", "to", "text", "content", "mentions") &&
+			boardOwnerRequestMentionsMatch(event.Payload["mentions"], lookup.Source.PeerPrincipalID)
+	}
 	if err := modulecore.ValidateEventEnvelope(event); err != nil || requireUnsequenced && event.EventSeq != 0 ||
 		!requireUnsequenced && event.EventSeq <= 0 || event.EventType != "agent.response" || event.ComponentID != "conversation_runtime" ||
-		event.ActorKind != "agent" || event.ActorID != "mio" || event.TraceID != accepted.InputEvent.TraceID ||
+		event.ActorKind != "agent" || event.ActorID != actorID || event.TraceID != accepted.InputEvent.TraceID ||
 		event.CausationEventID != accepted.InputEvent.EventID || len(event.DependencyEventIDs) != 0 ||
 		event.SessionID != accepted.SessionID || event.TurnID != accepted.TurnID || event.ThreadID != "" ||
 		event.RequestID != "" || event.ResponseID != "" || event.UtteranceID != "" || event.TaskID != "" || event.RunID != "" ||
 		event.ActionID != "" || event.AttemptID != "" || event.WorkstreamID != "" || event.GoalID != "" || event.ArtifactID != "" ||
 		event.EvidenceID != "" || event.MemoryID != "" || event.RelationID != "" || event.ScheduleID != "" || event.QueueItemID != "" ||
 		event.CheckpointID != "" || event.ReceiptID != "" || event.MessageID == accepted.InputMessageID ||
-		!boardOwnerRequestIDsAvoidBoardReferences(event, lookup.Source) || !boardOwnerRequestExactStringKeys(event.Payload,
-		"kind", "visibility", "from", "source_actor_id", "to", "text", "content") {
+		!boardOwnerRequestIDsAvoidBoardReferences(event, lookup.Source) || !validPayloadShape {
 		return ErrBoardOwnerRequestInvalidOutcome
 	}
 	text, textOK := event.Payload["text"].(string)
@@ -926,15 +958,37 @@ func validateBoardOwnerRequestCommitInput(input conversationruntime.BoardOwnerRe
 	if !textOK || !contentOK || !validBoardOwnerRequestInstruction(text) ||
 		strings.TrimSpace(text) == strings.TrimSpace(boardOwnerRequestPayloadText(accepted.InputEvent.Payload)) ||
 		text != content || event.Payload["kind"] != "reply" || event.Payload["visibility"] != "public" ||
-		event.Payload["from"] != "mio" || event.Payload["source_actor_id"] != "mio" || event.Payload["to"] != "external_peer" {
+		event.Payload["from"] != actorID || event.Payload["source_actor_id"] != actorID || event.Payload["to"] != "external_peer" {
 		return ErrBoardOwnerRequestInvalidOutcome
 	}
 	if err := validateMessageIndex(index, event, accepted.SessionID, accepted.TurnID); err != nil ||
-		index.FromActor != "mio" || index.ToKind != "external_peer" || index.ToActor != lookup.Source.PeerPrincipalID ||
+		index.FromActor != actorID || index.ToKind != "external_peer" || index.ToActor != lookup.Source.PeerPrincipalID ||
 		index.Kind != "board_owner_request" || index.Visibility != "public" || index.ReplyToMessageID != "" {
 		return ErrBoardOwnerRequestInvalidOutcome
 	}
 	return nil
+}
+
+func boardOwnerRequestCanonicalActorID(source conversationruntime.BoardOwnerRequestSource) string {
+	if source.TargetActorID == "" {
+		return "mio"
+	}
+	return source.TargetActorID
+}
+
+func boardOwnerRequestMentionsMatch(value any, peerPrincipalID string) bool {
+	switch mentions := value.(type) {
+	case []string:
+		return len(mentions) == 1 && mentions[0] == peerPrincipalID
+	case []any:
+		if len(mentions) != 1 {
+			return false
+		}
+		mention, ok := mentions[0].(string)
+		return ok && mention == peerPrincipalID
+	default:
+		return false
+	}
 }
 
 func boardOwnerRequestIDsAvoidBoardReferences(event modulecore.EventEnvelope, source conversationruntime.BoardOwnerRequestSource) bool {

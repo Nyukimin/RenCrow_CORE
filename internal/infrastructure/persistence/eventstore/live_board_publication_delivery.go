@@ -35,6 +35,7 @@ type BoardPublicationScope struct {
 
 type BoardPublicationClaimInput struct {
 	Scope                      BoardPublicationScope
+	ResponderActorID           string `json:"responder_actor_id,omitempty"`
 	CanonicalResponseMessageID modulecore.MessageID
 	Now                        time.Time
 	LeaseDuration              time.Duration
@@ -184,6 +185,10 @@ func (s *SQLiteStore) ClaimBoardPublication(ctx context.Context, input BoardPubl
 	if err := validateBoardPublicationScope(input.Scope); err != nil {
 		return BoardPublicationLease{}, false, err
 	}
+	if input.ResponderActorID != "" && input.ResponderActorID != "mio" &&
+		(!domainconversation.IsExternalPeerResponderActor(input.ResponderActorID) || input.ResponderActorID != input.Scope.PrincipalID) {
+		return BoardPublicationLease{}, false, ErrBoardPublicationScopeMismatch
+	}
 	if input.LeaseDuration <= 0 || input.LeaseDuration > maxWorkLeaseDuration {
 		return BoardPublicationLease{}, false, fmt.Errorf("BOARD publication lease duration must be positive and at most %s", maxWorkLeaseDuration)
 	}
@@ -200,8 +205,14 @@ func (s *SQLiteStore) ClaimBoardPublication(ctx context.Context, input BoardPubl
 		return BoardPublicationLease{}, false, err
 	}
 	defer tx.Rollback()
-	if err := requireBoardPublicationPinCandidateTx(ctx, tx, input.Scope); err != nil {
-		return BoardPublicationLease{}, false, err
+	var pinErr error
+	if input.ResponderActorID == "" {
+		pinErr = requireBoardPublicationPinCandidateTx(ctx, tx, input.Scope)
+	} else {
+		pinErr = requireBoardPublicationPinForResponderTx(ctx, tx, input.Scope, input.ResponderActorID)
+	}
+	if pinErr != nil {
+		return BoardPublicationLease{}, false, pinErr
 	}
 	var workID string
 	err = tx.QueryRowContext(ctx, `
@@ -227,8 +238,12 @@ func (s *SQLiteStore) ClaimBoardPublication(ctx context.Context, input BoardPubl
 	if err != nil {
 		return BoardPublicationLease{}, false, err
 	}
-	if _, _, _, _, err := loadBoardPublicationSourceTx(ctx, tx, workID, input.Scope); err != nil {
+	lease, _, _, _, err := loadBoardPublicationSourceTx(ctx, tx, workID, input.Scope)
+	if err != nil {
 		return BoardPublicationLease{}, false, err
+	}
+	if input.ResponderActorID != "" && !boardPublicationActorMatchesResponder(lease.CanonicalResponse.ActorID, input.ResponderActorID) {
+		return BoardPublicationLease{}, false, ErrBoardPublicationScopeMismatch
 	}
 	token := string(modulecore.NewRequestID())
 	result, err := tx.ExecContext(ctx, `
@@ -259,7 +274,7 @@ func (s *SQLiteStore) ClaimBoardPublication(ctx context.Context, input BoardPubl
 		}
 		return BoardPublicationLease{}, false, ErrWorkConflict
 	}
-	lease, _, _, _, err := loadCurrentBoardPublicationLeaseTx(ctx, tx, BoardPublicationLease{
+	lease, _, _, _, err = loadCurrentBoardPublicationLeaseTx(ctx, tx, BoardPublicationLease{
 		Scope: input.Scope, WorkID: workID, LeaseToken: token, LeaseExpiresAt: work.LeaseExpiresAt, Version: work.Version,
 	}, now)
 	if err != nil {
@@ -667,6 +682,35 @@ func requireBoardPublicationPinCandidateTx(ctx context.Context, tx *sql.Tx, scop
 	return ErrBoardPublicationScopeMismatch
 }
 
+func requireBoardPublicationPinForResponderTx(ctx context.Context, tx *sql.Tx, scope BoardPublicationScope, responderActorID string) error {
+	if err := validateBoardPublicationScope(scope); err != nil {
+		return err
+	}
+	if responderActorID == "" {
+		_, err := requireBoardPublicationPinTx(ctx, tx, scope)
+		return err
+	}
+	if responderActorID == "mio" {
+		_, err := requireBoardPublicationPinTx(ctx, tx, scope)
+		return err
+	}
+	if !domainconversation.IsExternalPeerResponderActor(responderActorID) || responderActorID != scope.PrincipalID {
+		return ErrBoardPublicationScopeMismatch
+	}
+	pin, found, err := readBoardConnectionPinForPrincipalTx(ctx, tx, scope.PrincipalID)
+	if err != nil {
+		return err
+	}
+	if !found || !boardConnectionPinMatchesPublicationScope(pin, scope) {
+		return ErrBoardPublicationScopeMismatch
+	}
+	return nil
+}
+
+func boardPublicationActorMatchesResponder(storedActorID, responderActorID string) bool {
+	return responderActorID == "" || storedActorID == responderActorID
+}
+
 func requireBoardPublicationPeerPinTx(ctx context.Context, tx *sql.Tx, scope BoardPublicationScope, binding domainconversation.ExternalPeerBinding) (BoardConnectionPin, error) {
 	if err := validateBoardPublicationScope(scope); err != nil {
 		return BoardConnectionPin{}, err
@@ -712,9 +756,6 @@ func loadBoardPublicationSourceTx(ctx context.Context, tx *sql.Tx, workID string
 	}
 	var bundle conversationruntime.ExternalCommittedBundle
 	if targetKind == boardPublicationTargetNewRoot {
-		if _, err := requireBoardPublicationPinTx(ctx, tx, scope); err != nil {
-			return BoardPublicationLease{}, conversationruntime.ExternalCommittedBundle{}, LeasedWorkItem{}, "", err
-		}
 		if !strings.HasPrefix(work.DedupeKey, "board-owner-request-publication:") || threadID != "" || replyTo != "" || strings.TrimSpace(title) == "" {
 			return BoardPublicationLease{}, conversationruntime.ExternalCommittedBundle{}, LeasedWorkItem{}, "", ErrBoardPublicationScopeMismatch
 		}
@@ -733,6 +774,14 @@ func loadBoardPublicationSourceTx(ctx context.Context, tx *sql.Tx, workID string
 			commitReceipt.Lookup.OwnerID != scope.OwnerID || commitReceipt.Lookup.Source.BoardInstanceID != boardInstanceID ||
 			commitReceipt.Lookup.Source.CorePrincipalID != scope.PrincipalID {
 			return BoardPublicationLease{}, conversationruntime.ExternalCommittedBundle{}, LeasedWorkItem{}, "", ErrBoardOwnerRequestCorrupt
+		}
+		ownerSource := commitReceipt.Lookup.Source
+		if !validBoardOwnerRequestSource(ownerSource, true) || ownerSource.OwnerID != scope.OwnerID ||
+			ownerSource.BoardInstanceID != scope.JournalInstanceID || ownerSource.CorePrincipalID != scope.PrincipalID {
+			return BoardPublicationLease{}, conversationruntime.ExternalCommittedBundle{}, LeasedWorkItem{}, "", ErrBoardPublicationScopeMismatch
+		}
+		if _, err := requireBoardOwnerRequestPinTx(ctx, tx, ownerSource); err != nil {
+			return BoardPublicationLease{}, conversationruntime.ExternalCommittedBundle{}, LeasedWorkItem{}, "", fmt.Errorf("%w: %w", ErrBoardPublicationScopeMismatch, err)
 		}
 		outcome, found, err := loadBoardOwnerRequestOutcomeTx(ctx, tx, commitReceipt.Lookup)
 		if err != nil {
@@ -986,7 +1035,8 @@ func validateBoardPublicationPrepared(lease BoardPublicationLease, input BoardPu
 	case boardPublicationTargetNewRoot:
 		if target.ThreadID != "" || target.ReplyTo != "" || strings.TrimSpace(lease.Title) == "" || wire.ThreadID != "" ||
 			wire.Title != lease.Title || wire.Kind != "request" || wire.ProcessingClaimID != "" || wire.ProcessingClaimReceipt != "" ||
-			!input.ProcessingClaimLeaseUntil.IsZero() || boardPublicationAttemptHasReplyOrClaimFields(input.PreparedBytes) {
+			!input.ProcessingClaimLeaseUntil.IsZero() || boardPublicationAttemptHasReplyOrClaimFields(input.PreparedBytes) ||
+			!boardPublicationPreparedMentionsMatch(input.PreparedBytes, lease.CanonicalResponse.Payload, target.PeerPrincipalID) {
 			return struct {
 				ProcessingClaimID string
 				ReceiptSHA256     string
@@ -1002,6 +1052,26 @@ func validateBoardPublicationPrepared(lease BoardPublicationLease, input BoardPu
 		ProcessingClaimID string
 		ReceiptSHA256     string
 	}{ProcessingClaimID: wire.ProcessingClaimID, ReceiptSHA256: boardPublicationDigest([]byte(wire.ProcessingClaimReceipt))}, nil
+}
+
+func boardPublicationPreparedMentionsMatch(payload []byte, canonicalPayload map[string]any, peerPrincipalID string) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return false
+	}
+	expected, explicit := canonicalPayload["mentions"]
+	rawMentions, supplied := fields["mentions"]
+	if !explicit {
+		return !supplied
+	}
+	if !boardOwnerRequestMentionsMatch(expected, peerPrincipalID) || !supplied {
+		return false
+	}
+	var mentions []string
+	if err := json.Unmarshal(rawMentions, &mentions); err != nil {
+		return false
+	}
+	return len(mentions) == 1 && mentions[0] == peerPrincipalID
 }
 
 func normalizedBoardPublicationTargetKind(targetKind string) string {

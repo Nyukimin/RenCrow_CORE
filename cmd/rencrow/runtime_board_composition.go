@@ -36,6 +36,8 @@ type boardCommunicationCompositionStore interface {
 	FindAcceptedBoardPeerRequest(context.Context, eventstore.BoardPeerRequestSource) (eventstore.AcceptedTurn, bool, error)
 	AcceptBoardPeerRequest(context.Context, eventstore.BoardPeerRequestAcceptInput) (eventstore.AcceptedTurn, error)
 	ReadPendingBoardOwnerRequests(context.Context, eventstore.BoardPublicationScope, modulecore.EventSeq, int) (eventstore.BoardOwnerRequestPendingPage, error)
+	ReadPendingBoardOwnerRequestsForResponder(context.Context, eventstore.BoardPublicationScope, string, modulecore.EventSeq, int) (eventstore.BoardOwnerRequestPendingPage, error)
+	ReadBoardOwnerRequestStatusForResponder(context.Context, eventstore.BoardPublicationScope, modulecore.TurnID, string) (eventstore.BoardOwnerRequestReadback, bool, error)
 	LoadBoardPublicationByTurn(context.Context, eventstore.BoardPublicationTurnLookupInput) (eventstore.BoardPublicationOutcome, bool, error)
 	NextBoardPublicationDue(context.Context, eventstore.BoardPublicationScope, time.Time) (time.Time, error)
 	RecordBoardTerminalReply(context.Context, eventstore.BoardTerminalReplySource) (eventstore.BoardTerminalReplyReceipt, bool, error)
@@ -70,6 +72,7 @@ type boardCommunicationCompositionDeps struct {
 	Sessions               boardCommunicationCanonicalSessionOwner
 	Mio                    *agent.MioAgent
 	PeerChat               *agent.BoardPeerChatRuntime
+	OwnerRequestChat       *agent.BoardPeerChatRuntime
 	Conversation           boardCommunicationConversationProvider
 	Peer                   boardCommunicationPeerCallbacks
 	Client                 *boardcommunication.Client
@@ -85,13 +88,15 @@ type boardCommunicationCompositionDeps struct {
 }
 
 type boardCommunicationComposition struct {
-	deps              boardCommunicationCompositionDeps
-	ownerMio          *conversationruntime.BoardOwnerRequestRuntime
-	peerMio           *conversationruntime.Runtime
-	peerResponder     *agent.BoardPeerChatRuntime
-	peerOwner         boardInboxOwner
-	boardClient       *boardcommunication.Client
-	ownerPendingAfter modulecore.EventSeq
+	deps                boardCommunicationCompositionDeps
+	ownerMio            *conversationruntime.BoardOwnerRequestRuntime
+	ownerAgent          *conversationruntime.BoardOwnerRequestRuntime
+	ownerRequestActorID string
+	peerMio             *conversationruntime.Runtime
+	peerResponder       *agent.BoardPeerChatRuntime
+	peerOwner           boardInboxOwner
+	boardClient         *boardcommunication.Client
+	ownerPendingAfter   modulecore.EventSeq
 }
 
 func newBoardCommunicationComposition(deps boardCommunicationCompositionDeps) (*boardCommunicationComposition, error) {
@@ -141,8 +146,28 @@ func newBoardCommunicationComposition(deps boardCommunicationCompositionDeps) (*
 	if err != nil {
 		return nil, ErrBoardCommunicationCompositionUnavailable
 	}
+	var ownerAgent *conversationruntime.BoardOwnerRequestRuntime
+	ownerRequestActorID := ""
+	if deps.OwnerRequestChat != nil {
+		ownerRequestActorID = string(deps.OwnerRequestChat.Actor())
+		principalActorID, principalIsInternal := domainconversation.BoardCommunicationMeetingInternalActorID(deps.Pin.PrincipalID)
+		if !principalIsInternal || ownerRequestActorID != principalActorID ||
+			deps.OwnerRequestChat.Purpose() != domainconversation.PurposeBoardOwnerRequest ||
+			(ownerRequestActorID == "mio" && (deps.UsePrincipalScopedPins || deps.InboxScope.ResponderActorID != "")) ||
+			(ownerRequestActorID != "mio" && (!deps.UsePrincipalScopedPins || deps.InboxScope.ResponderActorID != ownerRequestActorID)) {
+			return nil, ErrBoardCommunicationCompositionUnavailable
+		}
+		ownerAgent, err = conversationruntime.NewBoardOwnerRequestRuntime(conversationruntime.BoardOwnerRequestRuntimeDependencies{
+			Composer: deps.OwnerRequestChat.Composer, Generator: deps.OwnerRequestChat.Generator,
+			Journal: deps.Store, PolicyVersion: responseFirstPolicyVer, TargetActorID: ownerRequestActorID,
+		})
+		if err != nil {
+			return nil, ErrBoardCommunicationCompositionUnavailable
+		}
+	}
 	composition := &boardCommunicationComposition{
-		deps: deps, ownerMio: ownerRuntime, peerMio: peerRuntime, peerResponder: deps.PeerChat, boardClient: deps.Client,
+		deps: deps, ownerMio: ownerRuntime, ownerAgent: ownerAgent, ownerRequestActorID: ownerRequestActorID,
+		peerMio: peerRuntime, peerResponder: deps.PeerChat, boardClient: deps.Client,
 	}
 	callbacks := deps.Peer
 	if callbacks.FindAccepted == nil {
@@ -184,13 +209,72 @@ func (c *boardCommunicationComposition) acceptOwnerRequest(ctx context.Context, 
 	if !found || !sameBoardCommunicationPin(pin, c.deps.Pin) || pin.OwnerID != ownerID {
 		return boardOwnerHTTPAcceptedReceipt{}, errBoardOwnerHTTPNotFound
 	}
+	return c.acceptOwnerRequestWithPin(ctx, ownerID, request, pin, "", c.deps.ActorID)
+}
+
+func (c *boardCommunicationComposition) ownerHTTPCallbacks() boardOwnerHTTPCallbacks {
+	return boardOwnerHTTPCallbacks{
+		Accept: c.acceptOwnerRequest, Status: c.ownerRequestStatus,
+		AgentAccept: c.acceptAgentOwnerRequest, AgentStatus: c.agentOwnerRequestStatus,
+	}
+}
+
+func (c *boardCommunicationComposition) ownerRequestStatus(ctx context.Context, ownerID string, turnID modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+	if c == nil || c.ownerMio == nil || ctx == nil || ownerID == "" || ownerID != c.deps.OwnerID || turnID.Validate() != nil {
+		return boardOwnerHTTPStatusReceipt{}, false, errBoardOwnerHTTPNotFound
+	}
+	return readBoardOwnerHTTPStatus(ctx, c.deps.Store, ownerID, turnID, c.deps.Pin.PrincipalID, c.deps.Pin.CutoverAt)
+}
+
+func (c *boardCommunicationComposition) acceptAgentOwnerRequest(ctx context.Context, ownerID string, request boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+	if c == nil || c.ownerAgent == nil || c.deps.OwnerRequestChat == nil || ctx == nil ||
+		c.deps.Store == nil || c.deps.Sessions == nil || c.deps.Client == nil || c.deps.Now == nil ||
+		ownerID == "" || ownerID != c.deps.OwnerID || request.ActorID != c.ownerRequestActorID ||
+		!validBoardAgentOwnerHTTPRequestForComposition(request, c.ownerRequestActorID, c.deps.InboxScope.Pin, c.deps.InboxScope) {
+		return boardOwnerHTTPAcceptedReceipt{}, errBoardOwnerHTTPInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return boardOwnerHTTPAcceptedReceipt{}, err
+	}
+	pin, found, err := readBoardConnectionPinForPrincipal(ctx, c.deps.Store, c.deps.Pin.PrincipalID, c.deps.UsePrincipalScopedPins)
+	if err != nil {
+		return boardOwnerHTTPAcceptedReceipt{}, err
+	}
+	if !found || !sameBoardCommunicationPin(pin, c.deps.Pin) || pin.OwnerID != ownerID {
+		return boardOwnerHTTPAcceptedReceipt{}, errBoardOwnerHTTPNotFound
+	}
+	identity, err := c.deps.Client.ReadConnection(ctx)
+	if err != nil {
+		return boardOwnerHTTPAcceptedReceipt{}, err
+	}
+	if identity.PrincipalID != pin.PrincipalID || identity.JournalInstanceID != pin.JournalInstanceID {
+		return boardOwnerHTTPAcceptedReceipt{}, boardcommunication.ErrConnectionIdentityMismatch
+	}
+	contexts, err := c.deps.Client.ListContexts(ctx)
+	if err != nil {
+		return boardOwnerHTTPAcceptedReceipt{}, err
+	}
+	if !containsBoardDeliveryContext(contexts, request.ChannelID) {
+		return boardOwnerHTTPAcceptedReceipt{}, errBoardOwnerHTTPNotFound
+	}
+	return c.acceptOwnerRequestWithPin(ctx, ownerID, request, pin, c.ownerRequestActorID, boardCommunicationOwnerActor)
+}
+
+func (c *boardCommunicationComposition) acceptOwnerRequestWithPin(
+	ctx context.Context,
+	ownerID string,
+	request boardOwnerHTTPRequest,
+	pin eventstore.BoardConnectionPin,
+	targetActorID string,
+	admissionActorID string,
+) (boardOwnerHTTPAcceptedReceipt, error) {
 	source := conversationruntime.BoardOwnerRequestSource{
 		OwnerID: ownerID, BoardInstanceID: pin.JournalInstanceID, CorePrincipalID: pin.PrincipalID,
-		ChannelID: request.ChannelID, PeerPrincipalID: request.PeerID,
+		TargetActorID: targetActorID, ChannelID: request.ChannelID, PeerPrincipalID: request.PeerID,
 		Title: request.Title, IdempotencyKey: request.IdempotencyKey,
 	}
 	reservation, err := c.deps.Store.ReserveBoardOwnerRequest(ctx, eventstore.BoardOwnerRequestReservationInput{
-		Source: source, ActorID: c.deps.ActorID, Instruction: request.Instruction, Now: c.deps.Now().UTC(),
+		Source: source, ActorID: admissionActorID, Instruction: request.Instruction, Now: c.deps.Now().UTC(),
 	})
 	if err != nil {
 		return boardOwnerHTTPAcceptedReceipt{}, boardOwnerRequestHTTPError(err)
@@ -222,14 +306,14 @@ func (c *boardCommunicationComposition) acceptOwnerRequest(ctx context.Context, 
 		generationEpoch = state.GenerationEpoch
 	}
 	accepted, err := c.deps.Store.AcceptBoardOwnerRequest(ctx, eventstore.BoardOwnerRequestAcceptInput{
-		Reservation: reservation, ActorID: c.deps.ActorID, Instruction: request.Instruction,
+		Reservation: reservation, ActorID: admissionActorID, Instruction: request.Instruction,
 		SessionID: modulecore.SessionID(resolution.Session.ID()), RuntimeVersion: conversationruntime.ConversationRuntimeV2,
 		GenerationEpoch: generationEpoch, CreateNewSession: createNewSession,
 	})
 	if err != nil {
 		return boardOwnerHTTPAcceptedReceipt{}, err
 	}
-	if accepted.TriggerKind != "board_owner_request" || accepted.ActorID != c.deps.ActorID ||
+	if accepted.TriggerKind != "board_owner_request" || accepted.ActorID != admissionActorID ||
 		accepted.SessionID != modulecore.SessionID(resolution.Session.ID()) || (accepted.State != "accepted" && accepted.State != "completed") ||
 		accepted.InputEvent.EventType != "conversation.board_owner_request" || accepted.InputEvent.SessionID != accepted.SessionID ||
 		accepted.InputEvent.TurnID != accepted.TurnID || accepted.InputEvent.MessageID != accepted.InputMessageID ||
@@ -249,15 +333,12 @@ func (c *boardCommunicationComposition) acceptOwnerRequest(ctx context.Context, 
 	return receipt, nil
 }
 
-func (c *boardCommunicationComposition) ownerHTTPCallbacks() boardOwnerHTTPCallbacks {
-	return boardOwnerHTTPCallbacks{Accept: c.acceptOwnerRequest, Status: c.ownerRequestStatus}
-}
-
-func (c *boardCommunicationComposition) ownerRequestStatus(ctx context.Context, ownerID string, turnID modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
-	if c == nil || c.ownerMio == nil || ctx == nil || ownerID == "" || ownerID != c.deps.OwnerID || turnID.Validate() != nil {
+func (c *boardCommunicationComposition) agentOwnerRequestStatus(ctx context.Context, ownerID string, turnID modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+	if c == nil || c.ownerAgent == nil || c.deps.OwnerRequestChat == nil {
 		return boardOwnerHTTPStatusReceipt{}, false, errBoardOwnerHTTPNotFound
 	}
-	return readBoardOwnerHTTPStatus(ctx, c.deps.Store, ownerID, turnID, c.deps.Pin.PrincipalID, c.deps.Pin.CutoverAt)
+	return readBoardOwnerAgentHTTPStatus(ctx, c.deps.Store, ownerID, turnID, c.deps.Pin.PrincipalID,
+		c.deps.Pin.CutoverAt, c.ownerRequestActorID, c.deps.UsePrincipalScopedPins)
 }
 
 type boardCommunicationPeerOwner struct {
@@ -499,7 +580,8 @@ func (c *boardCommunicationComposition) processClaimedPeerRequest(
 		return result, nil
 	}
 	progressed, err := runBoardPublicationDelivery(ctx, c.boardClient, c.deps.Store, boardPublicationDeliveryInput{
-		Scope: boardPublicationScope(c.deps.InboxScope.Pin), Now: c.deps.Now().UTC(), LeaseDuration: boardPublicationLeaseDuration,
+		Scope: boardPublicationScope(c.deps.InboxScope.Pin), ResponderActorID: source.Binding.ResponderActorID,
+		Now: c.deps.Now().UTC(), LeaseDuration: boardPublicationLeaseDuration,
 		ClaimHint: &boardPublicationClaimHint{
 			Source: source, Claim: claim,
 			CanonicalResponseMessageID: committed.PublicationIntent.CanonicalResponseMessageID,
@@ -557,10 +639,13 @@ func (c *boardCommunicationComposition) nextBoardPublicationDue(ctx context.Cont
 	if c == nil || c.deps.Store == nil {
 		return time.Time{}, ErrBoardCommunicationCompositionUnavailable
 	}
-	if c.peerResponder == nil {
+	actorID := c.publicationResponderActorID()
+	if actorID == "" {
 		return c.deps.Store.NextBoardPublicationDue(ctx, scope, now)
 	}
-	actorID := string(c.peerResponder.Actor())
+	if actorID == "mio" {
+		return c.deps.Store.NextBoardPublicationDue(ctx, scope, now)
+	}
 	if !domainconversation.IsExternalPeerResponderActor(actorID) {
 		return time.Time{}, ErrBoardCommunicationCompositionUnavailable
 	}
@@ -571,6 +656,19 @@ func (c *boardCommunicationComposition) nextBoardPublicationDue(ctx context.Cont
 		return time.Time{}, ErrBoardCommunicationCompositionUnavailable
 	}
 	return store.NextBoardPublicationDueForResponder(ctx, scope, actorID, now)
+}
+
+func (c *boardCommunicationComposition) publicationResponderActorID() string {
+	if c == nil {
+		return ""
+	}
+	if c.ownerRequestActorID != "" {
+		return c.ownerRequestActorID
+	}
+	if c.peerResponder != nil {
+		return string(c.peerResponder.Actor())
+	}
+	return ""
 }
 
 func (c *boardCommunicationComposition) correlateTerminalPeerReply(ctx context.Context, source boardInboxSource) (bool, error) {
@@ -614,71 +712,16 @@ func (c *boardCommunicationComposition) processCatchUp(ctx context.Context) (boa
 		return boardCommunicationServiceStep{}, err
 	}
 	scope := boardPublicationScope(pin)
-	var ownerRetryDue time.Time
-	ownerScanHasMore := false
-	for pageIndex := 0; c.ownerMio != nil && pageIndex < boardOwnerPendingMaxPagesPerSweep; pageIndex++ {
-		pending, err := c.deps.Store.ReadPendingBoardOwnerRequests(ctx, scope, c.ownerPendingAfter, boardOwnerPendingPageSize)
-		if err != nil {
-			return boardCommunicationServiceStep{}, err
-		}
-		if len(pending.Items) == 0 {
-			c.ownerPendingAfter = 0
-			ownerScanHasMore = false
-			break
-		}
-		for _, item := range pending.Items {
-			if err := ctx.Err(); err != nil {
-				return boardCommunicationServiceStep{}, err
-			}
-			if item.Accepted.TriggerKind != "board_owner_request" ||
-				item.Reservation.Source.OwnerID != c.deps.OwnerID || item.Accepted.SessionID == "" ||
-				item.Lookup.TurnID != item.Accepted.TurnID {
-				return boardCommunicationServiceStep{}, errBoardOwnerHTTPConflict
-			}
-			state, stateFound, err := c.deps.Store.ReadSessionState(ctx, item.Accepted.SessionID, c.deps.OwnerID)
-			if err != nil || !stateFound || state.SessionID != item.Accepted.SessionID || state.OwnerID != c.deps.OwnerID ||
-				state.RuntimeVersion != conversationruntime.ConversationRuntimeV2 || state.GenerationEpoch != item.Accepted.GenerationEpoch {
-				if err == nil {
-					err = ErrBoardInboxCanonicalMismatch
-				}
-				return boardCommunicationServiceStep{}, err
-			}
-			request := conversationruntime.ReadViewRequest{
-				Principal: conversationruntime.Principal{OwnerID: c.deps.OwnerID, ActorID: item.Accepted.ActorID},
-				Session: conversationruntime.SessionState{
-					SessionID: state.SessionID, OwnerID: state.OwnerID, RuntimeVersion: state.RuntimeVersion,
-					CutoverSeq: state.CutoverSeq, AdmissionSeq: state.AdmissionSeq,
-					ProjectionWatermark: state.ProjectionWatermark, GenerationEpoch: state.GenerationEpoch,
-				},
-				Accepted: toConversationAcceptedTurn(item.Accepted),
-			}
-			result := c.ownerMio.RunAcceptedBoardOwnerRequest(ctx, conversationruntime.AcceptedTurnInput{ReadViewRequest: request})
-			if result.Status != conversationruntime.BoardOwnerRequestStatusCommitted {
-				if result.Status != conversationruntime.BoardOwnerRequestStatusFailedBeforeCommit &&
-					result.Status != conversationruntime.BoardOwnerRequestStatusCommitUncertain {
-					return boardCommunicationServiceStep{}, fmt.Errorf("owner Mio processing ended in state %q", result.Status)
-				}
-				retryAt := c.deps.Now().UTC().Add(5 * time.Second)
-				ownerRetryDue = earliestBoardCommunicationDue(ownerRetryDue, retryAt)
-				continue
-			}
-		}
-		if len(pending.Items) < boardOwnerPendingPageSize {
-			c.ownerPendingAfter = 0
-			ownerScanHasMore = false
-			break
-		}
-		if pending.NextAdmissionSeq <= c.ownerPendingAfter {
-			return boardCommunicationServiceStep{}, errBoardOwnerHTTPConflict
-		}
-		c.ownerPendingAfter = pending.NextAdmissionSeq
-		ownerScanHasMore = true
+	ownerRetryDue, ownerScanHasMore, err := c.processPendingBoardOwnerRequests(ctx, scope)
+	if err != nil {
+		return boardCommunicationServiceStep{}, err
 	}
 	if ownerScanHasMore {
 		c.deps.Service.NotifyDurableAcceptance()
 	}
 	publicationProgressed, publicationErr := runBoardPublicationDelivery(ctx, c.boardClient, c.deps.Store, boardPublicationDeliveryInput{
-		Scope: scope, Now: c.deps.Now().UTC(), LeaseDuration: boardPublicationLeaseDuration,
+		Scope: scope, ResponderActorID: c.publicationResponderActorID(),
+		Now: c.deps.Now().UTC(), LeaseDuration: boardPublicationLeaseDuration,
 	})
 	if publicationErr != nil {
 		var retryScheduled *boardPublicationRetryScheduledError
@@ -698,6 +741,90 @@ func (c *boardCommunicationComposition) processCatchUp(ctx context.Context) (boa
 		return boardCommunicationServiceStep{NextDueAt: earliestBoardCommunicationDue(inboxDue, publicationDue, ownerRetryDue)}, nil
 	}
 	return boardCommunicationServiceStep{NextDueAt: earliestBoardCommunicationDue(inboxDue, publicationDue)}, nil
+}
+
+func (c *boardCommunicationComposition) processPendingBoardOwnerRequests(
+	ctx context.Context,
+	scope eventstore.BoardPublicationScope,
+) (time.Time, bool, error) {
+	if c == nil || ctx == nil || c.deps.Store == nil || c.ownerMio == nil && c.ownerAgent == nil {
+		return time.Time{}, false, nil
+	}
+	var retryDue time.Time
+	scanHasMore := false
+	for pageIndex := 0; pageIndex < boardOwnerPendingMaxPagesPerSweep; pageIndex++ {
+		var pending eventstore.BoardOwnerRequestPendingPage
+		var err error
+		if c.ownerRequestActorID != "" {
+			pending, err = c.deps.Store.ReadPendingBoardOwnerRequestsForResponder(ctx, scope, c.ownerRequestActorID, c.ownerPendingAfter, boardOwnerPendingPageSize)
+		} else {
+			pending, err = c.deps.Store.ReadPendingBoardOwnerRequests(ctx, scope, c.ownerPendingAfter, boardOwnerPendingPageSize)
+		}
+		if err != nil {
+			return retryDue, scanHasMore, err
+		}
+		if len(pending.Items) == 0 {
+			c.ownerPendingAfter = 0
+			return retryDue, false, nil
+		}
+		for _, item := range pending.Items {
+			if err := ctx.Err(); err != nil {
+				return retryDue, scanHasMore, err
+			}
+			if item.Accepted.TriggerKind != "board_owner_request" || item.Reservation.Source.OwnerID != c.deps.OwnerID ||
+				item.Reservation.Source.CorePrincipalID != scope.PrincipalID || item.Accepted.SessionID == "" ||
+				item.Lookup.TurnID != item.Accepted.TurnID {
+				return retryDue, scanHasMore, errBoardOwnerHTTPConflict
+			}
+			runtime := c.ownerMio
+			if item.Reservation.Source.TargetActorID != "" {
+				if c.ownerAgent == nil || item.Reservation.Source.TargetActorID != c.ownerRequestActorID {
+					return retryDue, scanHasMore, errBoardOwnerHTTPConflict
+				}
+				runtime = c.ownerAgent
+			} else if c.ownerRequestActorID != "" && c.ownerRequestActorID != "mio" {
+				return retryDue, scanHasMore, errBoardOwnerHTTPConflict
+			}
+			if runtime == nil {
+				return retryDue, scanHasMore, errBoardOwnerHTTPConflict
+			}
+			state, stateFound, err := c.deps.Store.ReadSessionState(ctx, item.Accepted.SessionID, c.deps.OwnerID)
+			if err != nil || !stateFound || state.SessionID != item.Accepted.SessionID || state.OwnerID != c.deps.OwnerID ||
+				state.RuntimeVersion != conversationruntime.ConversationRuntimeV2 || state.GenerationEpoch != item.Accepted.GenerationEpoch {
+				if err == nil {
+					err = ErrBoardInboxCanonicalMismatch
+				}
+				return retryDue, scanHasMore, err
+			}
+			request := conversationruntime.ReadViewRequest{
+				Principal: conversationruntime.Principal{OwnerID: c.deps.OwnerID, ActorID: item.Accepted.ActorID},
+				Session: conversationruntime.SessionState{
+					SessionID: state.SessionID, OwnerID: state.OwnerID, RuntimeVersion: state.RuntimeVersion,
+					CutoverSeq: state.CutoverSeq, AdmissionSeq: state.AdmissionSeq,
+					ProjectionWatermark: state.ProjectionWatermark, GenerationEpoch: state.GenerationEpoch,
+				},
+				Accepted: toConversationAcceptedTurn(item.Accepted),
+			}
+			result := runtime.RunAcceptedBoardOwnerRequest(ctx, conversationruntime.AcceptedTurnInput{ReadViewRequest: request})
+			if result.Status != conversationruntime.BoardOwnerRequestStatusCommitted {
+				if result.Status != conversationruntime.BoardOwnerRequestStatusFailedBeforeCommit &&
+					result.Status != conversationruntime.BoardOwnerRequestStatusCommitUncertain {
+					return retryDue, scanHasMore, fmt.Errorf("board owner request processing ended in state %q", result.Status)
+				}
+				retryDue = earliestBoardCommunicationDue(retryDue, c.deps.Now().UTC().Add(5*time.Second))
+			}
+		}
+		if len(pending.Items) < boardOwnerPendingPageSize {
+			c.ownerPendingAfter = 0
+			return retryDue, false, nil
+		}
+		if pending.NextAdmissionSeq <= c.ownerPendingAfter {
+			return retryDue, scanHasMore, errBoardOwnerHTTPConflict
+		}
+		c.ownerPendingAfter = pending.NextAdmissionSeq
+		scanHasMore = true
+	}
+	return retryDue, scanHasMore, nil
 }
 
 func (c *boardCommunicationComposition) validateResponderBinding(binding domainconversation.ExternalPeerBinding) error {
@@ -781,6 +908,40 @@ func validBoardOwnerHTTPRequestForComposition(request boardOwnerHTTPRequest, cha
 		containsBoardInboxID(peers, request.PeerID)
 }
 
+func validBoardAgentOwnerHTTPRequestForComposition(
+	request boardOwnerHTTPRequest,
+	actorID string,
+	pin eventstore.BoardConnectionPin,
+	scope boardInboxScope,
+) bool {
+	if actorID == "" || request.ActorID != actorID || !validBoardOwnerHTTPActorID(actorID) ||
+		!validBoardOwnerHTTPValue(request.ChannelID, 512) || !validBoardOwnerHTTPValue(request.PeerID, 512) ||
+		!validBoardOwnerHTTPValue(request.Title, 2048) || !validBoardOwnerHTTPValue(request.IdempotencyKey, 512) ||
+		!validBoardOwnerHTTPInstruction(request.Instruction) || pin.PrincipalID == "" || request.PeerID == pin.PrincipalID ||
+		!containsBoardInboxID(scope.AllowedChannelIDs, request.ChannelID) {
+		return false
+	}
+	senderActorID, senderIsInternal := domainconversation.BoardCommunicationMeetingInternalActorID(pin.PrincipalID)
+	if !senderIsInternal || senderActorID != actorID {
+		return false
+	}
+	recipientActorID, recipientIsInternal := domainconversation.BoardCommunicationMeetingInternalActorID(request.PeerID)
+	if !recipientIsInternal && !domainconversation.IsBoardCommunicationMeetingExternalPrincipal(request.PeerID) {
+		return false
+	}
+	expectedRecipientActorID := ""
+	if recipientIsInternal {
+		expectedRecipientActorID = recipientActorID
+	}
+	for _, route := range scope.MeetingRoutes {
+		if route.Matches(request.ChannelID, pin.PrincipalID, request.PeerID) &&
+			route.RecipientActorID == expectedRecipientActorID {
+			return true
+		}
+	}
+	return false
+}
+
 func boardOwnerRequestHTTPError(err error) error {
 	switch {
 	case errors.Is(err, eventstore.ErrBoardOwnerRequestConflict):
@@ -797,8 +958,9 @@ func boardOwnerRequestSessionAddress(source conversationruntime.BoardOwnerReques
 		BoardInstanceID string `json:"board_instance_id"`
 		CorePrincipalID string `json:"core_principal_id"`
 		OwnerID         string `json:"owner_id"`
+		TargetActorID   string `json:"target_actor_id,omitempty"`
 		IdempotencyKey  string `json:"idempotency_key"`
-	}{source.BoardInstanceID, source.CorePrincipalID, source.OwnerID, source.IdempotencyKey})
+	}{source.BoardInstanceID, source.CorePrincipalID, source.OwnerID, source.TargetActorID, source.IdempotencyKey})
 	if err != nil {
 		return domainconversation.ChannelAddress{}, err
 	}
@@ -842,9 +1004,79 @@ func boardOwnerHTTPStatusReceiptFromReadback(readback eventstore.BoardOwnerReque
 	return receipt, nil
 }
 
+func boardOwnerHTTPAgentStatusReceiptFromReadback(readback eventstore.BoardOwnerRequestReadback, actorID string) (boardOwnerHTTPStatusReceipt, error) {
+	if actorID == "" || readback.TargetActorID != actorID {
+		return boardOwnerHTTPStatusReceipt{}, errBoardOwnerHTTPNotFound
+	}
+	stage := boardOwnerHTTPStageUnknown
+	switch readback.Stage {
+	case eventstore.BoardOwnerRequestStageAccepted:
+		stage = boardOwnerHTTPStageAccepted
+	case eventstore.BoardOwnerRequestStagePublicationPending:
+		stage = boardOwnerHTTPStagePublicationPending
+	case eventstore.BoardOwnerRequestStageCompleted:
+		stage = boardOwnerHTTPStagePublicationSaved
+		if readback.ReplyMessageID != "" {
+			stage = boardOwnerHTTPStageReplyConfirmed
+		}
+	}
+	receipt := boardOwnerHTTPStatusReceipt{
+		OwnerID: readback.OwnerID, SessionID: readback.SessionID, TurnID: readback.TurnID,
+		TraceID: readback.TraceID, InputMessageID: readback.InputMessageID,
+		ActorID: readback.TargetActorID, BoardMessageID: readback.BoardMessageID,
+		ThreadID: readback.BoardThreadID, ReplyMessageID: readback.ReplyMessageID,
+		Stage: stage, AcceptedAt: readback.AcceptedAt.UTC(), UpdatedAt: readback.UpdatedAt.UTC(), Durable: true,
+	}
+	if !validBoardOwnerHTTPAgentStatusReceipt(receipt) {
+		return boardOwnerHTTPStatusReceipt{}, errBoardOwnerHTTPNotFound
+	}
+	return receipt, nil
+}
+
 type boardOwnerHTTPStatusStore interface {
 	ReadBoardConnectionPin(context.Context) (eventstore.BoardConnectionPin, bool, error)
 	ReadBoardOwnerRequestStatus(context.Context, eventstore.BoardPublicationScope, modulecore.TurnID) (eventstore.BoardOwnerRequestReadback, bool, error)
+}
+
+type boardOwnerAgentStatusStore interface {
+	ReadBoardConnectionPin(context.Context) (eventstore.BoardConnectionPin, bool, error)
+	ReadBoardOwnerRequestStatusForResponder(context.Context, eventstore.BoardPublicationScope, modulecore.TurnID, string) (eventstore.BoardOwnerRequestReadback, bool, error)
+}
+
+func readBoardOwnerAgentHTTPStatus(
+	ctx context.Context,
+	store boardOwnerAgentStatusStore,
+	ownerID string,
+	turnID modulecore.TurnID,
+	expectedPrincipalID string,
+	expectedCutoverAt time.Time,
+	actorID string,
+	usePrincipalScopedPins bool,
+) (boardOwnerHTTPStatusReceipt, bool, error) {
+	if ctx == nil || store == nil || ownerID == "" || turnID.Validate() != nil || expectedPrincipalID == "" ||
+		expectedCutoverAt.IsZero() || !validBoardOwnerHTTPActorID(actorID) {
+		return boardOwnerHTTPStatusReceipt{}, false, errBoardOwnerHTTPNotFound
+	}
+	pin, found, err := readBoardConnectionPinForPrincipal(ctx, store, expectedPrincipalID, usePrincipalScopedPins)
+	if err != nil || !found {
+		return boardOwnerHTTPStatusReceipt{}, found, err
+	}
+	if pin.OwnerID != ownerID || pin.PrincipalID != expectedPrincipalID || !pin.CutoverAt.Equal(expectedCutoverAt) {
+		return boardOwnerHTTPStatusReceipt{}, false, errBoardOwnerHTTPNotFound
+	}
+	scope := boardPublicationScope(pin)
+	readback, found, err := store.ReadBoardOwnerRequestStatusForResponder(ctx, scope, turnID, actorID)
+	if err != nil || !found {
+		return boardOwnerHTTPStatusReceipt{}, found, err
+	}
+	if readback.Scope != scope || readback.OwnerID != ownerID || readback.TurnID != turnID || readback.TargetActorID != actorID {
+		return boardOwnerHTTPStatusReceipt{}, false, errBoardOwnerHTTPNotFound
+	}
+	receipt, err := boardOwnerHTTPAgentStatusReceiptFromReadback(readback, actorID)
+	if err != nil {
+		return boardOwnerHTTPStatusReceipt{}, false, err
+	}
+	return receipt, true, nil
 }
 
 func readBoardOwnerHTTPStatus(

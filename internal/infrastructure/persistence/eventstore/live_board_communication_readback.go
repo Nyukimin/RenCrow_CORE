@@ -291,6 +291,34 @@ func requireBoardCommunicationPinTx(ctx context.Context, tx *sql.Tx, scope Board
 	return pin, nil
 }
 
+func requireBoardOwnerRequestPinForResponderTx(ctx context.Context, tx *sql.Tx, scope BoardPublicationScope, responderActorID string) error {
+	if err := validateBoardPublicationScope(scope); err != nil {
+		return ErrBoardCommunicationReadbackScopeMismatch
+	}
+	if responderActorID != "" {
+		if conversationruntime.ValidateBoardOwnerRequestTargetActorID(responderActorID) != nil {
+			return ErrBoardCommunicationReadbackScopeMismatch
+		}
+		if responderActorID != "mio" && responderActorID != scope.PrincipalID {
+			return ErrBoardCommunicationReadbackScopeMismatch
+		}
+	}
+	if responderActorID == "" || responderActorID == "mio" {
+		if _, err := requireBoardCommunicationPinTx(ctx, tx, scope); err != nil {
+			return err
+		}
+		return nil
+	}
+	pin, found, err := readBoardConnectionPinForPrincipalTx(ctx, tx, scope.PrincipalID)
+	if err != nil {
+		return err
+	}
+	if !found || !boardConnectionPinMatchesPublicationScope(pin, scope) {
+		return ErrBoardCommunicationReadbackScopeMismatch
+	}
+	return nil
+}
+
 func requireBoardCommunicationPinForResponderTx(ctx context.Context, tx *sql.Tx, scope BoardPublicationScope, responderActorID string) (BoardConnectionPin, error) {
 	if responderActorID == "" {
 		return requireBoardCommunicationPinTx(ctx, tx, scope)
@@ -516,7 +544,7 @@ func (s *SQLiteStore) LoadBoardPublicationByTurn(ctx context.Context, input Boar
 		return BoardPublicationOutcome{}, false, err
 	}
 	defer tx.Rollback()
-	if _, err := requireBoardCommunicationPinForResponderTx(ctx, tx, input.Scope, input.ResponderActorID); err != nil {
+	if err := requireBoardPublicationPinForResponderTx(ctx, tx, input.Scope, input.ResponderActorID); err != nil {
 		return BoardPublicationOutcome{}, false, err
 	}
 	var sessionOwner string
@@ -608,6 +636,12 @@ func (s *SQLiteStore) LoadBoardPublicationByTurn(ctx context.Context, input Boar
 // ReadPendingBoardOwnerRequests reads a bounded page of accepted owner
 // requests that have no committed generated response yet.
 func (s *SQLiteStore) ReadPendingBoardOwnerRequests(ctx context.Context, scope BoardPublicationScope, afterAdmissionSeq modulecore.EventSeq, limit int) (BoardOwnerRequestPendingPage, error) {
+	return s.ReadPendingBoardOwnerRequestsForResponder(ctx, scope, "", afterAdmissionSeq, limit)
+}
+
+// ReadPendingBoardOwnerRequestsForResponder reads a bounded page for one fixed
+// owner request actor. The target actor predicate is applied before paging.
+func (s *SQLiteStore) ReadPendingBoardOwnerRequestsForResponder(ctx context.Context, scope BoardPublicationScope, responderActorID string, afterAdmissionSeq modulecore.EventSeq, limit int) (BoardOwnerRequestPendingPage, error) {
 	if err := s.ensureOpen(); err != nil {
 		return BoardOwnerRequestPendingPage{}, err
 	}
@@ -622,16 +656,32 @@ func (s *SQLiteStore) ReadPendingBoardOwnerRequests(ctx context.Context, scope B
 		return BoardOwnerRequestPendingPage{}, err
 	}
 	defer tx.Rollback()
-	if _, err := requireBoardCommunicationPinTx(ctx, tx, scope); err != nil {
+	if err := requireBoardOwnerRequestPinForResponderTx(ctx, tx, scope, responderActorID); err != nil {
 		return BoardOwnerRequestPendingPage{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT t.turn_id,t.admission_seq
-		FROM live_conversation_turn t
-		JOIN live_conversation_session s ON s.session_id=t.session_id
-		WHERE t.owner_id=? AND s.owner_id=? AND t.trigger_kind='board_owner_request'
-		  AND t.state='accepted' AND t.result_receipt_id IS NULL AND t.admission_seq>?
-		ORDER BY t.admission_seq,t.turn_id LIMIT ?`, scope.OwnerID, scope.OwnerID, int64(afterAdmissionSeq), limit+1)
+	targetActorPredicate := "COALESCE(json_extract(e.envelope_json,'$.payload.board_owner_request_binding.target_actor_id'),'')=''"
+	queryArgs := []any{scope.OwnerID, scope.OwnerID, int64(afterAdmissionSeq), scope.JournalInstanceID, scope.PrincipalID}
+	switch responderActorID {
+	case "mio":
+		targetActorPredicate = "COALESCE(json_extract(e.envelope_json,'$.payload.board_owner_request_binding.target_actor_id'),'') IN ('','mio')"
+	case "":
+	default:
+		targetActorPredicate = "json_extract(e.envelope_json,'$.payload.board_owner_request_binding.target_actor_id')=?"
+		queryArgs = append(queryArgs, responderActorID)
+	}
+	queryArgs = append(queryArgs, limit+1)
+	query := "SELECT t.turn_id,t.admission_seq\n" +
+		"FROM live_conversation_turn t\n" +
+		"JOIN live_conversation_session s ON s.session_id=t.session_id\n" +
+		"JOIN live_message_index m ON m.message_id=t.input_message_id AND m.session_id=t.session_id AND m.turn_id=t.turn_id\n" +
+		"JOIN event_envelope e ON e.event_id=m.event_id\n" +
+		"WHERE t.owner_id=? AND s.owner_id=? AND t.trigger_kind='board_owner_request'\n" +
+		"  AND t.state='accepted' AND t.result_receipt_id IS NULL AND t.admission_seq>?\n" +
+		"  AND json_extract(e.envelope_json,'$.payload.board_owner_request_binding.board_instance_id')=?\n" +
+		"  AND json_extract(e.envelope_json,'$.payload.board_owner_request_binding.core_principal_id')=?\n" +
+		"  AND " + targetActorPredicate + "\n" +
+		"ORDER BY t.admission_seq,t.turn_id LIMIT ?"
+	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return BoardOwnerRequestPendingPage{}, err
 	}
@@ -673,6 +723,10 @@ func (s *SQLiteStore) ReadPendingBoardOwnerRequests(ctx context.Context, scope B
 		if err != nil {
 			return BoardOwnerRequestPendingPage{}, err
 		}
+		if !boardOwnerRequestTargetMatchesResponder(source.TargetActorID, responderActorID) ||
+			source.BoardInstanceID != scope.JournalInstanceID || source.CorePrincipalID != scope.PrincipalID {
+			return BoardOwnerRequestPendingPage{}, ErrBoardOwnerRequestCorrupt
+		}
 		reservation, err := loadBoardOwnerRequestReservationTx(ctx, tx, source)
 		if err != nil {
 			return BoardOwnerRequestPendingPage{}, err
@@ -710,7 +764,10 @@ func (s *SQLiteStore) ReadPendingBoardOwnerRequests(ctx context.Context, scope B
 
 func boardOwnerRequestSourceFromAcceptedEvent(event modulecore.EventEnvelope, ownerID string) (conversationruntime.BoardOwnerRequestSource, error) {
 	binding, ok := event.Payload["board_owner_request_binding"].(map[string]any)
-	if !ok || !boardOwnerRequestExactStringKeys(binding, "board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key") {
+	legacyBindingKeys := []string{"board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key"}
+	explicitBindingKeys := []string{"board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key", "target_actor_id"}
+	if !ok || !boardOwnerRequestExactStringKeys(binding, legacyBindingKeys...) &&
+		!boardOwnerRequestExactStringKeys(binding, explicitBindingKeys...) {
 		return conversationruntime.BoardOwnerRequestSource{}, ErrBoardOwnerRequestCorrupt
 	}
 	stringValue := func(name string) (string, bool) {
@@ -726,14 +783,191 @@ func boardOwnerRequestSourceFromAcceptedEvent(event modulecore.EventEnvelope, ow
 	if !okBoard || !okCore || !okChannel || !okPeer || !okTitle || !okKey {
 		return conversationruntime.BoardOwnerRequestSource{}, ErrBoardOwnerRequestCorrupt
 	}
+	targetActorID := ""
+	if _, explicit := binding["target_actor_id"]; explicit {
+		var ok bool
+		targetActorID, ok = stringValue("target_actor_id")
+		if !ok || conversationruntime.ValidateBoardOwnerRequestTargetActorID(targetActorID) != nil {
+			return conversationruntime.BoardOwnerRequestSource{}, ErrBoardOwnerRequestCorrupt
+		}
+	}
 	source := conversationruntime.BoardOwnerRequestSource{
 		OwnerID: ownerID, BoardInstanceID: boardInstanceID, CorePrincipalID: corePrincipalID,
 		ChannelID: channelID, PeerPrincipalID: peerPrincipalID, Title: title, IdempotencyKey: idempotencyKey,
+		TargetActorID: targetActorID,
 	}
 	if !validBoardOwnerRequestSource(source, true) {
 		return conversationruntime.BoardOwnerRequestSource{}, ErrBoardOwnerRequestCorrupt
 	}
 	return source, nil
+}
+
+func boardOwnerRequestTargetMatchesResponder(targetActorID, responderActorID string) bool {
+	switch responderActorID {
+	case "":
+		return targetActorID == ""
+	case "mio":
+		return targetActorID == "" || targetActorID == "mio"
+	default:
+		return targetActorID == responderActorID
+	}
+}
+
+func loadBoardOwnerRequestReplyMessageIDTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	scope BoardPublicationScope,
+	accepted AcceptedTurn,
+	ownerOutcome conversationruntime.BoardOwnerRequestOutcome,
+	publicationOutcome BoardPublicationOutcome,
+) (string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT operation_id,operation_kind,input_sha256,result_json
+		FROM live_operation_receipt
+		WHERE operation_kind=? AND json_extract(result_json,'$.parent_board_message_id')=?
+		ORDER BY operation_id LIMIT 2`, boardTerminalReplyOperationKind, publicationOutcome.CanonicalMessage.MessageID)
+	if err != nil {
+		return "", err
+	}
+	type receiptRow struct {
+		operationID string
+		receipt     operationReceipt
+	}
+	receipts := make([]receiptRow, 0, 2)
+	for rows.Next() {
+		var row receiptRow
+		if err := rows.Scan(&row.operationID, &row.receipt.operationKind, &row.receipt.inputSHA256, &row.receipt.resultJSON); err != nil {
+			_ = rows.Close()
+			return "", err
+		}
+		receipts = append(receipts, row)
+	}
+	rowsErr := rows.Err()
+	closeErr := rows.Close()
+	if rowsErr != nil {
+		return "", rowsErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if len(receipts) > 1 {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	if len(receipts) == 0 {
+		return "", nil
+	}
+	row := receipts[0]
+	receipt, err := decodeBoardTerminalReplyReceipt(row.receipt)
+	if err != nil || receipt.OperationID != row.operationID || receipt.Scope != scope ||
+		receipt.ParentBoardMessageID != publicationOutcome.CanonicalMessage.MessageID ||
+		receipt.BoardPublicationWorkID != publicationOutcome.WorkID || receipt.SessionID != accepted.SessionID ||
+		receipt.TurnID != accepted.TurnID || receipt.ParentCoreEventID != ownerOutcome.Event.EventID ||
+		receipt.ParentCoreMessageID != ownerOutcome.Event.MessageID {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	event, err := loadEventEnvelopeTx(ctx, tx, receipt.EventID)
+	if err != nil {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	source, err := boardTerminalReplySourceFromEvent(event, scope)
+	if err != nil || source.Binding.MessageID != receipt.BoardMessageID || source.Binding.ReplyTo != receipt.ParentBoardMessageID {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	if err := validateBoardTerminalReplySource(source); err != nil {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	parent, found, err := loadBoardTerminalReplyParentTx(ctx, tx, source)
+	if err != nil || !found || parent.Outcome.WorkID != publicationOutcome.WorkID ||
+		parent.Event.EventID != ownerOutcome.Event.EventID || parent.Event.MessageID != ownerOutcome.Event.MessageID {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	if err := validateBoardTerminalReplyAgainstParent(source, parent); err != nil {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	if err := validateBoardTerminalReplySourceAtPin(ctx, tx, source); err != nil {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	if err := validateBoardTerminalReplyReceipt(ctx, tx, receipt, source, parent); err != nil {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	inputHash, err := boardTerminalReplyInputHash(source, parent)
+	if err != nil || row.receipt.inputSHA256 != inputHash {
+		return "", ErrBoardCommunicationReadbackCorrupt
+	}
+	return receipt.BoardMessageID, nil
+}
+
+func boardTerminalReplySourceFromEvent(event modulecore.EventEnvelope, scope BoardPublicationScope) (BoardTerminalReplySource, error) {
+	bindingPayload, ok := event.Payload["board_terminal_reply_binding"].(map[string]any)
+	if !ok {
+		return BoardTerminalReplySource{}, ErrBoardCommunicationReadbackCorrupt
+	}
+	binding, err := domainconversation.ParseExternalPeerBinding(map[string]any{"external_peer_binding": bindingPayload})
+	if err != nil {
+		return BoardTerminalReplySource{}, err
+	}
+	sourcePayload, ok := event.Payload["board_source"].(map[string]any)
+	if !ok {
+		return BoardTerminalReplySource{}, ErrBoardCommunicationReadbackCorrupt
+	}
+	stringValue := func(payload map[string]any, name string) (string, bool) {
+		value, ok := payload[name].(string)
+		return value, ok
+	}
+	parseTime := func(name string) (time.Time, bool) {
+		value, ok := stringValue(sourcePayload, name)
+		if !ok {
+			return time.Time{}, false
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, value)
+		return parsed, err == nil
+	}
+	text, okText := event.Payload["text"].(string)
+	content, okContent := event.Payload["content"].(string)
+	causationID, okCausation := stringValue(sourcePayload, "causation_id")
+	hopCount, okHop := boardTerminalReplyInt(sourcePayload["hop_count"])
+	recipients, okRecipients := boardTerminalReplyStrings(sourcePayload["recipients"])
+	mentions, okMentions := boardTerminalReplyStrings(sourcePayload["mentions"])
+	inboxItemID, okInboxItem := stringValue(sourcePayload, "inbox_item_id")
+	inboxCreatedAt, okInboxTime := parseTime("inbox_created_at")
+	messageAt, okMessageTime := parseTime("message_at")
+	threadCreatedAt, okThreadTime := parseTime("thread_created_at")
+	if !okText || !okContent || text == "" || content != text || !okCausation || !okHop ||
+		!okRecipients || !okMentions || !okInboxItem || !okInboxTime || !okMessageTime || !okThreadTime {
+		return BoardTerminalReplySource{}, ErrBoardCommunicationReadbackCorrupt
+	}
+	return BoardTerminalReplySource{
+		Scope: scope, Binding: binding, InboxItemID: inboxItemID,
+		InboxCreatedAt: inboxCreatedAt, MessageAt: messageAt, ThreadCreatedAt: threadCreatedAt,
+		Body: text, Recipients: recipients, Mentions: mentions, CausationID: causationID, HopCount: hopCount,
+	}, nil
+}
+
+func boardTerminalReplyInt(value any) (int, bool) {
+	number, ok := value.(float64)
+	if !ok || number < 0 || number != float64(int(number)) {
+		return 0, false
+	}
+	return int(number), true
+}
+
+func boardTerminalReplyStrings(value any) ([]string, bool) {
+	switch values := value.(type) {
+	case []string:
+		return append([]string(nil), values...), true
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, text)
+		}
+		return result, true
+	default:
+		return nil, false
+	}
 }
 
 // NextBoardPublicationDue returns the earliest due or future wakeup for a
@@ -757,7 +991,7 @@ func (s *SQLiteStore) NextBoardPublicationDueForResponder(ctx context.Context, s
 		return time.Time{}, err
 	}
 	defer tx.Rollback()
-	if _, err := requireBoardCommunicationPinForResponderTx(ctx, tx, scope, responderActorID); err != nil {
+	if err := requireBoardPublicationPinForResponderTx(ctx, tx, scope, responderActorID); err != nil {
 		return time.Time{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `

@@ -136,15 +136,20 @@ func boardOwnerRequestOutcomeFromCommit(input BoardOwnerRequestCommitInput) Boar
 
 func boardOwnerRequestTestOutcome(lookup BoardOwnerRequestLookup, accepted AcceptedTurn, text string) BoardOwnerRequestOutcome {
 	messageID := modulecore.NewMessageID()
-	event := modulecore.NewEventEnvelope(accepted.InputEvent.TraceID, accepted.InputEvent.EventID, nil, "conversation_runtime", "agent.response", time.Date(2026, 11, 5, 2, 1, 0, 0, time.UTC), map[string]any{
-		"kind": "reply", "visibility": "public", "from": "mio", "source_actor_id": "mio", "to": "external_peer",
+	actorID := boardOwnerRequestCanonicalActorID(lookup.Source)
+	payload := map[string]any{
+		"kind": "reply", "visibility": "public", "from": actorID, "source_actor_id": actorID, "to": "external_peer",
 		"text": text, "content": text,
-	})
+	}
+	if lookup.Source.TargetActorID != "" {
+		payload["mentions"] = []any{lookup.Source.PeerPrincipalID}
+	}
+	event := modulecore.NewEventEnvelope(accepted.InputEvent.TraceID, accepted.InputEvent.EventID, nil, "conversation_runtime", "agent.response", time.Date(2026, 11, 5, 2, 1, 0, 0, time.UTC), payload)
 	event.SessionID, event.TurnID, event.MessageID = accepted.SessionID, accepted.TurnID, messageID
-	event.ActorKind, event.ActorID = "agent", "mio"
+	event.ActorKind, event.ActorID = "agent", actorID
 	index := MessageIndex{
 		MessageID: messageID, EventID: event.EventID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,
-		FromActor: "mio", ToKind: "external_peer", ToActor: lookup.Source.PeerPrincipalID,
+		FromActor: actorID, ToKind: "external_peer", ToActor: lookup.Source.PeerPrincipalID,
 		Kind: "board_owner_request", Visibility: "public",
 	}
 	return BoardOwnerRequestOutcome{

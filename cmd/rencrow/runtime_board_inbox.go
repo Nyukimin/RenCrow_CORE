@@ -27,6 +27,7 @@ type boardInboxScope struct {
 	ResponderActorID  string
 	AllowedChannelIDs []string
 	AllowedPeerIDs    []string
+	MeetingRoutes     []domainconversation.BoardCommunicationMeetingRoute
 	WakeTimeout       time.Duration
 }
 
@@ -118,7 +119,46 @@ func validBoardInboxScope(scope boardInboxScope) bool {
 		(!domainconversation.IsExternalPeerResponderActor(scope.ResponderActorID) || scope.ResponderActorID != pin.PrincipalID) {
 		return false
 	}
-	return validBoardInboxAllowlist(scope.AllowedChannelIDs) && validBoardInboxAllowlist(scope.AllowedPeerIDs)
+	return validBoardInboxAllowlist(scope.AllowedChannelIDs) && validBoardInboxAllowlist(scope.AllowedPeerIDs) &&
+		validBoardInboxMeetingRoutes(scope)
+}
+
+func validBoardInboxMeetingRoutes(scope boardInboxScope) bool {
+	if err := domainconversation.ValidateBoardCommunicationMeetingRoutes(scope.MeetingRoutes); err != nil {
+		return false
+	}
+	for _, route := range scope.MeetingRoutes {
+		if !containsBoardInboxID(scope.AllowedChannelIDs, route.ChannelID) {
+			return false
+		}
+		if route.RecipientPrincipalID == scope.Pin.PrincipalID && route.RecipientActorID != boardInboxScopeActorID(scope) {
+			return false
+		}
+	}
+	return true
+}
+
+func boardInboxScopeActorID(scope boardInboxScope) string {
+	if scope.ResponderActorID != "" {
+		return scope.ResponderActorID
+	}
+	if scope.Pin.PrincipalID == domainconversation.BoardCommunicationMeetingMioPrincipalID {
+		return "mio"
+	}
+	return ""
+}
+
+func boardInboxMeetingRouteDirections(scope boardInboxScope, item boardcommunication.InboxItem) (forward, reverse bool) {
+	actorID := boardInboxScopeActorID(scope)
+	for _, route := range scope.MeetingRoutes {
+		if route.RecipientActorID == actorID && route.Matches(item.ChannelID, item.SenderID, scope.Pin.PrincipalID) {
+			forward = true
+		}
+		if route.Matches(item.ChannelID, scope.Pin.PrincipalID, item.SenderID) {
+			reverse = true
+		}
+	}
+	return forward, reverse
 }
 
 func validBoardInboxAllowlist(values []string) bool {
@@ -223,8 +263,12 @@ func handleBoardInboxItem(ctx context.Context, client *boardcommunication.Client
 func handleBoardInboxItemWithDue(ctx context.Context, client *boardcommunication.Client, owner boardInboxOwner, scope boardInboxScope, item boardcommunication.InboxItem) (time.Time, error) {
 	if !item.CreatedAt.After(scope.Pin.CutoverAt) || item.SenderID == scope.Pin.PrincipalID ||
 		!containsBoardInboxID(scope.AllowedChannelIDs, item.ChannelID) ||
-		!containsBoardInboxID(scope.AllowedPeerIDs, item.SenderID) ||
 		!containsBoardInboxID(item.Recipients, scope.Pin.PrincipalID) {
+		return time.Time{}, nil
+	}
+	legacyPeer := containsBoardInboxID(scope.AllowedPeerIDs, item.SenderID)
+	meetingForward, meetingReverse := boardInboxMeetingRouteDirections(scope, item)
+	if !legacyPeer && !meetingForward && !meetingReverse {
 		return time.Time{}, nil
 	}
 	source, err := readCanonicalBoardInboxSource(ctx, client, scope.Pin, item)
@@ -236,6 +280,20 @@ func handleBoardInboxItemWithDue(ctx context.Context, client *boardcommunication
 			return time.Time{}, ErrBoardInboxCanonicalMismatch
 		}
 		source.Binding.ResponderActorID = scope.ResponderActorID
+	}
+	if !legacyPeer {
+		switch {
+		case isBoardInboxRequest(source.Message):
+			if !meetingForward || !boardInboxMeetingRequestTargetsPinnedRecipient(source.Message, scope.Pin.PrincipalID) {
+				return time.Time{}, nil
+			}
+		case isBoardInboxReplyCandidate(source.Message):
+			if !meetingReverse {
+				return time.Time{}, nil
+			}
+		default:
+			return time.Time{}, nil
+		}
 	}
 	switch {
 	case isBoardInboxRequest(source.Message):
@@ -258,6 +316,11 @@ func handleBoardInboxItemWithDue(ctx context.Context, client *boardcommunication
 	default:
 		return time.Time{}, nil
 	}
+}
+
+func boardInboxMeetingRequestTargetsPinnedRecipient(message boardcommunication.BoardMessage, recipientPrincipalID string) bool {
+	return len(message.Mentions) == 1 && message.Mentions[0] == recipientPrincipalID &&
+		len(message.Recipients) == 1 && message.Recipients[0] == recipientPrincipalID
 }
 
 func readCanonicalBoardInboxSource(ctx context.Context, client *boardcommunication.Client, pin eventstore.BoardConnectionPin, item boardcommunication.InboxItem) (boardInboxSource, error) {

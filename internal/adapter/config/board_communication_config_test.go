@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 func boardCommunicationTestConfig() *Config {
@@ -362,6 +364,150 @@ board_communication:
 		len(got.PeerIDs) != 1 || got.PeerIDs[0] != "dots-comm" || got.CutoverAt != "2026-11-06T00:00:00Z" {
 		t.Fatalf("loaded responder = %+v", got)
 	}
+}
+
+func TestLoadConfigReadsBoardCommunicationMeetingRoutes(t *testing.T) {
+	ownerToken := filepath.Join(t.TempDir(), "owner-token")
+	shiroToken := filepath.Join(t.TempDir(), "shiro-token")
+	content := fmt.Sprintf(`
+server:
+  port: 8080
+board_communication:
+  enabled: true
+  url: https://board.example.invalid/
+  token_file: %q
+  principal_id: rencrow-comm
+  channel_ids: [rencrow, slack_c0c6j86evsr]
+  peer_ids: [muse-comm]
+  cutover_at: "2026-11-05T00:00:00Z"
+  responders:
+    - actor_id: shiro
+      token_file: %q
+      channel_ids: [slack_c0c6j86evsr]
+      peer_ids: [muse-comm]
+      cutover_at: "2026-11-06T00:00:00Z"
+  meeting_routes:
+    - channel_id: slack_c0c6j86evsr
+      sender_principal_id: muse-comm
+      recipient_actor_id: shiro
+      recipient_principal_id: shiro
+`, ownerToken, shiroToken)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := domainconversation.BoardCommunicationMeetingRoute{
+		ChannelID: "slack_c0c6j86evsr", SenderPrincipalID: "muse-comm",
+		RecipientActorID: "shiro", RecipientPrincipalID: "shiro",
+	}
+	if got := cfg.BoardCommunication.MeetingRoutes; len(got) != 1 || got[0] != want {
+		t.Fatalf("loaded board_communication meeting_routes = %#v; want %#v", got, []domainconversation.BoardCommunicationMeetingRoute{want})
+	}
+}
+
+func TestBoardCommunicationConfigAcceptsBoundMeetingRoutes(t *testing.T) {
+	cfg := boardCommunicationTestConfig()
+	cfg.BoardCommunication = validMeetingBoardCommunicationConfig(t)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected known meeting routes and configured internal profiles: %v", err)
+	}
+}
+
+func TestBoardCommunicationConfigRejectsUnsafeMeetingRoutes(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*BoardCommunicationConfig)
+	}{
+		{name: "meeting routes require enabled communication", change: func(board *BoardCommunicationConfig) {
+			board.Enabled = false
+			board.Responders = nil
+		}},
+		{name: "non-meeting channel", change: func(board *BoardCommunicationConfig) { board.MeetingRoutes[0].ChannelID = "channel-alpha" }},
+		{name: "unknown sender principal", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes[0].SenderPrincipalID = "untrusted-principal"
+		}},
+		{name: "Lumina is excluded", change: func(board *BoardCommunicationConfig) { board.MeetingRoutes[0].SenderPrincipalID = "lumina" }},
+		{name: "unknown recipient principal", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes[0].RecipientPrincipalID = "untrusted-principal"
+		}},
+		{name: "external-to-external direction", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes[0] = domainconversation.BoardCommunicationMeetingRoute{
+				ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "dots-comm", RecipientPrincipalID: "grok-comm",
+			}
+		}},
+		{name: "internal actor does not match principal", change: func(board *BoardCommunicationConfig) { board.MeetingRoutes[0].RecipientActorID = "kuro" }},
+		{name: "internal recipient profile is not configured", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes[0] = domainconversation.BoardCommunicationMeetingRoute{
+				ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "muse-comm",
+				RecipientActorID: "aka", RecipientPrincipalID: "aka",
+			}
+		}},
+		{name: "internal sender profile is not configured", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes[0] = domainconversation.BoardCommunicationMeetingRoute{
+				ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "aka",
+				RecipientPrincipalID: "dots-comm",
+			}
+		}},
+		{name: "internal recipient profile lacks meeting channel", change: func(board *BoardCommunicationConfig) {
+			board.Responders[0].ChannelIDs = []string{"rencrow"}
+		}},
+		{name: "Mio principal must be bound to configured identity", change: func(board *BoardCommunicationConfig) {
+			board.PrincipalID = "principal-other"
+			board.MeetingRoutes[0] = domainconversation.BoardCommunicationMeetingRoute{
+				ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "muse-comm",
+				RecipientActorID: "mio", RecipientPrincipalID: "rencrow-comm",
+			}
+		}},
+		{name: "external recipient cannot name a CORE actor", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes[0] = domainconversation.BoardCommunicationMeetingRoute{
+				ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "gin",
+				RecipientActorID: "kit", RecipientPrincipalID: "dots-comm",
+			}
+		}},
+		{name: "duplicate route", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes = append(board.MeetingRoutes, board.MeetingRoutes[0])
+		}},
+		{name: "self route", change: func(board *BoardCommunicationConfig) {
+			board.MeetingRoutes[0] = domainconversation.BoardCommunicationMeetingRoute{
+				ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "shiro",
+				RecipientActorID: "shiro", RecipientPrincipalID: "shiro",
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := boardCommunicationTestConfig()
+			board := validMeetingBoardCommunicationConfig(t)
+			test.change(&board)
+			cfg.BoardCommunication = board
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "board_communication.meeting_routes") {
+				t.Fatalf("Validate() error = %v; want meeting route rejection", err)
+			}
+		})
+	}
+}
+
+func validMeetingBoardCommunicationConfig(t *testing.T) BoardCommunicationConfig {
+	t.Helper()
+	board := validBoardCommunicationConfig(t)
+	board.ChannelIDs = append(board.ChannelIDs, domainconversation.BoardCommunicationMeetingChannelID)
+	board.Responders = []BoardCommunicationResponderConfig{
+		{ActorID: "shiro", TokenFile: filepath.Join(t.TempDir(), "shiro-token"), ChannelIDs: []string{domainconversation.BoardCommunicationMeetingChannelID}, PeerIDs: []string{"muse-comm"}, CutoverAt: "2099-01-01T00:00:00Z"},
+		{ActorID: "kuro", TokenFile: filepath.Join(t.TempDir(), "kuro-token"), ChannelIDs: []string{domainconversation.BoardCommunicationMeetingChannelID}, PeerIDs: []string{"muse-comm"}, CutoverAt: "2099-01-02T00:00:00Z"},
+		{ActorID: "gin", TokenFile: filepath.Join(t.TempDir(), "gin-token"), ChannelIDs: []string{domainconversation.BoardCommunicationMeetingChannelID}, PeerIDs: []string{"muse-comm"}, CutoverAt: "2099-01-03T00:00:00Z"},
+	}
+	board.MeetingRoutes = []domainconversation.BoardCommunicationMeetingRoute{
+		{ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "muse-comm", RecipientActorID: "shiro", RecipientPrincipalID: "shiro"},
+		{ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "shiro", RecipientActorID: "kuro", RecipientPrincipalID: "kuro"},
+		{ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "gin", RecipientPrincipalID: "dots-comm"},
+		{ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "grok-comm", RecipientActorID: "mio", RecipientPrincipalID: "rencrow-comm"},
+		{ChannelID: domainconversation.BoardCommunicationMeetingChannelID, SenderPrincipalID: "rencrow-comm", RecipientPrincipalID: "muse-comm"},
+	}
+	return board
 }
 
 func TestReadBoardCommunicationBearerTokenReadsProtectedFixture(t *testing.T) {

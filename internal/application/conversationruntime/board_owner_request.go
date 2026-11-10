@@ -31,6 +31,7 @@ type BoardOwnerRequestSource struct {
 	PeerPrincipalID string `json:"peer_principal_id"`
 	Title           string `json:"title"`
 	IdempotencyKey  string `json:"idempotency_key"`
+	TargetActorID   string `json:"target_actor_id,omitempty"`
 }
 
 // NewBoardThreadTarget intentionally has no thread or reply identity because
@@ -55,7 +56,7 @@ type BoardOwnerRequestLookup struct {
 	SourceFingerprint string                  `json:"source_fingerprint"`
 }
 
-// BoardOwnerRequestCommitInput gives the journal one canonical Mio response
+// BoardOwnerRequestCommitInput gives the journal one canonical target-actor response
 // and the private unresolved BOARD target/key to persist atomically.
 type BoardOwnerRequestCommitInput struct {
 	ExpectedLookup    BoardOwnerRequestLookup
@@ -105,6 +106,7 @@ type BoardOwnerRequestRuntimeDependencies struct {
 	Generator     EmissionGenerator
 	Journal       BoardOwnerRequestJournal
 	PolicyVersion string
+	TargetActorID string
 }
 
 // BoardOwnerRequestRuntime uses Mio's existing CHAT composition and emission
@@ -114,6 +116,7 @@ type BoardOwnerRequestRuntime struct {
 	generator     EmissionGenerator
 	journal       BoardOwnerRequestJournal
 	policyVersion string
+	targetActorID string
 }
 
 func NewBoardOwnerRequestRuntime(dependencies BoardOwnerRequestRuntimeDependencies) (*BoardOwnerRequestRuntime, error) {
@@ -124,10 +127,25 @@ func NewBoardOwnerRequestRuntime(dependencies BoardOwnerRequestRuntimeDependenci
 	if policyVersion == "" {
 		return nil, errors.New("board owner request policy_version is required")
 	}
+	targetActorID := strings.TrimSpace(dependencies.TargetActorID)
+	if targetActorID != dependencies.TargetActorID || targetActorID != "" && ValidateBoardOwnerRequestTargetActorID(targetActorID) != nil {
+		return nil, errors.New("board owner request target_actor_id is invalid")
+	}
 	return &BoardOwnerRequestRuntime{
 		composer: dependencies.Composer, generator: dependencies.Generator,
-		journal: dependencies.Journal, policyVersion: policyVersion,
+		journal: dependencies.Journal, policyVersion: policyVersion, targetActorID: targetActorID,
 	}, nil
+}
+
+// ValidateBoardOwnerRequestTargetActorID accepts only the eight CORE actors
+// that the BOARD owner request route can explicitly target.
+func ValidateBoardOwnerRequestTargetActorID(actorID string) error {
+	switch actorID {
+	case "mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin":
+		return nil
+	default:
+		return errors.New("unsupported BOARD owner request target actor")
+	}
 }
 
 // RunAcceptedBoardOwnerRequest starts after the EventStore has durably accepted
@@ -153,6 +171,9 @@ func (r *BoardOwnerRequestRuntime) RunAcceptedBoardOwnerRequest(ctx context.Cont
 	source, instruction, err := parseAcceptedBoardOwnerRequest(input.ReadViewRequest)
 	if err != nil {
 		return failed(err)
+	}
+	if !boardOwnerRequestTargetMatchesRuntime(r.targetActorID, source.TargetActorID) {
+		return failed(errors.New("accepted BOARD owner request target actor does not match the bound runtime actor"))
 	}
 	accepted := input.ReadViewRequest.Accepted
 	lookup := BoardOwnerRequestLookup{
@@ -180,7 +201,7 @@ func (r *BoardOwnerRequestRuntime) RunAcceptedBoardOwnerRequest(ctx context.Cont
 		return failed(err)
 	}
 
-	scope := boardOwnerRequestScope(input.ReadViewRequest, r.policyVersion)
+	scope := boardOwnerRequestScope(input.ReadViewRequest, r.policyVersion, source.TargetActorID)
 	canonical := boardOwnerRequestPromptSnapshot(input.ReadViewRequest, instruction)
 	composed, err := r.composer.ComposeConversationPrompt(ctx, scope, canonical.Clone())
 	if err != nil {
@@ -303,7 +324,9 @@ func parseAcceptedBoardOwnerRequest(request ReadViewRequest) (BoardOwnerRequestS
 		return invalid("request body text is invalid")
 	}
 	binding, ok := event.Payload["board_owner_request_binding"].(map[string]any)
-	if !ok || !exactStringKeys(binding, 6, "board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key") {
+	legacyBinding := []string{"board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key"}
+	explicitBinding := []string{"board_instance_id", "core_principal_id", "channel_id", "peer_principal_id", "title", "idempotency_key", "target_actor_id"}
+	if !ok || !exactStringKeys(binding, len(legacyBinding), legacyBinding...) && !exactStringKeys(binding, len(explicitBinding), explicitBinding...) {
 		return invalid("BOARD target binding shape is invalid")
 	}
 	readRef := func(name string, limit int) (string, bool) {
@@ -319,9 +342,17 @@ func parseAcceptedBoardOwnerRequest(request ReadViewRequest) (BoardOwnerRequestS
 	if !boardInstanceOK || !corePrincipalOK || !channelOK || !peerPrincipalOK || !titleOK || !keyOK {
 		return invalid("BOARD target binding value is invalid")
 	}
+	targetActorID := ""
+	if _, explicit := binding["target_actor_id"]; explicit {
+		targetActorID, ok = binding["target_actor_id"].(string)
+		if !ok || ValidateBoardOwnerRequestTargetActorID(targetActorID) != nil {
+			return invalid("target actor binding is invalid")
+		}
+	}
 	return BoardOwnerRequestSource{
 		OwnerID: session.OwnerID, BoardInstanceID: boardInstanceID, CorePrincipalID: corePrincipalID,
 		ChannelID: channelID, PeerPrincipalID: peerPrincipalID, Title: title, IdempotencyKey: idempotencyKey,
+		TargetActorID: targetActorID,
 	}, text, nil
 }
 
@@ -353,11 +384,15 @@ func computeBoardOwnerRequestSourceFingerprint(source BoardOwnerRequestSource, b
 	return hex.EncodeToString(fingerprint[:])
 }
 
-func boardOwnerRequestScope(request ReadViewRequest, policyVersion string) conversation.ConversationScope {
+func boardOwnerRequestScope(request ReadViewRequest, policyVersion, targetActorID string) conversation.ConversationScope {
 	accepted := request.Accepted
+	actorID := accepted.ActorID
+	if targetActorID != "" {
+		actorID = targetActorID
+	}
 	return conversation.ConversationScope{
 		TurnID: accepted.TurnID, SessionID: accepted.SessionID, TraceID: accepted.InputEvent.TraceID,
-		ActorID: accepted.ActorID, InputID: accepted.InputMessageID,
+		ActorID: actorID, InputID: accepted.InputMessageID,
 		GenerationID: fmt.Sprintf("%s:%d", accepted.TurnID, accepted.GenerationEpoch),
 		Purpose:      conversation.PurposeBoardOwnerRequest, PolicyVersion: policyVersion,
 	}
@@ -402,18 +437,22 @@ func validateBoardOwnerRequestPrompt(composed, canonical agent.PromptSnapshot, i
 
 func boardOwnerRequestCommit(request ReadViewRequest, lookup BoardOwnerRequestLookup, emission conversation.AgentEmission, receipt agent.InvocationReceipt) BoardOwnerRequestCommitInput {
 	accepted := request.Accepted
+	actorID := boardOwnerRequestCanonicalActorID(lookup.Source)
 	messageID := modulecore.NewMessageID()
 	text := emission.UserMessage.Text
 	payload := map[string]any{
-		"kind": "reply", "visibility": "public", "from": "mio", "source_actor_id": "mio", "to": "external_peer",
+		"kind": "reply", "visibility": "public", "from": actorID, "source_actor_id": actorID, "to": "external_peer",
 		"text": text, "content": text,
+	}
+	if lookup.Source.TargetActorID != "" {
+		payload["mentions"] = []any{lookup.Source.PeerPrincipalID}
 	}
 	event := modulecore.NewEventEnvelope(accepted.InputEvent.TraceID, accepted.InputEvent.EventID, nil, "conversation_runtime", "agent.response", time.Now().UTC(), payload)
 	event.SessionID, event.TurnID, event.MessageID = accepted.SessionID, accepted.TurnID, messageID
-	event.ActorKind, event.ActorID = "agent", "mio"
+	event.ActorKind, event.ActorID = "agent", actorID
 	index := MessageIndex{
 		MessageID: messageID, EventID: event.EventID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,
-		FromActor: "mio", ToKind: "external_peer", ToActor: lookup.Source.PeerPrincipalID,
+		FromActor: actorID, ToKind: "external_peer", ToActor: lookup.Source.PeerPrincipalID,
 		Kind: "board_owner_request", Visibility: "public",
 	}
 	return BoardOwnerRequestCommitInput{
@@ -423,6 +462,35 @@ func boardOwnerRequestCommit(request ReadViewRequest, lookup BoardOwnerRequestLo
 			ChannelID: lookup.Source.ChannelID, PeerPrincipalID: lookup.Source.PeerPrincipalID, Title: lookup.Source.Title,
 		},
 		IdempotencyKey: lookup.Source.IdempotencyKey,
+	}
+}
+
+func boardOwnerRequestCanonicalActorID(source BoardOwnerRequestSource) string {
+	if source.TargetActorID == "" {
+		return "mio"
+	}
+	return source.TargetActorID
+}
+
+func boardOwnerRequestTargetMatchesRuntime(runtimeActorID, requestedActorID string) bool {
+	if runtimeActorID == "mio" {
+		return requestedActorID == "" || requestedActorID == "mio"
+	}
+	return runtimeActorID == requestedActorID
+}
+
+func boardOwnerRequestMentionsMatch(value any, peerPrincipalID string) bool {
+	switch mentions := value.(type) {
+	case []string:
+		return len(mentions) == 1 && mentions[0] == peerPrincipalID
+	case []any:
+		if len(mentions) != 1 {
+			return false
+		}
+		mention, ok := mentions[0].(string)
+		return ok && mention == peerPrincipalID
+	default:
+		return false
 	}
 }
 
@@ -438,9 +506,15 @@ func validateBoardOwnerRequestOutcome(outcome BoardOwnerRequestOutcome, expected
 		return errors.New("stored board owner request target or lookup does not match the accepted scope")
 	}
 	event, index := outcome.Event, outcome.MessageIndex
+	actorID := boardOwnerRequestCanonicalActorID(expected.Source)
+	validPayloadShape := exactStringKeys(event.Payload, 7, "kind", "visibility", "from", "source_actor_id", "to", "text", "content")
+	if expected.Source.TargetActorID != "" {
+		validPayloadShape = exactStringKeys(event.Payload, 8, "kind", "visibility", "from", "source_actor_id", "to", "text", "content", "mentions") &&
+			boardOwnerRequestMentionsMatch(event.Payload["mentions"], expected.Source.PeerPrincipalID)
+	}
 	if err := modulecore.ValidateEventEnvelope(event); err != nil ||
 		event.EventType != "agent.response" || event.ComponentID != "conversation_runtime" ||
-		event.ActorKind != "agent" || event.ActorID != "mio" || event.TraceID != accepted.InputEvent.TraceID ||
+		event.ActorKind != "agent" || event.ActorID != actorID || event.TraceID != accepted.InputEvent.TraceID ||
 		event.CausationEventID != accepted.InputEvent.EventID || len(event.DependencyEventIDs) != 0 ||
 		event.SessionID != accepted.SessionID || event.TurnID != accepted.TurnID || event.ThreadID != "" ||
 		event.RequestID != "" || event.ResponseID != "" || event.UtteranceID != "" || event.TaskID != "" ||
@@ -448,20 +522,19 @@ func validateBoardOwnerRequestOutcome(outcome BoardOwnerRequestOutcome, expected
 		event.GoalID != "" || event.ArtifactID != "" || event.EvidenceID != "" || event.MemoryID != "" ||
 		event.RelationID != "" || event.ScheduleID != "" || event.QueueItemID != "" || event.CheckpointID != "" ||
 		event.ReceiptID != "" ||
-		event.MessageID == accepted.InputMessageID || event.MessageID == "" ||
-		!exactStringKeys(event.Payload, 7, "kind", "visibility", "from", "source_actor_id", "to", "text", "content") {
+		event.MessageID == accepted.InputMessageID || event.MessageID == "" || !validPayloadShape {
 		return errors.New("stored board owner request response envelope is invalid")
 	}
 	text, textOK := event.Payload["text"].(string)
 	content, contentOK := event.Payload["content"].(string)
 	if !textOK || !contentOK || strings.TrimSpace(text) == "" || text != content ||
 		strings.TrimSpace(text) == strings.TrimSpace(instruction) || event.Payload["kind"] != "reply" ||
-		event.Payload["visibility"] != "public" || event.Payload["from"] != "mio" ||
-		event.Payload["source_actor_id"] != "mio" || event.Payload["to"] != "external_peer" {
+		event.Payload["visibility"] != "public" ||
+		event.Payload["source_actor_id"] != actorID || event.Payload["from"] != actorID || event.Payload["to"] != "external_peer" {
 		return errors.New("stored board owner request response content is invalid")
 	}
 	if index.MessageID != event.MessageID || index.EventID != event.EventID || index.SessionID != accepted.SessionID ||
-		index.TurnID != accepted.TurnID || index.FromActor != "mio" || index.ToKind != "external_peer" ||
+		index.TurnID != accepted.TurnID || index.FromActor != actorID || index.ToKind != "external_peer" ||
 		index.ToActor != expected.Source.PeerPrincipalID || index.Kind != "board_owner_request" ||
 		index.Visibility != "public" || index.ReplyToMessageID != "" {
 		return errors.New("stored board owner request response index is invalid")

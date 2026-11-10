@@ -90,6 +90,7 @@ type boardInboxWireHarness struct {
 	t                 *testing.T
 	trace             *boardInboxTrace
 	identity          boardcommunication.ConnectionIdentity
+	contexts          []boardcommunication.BoardContext
 	wireIdentity      boardcommunication.ConnectionIdentity
 	identityStatus    int
 	inbox             func(read int, cursor string) boardcommunication.InboxPage
@@ -123,6 +124,7 @@ func newBoardInboxWireHarness(t *testing.T, pin eventstore.BoardConnectionPin) *
 		t:                 t,
 		trace:             &boardInboxTrace{},
 		identity:          boardcommunication.ConnectionIdentity{PrincipalID: pin.PrincipalID, JournalInstanceID: pin.JournalInstanceID},
+		contexts:          []boardcommunication.BoardContext{{ID: "channel-alpha", Label: "Channel alpha"}},
 		wireIdentity:      boardcommunication.ConnectionIdentity{PrincipalID: pin.PrincipalID, JournalInstanceID: pin.JournalInstanceID},
 		identityStatus:    http.StatusOK,
 		threadStatus:      http.StatusOK,
@@ -175,6 +177,11 @@ func (h *boardInboxWireHarness) serveHTTP(w http.ResponseWriter, r *http.Request
 		writeBoardInboxJSON(w, h.identityStatus, map[string]any{
 			"principal_id": h.identity.PrincipalID, "journal_instance_id": h.identity.JournalInstanceID,
 			"correlation_id": "correlation-synthetic",
+		})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/contexts":
+		h.trace.add("contexts")
+		writeBoardInboxJSON(w, http.StatusOK, map[string]any{
+			"contexts": h.contexts, "correlation_id": "correlation-synthetic",
 		})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/events":
 		h.trace.add("events")

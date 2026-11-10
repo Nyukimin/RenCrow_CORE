@@ -18,15 +18,16 @@ import (
 // CutoverAt is kept as its configured UTC RFC3339 literal; CORE's durable
 // communication owner is responsible for pinning the initial cutover.
 type BoardCommunicationConfig struct {
-	Enabled     bool                                `yaml:"enabled"`
-	URL         string                              `yaml:"url"`
-	UnixSocket  string                              `yaml:"unix_socket"`
-	TokenFile   string                              `yaml:"token_file"`
-	PrincipalID string                              `yaml:"principal_id"`
-	ChannelIDs  []string                            `yaml:"channel_ids"`
-	PeerIDs     []string                            `yaml:"peer_ids"`
-	CutoverAt   string                              `yaml:"cutover_at"`
-	Responders  []BoardCommunicationResponderConfig `yaml:"responders"`
+	Enabled       bool                                                `yaml:"enabled"`
+	URL           string                                              `yaml:"url"`
+	UnixSocket    string                                              `yaml:"unix_socket"`
+	TokenFile     string                                              `yaml:"token_file"`
+	PrincipalID   string                                              `yaml:"principal_id"`
+	ChannelIDs    []string                                            `yaml:"channel_ids"`
+	PeerIDs       []string                                            `yaml:"peer_ids"`
+	CutoverAt     string                                              `yaml:"cutover_at"`
+	Responders    []BoardCommunicationResponderConfig                 `yaml:"responders"`
+	MeetingRoutes []domainconversation.BoardCommunicationMeetingRoute `yaml:"meeting_routes"`
 }
 
 // BoardCommunicationResponderConfig defines one explicitly scoped BOARD CHAT
@@ -50,6 +51,9 @@ func (c *Config) validateBoardCommunicationConfig() error {
 	if !board.Enabled {
 		if len(board.Responders) != 0 {
 			return errors.New("board_communication.responders requires enabled=true")
+		}
+		if len(board.MeetingRoutes) != 0 {
+			return errors.New("board_communication.meeting_routes requires enabled=true")
 		}
 		return nil
 	}
@@ -89,7 +93,49 @@ func (c *Config) validateBoardCommunicationConfig() error {
 	if err := validateBoardCommunicationResponders(board); err != nil {
 		return err
 	}
+	if err := validateBoardCommunicationMeetingRoutes(board); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateBoardCommunicationMeetingRoutes(board BoardCommunicationConfig) error {
+	if err := domainconversation.ValidateBoardCommunicationMeetingRoutes(board.MeetingRoutes); err != nil {
+		return fmt.Errorf("board_communication.meeting_routes: %w", err)
+	}
+	for _, route := range board.MeetingRoutes {
+		senderActorID, senderIsInternal := domainconversation.BoardCommunicationMeetingInternalActorID(route.SenderPrincipalID)
+		recipientActorID, recipientIsInternal := domainconversation.BoardCommunicationMeetingInternalActorID(route.RecipientPrincipalID)
+		if senderIsInternal && !boardCommunicationMeetingProfileAllowsChannel(board, senderActorID) {
+			return fmt.Errorf("board_communication.meeting_routes sender profile %q must be configured for the meeting channel", senderActorID)
+		}
+		if recipientIsInternal && !boardCommunicationMeetingProfileAllowsChannel(board, recipientActorID) {
+			return fmt.Errorf("board_communication.meeting_routes recipient profile %q must be configured for the meeting channel", recipientActorID)
+		}
+	}
+	return nil
+}
+
+func boardCommunicationMeetingProfileAllowsChannel(board BoardCommunicationConfig, actorID string) bool {
+	if actorID == "mio" {
+		return board.PrincipalID == domainconversation.BoardCommunicationMeetingMioPrincipalID &&
+			containsBoardCommunicationID(board.ChannelIDs, domainconversation.BoardCommunicationMeetingChannelID)
+	}
+	for _, responder := range board.Responders {
+		if responder.ActorID == actorID {
+			return containsBoardCommunicationID(responder.ChannelIDs, domainconversation.BoardCommunicationMeetingChannelID)
+		}
+	}
+	return false
+}
+
+func containsBoardCommunicationID(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
 }
 
 func validateBoardCommunicationResponders(board BoardCommunicationConfig) error {

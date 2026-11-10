@@ -92,6 +92,20 @@ func TestRunBoardPublicationDeliveryUsesCurrentClaimHintAndCommitsCanonicalReadb
 	}
 }
 
+func TestRunBoardPublicationDeliveryScopesClaimToConfiguredResponder(t *testing.T) {
+	fixture := newBoardPublicationDeliveryTestFixture(t)
+	journal := newBoardPublicationDeliveryTestJournal(fixture.lease, fixture.trace)
+	input := fixture.input
+	input.ResponderActorID = "shiro"
+
+	if progressed, err := runBoardPublicationDelivery(context.Background(), fixture.wire.client, journal, input); err != nil || !progressed {
+		t.Fatalf("runBoardPublicationDelivery(Shiro scope) = progressed %t, err %v; want one completed send", progressed, err)
+	}
+	if len(journal.claimInputs) != 1 || journal.claimInputs[0].ResponderActorID != input.ResponderActorID {
+		t.Fatalf("claim actor = %#v; want fixed responder %q", journal.claimInputs, input.ResponderActorID)
+	}
+}
+
 func TestRunBoardPublicationDeliveryReplaysExactBytesAfterLostSendResult(t *testing.T) {
 	fixture := newBoardPublicationDeliveryTestFixture(t)
 	fixture.wire.dropFirstSend = true

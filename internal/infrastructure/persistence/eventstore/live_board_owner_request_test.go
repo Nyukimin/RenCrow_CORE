@@ -500,6 +500,10 @@ type boardOwnerRequestPublicationTestFixture struct {
 }
 
 func newBoardOwnerRequestPublicationTestFixture(t *testing.T) *boardOwnerRequestPublicationTestFixture {
+	return newBoardOwnerRequestPublicationTestFixtureForResponder(t, "")
+}
+
+func newBoardOwnerRequestPublicationTestFixtureForResponder(t *testing.T, responderActorID string) *boardOwnerRequestPublicationTestFixture {
 	t.Helper()
 	ctx := context.Background()
 	fixture := &boardOwnerRequestPublicationTestFixture{databasePath: filepath.Join(t.TempDir(), "board-owner-publication.sqlite")}
@@ -515,8 +519,20 @@ func newBoardOwnerRequestPublicationTestFixture(t *testing.T) *boardOwnerRequest
 			}
 		}
 	})
-	pin := pinBoardOwnerRequestConnection(t, fixture.store)
+	pin := boardConnectionPinFixture()
+	if responderActorID != "" && responderActorID != "mio" {
+		pin.PrincipalID = responderActorID
+		if _, err := fixture.store.PinBoardConnectionForPrincipal(ctx, pin); err != nil {
+			t.Fatalf("PinBoardConnectionForPrincipal(%s owner publication fixture): %v", responderActorID, err)
+		}
+	} else if _, err := fixture.store.PinBoardConnection(ctx, pin); err != nil {
+		t.Fatalf("PinBoardConnection(owner publication fixture): %v", err)
+	}
 	reservationInput := boardOwnerRequestReservationFixture(pin)
+	if responderActorID != "" {
+		reservationInput.Source.TargetActorID = responderActorID
+		reservationInput.Source.IdempotencyKey += ":" + responderActorID
+	}
 	reservation, err := fixture.store.ReserveBoardOwnerRequest(ctx, reservationInput)
 	if err != nil {
 		t.Fatalf("ReserveBoardOwnerRequest(owner publication fixture): %v", err)
@@ -548,7 +564,7 @@ func newBoardOwnerRequestPublicationTestFixture(t *testing.T) *boardOwnerRequest
 	fixture.scope = BoardPublicationScope{OwnerID: pin.OwnerID, JournalInstanceID: pin.JournalInstanceID, PrincipalID: pin.PrincipalID}
 	fixture.now = reservationInput.Now.Add(5 * time.Minute)
 	lease, available, err := fixture.store.ClaimBoardPublication(ctx, BoardPublicationClaimInput{
-		Scope: fixture.scope, Now: fixture.now, LeaseDuration: time.Minute,
+		Scope: fixture.scope, ResponderActorID: responderActorID, Now: fixture.now, LeaseDuration: time.Minute,
 	})
 	if err != nil || !available {
 		t.Fatalf("ClaimBoardPublication(owner request fixture) = available %t, err %v", available, err)
@@ -582,6 +598,9 @@ func boardOwnerRequestRootAttemptBytes(lease BoardPublicationLease, title, claim
 		"body":       payloadString(lease.CanonicalResponse.Payload, "text"),
 		"recipients": []string{lease.PublicationIntent.Target.PeerPrincipalID}, "kind": "request",
 		"idempotency_key": lease.LogicalKey,
+	}
+	if mentions := lease.CanonicalResponse.Payload["mentions"]; mentions != nil {
+		wire["mentions"] = []string{lease.PublicationIntent.Target.PeerPrincipalID}
 	}
 	if claimID != "" {
 		wire["processing_claim_id"] = claimID
@@ -785,10 +804,15 @@ func assertAcceptedBoardOwnerRequest(t *testing.T, store *SQLiteStore, ctx conte
 		t.Fatalf("accepted owner body = %#v, want exact instruction", event.Payload["body"])
 	}
 	binding, ok := event.Payload["board_owner_request_binding"].(map[string]any)
-	if !ok || len(binding) != 6 || binding["board_instance_id"] != reservation.Source.BoardInstanceID ||
+	wantBindingLength := 6
+	if reservation.Source.TargetActorID != "" {
+		wantBindingLength = 7
+	}
+	if !ok || len(binding) != wantBindingLength || binding["board_instance_id"] != reservation.Source.BoardInstanceID ||
 		binding["core_principal_id"] != reservation.Source.CorePrincipalID || binding["channel_id"] != reservation.Source.ChannelID ||
 		binding["peer_principal_id"] != reservation.Source.PeerPrincipalID || binding["title"] != reservation.Source.Title ||
-		binding["idempotency_key"] != reservation.Source.IdempotencyKey {
+		binding["idempotency_key"] != reservation.Source.IdempotencyKey ||
+		reservation.Source.TargetActorID != "" && binding["target_actor_id"] != reservation.Source.TargetActorID {
 		t.Fatalf("accepted typed BOARD target binding = %#v, want exact pinned source and namespaced key", event.Payload["board_owner_request_binding"])
 	}
 	for _, coreID := range []string{string(event.SessionID), string(event.TurnID), string(event.MessageID), string(event.EventID), string(event.TraceID)} {
@@ -826,17 +850,22 @@ func boardOwnerRequestCommitFixture(accepted AcceptedTurn, reservation BoardOwne
 		TurnID: accepted.TurnID, GenerationEpoch: accepted.GenerationEpoch,
 		OperationID: "conversation.output:" + string(accepted.TurnID), SourceFingerprint: hex.EncodeToString(fingerprint[:]),
 	}
+	actorID := boardOwnerRequestCanonicalActorID(reservation.Source)
 	messageID := modulecore.NewMessageID()
+	payload := map[string]any{
+		"kind": "reply", "visibility": "public", "from": actorID, "source_actor_id": actorID, "to": "external_peer",
+		"text": boardOwnerRequestTestReply, "content": boardOwnerRequestTestReply,
+	}
+	if reservation.Source.TargetActorID != "" {
+		payload["mentions"] = []any{reservation.Source.PeerPrincipalID}
+	}
 	responseEvent := modulecore.NewEventEnvelope(accepted.InputEvent.TraceID, accepted.InputEvent.EventID, nil,
-		"conversation_runtime", "agent.response", reservation.AdmittedAt.Add(time.Second), map[string]any{
-			"kind": "reply", "visibility": "public", "from": "mio", "source_actor_id": "mio", "to": "external_peer",
-			"text": boardOwnerRequestTestReply, "content": boardOwnerRequestTestReply,
-		})
+		"conversation_runtime", "agent.response", reservation.AdmittedAt.Add(time.Second), payload)
 	responseEvent.SessionID, responseEvent.TurnID, responseEvent.MessageID = accepted.SessionID, accepted.TurnID, messageID
-	responseEvent.ActorKind, responseEvent.ActorID = "agent", "mio"
+	responseEvent.ActorKind, responseEvent.ActorID = "agent", actorID
 	index := conversationruntime.MessageIndex{
 		MessageID: messageID, EventID: responseEvent.EventID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,
-		FromActor: "mio", ToKind: "external_peer", ToActor: reservation.Source.PeerPrincipalID,
+		FromActor: actorID, ToKind: "external_peer", ToActor: reservation.Source.PeerPrincipalID,
 		Kind: "board_owner_request", Visibility: "public",
 	}
 	target := conversationruntime.NewBoardThreadTarget{

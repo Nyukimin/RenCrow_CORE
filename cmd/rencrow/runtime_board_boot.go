@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -24,20 +25,22 @@ const (
 )
 
 type boardCommunicationBoot struct {
-	mu           sync.RWMutex
-	openMu       sync.Mutex
-	store        *eventstore.SQLiteStore
-	sessions     boardCommunicationCanonicalSessionOwner
-	mio          *agent.MioAgent
-	peerChat     *agent.BoardPeerChatRuntime
-	conversation boardCommunicationConversationProvider
-	service      *boardCommunicationService
-	settings     boardConnectionSettings
-	inboxScope   boardInboxScope
-	ownerID      string
-	client       *boardcommunication.Client
-	pin          eventstore.BoardConnectionPin
-	composition  *boardCommunicationComposition
+	mu                sync.RWMutex
+	openMu            sync.Mutex
+	store             *eventstore.SQLiteStore
+	sessions          boardCommunicationCanonicalSessionOwner
+	mio               *agent.MioAgent
+	peerChat          *agent.BoardPeerChatRuntime
+	ownerRequestChat  *agent.BoardPeerChatRuntime
+	conversation      boardCommunicationConversationProvider
+	service           *boardCommunicationService
+	settings          boardConnectionSettings
+	inboxScope        boardInboxScope
+	ownerID           string
+	client            *boardcommunication.Client
+	pin               eventstore.BoardConnectionPin
+	composition       *boardCommunicationComposition
+	agentRequestBoots map[string]*boardCommunicationBoot
 }
 
 func buildBoardCommunicationRuntime(
@@ -55,7 +58,18 @@ func buildBoardCommunicationRuntime(
 
 	service := newBoardCommunicationService(boardCommunicationServiceDeps{enabled: true})
 	deps.boardCommunication = service
-	boot := &boardCommunicationBoot{service: service}
+	var mioOwnerRequestChat *agent.BoardPeerChatRuntime
+	ownerRequestProvider, hasOwnerRequestProvider := conversation.(agent.ConversationGenerationProvider)
+	if actorID, ok := domainconversation.BoardCommunicationMeetingInternalActorID(cfg.BoardCommunication.PrincipalID); ok &&
+		actorID == "mio" && hasBoardCommunicationMeetingSenderRoute(cfg.BoardCommunication.MeetingRoutes, cfg.BoardCommunication.PrincipalID) &&
+		cfg.Prompts != nil && hasOwnerRequestProvider {
+		mioOwnerRequestChat, _ = agent.NewBoardPeerChatOwnerRequestRuntime(agent.BoardPeerChatActorMio, cfg.Prompts.MioPersona, ownerRequestProvider)
+	}
+	agentRequestBoots := make(map[string]*boardCommunicationBoot, len(cfg.BoardCommunication.Responders)+1)
+	boot := &boardCommunicationBoot{service: service, ownerRequestChat: mioOwnerRequestChat, agentRequestBoots: agentRequestBoots}
+	if mioOwnerRequestChat != nil {
+		agentRequestBoots[string(mioOwnerRequestChat.Actor())] = boot
+	}
 	ownerID := strings.TrimSpace(cfg.LocalAgentOps.UserID)
 	if ownerID == "" || ownerID != cfg.LocalAgentOps.UserID || !agentOpsUserIDPattern.MatchString(ownerID) {
 		ownerID = ""
@@ -85,7 +99,7 @@ func buildBoardCommunicationRuntime(
 		if len(responderWiring) > 0 {
 			wiring = responderWiring[0]
 		}
-		buildBoardCommunicationResponderRuntimes(cfg, deps, boot.store, boot.sessions, ownerID, wiring)
+		buildBoardCommunicationResponderRuntimes(cfg, deps, boot.store, boot.sessions, ownerID, wiring, agentRequestBoots)
 	}
 	cutoverAt, err := time.Parse(time.RFC3339, cfg.BoardCommunication.CutoverAt)
 	if err != nil {
@@ -110,7 +124,8 @@ func buildBoardCommunicationRuntime(
 	}
 	boot.inboxScope = boardInboxScope{
 		AllowedChannelIDs: allowedChannels, AllowedPeerIDs: allowedPeers,
-		WakeTimeout: boardCommunicationWakeTimeout,
+		WakeTimeout:   boardCommunicationWakeTimeout,
+		MeetingRoutes: boardCommunicationMeetingRoutesForPrincipal(boardConfig.MeetingRoutes, boardConfig.PrincipalID),
 	}
 	if !storeOK || !sessionsOK || mio == nil || conversation == nil ||
 		!cfg.LocalAgentOps.Enabled || boot.ownerID == "" || deps.boardOwnerHTTP == nil {
@@ -149,6 +164,7 @@ func buildBoardCommunicationResponderRuntimes(
 	sessions boardCommunicationCanonicalSessionOwner,
 	ownerID string,
 	wiring boardCommunicationResponderWiring,
+	agentRequestBoots map[string]*boardCommunicationBoot,
 ) {
 	if cfg == nil || deps == nil || !cfg.BoardCommunication.Enabled {
 		return
@@ -196,15 +212,24 @@ func buildBoardCommunicationResponderRuntimes(
 		inboxScope := boardInboxScope{
 			ResponderActorID: responder.ActorID, AllowedChannelIDs: allowedChannels,
 			AllowedPeerIDs: allowedPeers, WakeTimeout: boardCommunicationWakeTimeout,
+			MeetingRoutes: boardCommunicationMeetingRoutesForPrincipal(cfg.BoardCommunication.MeetingRoutes, responder.ActorID),
 		}
 		if !validBoardConnectionSettings(settings) || !validBoardInboxAllowlist(allowedPeers) {
 			log.Printf("BOARD responder %s unavailable: connection or inbox scope configuration", responder.ActorID)
 			service.setStatus(boardCommunicationServiceStateUnavailable, false)
 			continue
 		}
+		var ownerRequestChat *agent.BoardPeerChatRuntime
+		if peerChat != nil && hasBoardCommunicationMeetingSenderRoute(cfg.BoardCommunication.MeetingRoutes, responder.ActorID) {
+			ownerRequestChat, _ = peerChat.OwnerRequestRuntime()
+		}
 		boot := &boardCommunicationBoot{
-			store: store, sessions: sessions, peerChat: peerChat, service: service,
+			store: store, sessions: sessions, peerChat: peerChat, ownerRequestChat: ownerRequestChat, service: service,
 			settings: settings, inboxScope: inboxScope, ownerID: ownerID,
+		}
+		if ownerRequestChat != nil && agentRequestBoots != nil {
+			boot.agentRequestBoots = agentRequestBoots
+			agentRequestBoots[string(ownerRequestChat.Actor())] = boot
 		}
 		service.deps.lifecycle = boardCommunicationLifecycleDeps{enabled: true, open: boot.openGeneration}
 		service.deps.process = func(ctx context.Context) (boardCommunicationServiceStep, error) {
@@ -226,6 +251,34 @@ func buildBoardCommunicationResponderRuntimes(
 	}
 }
 
+func boardCommunicationMeetingRoutesForPrincipal(
+	routes []domainconversation.BoardCommunicationMeetingRoute,
+	principalID string,
+) []domainconversation.BoardCommunicationMeetingRoute {
+	if principalID == "" || len(routes) == 0 {
+		return nil
+	}
+	filtered := make([]domainconversation.BoardCommunicationMeetingRoute, 0, len(routes))
+	for _, route := range routes {
+		if route.SenderPrincipalID == principalID || route.RecipientPrincipalID == principalID {
+			filtered = append(filtered, route)
+		}
+	}
+	return filtered
+}
+
+func hasBoardCommunicationMeetingSenderRoute(
+	routes []domainconversation.BoardCommunicationMeetingRoute,
+	principalID string,
+) bool {
+	for _, route := range routes {
+		if route.SenderPrincipalID == principalID {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *boardCommunicationBoot) openGeneration(ctx context.Context) (boardCommunicationLifecycleGeneration, error) {
 	if b == nil || ctx == nil || b.store == nil || b.service == nil || b.sessions == nil ||
 		(b.peerChat == nil && (b.mio == nil || b.conversation == nil)) {
@@ -245,7 +298,8 @@ func (b *boardCommunicationBoot) openGeneration(ctx context.Context) (boardCommu
 		inboxScope := b.inboxScope
 		inboxScope.Pin = openedPin
 		createdComposition, err := newBoardCommunicationComposition(boardCommunicationCompositionDeps{
-			Store: b.store, Sessions: b.sessions, Mio: b.mio, PeerChat: b.peerChat, Conversation: b.conversation,
+			Store: b.store, Sessions: b.sessions, Mio: b.mio, PeerChat: b.peerChat,
+			OwnerRequestChat: b.ownerRequestChat, Conversation: b.conversation,
 			Client: openedClient, Pin: openedPin, InboxScope: inboxScope, Service: b.service,
 			UsePrincipalScopedPins: b.settings.UsePrincipalScopedPins,
 			Now:                    time.Now, OwnerID: b.ownerID, ActorID: func() string {
@@ -333,6 +387,37 @@ func (b *boardCommunicationBoot) ownerCallbacks() boardOwnerHTTPCallbacks {
 		Status: func(ctx context.Context, ownerID string, turnID modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
 			return b.readOwnerRequestStatus(ctx, ownerID, turnID)
 		},
+		AgentAccept: func(ctx context.Context, ownerID string, request boardOwnerHTTPRequest) (boardOwnerHTTPAcceptedReceipt, error) {
+			if b == nil || request.ActorID == "" || b.agentRequestBoots == nil {
+				return boardOwnerHTTPAcceptedReceipt{}, errBoardOwnerHTTPNotFound
+			}
+			targetBoot := b.agentRequestBoots[request.ActorID]
+			if targetBoot == nil {
+				return boardOwnerHTTPAcceptedReceipt{}, errBoardOwnerHTTPNotFound
+			}
+			composition := targetBoot.currentComposition()
+			if composition == nil {
+				return boardOwnerHTTPAcceptedReceipt{}, ErrBoardCommunicationCompositionUnavailable
+			}
+			return composition.acceptAgentOwnerRequest(ctx, ownerID, request)
+		},
+		AgentStatus: func(ctx context.Context, ownerID string, turnID modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+			if b == nil || ctx == nil || ownerID == "" || ownerID != b.ownerID || turnID.Validate() != nil || b.agentRequestBoots == nil {
+				return boardOwnerHTTPStatusReceipt{}, false, errBoardOwnerHTTPNotFound
+			}
+			for _, actorID := range []string{"mio", "shiro", "midori", "kuro", "aka", "ao", "kin", "gin"} {
+				if targetBoot := b.agentRequestBoots[actorID]; targetBoot != nil {
+					receipt, found, err := targetBoot.readAgentOwnerRequestStatus(ctx, ownerID, turnID)
+					if errors.Is(err, errBoardOwnerHTTPNotFound) {
+						continue
+					}
+					if err != nil || found {
+						return receipt, found, err
+					}
+				}
+			}
+			return boardOwnerHTTPStatusReceipt{}, false, nil
+		},
 	}
 }
 
@@ -348,10 +433,21 @@ func (b *boardCommunicationBoot) readOwnerRequestStatus(ctx context.Context, own
 	)
 }
 
+func (b *boardCommunicationBoot) readAgentOwnerRequestStatus(ctx context.Context, ownerID string, turnID modulecore.TurnID) (boardOwnerHTTPStatusReceipt, bool, error) {
+	if b == nil || ctx == nil || ownerID == "" || ownerID != b.ownerID || turnID.Validate() != nil ||
+		b.store == nil || b.ownerRequestChat == nil {
+		return boardOwnerHTTPStatusReceipt{}, false, errBoardOwnerHTTPNotFound
+	}
+	return readBoardOwnerAgentHTTPStatus(ctx, b.store, ownerID, turnID, b.settings.ExpectedPrincipalID,
+		b.settings.CutoverAt, string(b.ownerRequestChat.Actor()), b.settings.UsePrincipalScopedPins)
+}
+
 func registerBoardCommunicationOwnerRoutes(mux *http.ServeMux, deps *Dependencies) {
 	if mux == nil || deps == nil || deps.boardOwnerHTTP == nil {
 		return
 	}
 	mux.Handle(boardOwnerRequestsPath, deps.boardOwnerHTTP)
 	mux.Handle(boardOwnerRequestsPath+"/", deps.boardOwnerHTTP)
+	mux.Handle(boardOwnerAgentRequestsPath, deps.boardOwnerHTTP)
+	mux.Handle(boardOwnerAgentRequestsPath+"/", deps.boardOwnerHTTP)
 }

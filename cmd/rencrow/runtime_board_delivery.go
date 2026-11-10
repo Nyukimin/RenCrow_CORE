@@ -56,10 +56,11 @@ type boardPublicationClaimHint struct {
 }
 
 type boardPublicationDeliveryInput struct {
-	Scope         eventstore.BoardPublicationScope
-	Now           time.Time
-	LeaseDuration time.Duration
-	ClaimHint     *boardPublicationClaimHint
+	Scope            eventstore.BoardPublicationScope
+	ResponderActorID string
+	Now              time.Time
+	LeaseDuration    time.Duration
+	ClaimHint        *boardPublicationClaimHint
 }
 
 // boardPublicationDeliveryRoute keeps a new-thread destination separate from
@@ -102,8 +103,10 @@ func runBoardPublicationDelivery(ctx context.Context, client *boardcommunication
 		return false, boardcommunication.ErrConnectionIdentityMismatch
 	}
 	lease, available, err := journal.ClaimBoardPublication(ctx, eventstore.BoardPublicationClaimInput{
-		Scope: input.Scope, CanonicalResponseMessageID: boardPublicationClaimResponseID(input.ClaimHint),
-		Now: normalizedBoardDeliveryNow(input.Now), LeaseDuration: input.LeaseDuration,
+		Scope:                      input.Scope,
+		ResponderActorID:           input.ResponderActorID,
+		CanonicalResponseMessageID: boardPublicationClaimResponseID(input.ClaimHint),
+		Now:                        normalizedBoardDeliveryNow(input.Now), LeaseDuration: input.LeaseDuration,
 	})
 	if err != nil || !available {
 		return false, err

@@ -195,6 +195,101 @@ func TestBoardCommunicationCompositionOwnerAdmissionPrecedesDurableWake(t *testi
 	}
 }
 
+func TestBoardCommunicationCompositionAgentOwnerAdmissionUsesMeetingRouteAndLivePin(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*boardCommunicationCompositionDeps, *boardInboxWireHarness, *boardOwnerHTTPRequest)
+		wantError bool
+	}{
+		{name: "meeting route authorizes peer outside legacy peer allowlist"},
+		{name: "unlisted route peer", wantError: true, mutate: func(_ *boardCommunicationCompositionDeps, _ *boardInboxWireHarness, request *boardOwnerHTTPRequest) {
+			request.PeerID = "muse-comm"
+		}},
+		{name: "unlisted route channel", wantError: true, mutate: func(_ *boardCommunicationCompositionDeps, _ *boardInboxWireHarness, request *boardOwnerHTTPRequest) {
+			request.ChannelID = "channel-other"
+		}},
+		{name: "wrong requested actor", wantError: true, mutate: func(_ *boardCommunicationCompositionDeps, _ *boardInboxWireHarness, request *boardOwnerHTTPRequest) {
+			request.ActorID = "shiro"
+		}},
+		{name: "rotated live principal", wantError: true, mutate: func(_ *boardCommunicationCompositionDeps, wire *boardInboxWireHarness, _ *boardOwnerHTTPRequest) {
+			wire.identity.PrincipalID = "shiro"
+		}},
+		{name: "rotated live journal", wantError: true, mutate: func(_ *boardCommunicationCompositionDeps, wire *boardInboxWireHarness, _ *boardOwnerHTTPRequest) {
+			wire.identity.JournalInstanceID = "journal_abcdef0123456789abcdef0123456789"
+		}},
+		{name: "persisted pin changed", wantError: true, mutate: func(deps *boardCommunicationCompositionDeps, _ *boardInboxWireHarness, _ *boardOwnerHTTPRequest) {
+			deps.Store.(*boardCompositionStoreFake).pin.JournalInstanceID = "journal_abcdef0123456789abcdef0123456789"
+		}},
+		{name: "channel no longer in live contexts", wantError: true, mutate: func(_ *boardCommunicationCompositionDeps, wire *boardInboxWireHarness, _ *boardOwnerHTTPRequest) {
+			wire.contexts = []boardcommunication.BoardContext{{ID: "channel-other", Label: "Other channel"}}
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			steps := make([]string, 0, 4)
+			deps, wire := boardCompositionMeetingTestDependencies(t, &steps)
+			composition, err := newBoardCommunicationComposition(deps)
+			if err != nil {
+				t.Fatalf("newBoardCommunicationComposition: %v", err)
+			}
+			request := boardOwnerHTTPRequest{
+				ActorID: "mio", ChannelID: domainconversation.BoardCommunicationMeetingChannelID,
+				PeerID: "dots-comm", Title: "Meeting request", Instruction: "Ask for confirmation.", IdempotencyKey: "meeting-request-1",
+			}
+			if test.mutate != nil {
+				test.mutate(&deps, wire, &request)
+				composition.deps = deps
+			}
+			receipt, acceptErr := composition.ownerHTTPCallbacks().AgentAccept(context.Background(), deps.OwnerID, request)
+			if test.wantError {
+				if acceptErr == nil || len(steps) != 0 {
+					t.Fatalf("AgentAccept() = receipt %+v, err %v, steps %v; want rejection before durable reservation", receipt, acceptErr, steps)
+				}
+				return
+			}
+			if acceptErr != nil || !receipt.Durable {
+				t.Fatalf("AgentAccept() = receipt %+v, err %v; want durable acceptance", receipt, acceptErr)
+			}
+			store := deps.Store.(*boardCompositionStoreFake)
+			if store.reserveInput.Source.TargetActorID != "mio" || store.reserveInput.Source.PeerPrincipalID != "dots-comm" ||
+				store.reserveInput.ActorID != "mio" || store.acceptInput.ActorID != "mio" {
+				t.Fatalf("new agent admission lost target/source binding: reserve=%+v accept=%+v", store.reserveInput, store.acceptInput)
+			}
+			if !reflect.DeepEqual(wire.trace.snapshot(), []string{"identity", "contexts"}) ||
+				!reflect.DeepEqual(steps, []string{"reserve", "session", "accept"}) {
+				t.Fatalf("agent acceptance order wire=%v durable=%v; want live identity and channel checks before durable admission", wire.trace.snapshot(), steps)
+			}
+		})
+	}
+}
+
+func boardCompositionMeetingTestDependencies(t *testing.T, steps *[]string) (boardCommunicationCompositionDeps, *boardInboxWireHarness) {
+	t.Helper()
+	deps := boardCompositionTestDependencies(t, steps)
+	pin := deps.Pin
+	pin.PrincipalID = domainconversation.BoardCommunicationMeetingMioPrincipalID
+	deps.Pin = pin
+	deps.Store.(*boardCompositionStoreFake).pin = pin
+	deps.InboxScope = boardInboxTestScope(pin)
+	deps.InboxScope.AllowedChannelIDs = []string{domainconversation.BoardCommunicationMeetingChannelID}
+	deps.InboxScope.AllowedPeerIDs = []string{"peer-alpha"} // legacy peer scope deliberately excludes the routed peer
+	deps.InboxScope.MeetingRoutes = []domainconversation.BoardCommunicationMeetingRoute{{
+		ChannelID: domainconversation.BoardCommunicationMeetingChannelID,
+		SenderPrincipalID: pin.PrincipalID, RecipientPrincipalID: "dots-comm",
+	}}
+	wire := newBoardInboxWireHarness(t, pin)
+	wire.contexts = []boardcommunication.BoardContext{{ID: domainconversation.BoardCommunicationMeetingChannelID, Label: "Meeting"}}
+	deps.Client = wire.client
+	provider := deps.Conversation.(*boardCompositionConversationFake)
+	ownerChat, err := agent.NewBoardPeerChatOwnerRequestRuntime(agent.BoardPeerChatActorMio, "authored Mio persona", provider)
+	if err != nil {
+		t.Fatalf("NewBoardPeerChatOwnerRequestRuntime(Mio): %v", err)
+	}
+	deps.OwnerRequestChat = ownerChat
+	return deps, wire
+}
+
 func TestBoardCommunicationCompositionPeerHandoffUsesClaimAndWithholdsACKUntilB2(t *testing.T) {
 	steps := make([]string, 0, 8)
 	deps := boardCompositionTestDependencies(t, &steps)

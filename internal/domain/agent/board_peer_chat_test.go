@@ -198,6 +198,104 @@ func TestBoardPeerChatGeneratorPropagatesProviderFailureWithoutRetry(t *testing.
 	}
 }
 
+func TestNewBoardPeerChatOwnerRequestRuntimeIsExplicitAndUsesActorNeutralContract(t *testing.T) {
+	provider := &boardPeerChatTestProvider{response: `{"schema_version":"mio.turn.v1","kind":"reply","user_message":{"to":"external_peer","text":"Please confirm BOARD-R02."}}`}
+	runtime, err := NewBoardPeerChatOwnerRequestRuntime(BoardPeerChatActorShiro, "Shiro authored persona", provider)
+	if err != nil {
+		t.Fatalf("NewBoardPeerChatOwnerRequestRuntime(): %v", err)
+	}
+	scope := boardPeerChatTestScope()
+	scope.ActorID = "shiro"
+	scope.Purpose = conversation.PurposeBoardOwnerRequest
+	snapshot := boardOwnerRequestPromptSnapshot()
+	composed, err := runtime.Composer.ComposeConversationPrompt(context.Background(), scope, snapshot)
+	if err != nil {
+		t.Fatalf("ComposeConversationPrompt(owner request): %v", err)
+	}
+	if len(composed.Messages) != 2 || composed.Messages[0].Content != "Shiro authored persona" ||
+		composed.SourceRevision != snapshot.SourceRevision || composed.CutoverRevision != snapshot.CutoverRevision {
+		t.Fatalf("owner request did not preserve only authored persona and owner instruction: %#v", composed)
+	}
+	allowlist := conversation.EmissionAllowlist{AllowedSourceMessageIDs: append([]modulecore.MessageID(nil), composed.AllowedSourceMessageIDs...)}
+	emission, _, err := runtime.Generator.GenerateEmission(context.Background(), scope, composed, allowlist)
+	if err != nil {
+		t.Fatalf("GenerateEmission(owner request): %v", err)
+	}
+	if provider.calls != 1 || provider.scope.ActorID != "shiro" || provider.scope.Purpose != conversation.PurposeBoardOwnerRequest ||
+		provider.request.ResponseFormat != llm.ResponseFormatJSONObject || emission.Kind != conversation.EmissionKindReply ||
+		emission.UserMessage.To != "external_peer" || emission.UserMessage.Text != "Please confirm BOARD-R02." || emission.Delegation != nil {
+		t.Fatalf("owner request generation lost actor/purpose or strict single-recipient shape: calls=%d scope=%+v request=%+v emission=%+v", provider.calls, provider.scope, provider.request, emission)
+	}
+	contracts := 0
+	for _, message := range provider.request.Messages {
+		if message.Metadata["runtime_context_kind"] != "agent_emission_contract" {
+			continue
+		}
+		contracts++
+		contract := strings.ToLower(message.Content)
+		if strings.Contains(message.Content, "Mio") || !strings.Contains(contract, "owner-initiated new-thread request") ||
+			!strings.Contains(contract, "do not select another recipient") || !strings.Contains(contract, "do not delegate") ||
+			!strings.Contains(contract, "do not call tools") {
+			t.Fatalf("owner request contract is not actor-neutral and single-target: %q", message.Content)
+		}
+	}
+	if contracts != 1 {
+		t.Fatalf("owner request contract count = %d, want one", contracts)
+	}
+}
+
+func TestBoardPeerChatOwnerRequestRuntimeUsesFixedActorAllowlist(t *testing.T) {
+	provider := &boardPeerChatTestProvider{}
+	for _, actorID := range []string{"mio", "shiro", "midori", "kuro", "aka", "ao", "kin", "gin"} {
+		t.Run(actorID, func(t *testing.T) {
+			runtime, err := NewBoardPeerChatOwnerRequestRuntime(BoardPeerChatActor(actorID), "authored persona", provider)
+			if err != nil || runtime == nil || string(runtime.Actor()) != actorID {
+				t.Fatalf("NewBoardPeerChatOwnerRequestRuntime(%s) = (%#v, %v), want fixed actor runtime", actorID, runtime, err)
+			}
+		})
+	}
+
+	replyRuntime, err := NewBoardPeerChatRuntime(BoardPeerChatActorShiro, "Shiro authored persona", provider)
+	if err != nil {
+		t.Fatalf("NewBoardPeerChatRuntime(Shiro): %v", err)
+	}
+	ownerRuntime, err := replyRuntime.OwnerRequestRuntime()
+	if err != nil {
+		t.Fatalf("OwnerRequestRuntime(Shiro): %v", err)
+	}
+	if ownerRuntime == replyRuntime || ownerRuntime.Actor() != replyRuntime.Actor() ||
+		ownerRuntime.Generator.purpose != conversation.PurposeBoardOwnerRequest ||
+		replyRuntime.Generator.purpose != conversation.PurposeExternalPeer {
+		t.Fatal("owner request opt-in did not create a separate Shiro-bound generator while preserving reply-only default")
+	}
+	if _, err := NewBoardPeerChatOwnerRequestRuntime("lumina", "Lumina authored persona", provider); err == nil {
+		t.Fatal("NewBoardPeerChatOwnerRequestRuntime(Lumina) error = nil, want legacy-only actor rejection")
+	}
+}
+
+func TestBoardPeerChatOwnerRequestRejectsLegacyLuminaAndReplyPurpose(t *testing.T) {
+	provider := &boardPeerChatTestProvider{response: `{"schema_version":"mio.turn.v1","kind":"reply","user_message":{"to":"external_peer","text":"Please confirm."}}`}
+	if runtime, err := NewBoardPeerChatOwnerRequestRuntime("lumina", "Lumina authored persona", provider); err == nil || runtime != nil {
+		t.Fatalf("NewBoardPeerChatOwnerRequestRuntime(Lumina) = (%#v, %v), want opt-in route rejection", runtime, err)
+	}
+	runtime, err := NewBoardPeerChatOwnerRequestRuntime(BoardPeerChatActorShiro, "Shiro authored persona", provider)
+	if err != nil {
+		t.Fatalf("NewBoardPeerChatOwnerRequestRuntime(): %v", err)
+	}
+	scope := boardPeerChatTestScope()
+	if _, err := runtime.Composer.ComposeConversationPrompt(context.Background(), scope, boardOwnerRequestPromptSnapshot()); err == nil {
+		t.Fatal("owner request composer accepted reply-only purpose")
+	}
+	snapshot := boardOwnerRequestPromptSnapshot()
+	allowlist := conversation.EmissionAllowlist{AllowedSourceMessageIDs: snapshot.AllowedSourceMessageIDs}
+	if _, _, err := runtime.Generator.GenerateEmission(context.Background(), scope, snapshot, allowlist); err == nil {
+		t.Fatal("owner request generator accepted reply-only purpose")
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want zero for invalid owner request purpose", provider.calls)
+	}
+}
+
 func promptContents(messages []llm.Message) []string {
 	contents := make([]string, len(messages))
 	for index, message := range messages {
