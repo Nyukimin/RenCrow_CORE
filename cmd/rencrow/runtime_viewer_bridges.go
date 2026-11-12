@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
@@ -317,6 +318,16 @@ func buildViewerBridgeHandlers(
 			return binding.SessionID(), nil
 		}
 		messageHandler := func(ctx context.Context, req viewer.SendRequest) (string, error) {
+			if deps != nil && deps.agentAdmission != nil && isAgentHeartbeatActor(string(req.To)) {
+				release, admissionErr := deps.agentAdmission.Acquire(ctx, string(req.To), domaintask.PriorityHigh)
+				if admissionErr != nil {
+					return "", fmt.Errorf("acquire %s legacy Viewer actor: %w", req.To, admissionErr)
+				}
+				if release == nil {
+					return "", fmt.Errorf("acquire %s legacy Viewer actor: admission returned no release", req.To)
+				}
+				defer release()
+			}
 			// AuthenticatedViewerOwnerID intentionally accepts only the HTTP User
 			// scope installed by Viewer ingress. Capture that owner before deriving
 			// Mio's Agent execution scope; later code verifies it still matches the

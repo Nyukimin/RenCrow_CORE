@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -95,6 +96,13 @@ type EmissionGenerator interface {
 	GenerateEmission(context.Context, conversation.ConversationScope, agent.PromptSnapshot, conversation.EmissionAllowlist) (conversation.AgentEmission, agent.InvocationReceipt, error)
 }
 
+// ActorAdmission serializes generation with other work owned by the same
+// authenticated CORE actor. The admission owner also supports reentry when a
+// scheduled Work calls this runtime with its existing reservation context.
+type ActorAdmission interface {
+	Acquire(context.Context, string, domaintask.Priority) (func(), error)
+}
+
 // CommittedEventPublisher publishes an already committed batch. Implementors
 // must deduplicate by canonical event ID because recovery republishes the
 // stored batch after an unknown delivery result.
@@ -118,6 +126,7 @@ type RuntimeDependencies struct {
 	ExternalResponderActorID string
 	Publisher                CommittedEventPublisher
 	ClarificationReplies     ClarificationReplyStore
+	ActorAdmission           ActorAdmission
 	Config                   RuntimeConfig
 }
 
@@ -153,6 +162,7 @@ type Runtime struct {
 	externalResponderActorID string
 	publisher                CommittedEventPublisher
 	clarificationReplies     ClarificationReplyStore
+	actorAdmission           ActorAdmission
 	config                   RuntimeConfig
 	externalOnly             bool
 	locks                    sessionLocks
@@ -190,6 +200,7 @@ func NewRuntime(dependencies RuntimeDependencies) (*Runtime, error) {
 		externalJournal:      dependencies.ExternalJournal,
 		publisher:            dependencies.Publisher,
 		clarificationReplies: dependencies.ClarificationReplies,
+		actorAdmission:       dependencies.ActorAdmission,
 		config: RuntimeConfig{
 			PolicyVersion: policyVersion, AllowedAssignees: assignees,
 		},
@@ -218,8 +229,17 @@ func NewExternalRuntime(dependencies RuntimeDependencies) (*Runtime, error) {
 	return &Runtime{
 		readViews: dependencies.ReadViews, composer: dependencies.Composer, generator: dependencies.Generator,
 		externalJournal: dependencies.ExternalJournal, externalResponderActorID: dependencies.ExternalResponderActorID,
-		config: RuntimeConfig{PolicyVersion: policyVersion}, externalOnly: true,
+		actorAdmission: dependencies.ActorAdmission,
+		config:         RuntimeConfig{PolicyVersion: policyVersion}, externalOnly: true,
 	}, nil
+}
+
+// SetActorAdmission attaches the shared CORE actor reservation after runtime
+// composition. Production callers invoke it before accepting requests.
+func (r *Runtime) SetActorAdmission(admission ActorAdmission) {
+	if r != nil {
+		r.actorAdmission = admission
+	}
 }
 
 // RunAcceptedTurn generates one structured conversation emission, commits its complete
@@ -367,6 +387,12 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 		AllowedAssignees:        allowedAssignees,
 		AllowedSourceMessageIDs: append([]modulecore.MessageID(nil), snapshot.AllowedSourceMessageIDs...),
 	}
+	releaseAdmission, err := r.acquireGenerationAdmission(ctx)
+	if err != nil {
+		markV2TimingError(ctx, turntiming.PointV2Generation, err)
+		return TurnResult{Status: TurnStatusFailedBeforeCommit, Cause: err}
+	}
+	defer releaseAdmission()
 	generationTurn, generationSpan, generationTimed := beginV2TimingSpan(ctx, turntiming.PointV2Generation)
 	emission, receipt, generationErr := r.generator.GenerateEmission(ctx, scope, snapshot, allowlist)
 	generationResult := generationErr
@@ -405,6 +431,38 @@ func (r *Runtime) RunAcceptedTurn(ctx context.Context, input AcceptedTurnInput) 
 		return r.commitExternalTurn(ctx, input, externalLookup, prepared, receipt, false, "", nil)
 	}
 	return r.commitAndPublish(ctx, prepared, accepted.SessionID, accepted.TurnID, false, nil)
+}
+
+func (r *Runtime) acquireGenerationAdmission(ctx context.Context) (func(), error) {
+	if r == nil || r.actorAdmission == nil {
+		return func() {}, nil
+	}
+	actorID := conversationActorMio
+	priority := domaintask.PriorityHigh
+	if r.externalOnly {
+		actorID = r.externalResponderActorID
+		priority = domaintask.PriorityNormal
+	}
+	if !isOperativeHeartbeatActor(actorID) {
+		return func() {}, nil
+	}
+	release, err := r.actorAdmission.Acquire(ctx, actorID, priority)
+	if err != nil {
+		return nil, fmt.Errorf("acquire %s conversation actor: %w", actorID, err)
+	}
+	if release == nil {
+		return nil, fmt.Errorf("acquire %s conversation actor: admission returned no release", actorID)
+	}
+	return release, nil
+}
+
+func isOperativeHeartbeatActor(actorID string) bool {
+	switch strings.TrimSpace(actorID) {
+	case "mio", "shiro", "kuro", "midori":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Runtime) commitSafeError(ctx context.Context, input AcceptedTurnInput, receipt agent.InvocationReceipt, cause error, failureStage ...ExternalFailureStage) TurnResult {

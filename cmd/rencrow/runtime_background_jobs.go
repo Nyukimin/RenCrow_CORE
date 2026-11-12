@@ -22,6 +22,7 @@ import (
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -604,31 +605,48 @@ type superAgentRunQueueTaskOwner interface {
 	superagentapp.InterruptedRunRecoveryTaskOwner
 }
 
-func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, taskOwner superAgentRunQueueTaskOwner, reporter backgroundJobFailureReporter) {
-	if cfg == nil || !cfg.SuperAgentHarness.RunQueueSchedulerEnabled {
-		return
+func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, taskOwner superAgentRunQueueTaskOwner, reporter backgroundJobFailureReporter) *superagentapp.RunQueueScheduler {
+	if cfg == nil || (!cfg.SuperAgentHarness.RunQueueSchedulerEnabled && !cfg.Heartbeat.AgentSchedulerEnabled) {
+		return nil
 	}
 	if store == nil || processor == nil || taskOwner == nil {
 		err := fmt.Errorf("superagent run queue scheduler requested but store, processor, or task owner is unavailable")
 		log.Printf("WARN: %v", err)
 		reporter.Failed("superagent_run_queue", err, "")
-		return
+		return nil
 	}
 	queued, blocked, err := superagentapp.RecoverInterruptedAgentRuns(context.Background(), store, taskOwner, time.Now().UTC())
 	if err != nil {
 		log.Printf("WARN: superagent interrupted run recovery failed: %v", err)
 		reporter.Failed("superagent_run_recovery", err, "")
-		return
+		return nil
 	}
 	log.Printf("SuperAgent interrupted run recovery: queued=%d blocked=%d", queued, blocked)
 	interval := time.Duration(cfg.SuperAgentHarness.RunQueueSchedulerIntervalSec) * time.Second
 	claimLimit := cfg.SuperAgentHarness.RunQueueSchedulerClaimLimit
+	var actorTaskLister superagentapp.RunQueueActorTaskLister
+	if cfg.Heartbeat.AgentSchedulerEnabled {
+		listOwner, ok := taskOwner.(interface {
+			List(context.Context, domaintask.Filter) ([]domaintask.Task, error)
+		})
+		if !ok {
+			err := fmt.Errorf("agent scheduler requested but TaskManager does not expose bounded List")
+			log.Printf("WARN: %v", err)
+			reporter.Failed("superagent_run_queue", err, "")
+			return nil
+		}
+		actorTaskLister = func(ctx context.Context, actor string, limit int) ([]domaintask.Task, error) {
+			return listOwner.List(ctx, domaintask.Filter{Assignee: actor, Status: domaintask.StatusQueued, Limit: limit})
+		}
+	}
 	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter), taskOwner, superagentapp.RunQueueSchedulerOptions{
-		Interval:   interval,
-		ClaimLimit: claimLimit,
+		Interval: interval, ClaimLimit: claimLimit, ActorTaskLister: actorTaskLister,
 	})
-	scheduler.Start(context.Background())
-	log.Printf("SuperAgent run queue scheduler enabled: interval=%s claim_limit=%d", interval, claimLimit)
+	if !cfg.Heartbeat.AgentSchedulerEnabled {
+		scheduler.Start(context.Background())
+		log.Printf("SuperAgent run queue scheduler enabled: interval=%s claim_limit=%d", interval, claimLimit)
+	}
+	return scheduler
 }
 
 func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) superagentapp.RunQueueProcessorFunc {

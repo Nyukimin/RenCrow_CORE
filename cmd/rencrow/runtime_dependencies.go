@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -18,11 +19,13 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/nativeharnessclient/delegation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
 	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
 	artifactcleanupapp "github.com/Nyukimin/RenCrow_CORE/internal/application/artifactcleanup"
 	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	browsertraceapp "github.com/Nyukimin/RenCrow_CORE/internal/application/browsertrace"
 	complexityapp "github.com/Nyukimin/RenCrow_CORE/internal/application/complexity"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
 	durablestoreapp "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	gmailapp "github.com/Nyukimin/RenCrow_CORE/internal/application/gmailintake"
@@ -48,6 +51,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
@@ -386,6 +390,14 @@ type Dependencies struct {
 	llmBusyTracker                      *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
 	llmGatewayProcess                   *os.Process                                 // local RenCrow_LLM process started by CORE
 	webGatherDeps                       func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
+
+	boardCommunicationActorBoots map[string]*boardCommunicationBoot
+	agentHeartbeat               *agentheartbeat.Scheduler
+	agentAdmission               conversationruntime.ActorAdmission
+	agentHeartbeatStarted        bool
+	agentHeartbeatCancel         context.CancelFunc
+	agentHeartbeatDone           <-chan struct{}
+	agentRunQueue                *superagentapp.RunQueueScheduler
 }
 
 func newConfiguredTTSAudioAccessOwner(cfg *config.Config, visibility *runtimeSessionVisibility) *ttsAudioAccessOwner {
@@ -409,6 +421,25 @@ func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Run
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
 	queueOwnersSafeToClose := true
+	if d.agentHeartbeatCancel != nil {
+		d.agentHeartbeatCancel()
+		if d.agentHeartbeatDone != nil {
+			select {
+			case <-d.agentHeartbeatDone:
+			case <-time.After(5 * time.Minute):
+				log.Printf("Agent heartbeat scheduler did not stop before shutdown timeout")
+				queueOwnersSafeToClose = false
+			}
+		}
+		if d.agentHeartbeat != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			if err := d.agentHeartbeat.Wait(ctx); err != nil {
+				log.Printf("Agent heartbeat reservations did not drain before shutdown: %v", err)
+				queueOwnersSafeToClose = false
+			}
+			cancel()
+		}
+	}
 	if d.boardCommunicationCancel != nil {
 		d.boardCommunicationCancel()
 	}
@@ -2082,6 +2113,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		cfg, deps, canonicalEventStore, sessionRuntime.SessionRepo, agents.Mio, llmRuntime.Conversation,
 		responderWiring,
 	)
+	startAgentHeartbeatScheduler(cfg, deps)
 
 	log.Println("Dependency injection complete")
 	return deps
@@ -2104,6 +2136,13 @@ func buildExtensionHealthHandler(cfg *config.Config, deps *Dependencies) http.Ha
 			Message:    message,
 		}
 	}
+	heartbeatMessage := "disabled"
+	if cfg.Heartbeat.AgentSchedulerEnabled {
+		heartbeatMessage = "10s scheduler configured"
+		if deps.agentHeartbeatStarted {
+			heartbeatMessage = "10s scheduler started; actors=mio,shiro,kuro,midori"
+		}
+	}
 	items := []viewer.ExtensionHealthItem{
 		item("tool-registry", "tool", "Tool Registry", "runtime", true, deps.toolRegistry != nil, ""),
 		item("module-llm", "module", "RenCrow LLM Module", "runtime", true, len(deps.moduleLLMProviders) > 0, ""),
@@ -2112,6 +2151,7 @@ func buildExtensionHealthHandler(cfg *config.Config, deps *Dependencies) http.Ha
 		item("module-tts", "module", "RenCrow TTS Module", "runtime", true, deps.moduleTTSProvider != nil, ""),
 		item("character-runtime", "module", "Six Character Runtime", "runtime", true, deps.characterRuntime != nil, ""),
 		item("scheduler", "extension", "In-App Scheduler", "runtime", true, deps.schedulerStatus != nil, ""),
+		item("agent-heartbeat", "extension", "CORE Agent Scheduler", "config", cfg.Heartbeat.AgentSchedulerEnabled, deps.agentHeartbeatStarted, heartbeatMessage),
 		item("history-repair", "extension", "JSONL History Repair", "runtime", true, deps.historyRepairJSONL != nil, ""),
 		item("package-validation", "extension", "Package Update Validation", "runtime", true, deps.packageValidation != nil, ""),
 		item("skill-governance", "skill", "Skill Governance", "config", cfg.SkillGovernance.IsEnabled(), deps.skillGovernanceRecent != nil, ""),
@@ -2121,7 +2161,103 @@ func buildExtensionHealthHandler(cfg *config.Config, deps *Dependencies) http.Ha
 		item("ai-workflow", "extension", "AI Workflow", "config", cfg.AIWorkflow.IsEnabled(), deps.aiWorkflowStatus != nil, ""),
 		item("knowledge-memory", "extension", "Knowledge Memory", "config", cfg.KnowledgeMemory.IsEnabled(), deps.knowledgeMemoryStatus != nil, ""),
 	}
-	return viewer.HandleExtensionHealth(viewer.ExtensionHealthOptions{Items: items})
+	return func(w http.ResponseWriter, r *http.Request) {
+		current := append([]viewer.ExtensionHealthItem(nil), items...)
+		for index := range current {
+			if current[index].ID != "agent-heartbeat" {
+				continue
+			}
+			status, message, loaded := agentHeartbeatHealth(cfg, deps)
+			current[index].Status = status
+			current[index].Message = message
+			current[index].Loaded = loaded
+			break
+		}
+		viewer.HandleExtensionHealth(viewer.ExtensionHealthOptions{Items: current}).ServeHTTP(w, r)
+	}
+}
+
+func startAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
+	if cfg == nil || deps == nil || !cfg.Heartbeat.AgentSchedulerEnabled {
+		return
+	}
+	if deps.agentHeartbeat == nil {
+		log.Printf("WARN: agent heartbeat scheduler requested but was not configured")
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	deps.agentHeartbeatCancel = cancel
+	deps.agentHeartbeatDone = done
+	deps.agentHeartbeatStarted = true
+	go func() {
+		defer close(done)
+		if err := deps.agentHeartbeat.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("WARN: agent heartbeat scheduler stopped: %v", err)
+		}
+	}()
+	log.Printf("agent heartbeat scheduler started interval=%s actors=%s", agentheartbeat.Interval, strings.Join(agentHeartbeatActorIDs, ","))
+}
+
+func agentHeartbeatHealth(cfg *config.Config, deps *Dependencies) (string, string, bool) {
+	if cfg == nil || deps == nil || !cfg.Heartbeat.AgentSchedulerEnabled {
+		return "", "disabled", false
+	}
+	if !deps.agentHeartbeatStarted || deps.agentHeartbeat == nil {
+		return "degraded", "10s scheduler configured but not started", false
+	}
+	message := "10s scheduler ready; actors=" + strings.Join(agentHeartbeatActorIDs, ",")
+	degraded := deps.agentRunQueue == nil
+	if degraded {
+		message += "; private queue unavailable"
+	} else {
+		message += "; private queue ready"
+	}
+	if cfg.Games.AutoPlay.Enabled {
+		if deps.gameAutoplay == nil {
+			degraded = true
+			message += "; idle game activity unavailable"
+		} else {
+			message += "; idle game activity ready"
+		}
+	} else {
+		message += "; idle game activity not configured"
+	}
+	if cfg.BoardCommunication.Enabled {
+		expected := make(map[string]struct{})
+		if actor, ok := domainconversation.BoardCommunicationMeetingInternalActorID(cfg.BoardCommunication.PrincipalID); ok && isAgentHeartbeatActor(actor) {
+			expected[actor] = struct{}{}
+		}
+		for _, responder := range cfg.BoardCommunication.Responders {
+			if isAgentHeartbeatActor(responder.ActorID) {
+				expected[responder.ActorID] = struct{}{}
+			}
+		}
+		ready, total := 0, len(expected)
+		for actor := range expected {
+			boot := deps.boardCommunicationActorBoots[actor]
+			if boot == nil || boot.service == nil {
+				continue
+			}
+			if boot.service.Status().Ready {
+				ready++
+			}
+		}
+		if total == 0 {
+			message += "; BOARD enabled; no scheduled CORE actors"
+		} else if ready != total {
+			degraded = true
+			message += fmt.Sprintf("; BOARD degraded (%d/%d operative actors ready)", ready, total)
+		} else {
+			message += fmt.Sprintf("; BOARD ready (%d operative actors)", ready)
+		}
+	} else {
+		message += "; BOARD disabled"
+	}
+	if degraded {
+		return "degraded", message, true
+	}
+	return "ok", message, true
 }
 
 func selectComplexityCoder(runtime llmRuntimeProviders) *coderAdapter {

@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -102,21 +103,23 @@ type BoardOwnerRequestResult struct {
 }
 
 type BoardOwnerRequestRuntimeDependencies struct {
-	Composer      PromptComposer
-	Generator     EmissionGenerator
-	Journal       BoardOwnerRequestJournal
-	PolicyVersion string
-	TargetActorID string
+	Composer       PromptComposer
+	Generator      EmissionGenerator
+	Journal        BoardOwnerRequestJournal
+	ActorAdmission ActorAdmission
+	PolicyVersion  string
+	TargetActorID  string
 }
 
 // BoardOwnerRequestRuntime uses Mio's existing CHAT composition and emission
 // ports, with a typed journal and no legacy publisher or dispatch queue.
 type BoardOwnerRequestRuntime struct {
-	composer      PromptComposer
-	generator     EmissionGenerator
-	journal       BoardOwnerRequestJournal
-	policyVersion string
-	targetActorID string
+	composer       PromptComposer
+	generator      EmissionGenerator
+	journal        BoardOwnerRequestJournal
+	actorAdmission ActorAdmission
+	policyVersion  string
+	targetActorID  string
 }
 
 func NewBoardOwnerRequestRuntime(dependencies BoardOwnerRequestRuntimeDependencies) (*BoardOwnerRequestRuntime, error) {
@@ -133,8 +136,17 @@ func NewBoardOwnerRequestRuntime(dependencies BoardOwnerRequestRuntimeDependenci
 	}
 	return &BoardOwnerRequestRuntime{
 		composer: dependencies.Composer, generator: dependencies.Generator,
-		journal: dependencies.Journal, policyVersion: policyVersion, targetActorID: targetActorID,
+		journal: dependencies.Journal, actorAdmission: dependencies.ActorAdmission,
+		policyVersion: policyVersion, targetActorID: targetActorID,
 	}, nil
+}
+
+// SetActorAdmission attaches the same actor reservation used by ordinary
+// conversation generation. Production callers invoke it before processing.
+func (r *BoardOwnerRequestRuntime) SetActorAdmission(admission ActorAdmission) {
+	if r != nil {
+		r.actorAdmission = admission
+	}
 }
 
 // ValidateBoardOwnerRequestTargetActorID accepts only the eight CORE actors
@@ -215,6 +227,21 @@ func (r *BoardOwnerRequestRuntime) RunAcceptedBoardOwnerRequest(ctx context.Cont
 	}
 	if err := ctx.Err(); err != nil {
 		return failed(err)
+	}
+	actorID := source.TargetActorID
+	if actorID == "" {
+		actorID = conversationActorMio
+	}
+	var releaseAdmission func()
+	if r.actorAdmission != nil && isOperativeHeartbeatActor(actorID) {
+		releaseAdmission, err = r.actorAdmission.Acquire(ctx, actorID, domaintask.PriorityHigh)
+		if err != nil {
+			return failed(fmt.Errorf("acquire %s BOARD owner actor: %w", actorID, err))
+		}
+		if releaseAdmission == nil {
+			return failed(fmt.Errorf("acquire %s BOARD owner actor: admission returned no release", actorID))
+		}
+		defer releaseAdmission()
 	}
 	allowlist := conversation.EmissionAllowlist{
 		AllowedSourceMessageIDs: append([]modulecore.MessageID(nil), composed.AllowedSourceMessageIDs...),

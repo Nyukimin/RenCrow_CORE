@@ -11,6 +11,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
@@ -23,6 +24,17 @@ const (
 	boardCommunicationWakeTimeout = 5 * time.Second
 	boardCommunicationOwnerActor  = "mio"
 )
+
+var agentHeartbeatActorIDs = []string{"mio", "shiro", "kuro", "midori"}
+
+func isAgentHeartbeatActor(actorID string) bool {
+	switch actorID {
+	case "mio", "shiro", "kuro", "midori":
+		return true
+	default:
+		return false
+	}
+}
 
 type boardCommunicationBoot struct {
 	mu                sync.RWMutex
@@ -41,6 +53,7 @@ type boardCommunicationBoot struct {
 	pin               eventstore.BoardConnectionPin
 	composition       *boardCommunicationComposition
 	agentRequestBoots map[string]*boardCommunicationBoot
+	actorAdmission    conversationruntime.ActorAdmission
 }
 
 func buildBoardCommunicationRuntime(
@@ -66,7 +79,10 @@ func buildBoardCommunicationRuntime(
 		mioOwnerRequestChat, _ = agent.NewBoardPeerChatOwnerRequestRuntime(agent.BoardPeerChatActorMio, cfg.Prompts.MioPersona, ownerRequestProvider)
 	}
 	agentRequestBoots := make(map[string]*boardCommunicationBoot, len(cfg.BoardCommunication.Responders)+1)
-	boot := &boardCommunicationBoot{service: service, ownerRequestChat: mioOwnerRequestChat, agentRequestBoots: agentRequestBoots}
+	boot := &boardCommunicationBoot{
+		service: service, ownerRequestChat: mioOwnerRequestChat, agentRequestBoots: agentRequestBoots,
+		actorAdmission: deps.agentAdmission,
+	}
 	if mioOwnerRequestChat != nil {
 		agentRequestBoots[string(mioOwnerRequestChat.Actor())] = boot
 	}
@@ -127,6 +143,8 @@ func buildBoardCommunicationRuntime(
 		WakeTimeout:   boardCommunicationWakeTimeout,
 		MeetingRoutes: boardCommunicationMeetingRoutesForPrincipal(boardConfig.MeetingRoutes, boardConfig.PrincipalID),
 	}
+	rootActorID, rootIsInternal := domainconversation.BoardCommunicationMeetingInternalActorID(boardConfig.PrincipalID)
+	boot.inboxScope.SchedulerOwnsPeerDispatch = cfg.Heartbeat.AgentSchedulerEnabled && rootIsInternal && isAgentHeartbeatActor(rootActorID)
 	if !storeOK || !sessionsOK || mio == nil || conversation == nil ||
 		!cfg.LocalAgentOps.Enabled || boot.ownerID == "" || deps.boardOwnerHTTP == nil {
 		service.setStatus(boardCommunicationServiceStateUnavailable, false)
@@ -135,6 +153,12 @@ func buildBoardCommunicationRuntime(
 	if !validBoardConnectionSettings(boot.settings) || !validBoardInboxAllowlist(allowedPeers) {
 		service.setStatus(boardCommunicationServiceStateUnavailable, false)
 		return
+	}
+	if rootIsInternal && isAgentHeartbeatActor(rootActorID) {
+		if deps.boardCommunicationActorBoots == nil {
+			deps.boardCommunicationActorBoots = make(map[string]*boardCommunicationBoot)
+		}
+		deps.boardCommunicationActorBoots[rootActorID] = boot
 	}
 
 	service.deps.lifecycle = boardCommunicationLifecycleDeps{enabled: true, open: boot.openGeneration}
@@ -212,7 +236,8 @@ func buildBoardCommunicationResponderRuntimes(
 		inboxScope := boardInboxScope{
 			ResponderActorID: responder.ActorID, AllowedChannelIDs: allowedChannels,
 			AllowedPeerIDs: allowedPeers, WakeTimeout: boardCommunicationWakeTimeout,
-			MeetingRoutes: boardCommunicationMeetingRoutesForPrincipal(cfg.BoardCommunication.MeetingRoutes, responder.ActorID),
+			MeetingRoutes:             boardCommunicationMeetingRoutesForPrincipal(cfg.BoardCommunication.MeetingRoutes, responder.ActorID),
+			SchedulerOwnsPeerDispatch: cfg.Heartbeat.AgentSchedulerEnabled && isAgentHeartbeatActor(responder.ActorID),
 		}
 		if !validBoardConnectionSettings(settings) || !validBoardInboxAllowlist(allowedPeers) {
 			log.Printf("BOARD responder %s unavailable: connection or inbox scope configuration", responder.ActorID)
@@ -226,6 +251,13 @@ func buildBoardCommunicationResponderRuntimes(
 		boot := &boardCommunicationBoot{
 			store: store, sessions: sessions, peerChat: peerChat, ownerRequestChat: ownerRequestChat, service: service,
 			settings: settings, inboxScope: inboxScope, ownerID: ownerID,
+			actorAdmission: deps.agentAdmission,
+		}
+		if isAgentHeartbeatActor(responder.ActorID) {
+			if deps.boardCommunicationActorBoots == nil {
+				deps.boardCommunicationActorBoots = make(map[string]*boardCommunicationBoot)
+			}
+			deps.boardCommunicationActorBoots[responder.ActorID] = boot
 		}
 		if ownerRequestChat != nil && agentRequestBoots != nil {
 			boot.agentRequestBoots = agentRequestBoots
@@ -302,6 +334,7 @@ func (b *boardCommunicationBoot) openGeneration(ctx context.Context) (boardCommu
 			OwnerRequestChat: b.ownerRequestChat, Conversation: b.conversation,
 			Client: openedClient, Pin: openedPin, InboxScope: inboxScope, Service: b.service,
 			UsePrincipalScopedPins: b.settings.UsePrincipalScopedPins,
+			ActorAdmission:         b.actorAdmission,
 			Now:                    time.Now, OwnerID: b.ownerID, ActorID: func() string {
 				if b.peerChat != nil {
 					return ""

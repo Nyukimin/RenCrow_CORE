@@ -10,14 +10,85 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestScheduledBoardSourceChoosesOldestOwnItemAndIgnoresBodyPriority(t *testing.T) {
+	pin := boardInboxTestPin()
+	pin.PrincipalID = "shiro"
+	h := newBoardInboxWireHarness(t, pin)
+	newer := boardInboxTestItem("item-newer", "message-newer", pin.CutoverAt.Add(2*time.Second), "priority: critical\nnewest")
+	older := boardInboxTestItem("item-older", "message-older", pin.CutoverAt.Add(time.Second), "priority: critical\noldest")
+	newer.Recipients = []string{"shiro"}
+	older.Recipients = []string{"shiro"}
+	h.inbox = func(_ int, cursor string) boardcommunication.InboxPage {
+		if cursor != "" {
+			return boardcommunication.InboxPage{}
+		}
+		return boardcommunication.InboxPage{Items: []boardcommunication.InboxItem{newer, older}}
+	}
+	steps := []string{}
+	deps := boardCommunicationCompositionDeps{
+		Store: &boardCompositionStoreFake{steps: &steps, pin: pin}, Client: h.client,
+		Pin: pin, InboxScope: func() boardInboxScope {
+			scope := boardInboxTestScope(pin)
+			scope.ResponderActorID = "shiro"
+			return scope
+		}(), ActorID: "shiro", Now: func() time.Time { return pin.CutoverAt.Add(time.Hour) },
+		AllowedChannelIDs: []string{"channel-alpha"}, AllowedPeerIDs: []string{"peer-alpha"},
+	}
+	composition := &boardCommunicationComposition{deps: deps, boardClient: h.client, peerOwner: newBoardInboxTestOwner(h.trace, pin)}
+	planner, ok := any(composition).(interface {
+		PlanScheduledBoardWork(context.Context, string) (agentheartbeat.Work, bool, error)
+	})
+	if !ok {
+		t.Fatal("BOARD composition does not expose exact scheduled work planning")
+	}
+	work, found, err := planner.PlanScheduledBoardWork(context.Background(), "shiro")
+	if err != nil {
+		t.Fatalf("PlanScheduledBoardWork(): %v", err)
+	}
+	if !found {
+		t.Fatal("PlanScheduledBoardWork() found no own BOARD work")
+	}
+	if work.ID != "board-inbox:item-older" || work.Priority != domaintask.PriorityNormal || !work.CreatedAt.Equal(older.CreatedAt) {
+		t.Fatalf("scheduled work = id:%q priority:%q created:%s; want oldest metadata with normal priority", work.ID, work.Priority, work.CreatedAt)
+	}
+	if h.inboxReads == 0 || h.threadReads != 0 {
+		t.Fatalf("planning reads inbox/thread=%d/%d; want metadata inbox only", h.inboxReads, h.threadReads)
+	}
+}
+
+func TestScheduledBoardSourceDefersNoProgressItemAndFiltersUnsupportedMetadata(t *testing.T) {
+	pin := boardInboxTestPin()
+	h := newBoardInboxWireHarness(t, pin)
+	older := boardInboxTestItem("item-stalled", "message-stalled", pin.CutoverAt.Add(time.Second), "stalled")
+	newer := boardInboxTestItem("item-next", "message-next", pin.CutoverAt.Add(2*time.Second), "next")
+	unrelated := boardInboxTestItem("item-unrelated", "message-unrelated", pin.CutoverAt.Add(3*time.Second), "notification")
+	unrelated.Kind = "notification"
+	h.inbox = func(_ int, cursor string) boardcommunication.InboxPage {
+		if cursor != "" {
+			return boardcommunication.InboxPage{}
+		}
+		return boardcommunication.InboxPage{Items: []boardcommunication.InboxItem{older, newer, unrelated}}
+	}
+	deferred := map[string]time.Time{"item-stalled": time.Now().UTC().Add(time.Minute)}
+	selected, found, err := nextScheduledBoardInboxItemSkipping(context.Background(), h.client, boardInboxTestScope(pin), deferred)
+	if err != nil {
+		t.Fatalf("nextScheduledBoardInboxItemSkipping(): %v", err)
+	}
+	if !found || selected.ItemID != "item-next" {
+		t.Fatalf("selected item = %q, found=%t; want next eligible item after temporary deferral", selected.ItemID, found)
+	}
+}
 
 type boardCompositionStoreFake struct {
 	boardCommunicationCompositionStore

@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	characterruntimeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -89,7 +90,11 @@ func buildViewerRuntimeHandlers(
 	deps.viewerGamesResult = viewer.HandleGameBridgeResult(gameBridgeStore)
 	deps.viewerGamesSessions = viewer.HandleGameBridgeSessions(gameBridgeStore, gameBridgeStatusOptions)
 	deps.viewerGamesEvents = viewer.HandleGameBridgeEvents(gameBridgeStore)
-	deps.viewerGamesDecision = viewer.HandleGameAgentDecision(gameDecisionProvider)
+	deps.viewerGamesDecision = viewer.HandleGameAgentDecision(newHeartbeatGameDecisionProvider(
+		gameDecisionProvider,
+		func() conversationruntime.ActorAdmission { return deps.agentAdmission },
+		cfg != nil && cfg.Heartbeat.AgentSchedulerEnabled,
+	))
 	gameObserverProxyOptions := viewer.GameObserverProxyOptions{ObserverBaseURL: cfg.Games.ObserverURL}
 	deps.viewerGamesObserverPage = viewer.HandleGameObserverPage(gameObserverProxyOptions)
 	deps.viewerGamesObserverProxy = viewer.HandleGameObserverProxy(gameObserverProxyOptions)
@@ -113,8 +118,12 @@ func buildViewerRuntimeHandlers(
 			autoplayOptions.Recall = gameBridgeStore
 		}
 		deps.gameAutoplay = viewer.NewGameAutoplayService(autoplayOptions)
-		deps.gameAutoplay.Start()
-		log.Printf("Games autoplay enabled: personas=%v provider=%s", cfg.Games.AutoPlay.Personas, gamePlayProvider.Name())
+		if cfg.Heartbeat.AgentSchedulerEnabled {
+			log.Printf("Games autoplay enabled through agent heartbeat idle work: personas=%v provider=%s", cfg.Games.AutoPlay.Personas, gamePlayProvider.Name())
+		} else {
+			deps.gameAutoplay.Start()
+			log.Printf("Games autoplay enabled: personas=%v provider=%s", cfg.Games.AutoPlay.Personas, gamePlayProvider.Name())
+		}
 	}
 
 	hub := viewer.NewEventHub(200)

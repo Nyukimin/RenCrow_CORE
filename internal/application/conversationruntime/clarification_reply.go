@@ -177,6 +177,12 @@ func (r *Runtime) runClarificationReplyTurn(ctx context.Context, input AcceptedT
 		err := errors.New("clarification reply instruction generator is unavailable")
 		return clarificationReplyFailed(ctx, err)
 	}
+	releaseAdmission, admissionErr := r.acquireGenerationAdmission(ctx)
+	if admissionErr != nil {
+		markV2TimingError(ctx, turntiming.PointV2Generation, admissionErr)
+		return clarificationReplyFailed(ctx, admissionErr)
+	}
+	defer releaseAdmission()
 	instruction, receipt, generationErr := generator.GenerateClarificationReplyInstruction(ctx, scope, composed, generationContext)
 	if err := ctx.Err(); err != nil {
 		markV2TimingError(ctx, turntiming.PointV2Generation, err)

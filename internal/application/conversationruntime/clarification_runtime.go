@@ -333,6 +333,12 @@ func (r *Runtime) runClarificationControlTurn(ctx context.Context, input Accepte
 		AllowedAssignees:        append([]string(nil), r.config.AllowedAssignees...),
 		AllowedSourceMessageIDs: append([]modulecore.MessageID(nil), snapshot.AllowedSourceMessageIDs...),
 	}
+	releaseAdmission, admissionErr := r.acquireGenerationAdmission(ctx)
+	if admissionErr != nil {
+		markV2TimingError(ctx, turntiming.PointV2Generation, admissionErr)
+		return clarificationFailed(ctx, admissionErr)
+	}
+	defer releaseAdmission()
 
 	generationTurn, generationSpan, generationTimed := beginV2TimingSpan(ctx, turntiming.PointV2Generation)
 	decision, receipt, generationErr := generator.GenerateClarificationDecision(ctx, scope, snapshot, control, allowlist)

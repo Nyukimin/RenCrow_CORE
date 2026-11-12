@@ -37,7 +37,7 @@ type resilienceMonitorState struct {
 
 func cmdResilience() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: rencrow resilience <capture-stop|reconcile|status|gc>")
+		fmt.Fprintln(os.Stderr, "usage: rencrow resilience <capture-stop|reconcile|status|gc|stack-reconcile|stack-maintenance enter|leave>")
 		os.Exit(2)
 	}
 	var err error
@@ -50,6 +50,18 @@ func cmdResilience() {
 		err = resilienceStatus()
 	case "gc":
 		err = resilienceGC()
+	case "stack-reconcile":
+		if len(os.Args) != 3 {
+			err = errors.New("usage: rencrow resilience stack-reconcile")
+		} else {
+			err = resilienceStackReconcile()
+		}
+	case "stack-maintenance":
+		if len(os.Args) != 4 {
+			err = errors.New("usage: rencrow resilience stack-maintenance <enter|leave>")
+		} else {
+			err = resilienceStackMaintenance(os.Args[3])
+		}
 	default:
 		err = fmt.Errorf("unknown resilience command: %s", os.Args[2])
 	}

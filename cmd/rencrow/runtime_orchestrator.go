@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
 	appnewsbrief "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
@@ -129,7 +132,8 @@ func buildOrchestratorRuntime(
 		deps.repairRunner = newAsyncRepairTaskRunner(deps.distOrch, deps.eventRelay)
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
-		startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay))
+		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay))
+		configureAgentHeartbeatScheduler(cfg, deps)
 		return
 	}
 
@@ -260,7 +264,91 @@ func buildOrchestratorRuntime(
 	deps.entryHandler = bridges.EntryFromOrch(orch)
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)
 	deps.voiceDirectHandler = orch
-	startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay))
+	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay))
+	configureAgentHeartbeatScheduler(cfg, deps)
+}
+
+func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
+	if cfg == nil || deps == nil || !cfg.Heartbeat.AgentSchedulerEnabled {
+		return
+	}
+	var reportMu sync.Mutex
+	lastReported := make(map[string]string)
+	report := func(actor, stage string, err error) {
+		if err == nil {
+			return
+		}
+		key := actor + "\x00" + stage
+		message := err.Error()
+		reportMu.Lock()
+		if lastReported[key] == message {
+			reportMu.Unlock()
+			return
+		}
+		lastReported[key] = message
+		reportMu.Unlock()
+		log.Printf("agent heartbeat actor=%s stage=%s error=%v", actor, stage, err)
+	}
+	boardSource := func(ctx context.Context, actor string) (agentheartbeat.Work, bool, error) {
+		boot := deps.boardCommunicationActorBoots[actor]
+		if boot == nil {
+			return agentheartbeat.Work{}, false, nil
+		}
+		composition := boot.currentComposition()
+		if composition == nil {
+			return agentheartbeat.Work{}, false, ErrBoardCommunicationCompositionUnavailable
+		}
+		return composition.PlanScheduledBoardWork(ctx, actor)
+	}
+	privateSource := func(ctx context.Context, actor string) (agentheartbeat.Work, bool, error) {
+		scheduler := deps.agentRunQueue
+		if scheduler == nil {
+			return agentheartbeat.Work{}, false, nil
+		}
+		item, task, err := scheduler.PlanForActor(ctx, actor)
+		if err != nil || item == nil {
+			return agentheartbeat.Work{}, false, err
+		}
+		return agentheartbeat.Work{
+			ID: string(item.QueueItemID), Priority: task.Priority, CreatedAt: task.CreatedAt.UTC(),
+			Run: func(runCtx context.Context, stop <-chan struct{}) error {
+				if boardWorkStopRequested(stop) {
+					return nil
+				}
+				log.Printf("agent heartbeat work started actor=%s source=private work_id=%s", actor, item.QueueItemID)
+				ran, runErr := scheduler.RunPlanned(runCtx, item.QueueItemID, actor)
+				outcome := "stale"
+				if ran {
+					outcome = "executed"
+				}
+				log.Printf("agent heartbeat work finished actor=%s source=private work_id=%s outcome=%s error=%v", actor, item.QueueItemID, outcome, runErr)
+				return runErr
+			},
+		}, true, nil
+	}
+	boardSource = func(source agentheartbeat.Source) agentheartbeat.Source {
+		return func(ctx context.Context, actor string) (agentheartbeat.Work, bool, error) {
+			work, found, err := source(ctx, actor)
+			if err != nil || !found || work.Run == nil {
+				return work, found, err
+			}
+			run := work.Run
+			work.Run = func(runCtx context.Context, stop <-chan struct{}) error {
+				log.Printf("agent heartbeat work started actor=%s source=BOARD work_id=%s", actor, work.ID)
+				runErr := run(runCtx, stop)
+				log.Printf("agent heartbeat work finished actor=%s source=BOARD work_id=%s error=%v", actor, work.ID, runErr)
+				return runErr
+			}
+			return work, found, err
+		}
+	}(boardSource)
+	deps.agentHeartbeat = agentheartbeat.New(append([]string(nil), agentHeartbeatActorIDs...), agentheartbeat.Sources{
+		Board: boardSource, Private: privateSource, Idle: gameAutoplayIdleSource(deps.gameAutoplay),
+	}, report)
+	deps.agentAdmission = deps.agentHeartbeat
+	if deps.responseFirst != nil && deps.responseFirst.runtime != nil {
+		deps.responseFirst.runtime.SetActorAdmission(deps.agentAdmission)
+	}
 }
 
 func configuredNewsSearchProvider(cfg *config.Config) string {

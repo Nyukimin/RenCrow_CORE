@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,5 +29,29 @@ func TestHandleExtensionHealthSummarizesItems(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("response missing %s: %s", want, rec.Body.String())
 		}
+	}
+}
+
+func TestHandleExtensionHealthPreservesDegradedStatus(t *testing.T) {
+	handler := HandleExtensionHealth(ExtensionHealthOptions{
+		Items: []ExtensionHealthItem{{
+			ID: "agent-heartbeat", Kind: "extension", Name: "CORE Agent Scheduler", Source: "config",
+			Status: "degraded", Message: "private queue unavailable", Configured: true, Loaded: true,
+		}},
+	})
+	rec := httptest.NewRecorder()
+	handler(rec, httptest.NewRequest(http.MethodGet, "/viewer/extensions/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Summary    map[string]int        `json:"summary"`
+		Extensions []ExtensionHealthItem `json:"extensions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if response.Summary["degraded"] != 1 || len(response.Extensions) != 1 || response.Extensions[0].Status != "degraded" {
+		t.Fatalf("health readback summary=%v extensions=%+v, want degraded status preserved", response.Summary, response.Extensions)
 	}
 }

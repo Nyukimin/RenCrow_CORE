@@ -171,6 +171,17 @@ func (s *GameAutoplayService) Stop() {
 
 // RunOnce は 1 回の「遊びたいか」判断を行い、次に考えるまでの間隔を返す。
 func (s *GameAutoplayService) RunOnce(ctx context.Context) time.Duration {
+	return s.runOnce(ctx, false)
+}
+
+// RunOnceIdle は heartbeat の idle Work から 1 回の判断を行う。
+// キャンセルは判断中と GAMES への送信前なら協調停止できるが、送信を始めた
+// launch は応答と session ID を受け取るまで完了させる。
+func (s *GameAutoplayService) RunOnceIdle(ctx context.Context) time.Duration {
+	return s.runOnce(ctx, true)
+}
+
+func (s *GameAutoplayService) runOnce(ctx context.Context, preserveLaunch bool) time.Duration {
 	if s.sessionStillRunning(ctx) {
 		return gameAutoplayBusyRetry
 	}
@@ -194,7 +205,19 @@ func (s *GameAutoplayService) RunOnce(ctx context.Context) time.Duration {
 		log.Printf("[GamesAutoplay] play decision missing game_id or personas, skipped: %+v", decision)
 		return next
 	}
-	result, _, err := PerformGameLaunch(ctx, s.launch, GameLaunchRequest{
+	launchCtx := ctx
+	var cancelLaunch context.CancelFunc
+	if preserveLaunch {
+		// This check is the cancellation boundary: before it, idle work can stop
+		// without launching. After it, submit with a bounded detached context so
+		// a newer turn cannot discard an accepted launch response/session ID.
+		if err := ctx.Err(); err != nil {
+			return next
+		}
+		launchCtx, cancelLaunch = context.WithTimeout(context.WithoutCancel(ctx), defaultGameLaunchTimeout)
+		defer cancelLaunch()
+	}
+	result, _, err := PerformGameLaunch(launchCtx, s.launch, GameLaunchRequest{
 		GameID:   strings.TrimSpace(decision.GameID),
 		Personas: personas,
 		Reason:   strings.TrimSpace(decision.Reason),

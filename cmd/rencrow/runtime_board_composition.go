@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -79,6 +82,7 @@ type boardCommunicationCompositionDeps struct {
 	Pin                    eventstore.BoardConnectionPin
 	InboxScope             boardInboxScope
 	UsePrincipalScopedPins bool
+	ActorAdmission         conversationruntime.ActorAdmission
 	Service                *boardCommunicationService
 	Now                    func() time.Time
 	OwnerID                string
@@ -97,6 +101,8 @@ type boardCommunicationComposition struct {
 	peerOwner           boardInboxOwner
 	boardClient         *boardcommunication.Client
 	ownerPendingAfter   modulecore.EventSeq
+	deferredMu          sync.Mutex
+	deferredInboxItems  map[string]time.Time
 }
 
 func newBoardCommunicationComposition(deps boardCommunicationCompositionDeps) (*boardCommunicationComposition, error) {
@@ -117,7 +123,7 @@ func newBoardCommunicationComposition(deps boardCommunicationCompositionDeps) (*
 			Generator: agent.NewMioEmissionGenerator(responseFirstConversationProvider{
 				provider: deps.Conversation,
 			}),
-			Journal:       deps.Store,
+			Journal: deps.Store, ActorAdmission: deps.ActorAdmission,
 			PolicyVersion: responseFirstPolicyVer,
 		})
 		if err != nil {
@@ -141,6 +147,7 @@ func newBoardCommunicationComposition(deps boardCommunicationCompositionDeps) (*
 		Generator:                peerGenerator,
 		ExternalJournal:          deps.Store,
 		ExternalResponderActorID: responderActorID,
+		ActorAdmission:           deps.ActorAdmission,
 		Config:                   conversationruntime.RuntimeConfig{PolicyVersion: responseFirstPolicyVer},
 	})
 	if err != nil {
@@ -159,7 +166,8 @@ func newBoardCommunicationComposition(deps boardCommunicationCompositionDeps) (*
 		}
 		ownerAgent, err = conversationruntime.NewBoardOwnerRequestRuntime(conversationruntime.BoardOwnerRequestRuntimeDependencies{
 			Composer: deps.OwnerRequestChat.Composer, Generator: deps.OwnerRequestChat.Generator,
-			Journal: deps.Store, PolicyVersion: responseFirstPolicyVer, TargetActorID: ownerRequestActorID,
+			Journal: deps.Store, ActorAdmission: deps.ActorAdmission,
+			PolicyVersion: responseFirstPolicyVer, TargetActorID: ownerRequestActorID,
 		})
 		if err != nil {
 			return nil, ErrBoardCommunicationCompositionUnavailable
@@ -696,6 +704,189 @@ func (c *boardCommunicationComposition) correlateTerminalPeerReply(ctx context.C
 	return true, nil
 }
 
+// PlanScheduledBoardWork discovers one exact BOARD item without reading its
+// canonical thread. The ordinary request/reply handler remains the only path
+// that claims, processes, correlates, and acknowledges the selected item.
+func (c *boardCommunicationComposition) PlanScheduledBoardWork(ctx context.Context, actorID string) (agentheartbeat.Work, bool, error) {
+	if c == nil || ctx == nil || c.deps.Store == nil || c.boardClient == nil || c.deps.Now == nil ||
+		actorID == "" || actorID != boardInboxScopeActorID(c.deps.InboxScope) || !validBoardInboxScope(c.deps.InboxScope) {
+		return agentheartbeat.Work{}, false, ErrBoardCommunicationCompositionUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return agentheartbeat.Work{}, false, err
+	}
+	pin, found, err := readBoardConnectionPinForPrincipal(ctx, c.deps.Store, c.deps.Pin.PrincipalID, c.deps.UsePrincipalScopedPins)
+	if err != nil || !found || !sameBoardCommunicationPin(pin, c.deps.Pin) {
+		return agentheartbeat.Work{}, false, errors.Join(ErrBoardCommunicationCompositionUnavailable, err)
+	}
+	identity, err := c.boardClient.ReadConnection(ctx)
+	if err != nil {
+		return agentheartbeat.Work{}, false, err
+	}
+	if identity.PrincipalID != pin.PrincipalID || identity.JournalInstanceID != pin.JournalInstanceID {
+		return agentheartbeat.Work{}, false, boardcommunication.ErrConnectionIdentityMismatch
+	}
+	if err := verifyBoardConnectionContexts(ctx, c.boardClient, c.deps.AllowedChannelIDs); err != nil {
+		return agentheartbeat.Work{}, false, err
+	}
+
+	item, found, err := nextScheduledBoardInboxItemSkipping(ctx, c.boardClient, c.deps.InboxScope, c.deferredInboxSnapshot())
+	if err != nil || !found {
+		return agentheartbeat.Work{}, found, err
+	}
+	return agentheartbeat.Work{
+		ID: "board-inbox:" + item.ItemID, Priority: domaintask.PriorityNormal, CreatedAt: item.CreatedAt.UTC(),
+		Run: func(runCtx context.Context, stop <-chan struct{}) error {
+			if boardWorkStopRequested(stop) {
+				return nil
+			}
+			due, err := handleBoardInboxItemWithStop(runCtx, c.boardClient, c.peerOwner, c.deps.InboxScope, item, stop)
+			if errors.Is(err, boardcommunication.ErrClaimActive) {
+				c.deferBoardInboxItem(item.ItemID, due)
+				return nil
+			}
+			if err != nil {
+				if due.IsZero() {
+					due = time.Now().UTC().Add(30 * time.Second)
+				}
+				c.deferBoardInboxItem(item.ItemID, due)
+				return err
+			}
+			if !due.IsZero() {
+				c.deferBoardInboxItem(item.ItemID, due)
+				return nil
+			}
+			c.clearDeferredBoardInboxItem(item.ItemID)
+			return err
+		},
+	}, true, nil
+}
+
+func nextScheduledBoardInboxItem(ctx context.Context, client *boardcommunication.Client, scope boardInboxScope) (boardcommunication.InboxItem, bool, error) {
+	return nextScheduledBoardInboxItemSkipping(ctx, client, scope, nil)
+}
+
+func nextScheduledBoardInboxItemSkipping(ctx context.Context, client *boardcommunication.Client, scope boardInboxScope, deferred map[string]time.Time) (boardcommunication.InboxItem, bool, error) {
+	if ctx == nil || client == nil || !validBoardInboxScope(scope) {
+		return boardcommunication.InboxItem{}, false, ErrBoardInboxInvalidScope
+	}
+	cursor := ""
+	visited := make(map[string]struct{})
+	var selected boardcommunication.InboxItem
+	for pageCount := 0; pageCount < 256; pageCount++ {
+		if err := ctx.Err(); err != nil {
+			return boardcommunication.InboxItem{}, false, err
+		}
+		page, err := client.Inbox(ctx, boardcommunication.PageRequest{Limit: boardInboxPageSize, Cursor: cursor})
+		if err != nil {
+			return boardcommunication.InboxItem{}, false, err
+		}
+		for _, item := range page.Items {
+			if !scheduledBoardInboxCandidate(scope, item) || deferred[item.ItemID].After(time.Now().UTC()) {
+				continue
+			}
+			if selected.ItemID == "" || item.CreatedAt.Before(selected.CreatedAt) ||
+				(item.CreatedAt.Equal(selected.CreatedAt) && item.ItemID < selected.ItemID) {
+				selected = item
+			}
+		}
+		if page.NextCursor == "" {
+			return selected, selected.ItemID != "", nil
+		}
+		if page.NextCursor == cursor {
+			return boardcommunication.InboxItem{}, false, ErrBoardInboxCursorStalled
+		}
+		if _, ok := visited[page.NextCursor]; ok {
+			return boardcommunication.InboxItem{}, false, ErrBoardInboxCursorStalled
+		}
+		visited[cursor] = struct{}{}
+		cursor = page.NextCursor
+	}
+	return boardcommunication.InboxItem{}, false, ErrBoardInboxCursorStalled
+}
+
+func (c *boardCommunicationComposition) deferredInboxSnapshot() map[string]time.Time {
+	if c == nil {
+		return nil
+	}
+	c.deferredMu.Lock()
+	defer c.deferredMu.Unlock()
+	now := time.Now().UTC()
+	for id, due := range c.deferredInboxItems {
+		if !due.After(now) {
+			delete(c.deferredInboxItems, id)
+		}
+	}
+	copyOfDeferred := make(map[string]time.Time, len(c.deferredInboxItems))
+	for id, due := range c.deferredInboxItems {
+		copyOfDeferred[id] = due
+	}
+	return copyOfDeferred
+}
+
+func (c *boardCommunicationComposition) deferBoardInboxItem(itemID string, due time.Time) {
+	if c == nil || itemID == "" {
+		return
+	}
+	if due.IsZero() || !due.After(time.Now().UTC()) {
+		due = time.Now().UTC().Add(30 * time.Second)
+	}
+	c.deferredMu.Lock()
+	if c.deferredInboxItems == nil {
+		c.deferredInboxItems = make(map[string]time.Time)
+	}
+	c.deferredInboxItems[itemID] = due.UTC()
+	c.deferredMu.Unlock()
+}
+
+func (c *boardCommunicationComposition) clearDeferredBoardInboxItem(itemID string) {
+	if c == nil || itemID == "" {
+		return
+	}
+	c.deferredMu.Lock()
+	delete(c.deferredInboxItems, itemID)
+	c.deferredMu.Unlock()
+}
+
+func scheduledBoardInboxCandidate(scope boardInboxScope, item boardcommunication.InboxItem) bool {
+	if !item.CreatedAt.After(scope.Pin.CutoverAt) || item.SenderID == scope.Pin.PrincipalID ||
+		!containsBoardInboxID(scope.AllowedChannelIDs, item.ChannelID) ||
+		!containsBoardInboxID(item.Recipients, scope.Pin.PrincipalID) {
+		return false
+	}
+	if !containsBoardInboxID(scope.AllowedPeerIDs, item.SenderID) {
+		forward, reverse := boardInboxMeetingRouteDirections(scope, item)
+		if forward && !scheduledInboxRequestMetadata(item) {
+			return false
+		}
+		if reverse && !scheduledInboxReplyMetadata(item) {
+			return false
+		}
+		return forward || reverse
+	}
+	return scheduledInboxRequestMetadata(item) || scheduledInboxReplyMetadata(item)
+}
+
+func scheduledInboxRequestMetadata(item boardcommunication.InboxItem) bool {
+	return (item.Kind == "" || item.Kind == "request") && item.ReplyTo == ""
+}
+
+func scheduledInboxReplyMetadata(item boardcommunication.InboxItem) bool {
+	return (item.Kind == "" || item.Kind == "reply") && item.ReplyTo != ""
+}
+
+func boardWorkStopRequested(stop <-chan struct{}) bool {
+	if stop == nil {
+		return false
+	}
+	select {
+	case <-stop:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *boardCommunicationComposition) processCatchUp(ctx context.Context) (boardCommunicationServiceStep, error) {
 	if c == nil || ctx == nil || c.boardClient == nil || c.deps.Store == nil || c.deps.Now == nil {
 		return boardCommunicationServiceStep{}, ErrBoardCommunicationCompositionUnavailable
@@ -707,9 +898,12 @@ func (c *boardCommunicationComposition) processCatchUp(ctx context.Context) (boa
 	if err != nil || !found || !sameBoardCommunicationPin(pin, c.deps.Pin) {
 		return boardCommunicationServiceStep{}, errors.Join(ErrBoardCommunicationCompositionUnavailable, err)
 	}
-	_, inboxDue, err := catchUpBoardInboxWithDue(ctx, c.boardClient, c.peerOwner, c.deps.InboxScope, make(map[string]boardcommunication.InboxItem))
-	if err != nil {
-		return boardCommunicationServiceStep{}, err
+	var inboxDue time.Time
+	if !c.deps.InboxScope.SchedulerOwnsPeerDispatch {
+		_, inboxDue, err = catchUpBoardInboxWithDue(ctx, c.boardClient, c.peerOwner, c.deps.InboxScope, make(map[string]boardcommunication.InboxItem))
+		if err != nil {
+			return boardCommunicationServiceStep{}, err
+		}
 	}
 	scope := boardPublicationScope(pin)
 	ownerRetryDue, ownerScanHasMore, err := c.processPendingBoardOwnerRequests(ctx, scope)
@@ -771,48 +965,11 @@ func (c *boardCommunicationComposition) processPendingBoardOwnerRequests(
 			if err := ctx.Err(); err != nil {
 				return retryDue, scanHasMore, err
 			}
-			if item.Accepted.TriggerKind != "board_owner_request" || item.Reservation.Source.OwnerID != c.deps.OwnerID ||
-				item.Reservation.Source.CorePrincipalID != scope.PrincipalID || item.Accepted.SessionID == "" ||
-				item.Lookup.TurnID != item.Accepted.TurnID {
-				return retryDue, scanHasMore, errBoardOwnerHTTPConflict
-			}
-			runtime := c.ownerMio
-			if item.Reservation.Source.TargetActorID != "" {
-				if c.ownerAgent == nil || item.Reservation.Source.TargetActorID != c.ownerRequestActorID {
-					return retryDue, scanHasMore, errBoardOwnerHTTPConflict
-				}
-				runtime = c.ownerAgent
-			} else if c.ownerRequestActorID != "" && c.ownerRequestActorID != "mio" {
-				return retryDue, scanHasMore, errBoardOwnerHTTPConflict
-			}
-			if runtime == nil {
-				return retryDue, scanHasMore, errBoardOwnerHTTPConflict
-			}
-			state, stateFound, err := c.deps.Store.ReadSessionState(ctx, item.Accepted.SessionID, c.deps.OwnerID)
-			if err != nil || !stateFound || state.SessionID != item.Accepted.SessionID || state.OwnerID != c.deps.OwnerID ||
-				state.RuntimeVersion != conversationruntime.ConversationRuntimeV2 || state.GenerationEpoch != item.Accepted.GenerationEpoch {
-				if err == nil {
-					err = ErrBoardInboxCanonicalMismatch
-				}
+			itemRetryDue, err := c.processOnePendingBoardOwnerRequest(ctx, scope, item)
+			if err != nil {
 				return retryDue, scanHasMore, err
 			}
-			request := conversationruntime.ReadViewRequest{
-				Principal: conversationruntime.Principal{OwnerID: c.deps.OwnerID, ActorID: item.Accepted.ActorID},
-				Session: conversationruntime.SessionState{
-					SessionID: state.SessionID, OwnerID: state.OwnerID, RuntimeVersion: state.RuntimeVersion,
-					CutoverSeq: state.CutoverSeq, AdmissionSeq: state.AdmissionSeq,
-					ProjectionWatermark: state.ProjectionWatermark, GenerationEpoch: state.GenerationEpoch,
-				},
-				Accepted: toConversationAcceptedTurn(item.Accepted),
-			}
-			result := runtime.RunAcceptedBoardOwnerRequest(ctx, conversationruntime.AcceptedTurnInput{ReadViewRequest: request})
-			if result.Status != conversationruntime.BoardOwnerRequestStatusCommitted {
-				if result.Status != conversationruntime.BoardOwnerRequestStatusFailedBeforeCommit &&
-					result.Status != conversationruntime.BoardOwnerRequestStatusCommitUncertain {
-					return retryDue, scanHasMore, fmt.Errorf("board owner request processing ended in state %q", result.Status)
-				}
-				retryDue = earliestBoardCommunicationDue(retryDue, c.deps.Now().UTC().Add(5*time.Second))
-			}
+			retryDue = earliestBoardCommunicationDue(retryDue, itemRetryDue)
 		}
 		if len(pending.Items) < boardOwnerPendingPageSize {
 			c.ownerPendingAfter = 0
@@ -825,6 +982,60 @@ func (c *boardCommunicationComposition) processPendingBoardOwnerRequests(
 		scanHasMore = true
 	}
 	return retryDue, scanHasMore, nil
+}
+
+func (c *boardCommunicationComposition) processOnePendingBoardOwnerRequest(
+	ctx context.Context,
+	scope eventstore.BoardPublicationScope,
+	item eventstore.BoardOwnerRequestPending,
+) (time.Time, error) {
+	if c == nil || ctx == nil || c.deps.Store == nil || c.deps.Now == nil {
+		return time.Time{}, ErrBoardCommunicationCompositionUnavailable
+	}
+	if item.Accepted.TriggerKind != "board_owner_request" || item.Reservation.Source.OwnerID != c.deps.OwnerID ||
+		item.Reservation.Source.CorePrincipalID != scope.PrincipalID || item.Accepted.SessionID == "" ||
+		item.Lookup.TurnID != item.Accepted.TurnID {
+		return time.Time{}, errBoardOwnerHTTPConflict
+	}
+	targetActor := item.Reservation.Source.TargetActorID
+	runtime := c.ownerMio
+	if targetActor != "" {
+		if c.ownerAgent == nil || targetActor != c.ownerRequestActorID {
+			return time.Time{}, errBoardOwnerHTTPConflict
+		}
+		runtime = c.ownerAgent
+	} else if c.ownerRequestActorID != "" && c.ownerRequestActorID != "mio" {
+		return time.Time{}, errBoardOwnerHTTPConflict
+	}
+	if runtime == nil {
+		return time.Time{}, errBoardOwnerHTTPConflict
+	}
+	state, stateFound, err := c.deps.Store.ReadSessionState(ctx, item.Accepted.SessionID, c.deps.OwnerID)
+	if err != nil || !stateFound || state.SessionID != item.Accepted.SessionID || state.OwnerID != c.deps.OwnerID ||
+		state.RuntimeVersion != conversationruntime.ConversationRuntimeV2 || state.GenerationEpoch != item.Accepted.GenerationEpoch {
+		if err == nil {
+			err = ErrBoardInboxCanonicalMismatch
+		}
+		return time.Time{}, err
+	}
+	request := conversationruntime.ReadViewRequest{
+		Principal: conversationruntime.Principal{OwnerID: c.deps.OwnerID, ActorID: item.Accepted.ActorID},
+		Session: conversationruntime.SessionState{
+			SessionID: state.SessionID, OwnerID: state.OwnerID, RuntimeVersion: state.RuntimeVersion,
+			CutoverSeq: state.CutoverSeq, AdmissionSeq: state.AdmissionSeq,
+			ProjectionWatermark: state.ProjectionWatermark, GenerationEpoch: state.GenerationEpoch,
+		},
+		Accepted: toConversationAcceptedTurn(item.Accepted),
+	}
+	result := runtime.RunAcceptedBoardOwnerRequest(ctx, conversationruntime.AcceptedTurnInput{ReadViewRequest: request})
+	if result.Status == conversationruntime.BoardOwnerRequestStatusCommitted {
+		return time.Time{}, nil
+	}
+	if result.Status != conversationruntime.BoardOwnerRequestStatusFailedBeforeCommit &&
+		result.Status != conversationruntime.BoardOwnerRequestStatusCommitUncertain {
+		return time.Time{}, fmt.Errorf("board owner request processing ended in state %q", result.Status)
+	}
+	return c.deps.Now().UTC().Add(5 * time.Second), nil
 }
 
 func (c *boardCommunicationComposition) validateResponderBinding(binding domainconversation.ExternalPeerBinding) error {

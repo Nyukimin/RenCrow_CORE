@@ -435,3 +435,136 @@ func reverseLimit[T any](items []T, limit int) []T {
 	}
 	return out
 }
+
+func (s *JSONLStore) ListRunQueueCandidatesForTasks(ctx context.Context, taskIDs []modulecore.TaskID) ([]domainsuperagent.RunQueueItem, error) {
+	if s == nil {
+		return nil, fmt.Errorf("superagent jsonl store is unavailable")
+	}
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	allowed := make(map[modulecore.TaskID]struct{}, len(taskIDs))
+	for _, taskID := range taskIDs {
+		if err := taskID.Validate(); err != nil {
+			return nil, fmt.Errorf("list run queue items: invalid task_id: %w", err)
+		}
+		allowed[taskID] = struct{}{}
+	}
+
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	latest := make(map[modulecore.QueueItemID]domainsuperagent.RunQueueItem)
+	overflow := false
+	err := readJSONL(s.runQueuePath, func(line []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if _, ok := allowed[item.TaskID]; !ok {
+			return nil
+		}
+		if _, exists := latest[item.QueueItemID]; !exists && len(latest) >= runQueueActorCandidateLimit {
+			overflow = true
+			return nil
+		}
+		latest[item.QueueItemID] = item
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if overflow {
+		return nil, fmt.Errorf("run queue actor candidate limit exceeded")
+	}
+	items := make([]domainsuperagent.RunQueueItem, 0, len(latest))
+	for _, item := range latest {
+		if item.Status == "queued" || item.Status == "reserved" {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *JSONLStore) ClaimRunQueueItem(ctx context.Context, queueID modulecore.QueueItemID, now, leaseUntil time.Time, leaseToken string) (*domainsuperagent.RunQueueItem, error) {
+	if !validExactRunQueueLease(queueID, leaseToken) {
+		return nil, fmt.Errorf("run queue exact claim requires a valid queue_item_id and lease token")
+	}
+	if !leaseUntil.After(now) {
+		return nil, fmt.Errorf("run queue exact claim lease must expire after now")
+	}
+	if s == nil {
+		return nil, fmt.Errorf("superagent jsonl store is unavailable")
+	}
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	var current domainsuperagent.RunQueueItem
+	found := false
+	if err := readJSONL(s.runQueuePath, func(line []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.QueueItemID == queueID {
+			current, found = item, true
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if !found || !runQueueItemExactActorClaimable(current, now) {
+		return nil, nil
+	}
+	reserveExactRunQueueItem(&current, now, leaseUntil, leaseToken)
+	if err := domainsuperagent.ValidateRunQueueItem(current); err != nil {
+		return nil, err
+	}
+	if err := appendJSONL(s.runQueuePath, current); err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+func (s *JSONLStore) ReleaseRunQueueItem(ctx context.Context, queueID modulecore.QueueItemID, leaseToken string) (bool, error) {
+	if !validExactRunQueueLease(queueID, leaseToken) {
+		return false, nil
+	}
+	if s == nil {
+		return false, fmt.Errorf("superagent jsonl store is unavailable")
+	}
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	var current domainsuperagent.RunQueueItem
+	found := false
+	if err := readJSONL(s.runQueuePath, func(line []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.QueueItemID == queueID {
+			current, found = item, true
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	if !found || current.Status != "reserved" || current.LeaseToken != leaseToken || current.RunID != "" || current.AttemptCount <= 0 {
+		return false, nil
+	}
+	releaseExactRunQueueItem(&current)
+	if err := domainsuperagent.ValidateRunQueueItem(current); err != nil {
+		return false, err
+	}
+	if err := appendJSONL(s.runQueuePath, current); err != nil {
+		return false, err
+	}
+	return true, nil
+}

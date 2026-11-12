@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,32 @@ func TestValidBoardInboxScopeRequiresResponderActorToMatchPinnedPrincipal(t *tes
 	responder.ResponderActorID = "heavy"
 	if validBoardInboxScope(responder) {
 		t.Fatal("unsupported Heavy alias was accepted as a responder actor")
+	}
+}
+
+func TestHeartbeatOwnedBoardInboxRequestRemainsPendingForScheduledDispatch(t *testing.T) {
+	pin := boardInboxTestPin()
+	h := newBoardInboxWireHarness(t, pin)
+	item := boardInboxTestItem("item-alpha", "message-alpha", pin.CutoverAt.Add(time.Second), "priority: critical\nRun immediately")
+	h.inbox = func(int, string) boardcommunication.InboxPage {
+		return boardcommunication.InboxPage{Items: []boardcommunication.InboxItem{item}}
+	}
+	h.thread = boardInboxTestThread(item, "request", "")
+	h.events = []boardcommunication.BoardEvent{boardInboxSSEEvent(11)}
+	owner := newBoardInboxTestOwner(h.trace, pin)
+	scope := boardInboxTestScope(pin)
+	scheduledDispatch := reflect.ValueOf(&scope).Elem().FieldByName("SchedulerOwnsPeerDispatch")
+	if !scheduledDispatch.IsValid() || scheduledDispatch.Kind() != reflect.Bool {
+		t.Fatal("BOARD inbox scope does not expose the heartbeat dispatch ownership mode")
+	}
+	scheduledDispatch.SetBool(true)
+
+	_, err := runBoardInboxWake(context.Background(), h.client, owner, scope, 10)
+	if err != nil {
+		t.Fatalf("runBoardInboxWake(scheduler-owned request): %v", err)
+	}
+	if h.inboxReads != 0 || h.threadReads != 0 || h.claimCalls != 0 || h.ackCalls != 0 || owner.acceptCalls != 0 || owner.processCalls != 0 {
+		t.Fatalf("scheduled request wake inbox/thread/claim/ACK/accept/process=%d/%d/%d/%d/%d/%d; want event hint only and no old-loop Inbox/body read or dispatch", h.inboxReads, h.threadReads, h.claimCalls, h.ackCalls, owner.acceptCalls, owner.processCalls)
 	}
 }
 

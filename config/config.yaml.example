@@ -450,6 +450,7 @@ subagent:
 # ハートビート（定期タスク）
 heartbeat:
   enabled: false
+  agent_scheduler_enabled: false # CORE actor admission and 10-second task/BOARD selection loop
   interval: 30            # チェック間隔（分）、最小5分
   channel: "line"         # 通知先: line / telegram / discord / slack
   chat_id: "${RENCROW_HEARTBEAT_CHAT_ID}"  # 各チャネルの送信先ID

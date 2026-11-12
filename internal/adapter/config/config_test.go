@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -26,6 +27,37 @@ func TestExampleConfigEnablesDurableSuperAgentResumeScheduler(t *testing.T) {
 	}
 	if !cfg.SuperAgentHarness.RunQueueSchedulerEnabled || cfg.SuperAgentHarness.RunQueueSchedulerIntervalSec != 30 || cfg.SuperAgentHarness.RunQueueSchedulerClaimLimit != 1 {
 		t.Fatalf("example durable resume scheduler is not enabled: %+v", cfg.SuperAgentHarness)
+	}
+}
+
+func TestHeartbeatAgentSchedulerIsExplicitlyOptIn(t *testing.T) {
+	field := func(t *testing.T, cfg *Config) reflect.Value {
+		t.Helper()
+		value := reflect.ValueOf(cfg.Heartbeat).FieldByName("AgentSchedulerEnabled")
+		if !value.IsValid() || value.Kind() != reflect.Bool {
+			t.Fatal("heartbeat.agent_scheduler_enabled is not represented as a boolean config field")
+		}
+		return value
+	}
+
+	example, err := LoadConfig(filepath.Join("..", "..", "..", "config", "config.yaml.example"))
+	if err != nil {
+		t.Fatalf("LoadConfig(example): %v", err)
+	}
+	if field(t, example).Bool() {
+		t.Fatal("config.yaml.example must leave the agent scheduler disabled by default")
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  host: 127.0.0.1\n  port: 18790\nheartbeat:\n  agent_scheduler_enabled: true\n"), 0600); err != nil {
+		t.Fatalf("write opt-in config: %v", err)
+	}
+	enabled, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig(opt-in): %v", err)
+	}
+	if !field(t, enabled).Bool() {
+		t.Fatal("heartbeat.agent_scheduler_enabled: true was not loaded")
 	}
 }
 

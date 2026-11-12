@@ -3,8 +3,11 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +53,31 @@ func fakeAutoplayObserver(t *testing.T, sessionStatus string) (*httptest.Server,
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, &launches
+}
+
+type controlledAutoplayLaunchTransport struct {
+	started       chan struct{}
+	allowResponse <-chan struct{}
+	canceled      chan struct{}
+}
+
+func (rt controlledAutoplayLaunchTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	close(rt.started)
+	select {
+	case <-request.Context().Done():
+		close(rt.canceled)
+		return nil, request.Context().Err()
+	case <-rt.allowResponse:
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"ok":true,"game_id":"nethack","session_id":"auto_1","status":"launching"}`,
+			)),
+			Request: request,
+		}, nil
+	}
 }
 
 func autoplayServiceForTest(t *testing.T, provider llm.LLMProvider, observerURL string) *GameAutoplayService {
@@ -113,6 +141,97 @@ func TestGameAutoplayPlayTrueLaunchesAndCounts(t *testing.T) {
 	defer service.mu.Unlock()
 	if service.dayCount != 1 || service.lastSessionID != "auto_1" {
 		t.Fatalf("launch must be recorded: count=%d session=%s", service.dayCount, service.lastSessionID)
+	}
+}
+
+func TestGameAutoplayIdleCompletesSubmittedLaunchAfterStopCancellation(t *testing.T) {
+	observer, _ := fakeAutoplayObserver(t, "completed")
+	started := make(chan struct{})
+	allowResponse := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	transport := controlledAutoplayLaunchTransport{started: started, allowResponse: allowResponse, canceled: requestCanceled}
+	var releaseOnce sync.Once
+	releaseObserver := func() { releaseOnce.Do(func() { close(allowResponse) }) }
+	defer releaseObserver()
+	service := NewGameAutoplayService(GameAutoplayOptions{
+		Provider: &fakeAutoplayProvider{content: `{"play":true,"game_id":"nethack","personas":["mio"],"reason":"x","next_check_minutes":30}`},
+		Launch: GameLaunchOptions{
+			ObserverBaseURL: observer.URL,
+			HTTPClient:      &http.Client{Timeout: 2 * time.Second, Transport: transport},
+		},
+		Personas: []string{"mio"},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan time.Duration, 1)
+	go func() { done <- service.RunOnceIdle(ctx) }()
+	<-started
+
+	// The observer has received the launch request. A stop at this point must
+	// not discard its response or the session ID CORE needs to retain.
+	cancel()
+	select {
+	case <-requestCanceled:
+		t.Fatal("submitted idle launch request was canceled")
+	case <-time.After(50 * time.Millisecond):
+	}
+	releaseObserver()
+	select {
+	case delay := <-done:
+		if delay != 30*time.Minute {
+			t.Fatalf("RunOnceIdle() delay = %s, want 30m", delay)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunOnceIdle() did not finish after observer response")
+	}
+	select {
+	case <-requestCanceled:
+		t.Fatal("submitted idle launch request was canceled")
+	default:
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.dayCount != 1 || service.lastSessionID != "auto_1" {
+		t.Fatalf("submitted launch receipt lost: count=%d session=%q", service.dayCount, service.lastSessionID)
+	}
+}
+
+func TestGameAutoplayLegacyRunOnceStillCancelsLaunchRequest(t *testing.T) {
+	observer, _ := fakeAutoplayObserver(t, "completed")
+	started := make(chan struct{})
+	allowResponse := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	transport := controlledAutoplayLaunchTransport{started: started, allowResponse: allowResponse, canceled: requestCanceled}
+	var releaseOnce sync.Once
+	releaseObserver := func() { releaseOnce.Do(func() { close(allowResponse) }) }
+	defer releaseObserver()
+	service := NewGameAutoplayService(GameAutoplayOptions{
+		Provider: &fakeAutoplayProvider{content: `{"play":true,"game_id":"nethack","personas":["mio"],"reason":"x","next_check_minutes":30}`},
+		Launch: GameLaunchOptions{
+			ObserverBaseURL: observer.URL,
+			HTTPClient:      &http.Client{Timeout: 2 * time.Second, Transport: transport},
+		},
+		Personas: []string{"mio"},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan time.Duration, 1)
+	go func() { done <- service.RunOnce(ctx) }()
+	<-started
+	cancel()
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("legacy RunOnce() did not cancel its in-flight launch request")
+	}
+	releaseObserver()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunOnce() did not finish after cancellation")
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.dayCount != 0 || service.lastSessionID != "" {
+		t.Fatalf("legacy canceled launch unexpectedly recorded: count=%d session=%q", service.dayCount, service.lastSessionID)
 	}
 }
 

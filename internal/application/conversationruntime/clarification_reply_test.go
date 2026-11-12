@@ -12,6 +12,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -78,6 +79,29 @@ func TestRunAcceptedTurnContinuesExplicitClarificationReplyOnceAndPrivately(t *t
 	if len(contextMessages) != len(fixture.stored.Context)+1 || contextMessages[len(contextMessages)-1].MessageID != fixture.stored.Reply.InputMessageID ||
 		contextMessages[len(contextMessages)-1].Text != fixture.stored.AnswerText {
 		t.Fatalf("committed canonical context did not append the explicit answer exactly once: %+v", contextMessages)
+	}
+}
+
+func TestClarificationReplyAcquiresMioHighAdmissionBeforeGeneration(t *testing.T) {
+	fixture := newClarificationReplyRuntimeFixture(t)
+	var order []string
+	store := &clarificationReplyStoreFake{context: fixture.stored}
+	generator := &clarificationReplyGeneratorFake{
+		instruction: "Use the explicitly selected staging region.", order: &order,
+	}
+	runtime := newClarificationReplyRuntime(t, store, generator, &fakePublisher{})
+	admission := &actorAdmissionRecorder{order: &order}
+	installActorAdmission(t, runtime, admission)
+
+	result := runtime.RunAcceptedTurn(context.Background(), AcceptedTurnInput{ReadViewRequest: fixture.request})
+	if result.Status != TurnStatusDelivered || !result.Committed {
+		t.Fatalf("RunAcceptedTurn() = %+v, want delivered clarification reply", result)
+	}
+	if len(admission.records) != 1 || admission.records[0] != (admissionRecord{actor: "mio", priority: domaintask.PriorityHigh}) || admission.releases != 1 {
+		t.Fatalf("admission records/releases = %+v/%d, want Mio high priority acquired and released once", admission.records, admission.releases)
+	}
+	if want := []string{"acquire:mio:high", "generate", "release"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("clarification reply generation/admission order = %v, want %v", order, want)
 	}
 }
 
@@ -306,6 +330,7 @@ type clarificationReplyGeneratorFake struct {
 	scope         conversation.ConversationScope
 	snapshot      agent.PromptSnapshot
 	replyContext  conversation.ClarificationReplyGenerationContext
+	order         *[]string
 }
 
 func (generator *clarificationReplyGeneratorFake) GenerateEmission(context.Context, conversation.ConversationScope, agent.PromptSnapshot, conversation.EmissionAllowlist) (conversation.AgentEmission, agent.InvocationReceipt, error) {
@@ -314,6 +339,9 @@ func (generator *clarificationReplyGeneratorFake) GenerateEmission(context.Conte
 }
 
 func (generator *clarificationReplyGeneratorFake) GenerateClarificationReplyInstruction(_ context.Context, scope conversation.ConversationScope, snapshot agent.PromptSnapshot, input conversation.ClarificationReplyGenerationContext) (string, agent.InvocationReceipt, error) {
+	if generator.order != nil {
+		*generator.order = append(*generator.order, "generate")
+	}
 	generator.replyCalls++
 	generator.scope = scope
 	generator.snapshot = snapshot.Clone()

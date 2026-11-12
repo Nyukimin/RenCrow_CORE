@@ -54,11 +54,12 @@ func (f RunQueueProcessorFunc) ProcessRunQueueItem(ctx context.Context, item dom
 }
 
 type RunQueueSchedulerOptions struct {
-	ClaimLimit    int
-	Interval      time.Duration
-	LeaseDuration time.Duration
-	Now           func() time.Time
-	LeaseToken    func() (string, error)
+	ClaimLimit      int
+	Interval        time.Duration
+	LeaseDuration   time.Duration
+	Now             func() time.Time
+	LeaseToken      func() (string, error)
+	ActorTaskLister RunQueueActorTaskLister
 }
 
 type RunQueueScheduler struct {
@@ -110,129 +111,150 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 		if item == nil {
 			return processed, nil
 		}
-		run, err := s.startRun(ctx, item)
-		if err != nil {
-			var cleanupErr error
-			if run.RunID != "" {
-				cleanupErr = s.interruptIssuedRun(ctx, *item, run, err.Error())
-			}
-			taskStateErr := s.terminalizeStartFailureTask(ctx, item.TaskID, err.Error())
-			blockErr := s.blockReservation(ctx, *item, err.Error(), s.options.Now().UTC())
-			if blockErr != nil {
-				return processed, errors.Join(err, cleanupErr, taskStateErr, fmt.Errorf("block queue item: %w", blockErr))
-			}
-			blocked := *item
-			blocked.Status = "blocked"
-			blocked.Reason = strings.TrimSpace(err.Error())
-			blocked.RunID = ""
-			blocked.CompletedAt = s.options.Now().UTC()
-			blocked.LeaseToken, blocked.LeaseUntil = "", time.Time{}
-			if _, eventErr := s.saveTrace(ctx, blocked, modulecore.NewTraceID(), "", "run_queue.blocked", "blocked", blocked.Reason); eventErr != nil {
-				return processed, errors.Join(err, cleanupErr, taskStateErr, eventErr)
-			}
-			if cleanupErr != nil || taskStateErr != nil {
-				return processed, errors.Join(err, cleanupErr, taskStateErr)
-			}
-			return processed, err
-		}
-		if leaseStore, ok := s.store.(RunQueueLeaseStore); ok {
-			attached, attachErr := leaseStore.AttachRunQueueRun(ctx, string(item.QueueItemID), item.LeaseToken, run.RunID)
-			if attachErr != nil {
-				originalErr := fmt.Errorf("attach canonical run to run queue item: %w", attachErr)
-				if cleanupErr := s.interruptIssuedRun(ctx, *item, run, originalErr.Error()); cleanupErr != nil {
-					return processed, errors.Join(originalErr, cleanupErr)
-				}
-				return processed, originalErr
-			}
-			if !attached {
-				// The Task owner has already issued the canonical Run, but the
-				// reservation is no longer ours. Do not process the Run or emit a
-				// queue/projection/event receipt that could overwrite the newer
-				// claimant. Close the exact issued Run through the Task owner;
-				// never transition the Task or touch the newer claimant's Run.
-				originalErr := fmt.Errorf("run queue lease lost before attaching canonical run")
-				if cleanupErr := s.interruptIssuedRun(ctx, *item, run, originalErr.Error()); cleanupErr != nil {
-					return processed, errors.Join(originalErr, cleanupErr)
-				}
-				return processed, originalErr
-			}
-		} else {
-			// The in-memory/non-lease store is a single-store test fallback;
-			// retain its local state transition because there is no lease CAS.
-			item.RunID = run.RunID
-			item.Status = "claimed"
-			if err := s.store.SaveRunQueueItem(ctx, *item); err != nil {
-				return processed, fmt.Errorf("persist claimed run queue item: %w", err)
-			}
-		}
-		item.RunID = run.RunID
-		item.Status = "claimed"
-		traceID := modulecore.NewTraceID()
-		claimedEventID, err := s.saveTrace(ctx, *item, traceID, "", "run_queue.claimed", "claimed", item.Action)
-		if err != nil {
-			return processed, err
-		}
-		summary, execErr := s.processWithHeartbeat(ctx, *item, traceID)
-		completedAt := s.options.Now().UTC()
-		if execErr != nil {
-			task, taskErr := s.taskOwner.Get(ctx, item.TaskID)
-			if taskErr != nil {
-				return processed, errors.Join(execErr, fmt.Errorf("get canonical task after run queue error: %w", taskErr))
-			}
-			switch task.Status {
-			case domaintask.StatusWaiting:
-				reason := strings.TrimSpace(task.WaitingReason)
-				if reason == "" {
-					reason = execErr.Error()
-				}
-				if err := s.complete(ctx, *item, "cancelled", reason, completedAt); err != nil {
-					return processed, err
-				}
-				if _, eventErr := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.cancelled", "cancelled", reason); eventErr != nil {
-					return processed, eventErr
-				}
-				return processed, execErr
-			case domaintask.StatusRunning:
-				if _, failErr := s.taskOwner.Fail(ctx, item.TaskID, execErr.Error(), nil); failErr != nil {
-					return processed, fmt.Errorf("fail canonical task after run queue error: %w", failErr)
-				}
-			case domaintask.StatusFailed:
-				// The canonical Task already records the failure. Do not issue a
-				// second owner transition; finish the queue receipt below.
-			default:
-				return processed, fmt.Errorf("run queue processor failed while canonical task %s is %s", item.TaskID, task.Status)
-			}
-			if err := s.complete(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
-				return processed, err
-			}
-			if err := s.completeAgentRun(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
-				return processed, err
-			}
-			if _, eventErr := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.failed", "failed", execErr.Error()); eventErr != nil {
-				return processed, eventErr
-			}
-			return processed, execErr
-		}
-		task, err := s.taskOwner.Get(ctx, item.TaskID)
-		if err != nil {
-			return processed, fmt.Errorf("get canonical task after run queue success: %w", err)
-		}
-		if task.Status != domaintask.StatusSucceeded {
-			return processed, fmt.Errorf("run queue processor succeeded while canonical task %s is %s", item.TaskID, task.Status)
-		}
-		if err := s.complete(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
-			return processed, err
-		}
-		if err := s.completeAgentRun(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
-			return processed, err
-		}
-		if _, err := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.completed", "completed", summary); err != nil {
+		if err := s.runReservedItem(ctx, item); err != nil {
 			return processed, err
 		}
 		processed++
 		now = s.options.Now().UTC()
 	}
 	return processed, nil
+}
+
+func (s *RunQueueScheduler) runReservedItem(ctx context.Context, item *domainsuperagent.RunQueueItem) error {
+	return s.runReservedItemWithStartFailure(ctx, item, nil)
+}
+
+func (s *RunQueueScheduler) runReservedItemWithStartFailure(ctx context.Context, item *domainsuperagent.RunQueueItem, onStartFailure func(error) (bool, error)) error {
+	if item == nil {
+		return fmt.Errorf("run queue item is nil")
+	}
+
+	run, err := s.startRun(ctx, item)
+	if err != nil {
+		if onStartFailure != nil {
+			handled, handlerErr := onStartFailure(err)
+			if handled {
+				return handlerErr
+			}
+		}
+		var cleanupErr error
+		if run.RunID != "" {
+			cleanupErr = s.interruptIssuedRun(ctx, *item, run, err.Error())
+		}
+		taskStateErr := s.terminalizeStartFailureTask(ctx, item.TaskID, err.Error())
+		blockErr := s.blockReservation(ctx, *item, err.Error(), s.options.Now().UTC())
+		if blockErr != nil {
+			return errors.Join(err, cleanupErr, taskStateErr, fmt.Errorf("block queue item: %w", blockErr))
+		}
+		blocked := *item
+		blocked.Status = "blocked"
+		blocked.Reason = strings.TrimSpace(err.Error())
+		blocked.RunID = ""
+		blocked.CompletedAt = s.options.Now().UTC()
+		blocked.LeaseToken, blocked.LeaseUntil = "", time.Time{}
+		if _, eventErr := s.saveTrace(ctx, blocked, modulecore.NewTraceID(), "", "run_queue.blocked", "blocked", blocked.Reason); eventErr != nil {
+			return errors.Join(err, cleanupErr, taskStateErr, eventErr)
+		}
+		if cleanupErr != nil || taskStateErr != nil {
+			return errors.Join(err, cleanupErr, taskStateErr)
+		}
+		return err
+	}
+	if leaseStore, ok := s.store.(RunQueueLeaseStore); ok {
+		attached, attachErr := leaseStore.AttachRunQueueRun(ctx, string(item.QueueItemID), item.LeaseToken, run.RunID)
+		if attachErr != nil {
+			originalErr := fmt.Errorf("attach canonical run to run queue item: %w", attachErr)
+			if cleanupErr := s.interruptIssuedRun(ctx, *item, run, originalErr.Error()); cleanupErr != nil {
+				return errors.Join(originalErr, cleanupErr)
+			}
+			return originalErr
+		}
+		if !attached {
+			// The Task owner has already issued the canonical Run, but the
+			// reservation is no longer ours. Do not process the Run or emit a
+			// queue/projection/event receipt that could overwrite the newer
+			// claimant. Close the exact issued Run through the Task owner;
+			// never transition the Task or touch the newer claimant's Run.
+			originalErr := fmt.Errorf("run queue lease lost before attaching canonical run")
+			if cleanupErr := s.interruptIssuedRun(ctx, *item, run, originalErr.Error()); cleanupErr != nil {
+				return errors.Join(originalErr, cleanupErr)
+			}
+			return originalErr
+		}
+	} else {
+		// The in-memory/non-lease store is a single-store test fallback;
+		// retain its local state transition because there is no lease CAS.
+		item.RunID = run.RunID
+		item.Status = "claimed"
+		if err := s.store.SaveRunQueueItem(ctx, *item); err != nil {
+			return fmt.Errorf("persist claimed run queue item: %w", err)
+		}
+	}
+	item.RunID = run.RunID
+	item.Status = "claimed"
+	traceID := modulecore.NewTraceID()
+	claimedEventID, err := s.saveTrace(ctx, *item, traceID, "", "run_queue.claimed", "claimed", item.Action)
+	if err != nil {
+		return err
+	}
+	summary, execErr := s.processWithHeartbeat(ctx, *item, traceID)
+	completedAt := s.options.Now().UTC()
+	if execErr != nil {
+		task, taskErr := s.taskOwner.Get(ctx, item.TaskID)
+		if taskErr != nil {
+			return errors.Join(execErr, fmt.Errorf("get canonical task after run queue error: %w", taskErr))
+		}
+		switch task.Status {
+		case domaintask.StatusWaiting:
+			reason := strings.TrimSpace(task.WaitingReason)
+			if reason == "" {
+				reason = execErr.Error()
+			}
+			if err := s.complete(ctx, *item, "cancelled", reason, completedAt); err != nil {
+				return err
+			}
+			if _, eventErr := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.cancelled", "cancelled", reason); eventErr != nil {
+				return eventErr
+			}
+			return execErr
+		case domaintask.StatusRunning:
+			if _, failErr := s.taskOwner.Fail(ctx, item.TaskID, execErr.Error(), nil); failErr != nil {
+				return fmt.Errorf("fail canonical task after run queue error: %w", failErr)
+			}
+		case domaintask.StatusFailed:
+			// The canonical Task already records the failure. Do not issue a
+			// second owner transition; finish the queue receipt below.
+		default:
+			return fmt.Errorf("run queue processor failed while canonical task %s is %s", item.TaskID, task.Status)
+		}
+		if err := s.complete(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
+			return err
+		}
+		if err := s.completeAgentRun(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
+			return err
+		}
+		if _, eventErr := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.failed", "failed", execErr.Error()); eventErr != nil {
+			return eventErr
+		}
+		return execErr
+	}
+	task, err := s.taskOwner.Get(ctx, item.TaskID)
+	if err != nil {
+		return fmt.Errorf("get canonical task after run queue success: %w", err)
+	}
+	if task.Status != domaintask.StatusSucceeded {
+		return fmt.Errorf("run queue processor succeeded while canonical task %s is %s", item.TaskID, task.Status)
+	}
+	if err := s.complete(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
+		return err
+	}
+	if err := s.completeAgentRun(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
+		return err
+	}
+	if _, err := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.completed", "completed", summary); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *RunQueueScheduler) completeAgentRun(ctx context.Context, item domainsuperagent.RunQueueItem, status, summary string, at time.Time) error {

@@ -75,7 +75,7 @@ func normalizeExtensionHealthItems(items []ExtensionHealthItem) []ExtensionHealt
 func normalizeExtensionHealthStatus(status string, configured bool, loaded bool) string {
 	status = normalizeExtensionHealthToken(status)
 	switch status {
-	case "ok", "broken", "permission_denied", "unconfigured", "loaded", "missing":
+	case "ok", "degraded", "broken", "permission_denied", "unconfigured", "loaded", "missing":
 		return status
 	}
 	if loaded {

@@ -95,6 +95,7 @@ func (s *SQLiteStore) migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS run_queue (
 			queue_item_id TEXT PRIMARY KEY,
+			task_id TEXT,
 			status TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -107,7 +108,10 @@ func (s *SQLiteStore) migrate() error {
 	}
 	// Best-effort rename for local DBs created before queue_item_id was canonical.
 	_, _ = s.db.Exec(`ALTER TABLE run_queue RENAME COLUMN queue_id TO queue_item_id`)
-	return s.migrateContextPackRunID()
+	if err := s.migrateContextPackRunID(); err != nil {
+		return err
+	}
+	return s.migrateRunQueueTaskIndex()
 }
 
 // migrateContextPackRunID rebuilds context_pack tables that still declare
@@ -218,7 +222,7 @@ func (s *SQLiteStore) SaveRunQueueItem(ctx context.Context, item domainsuperagen
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO run_queue (queue_item_id, status, created_at, payload) VALUES (?, ?, ?, ?)`, string(item.QueueItemID), item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload))
+	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO run_queue (queue_item_id, task_id, status, created_at, payload) VALUES (?, ?, ?, ?, ?)`, string(item.QueueItemID), string(item.TaskID), item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload))
 	return err
 }
 
@@ -486,3 +490,223 @@ func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, l
 }
 
 const timeFormatRFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"
+
+func (s *SQLiteStore) migrateRunQueueTaskIndex() error {
+	var hasTaskID int
+	if err := s.db.QueryRow("SELECT count(*) FROM pragma_table_info('run_queue') WHERE name='task_id'").Scan(&hasTaskID); err != nil {
+		return err
+	}
+	if hasTaskID == 0 {
+		if _, err := s.db.Exec("ALTER TABLE run_queue ADD COLUMN task_id TEXT"); err != nil {
+			return err
+		}
+	}
+	rows, err := s.db.Query("SELECT queue_item_id, payload FROM run_queue WHERE task_id IS NULL OR task_id=''")
+	if err != nil {
+		return err
+	}
+	type legacyQueueRow struct {
+		queueID string
+		taskID  string
+	}
+	var backfill []legacyQueueRow
+	for rows.Next() {
+		var queueID, payload string
+		if err := rows.Scan(&queueID, &payload); err != nil {
+			rows.Close()
+			return err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal([]byte(payload), &item); err != nil {
+			rows.Close()
+			return err
+		}
+		if item.TaskID == "" {
+			rows.Close()
+			return fmt.Errorf("run queue item %s has no task_id for migration", queueID)
+		}
+		backfill = append(backfill, legacyQueueRow{queueID: queueID, taskID: string(item.TaskID)})
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, row := range backfill {
+		if _, err := s.db.Exec("UPDATE run_queue SET task_id=? WHERE queue_item_id=? AND (task_id IS NULL OR task_id='')", row.taskID, row.queueID); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.Exec("CREATE INDEX IF NOT EXISTS run_queue_task_status_created_idx ON run_queue(task_id, status, created_at)")
+	return err
+}
+
+func (s *SQLiteStore) ListRunQueueCandidatesForTasks(ctx context.Context, taskIDs []modulecore.TaskID) ([]domainsuperagent.RunQueueItem, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("superagent sqlite store is closed")
+	}
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	unique := make([]modulecore.TaskID, 0, len(taskIDs))
+	seen := make(map[modulecore.TaskID]struct{}, len(taskIDs))
+	for _, taskID := range taskIDs {
+		if err := taskID.Validate(); err != nil {
+			return nil, fmt.Errorf("list run queue items: invalid task_id: %w", err)
+		}
+		if _, ok := seen[taskID]; ok {
+			continue
+		}
+		seen[taskID] = struct{}{}
+		unique = append(unique, taskID)
+	}
+	result := make([]domainsuperagent.RunQueueItem, 0)
+	for offset := 0; offset < len(unique); offset += 900 {
+		end := min(offset+900, len(unique))
+		chunk := unique[offset:end]
+		placeholders := make([]string, len(chunk))
+		args := make([]any, 0, len(chunk)+1)
+		for index, taskID := range chunk {
+			placeholders[index] = "?"
+			args = append(args, string(taskID))
+		}
+		remaining := runQueueActorCandidateLimit - len(result)
+		if remaining <= 0 {
+			return result, nil
+		}
+		args = append(args, remaining)
+		query := "SELECT payload FROM run_queue WHERE status IN ('queued','reserved') AND task_id IN (" + strings.Join(placeholders, ",") + ") ORDER BY created_at ASC, queue_item_id ASC LIMIT ?"
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var payload string
+			if err := rows.Scan(&payload); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			var item domainsuperagent.RunQueueItem
+			if err := json.Unmarshal([]byte(payload), &item); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			result = append(result, item)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(result) >= runQueueActorCandidateLimit {
+			return result, nil
+		}
+	}
+	return result, nil
+}
+
+func (s *SQLiteStore) ClaimRunQueueItem(ctx context.Context, queueID modulecore.QueueItemID, now, leaseUntil time.Time, leaseToken string) (*domainsuperagent.RunQueueItem, error) {
+	if !validExactRunQueueLease(queueID, leaseToken) {
+		return nil, fmt.Errorf("run queue exact claim requires a valid queue_item_id and lease token")
+	}
+	if !leaseUntil.After(now) {
+		return nil, fmt.Errorf("run queue exact claim lease must expire after now")
+	}
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("superagent sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var payload string
+	if err := tx.QueryRowContext(ctx, "SELECT payload FROM run_queue WHERE queue_item_id=?", string(queueID)).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
+		return nil, tx.Commit()
+	} else if err != nil {
+		return nil, err
+	}
+	var item domainsuperagent.RunQueueItem
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return nil, err
+	}
+	if item.QueueItemID != queueID || !runQueueItemExactActorClaimable(item, now) {
+		return nil, tx.Commit()
+	}
+	currentStatus := item.Status
+	reserveExactRunQueueItem(&item, now, leaseUntil, leaseToken)
+	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return nil, err
+	}
+	result, err := tx.ExecContext(ctx, "UPDATE run_queue SET status='reserved', payload=? WHERE queue_item_id=? AND status=? AND payload=?", string(encoded), string(queueID), currentStatus, payload)
+	if err != nil {
+		return nil, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if changed != 1 {
+		return nil, tx.Commit()
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *SQLiteStore) ReleaseRunQueueItem(ctx context.Context, queueID modulecore.QueueItemID, leaseToken string) (bool, error) {
+	if !validExactRunQueueLease(queueID, leaseToken) {
+		return false, nil
+	}
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("superagent sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var payload string
+	if err := tx.QueryRowContext(ctx, "SELECT payload FROM run_queue WHERE queue_item_id=?", string(queueID)).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
+		return false, tx.Commit()
+	} else if err != nil {
+		return false, err
+	}
+	var item domainsuperagent.RunQueueItem
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return false, err
+	}
+	if item.QueueItemID != queueID || item.Status != "reserved" || item.LeaseToken != leaseToken || item.RunID != "" || item.AttemptCount <= 0 {
+		return false, tx.Commit()
+	}
+	releaseExactRunQueueItem(&item)
+	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+		return false, err
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, "UPDATE run_queue SET status='queued', payload=? WHERE queue_item_id=? AND status='reserved' AND payload=?", string(encoded), string(queueID), payload)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if changed != 1 {
+		return false, tx.Commit()
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}

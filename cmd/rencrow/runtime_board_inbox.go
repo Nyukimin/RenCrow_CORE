@@ -23,12 +23,13 @@ const (
 var ErrBoardInboxRuntimeUnavailable = errors.New("BOARD inbox runtime unavailable")
 
 type boardInboxScope struct {
-	Pin               eventstore.BoardConnectionPin
-	ResponderActorID  string
-	AllowedChannelIDs []string
-	AllowedPeerIDs    []string
-	MeetingRoutes     []domainconversation.BoardCommunicationMeetingRoute
-	WakeTimeout       time.Duration
+	Pin                       eventstore.BoardConnectionPin
+	ResponderActorID          string
+	SchedulerOwnsPeerDispatch bool
+	AllowedChannelIDs         []string
+	AllowedPeerIDs            []string
+	MeetingRoutes             []domainconversation.BoardCommunicationMeetingRoute
+	WakeTimeout               time.Duration
 }
 
 type boardInboxSource struct {
@@ -91,16 +92,20 @@ func runBoardInboxWake(ctx context.Context, client *boardcommunication.Client, o
 		return afterSequence, boardcommunication.ErrConnectionIdentityMismatch
 	}
 
+	initialHadItems := false
 	seen := make(map[string]boardcommunication.InboxItem)
-	initialHadItems, err := catchUpBoardInbox(ctx, client, owner, scope, seen)
-	if err != nil {
-		return afterSequence, err
+	if !scope.SchedulerOwnsPeerDispatch {
+		var err error
+		initialHadItems, err = catchUpBoardInbox(ctx, client, owner, scope, seen)
+		if err != nil {
+			return afterSequence, err
+		}
 	}
 	nextSequence, err := readOneBoardInboxHint(ctx, client, scope.WakeTimeout, afterSequence)
 	if err != nil {
 		return nextSequence, err
 	}
-	if !initialHadItems {
+	if !scope.SchedulerOwnsPeerDispatch && !initialHadItems {
 		if _, err := catchUpBoardInbox(ctx, client, owner, scope, seen); err != nil {
 			return nextSequence, err
 		}
@@ -261,6 +266,13 @@ func handleBoardInboxItem(ctx context.Context, client *boardcommunication.Client
 }
 
 func handleBoardInboxItemWithDue(ctx context.Context, client *boardcommunication.Client, owner boardInboxOwner, scope boardInboxScope, item boardcommunication.InboxItem) (time.Time, error) {
+	return handleBoardInboxItemWithStop(ctx, client, owner, scope, item, nil)
+}
+
+func handleBoardInboxItemWithStop(ctx context.Context, client *boardcommunication.Client, owner boardInboxOwner, scope boardInboxScope, item boardcommunication.InboxItem, stop <-chan struct{}) (time.Time, error) {
+	if boardWorkStopRequested(stop) {
+		return time.Time{}, nil
+	}
 	if !item.CreatedAt.After(scope.Pin.CutoverAt) || item.SenderID == scope.Pin.PrincipalID ||
 		!containsBoardInboxID(scope.AllowedChannelIDs, item.ChannelID) ||
 		!containsBoardInboxID(item.Recipients, scope.Pin.PrincipalID) {
@@ -275,6 +287,9 @@ func handleBoardInboxItemWithDue(ctx context.Context, client *boardcommunication
 	if err != nil {
 		return time.Time{}, err
 	}
+	if boardWorkStopRequested(stop) {
+		return time.Time{}, nil
+	}
 	if scope.ResponderActorID != "" {
 		if source.Binding.RecipientPrincipalID != scope.ResponderActorID {
 			return time.Time{}, ErrBoardInboxCanonicalMismatch
@@ -285,36 +300,48 @@ func handleBoardInboxItemWithDue(ctx context.Context, client *boardcommunication
 		switch {
 		case isBoardInboxRequest(source.Message):
 			if !meetingForward || !boardInboxMeetingRequestTargetsPinnedRecipient(source.Message, scope.Pin.PrincipalID) {
-				return time.Time{}, nil
+				return scheduledBoardRetryDue(stop), nil
 			}
 		case isBoardInboxReplyCandidate(source.Message):
 			if !meetingReverse {
-				return time.Time{}, nil
+				return scheduledBoardRetryDue(stop), nil
 			}
 		default:
-			return time.Time{}, nil
+			return scheduledBoardRetryDue(stop), nil
 		}
 	}
 	switch {
 	case isBoardInboxRequest(source.Message):
 		source.Binding.Classification = domainconversation.ExternalPeerClassificationRequest
 		if err := source.Binding.ValidateNewRequest(); err != nil {
-			return time.Time{}, nil
+			return scheduledBoardRetryDue(stop), nil
 		}
-		return processBoardInboxRequestWithDue(ctx, client, owner, scope, source)
+		return processBoardInboxRequestWithStop(ctx, client, owner, scope, source, stop)
 	case isBoardInboxReplyCandidate(source.Message):
 		source.Binding.Classification = domainconversation.ExternalPeerClassificationUnknownReply
 		if err := source.Binding.Validate(); err != nil {
+			return scheduledBoardRetryDue(stop), nil
+		}
+		if boardWorkStopRequested(stop) {
 			return time.Time{}, nil
 		}
 		terminal, err := owner.CorrelateTerminalBoardReply(ctx, source)
-		if err != nil || !terminal {
+		if err != nil {
 			return time.Time{}, err
 		}
+		if !terminal {
+			if stop != nil {
+				return time.Now().UTC().Add(30 * time.Second), nil
+			}
+			return time.Time{}, nil
+		}
+		if boardWorkStopRequested(stop) {
+			return time.Time{}, nil
+		}
 		source.Binding.Classification = domainconversation.ExternalPeerClassificationCorrelatedReplyTerminal
-		return claimAndAckDurableTerminalWithDue(ctx, client, scope.Pin, source)
+		return claimAndAckDurableTerminalWithStop(ctx, client, scope.Pin, source, stop)
 	default:
-		return time.Time{}, nil
+		return scheduledBoardRetryDue(stop), nil
 	}
 }
 
@@ -396,6 +423,13 @@ func processBoardInboxRequest(ctx context.Context, client *boardcommunication.Cl
 }
 
 func processBoardInboxRequestWithDue(ctx context.Context, client *boardcommunication.Client, owner boardInboxOwner, scope boardInboxScope, source boardInboxSource) (time.Time, error) {
+	return processBoardInboxRequestWithStop(ctx, client, owner, scope, source, nil)
+}
+
+func processBoardInboxRequestWithStop(ctx context.Context, client *boardcommunication.Client, owner boardInboxOwner, scope boardInboxScope, source boardInboxSource, stop <-chan struct{}) (time.Time, error) {
+	if boardWorkStopRequested(stop) {
+		return time.Time{}, nil
+	}
 	claimID := boardInboxClaimID(scope.Pin, source.Item)
 	claim, err := client.ClaimProcessing(ctx, source.Item.ItemID, boardcommunication.ClaimRequest{
 		Receipt: source.Item.AckReceipt, ClaimID: claimID, LeaseSeconds: boardInboxClaimLeaseSeconds,
@@ -412,15 +446,27 @@ func processBoardInboxRequestWithDue(ctx context.Context, client *boardcommunica
 	switch claim.Status {
 	case "already_processed":
 		accepted, found, err := owner.FindAcceptedBoardRequest(ctx, source)
-		if err != nil || !found {
+		if err != nil {
 			return time.Time{}, err
+		}
+		if !found {
+			return scheduledBoardRetryDue(stop), nil
 		}
 		if err := validateAcceptedBoardRequest(accepted, scope.Pin, source.Binding); err != nil {
 			return time.Time{}, err
 		}
 		outcome, err := owner.HasDurableBoardOutcome(ctx, accepted)
-		if err != nil || !outcome {
+		if err != nil {
 			return time.Time{}, err
+		}
+		if !outcome {
+			if stop != nil {
+				return fallbackBoardInboxClaimDue(), nil
+			}
+			return time.Time{}, nil
+		}
+		if boardWorkStopRequested(stop) {
+			return time.Time{}, nil
 		}
 		return time.Time{}, client.AckInbox(ctx, source.Item.ItemID, source.Item.AckReceipt)
 	case "already_claimed":
@@ -430,6 +476,9 @@ func processBoardInboxRequestWithDue(ctx context.Context, client *boardcommunica
 			return time.Time{}, boardcommunication.ErrUnknownOutcome
 		}
 		proof := boardInboxClaim{ClaimID: claim.ClaimID, ClaimReceipt: claim.ClaimReceipt, LeaseUntil: *claim.LeaseUntil}
+		if boardWorkStopRequested(stop) {
+			return boardInboxClaimLeaseDue(&proof.LeaseUntil), nil
+		}
 		accepted, found, err := owner.FindAcceptedBoardRequest(ctx, source)
 		if err != nil {
 			return time.Time{}, err
@@ -446,6 +495,9 @@ func processBoardInboxRequestWithDue(ctx context.Context, client *boardcommunica
 			if err := validateAcceptedBoardRequest(accepted, scope.Pin, source.Binding); err != nil {
 				return time.Time{}, err
 			}
+		}
+		if boardWorkStopRequested(stop) {
+			return boardInboxClaimLeaseDue(&proof.LeaseUntil), nil
 		}
 		if _, err := owner.ProcessClaimedBoardRequest(ctx, accepted, source, proof); err != nil {
 			return time.Time{}, err
@@ -469,6 +521,13 @@ func claimAndAckDurableTerminal(ctx context.Context, client *boardcommunication.
 }
 
 func claimAndAckDurableTerminalWithDue(ctx context.Context, client *boardcommunication.Client, pin eventstore.BoardConnectionPin, source boardInboxSource) (time.Time, error) {
+	return claimAndAckDurableTerminalWithStop(ctx, client, pin, source, nil)
+}
+
+func claimAndAckDurableTerminalWithStop(ctx context.Context, client *boardcommunication.Client, pin eventstore.BoardConnectionPin, source boardInboxSource, stop <-chan struct{}) (time.Time, error) {
+	if boardWorkStopRequested(stop) {
+		return time.Time{}, nil
+	}
 	claim, err := client.ClaimProcessing(ctx, source.Item.ItemID, boardcommunication.ClaimRequest{
 		Receipt: source.Item.AckReceipt, ClaimID: boardInboxClaimID(pin, source.Item), LeaseSeconds: boardInboxClaimLeaseSeconds,
 	})
@@ -480,6 +539,9 @@ func claimAndAckDurableTerminalWithDue(ctx context.Context, client *boardcommuni
 	}
 	if claim.MessageID != source.Item.MessageID {
 		return time.Time{}, ErrBoardInboxCanonicalMismatch
+	}
+	if boardWorkStopRequested(stop) {
+		return boardInboxClaimLeaseDue(claim.LeaseUntil), nil
 	}
 	switch claim.Status {
 	case "claimed", "reacquired", "already_processed":
@@ -500,6 +562,13 @@ func boardInboxClaimLeaseDue(leaseUntil *time.Time) time.Time {
 		return time.Now().UTC().Add(time.Second)
 	}
 	return due
+}
+
+func scheduledBoardRetryDue(stop <-chan struct{}) time.Time {
+	if stop == nil {
+		return time.Time{}
+	}
+	return time.Now().UTC().Add(30 * time.Second)
 }
 
 func fallbackBoardInboxClaimDue() time.Time {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -117,6 +118,41 @@ func TestRunAcceptedTurnHandlesClarificationDecisionWithoutPublishingPrivateQues
 				t.Fatalf("ask-user result = %+v, want only the committed public clarification prompt", result)
 			}
 		})
+	}
+}
+
+func TestClarificationControlAcquiresMioHighAdmissionBeforeGeneration(t *testing.T) {
+	fixture := newClarificationRuntimeFixture(t, conversation.ClarificationDecision{
+		SchemaVersion: "mio.clarification.v1", Kind: conversation.ClarificationDecisionAskUser, Question: "Which environment?",
+	})
+	var order []string
+	generator := &clarificationDecisionGeneratorFake{
+		decision: conversation.ClarificationDecision{
+			SchemaVersion: "mio.clarification.v1", Kind: conversation.ClarificationDecisionAskUser, Question: "Which environment?",
+		},
+		order: &order,
+	}
+	journal := &clarificationDecisionJournalFake{context: fixture.context, ownerID: fixture.request.Session.OwnerID}
+	runtime, err := NewRuntime(RuntimeDependencies{
+		ReadViews: clarificationReadViewBuilder{view: fixture.view}, Composer: identityPromptComposer{},
+		Generator: generator, Journal: journal, Publisher: &fakePublisher{},
+		Config: RuntimeConfig{PolicyVersion: "policy-test-v1", AllowedAssignees: []string{"shiro"}},
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime(): %v", err)
+	}
+	admission := &actorAdmissionRecorder{order: &order}
+	installActorAdmission(t, runtime, admission)
+
+	result := runtime.RunAcceptedTurn(context.Background(), AcceptedTurnInput{ReadViewRequest: fixture.request})
+	if result.Status != TurnStatusDelivered || !result.Committed {
+		t.Fatalf("RunAcceptedTurn() = %+v, want delivered clarification decision", result)
+	}
+	if len(admission.records) != 1 || admission.records[0] != (admissionRecord{actor: "mio", priority: domaintask.PriorityHigh}) || admission.releases != 1 {
+		t.Fatalf("admission records/releases = %+v/%d, want Mio high priority acquired and released once", admission.records, admission.releases)
+	}
+	if want := []string{"acquire:mio:high", "generate", "release"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("clarification generation/admission order = %v, want %v", order, want)
 	}
 }
 
@@ -492,6 +528,7 @@ type clarificationDecisionGeneratorFake struct {
 	snapshot           agent.PromptSnapshot
 	control            conversation.ClarificationControlContext
 	allowlist          conversation.EmissionAllowlist
+	order              *[]string
 }
 
 type clarificationEmissionOnlyGeneratorFake struct{ calls int }
@@ -507,6 +544,9 @@ func (generator *clarificationDecisionGeneratorFake) GenerateEmission(context.Co
 }
 
 func (generator *clarificationDecisionGeneratorFake) GenerateClarificationDecision(_ context.Context, scope conversation.ConversationScope, snapshot agent.PromptSnapshot, control conversation.ClarificationControlContext, allowlist conversation.EmissionAllowlist) (conversation.ClarificationDecision, agent.InvocationReceipt, error) {
+	if generator.order != nil {
+		*generator.order = append(*generator.order, "generate")
+	}
 	generator.clarificationCalls++
 	generator.scope = scope
 	generator.snapshot = snapshot.Clone()

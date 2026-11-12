@@ -544,12 +544,13 @@ func (c EconomicObjectiveConfig) DraftOnlyEnabled() bool {
 
 // HeartbeatConfig はハートビート（定期タスク）の設定
 type HeartbeatConfig struct {
-	Enabled    bool                     `yaml:"enabled"`  // ハートビートの有効化（デフォルト: false）
-	Interval   int                      `yaml:"interval"` // チェック間隔（分）、最小5分（デフォルト: 30）
-	Channel    string                   `yaml:"channel"`  // 通知先チャネル（line, telegram, discord, slack）
-	ChatID     string                   `yaml:"chat_id"`  // 通知先ID（LINE user ID / Telegram chat ID / Discord channel ID / Slack channel ID）
-	XBookmarks XBookmarkHeartbeatConfig `yaml:"x_bookmarks"`
-	Gmail      GmailHeartbeatConfig     `yaml:"gmail"`
+	Enabled               bool                     `yaml:"enabled"`                 // ハートビート（定期タスク）の有効化（デフォルト: false）
+	AgentSchedulerEnabled bool                     `yaml:"agent_scheduler_enabled"` // エージェント着手ハートビートの有効化（デフォルト: false）
+	Interval              int                      `yaml:"interval"`                // チェック間隔（分）、最小5分（デフォルト: 30）
+	Channel               string                   `yaml:"channel"`                 // 通知先チャネル（line, telegram, discord, slack）
+	ChatID                string                   `yaml:"chat_id"`                 // 通知先ID（LINE user ID / Telegram chat ID / Discord channel ID / Slack channel ID）
+	XBookmarks            XBookmarkHeartbeatConfig `yaml:"x_bookmarks"`
+	Gmail                 GmailHeartbeatConfig     `yaml:"gmail"`
 }
 
 // Gmail credentials are local secret files, never configuration values or LLM input.
