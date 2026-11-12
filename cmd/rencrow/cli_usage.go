@@ -58,6 +58,7 @@ const (
 	tasksUsageList          = "usage: rencrow tasks list [--status <status>] [--module <module_id>] [--assignee <name>] [--route <route>] [<limit>] [--json]"
 	tasksUsageShow          = "usage: rencrow tasks show <task_id>"
 	tasksUsageCreate        = "usage: rencrow tasks create --title <text> [--module <module_id>] [--module-root <path>] [--route <route>] [--assignee <name>] [--owner-id <id>] [--priority <priority>] [--plan <text>] [--read-only] [--parent-task-id <task_id>] [--dependency-task-id <task_id>]... [--supersedes-task-id <task_id>] [--origin-session-id <id>] [--origin-thread-id <id>] [--origin-turn-id <id>] [--origin-message-id <id>] [--workstream-id <id>] [--goal-id <id>] [--json]"
+	tasksUsageEnqueue       = "usage: rencrow tasks enqueue <task_id>"
 	tasksUsageQueue         = "usage: rencrow tasks queue <task_id>"
 	tasksUsageStart         = "usage: rencrow tasks start <task_id>"
 	tasksUsageWait          = "usage: rencrow tasks wait <task_id> [--reason <text>]"
@@ -82,6 +83,7 @@ var tasksSubcommands = []struct{ name, usage string }{
 	{"list", tasksUsageList},
 	{"show", tasksUsageShow},
 	{"create", tasksUsageCreate},
+	{"enqueue", tasksUsageEnqueue},
 	{"queue", tasksUsageQueue},
 	{"start", tasksUsageStart},
 	{"wait", tasksUsageWait},

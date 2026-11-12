@@ -7,6 +7,11 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+const (
+	RunQueueIntentPrivateFirstChat = "rencrow:tasks.enqueue:first-chat-run:v1"
+	RunQueueGoalPrivateFirstChat   = "専用タスク"
+)
+
 type AgentRun struct {
 	RunID              modulecore.RunID        `json:"run_id"`
 	TaskID             modulecore.TaskID       `json:"task_id"`

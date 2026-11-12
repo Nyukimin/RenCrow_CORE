@@ -204,6 +204,88 @@ func (s *JSONLStore) SaveRunQueueItem(_ context.Context, item domainsuperagent.R
 	return appendJSONL(s.runQueuePath, item)
 }
 
+// FindRunQueueItemByTaskIntent returns the earliest receipt for one canonical
+// Task and intent key with that queue item's latest appended state. It scans
+// the full append-only history so an old completed receipt remains a dedup hit.
+func (s *JSONLStore) FindRunQueueItemByTaskIntent(ctx context.Context, taskID modulecore.TaskID, intent string) (domainsuperagent.RunQueueItem, bool, error) {
+	if s == nil {
+		return domainsuperagent.RunQueueItem{}, false, errors.New("superagent JSONL store is unavailable")
+	}
+	if err := taskID.Validate(); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if strings.TrimSpace(intent) == "" || strings.TrimSpace(intent) != intent {
+		return domainsuperagent.RunQueueItem{}, false, errors.New("run queue intent is required")
+	}
+	if ctx == nil {
+		return domainsuperagent.RunQueueItem{}, false, errors.New("run queue lookup context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	return s.findRunQueueItemByTaskIntentUnlocked(taskID, intent)
+}
+
+// InsertRunQueueItemIfAbsent appends one first-run intent under the same
+// process-local queue lock used by queue claims and lifecycle updates. A retry
+// returns the existing item and never appends a replacement receipt.
+func (s *JSONLStore) InsertRunQueueItemIfAbsent(ctx context.Context, item domainsuperagent.RunQueueItem) (domainsuperagent.RunQueueItem, bool, error) {
+	if s == nil {
+		return domainsuperagent.RunQueueItem{}, false, errors.New("superagent JSONL store is unavailable")
+	}
+	if ctx == nil {
+		return domainsuperagent.RunQueueItem{}, false, errors.New("run queue insert context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	if strings.TrimSpace(item.IdempotencyKey) == "" || strings.TrimSpace(item.IdempotencyKey) != item.IdempotencyKey {
+		return domainsuperagent.RunQueueItem{}, false, errors.New("run queue intent is required")
+	}
+	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	existing, found, err := s.findRunQueueItemByTaskIntentUnlocked(item.TaskID, item.IdempotencyKey)
+	if err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	if found {
+		return existing, false, nil
+	}
+	if err := appendJSONL(s.runQueuePath, item); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	return item, true, nil
+}
+
+func (s *JSONLStore) findRunQueueItemByTaskIntentUnlocked(taskID modulecore.TaskID, intent string) (domainsuperagent.RunQueueItem, bool, error) {
+	var first domainsuperagent.RunQueueItem
+	var latestFirst domainsuperagent.RunQueueItem
+	found := false
+	err := readJSONL(s.runQueuePath, func(line []byte) error {
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.TaskID != taskID || item.IdempotencyKey != intent {
+			return nil
+		}
+		if !found {
+			first, latestFirst, found = item, item, true
+			return nil
+		}
+		if item.QueueItemID == first.QueueItemID {
+			latestFirst = item
+		}
+		return nil
+	})
+	return latestFirst, found, err
+}
+
 func (s *JSONLStore) ClaimNextRunQueueItem(_ context.Context, now, leaseUntil time.Time, leaseToken string) (*domainsuperagent.RunQueueItem, error) {
 	s.runQueueMu.Lock()
 	defer s.runQueueMu.Unlock()

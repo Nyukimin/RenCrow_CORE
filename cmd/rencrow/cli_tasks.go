@@ -32,6 +32,10 @@ func cmdTasks() {
 		cmdTasksReap()
 		return
 	}
+	if isTasksEnqueueSubcommand(os.Args[2:]) {
+		cmdTasksEnqueue()
+		return
+	}
 	if isTaskStorageSubcommand(os.Args[2:]) {
 		// verify / rebuild-index / history work on the store files directly and
 		// must not open the store as a writer through the Manager.

@@ -217,6 +217,21 @@ func (s *RunQueueScheduler) runReservedItemWithStartFailure(ctx context.Context,
 				return eventErr
 			}
 			return execErr
+		case domaintask.StatusCancelled:
+			reason := strings.TrimSpace(task.Summary)
+			if reason == "" {
+				reason = execErr.Error()
+			}
+			if err := s.complete(ctx, *item, "cancelled", reason, completedAt); err != nil {
+				return err
+			}
+			if err := s.completeAgentRun(ctx, *item, "cancelled", reason, completedAt); err != nil {
+				return err
+			}
+			if _, eventErr := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.cancelled", "cancelled", reason); eventErr != nil {
+				return eventErr
+			}
+			return execErr
 		case domaintask.StatusRunning:
 			if _, failErr := s.taskOwner.Fail(ctx, item.TaskID, execErr.Error(), nil); failErr != nil {
 				return fmt.Errorf("fail canonical task after run queue error: %w", failErr)

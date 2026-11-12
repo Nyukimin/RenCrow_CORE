@@ -226,6 +226,76 @@ func (s *SQLiteStore) SaveRunQueueItem(ctx context.Context, item domainsuperagen
 	return err
 }
 
+// FindRunQueueItemByTaskIntent returns the first durable receipt for one
+// canonical Task and idempotency key, including its latest saved lifecycle
+// state. It deliberately does not use a recent-items limit: a retry after
+// claim or completion must still resolve to the original receipt.
+func (s *SQLiteStore) FindRunQueueItemByTaskIntent(ctx context.Context, taskID modulecore.TaskID, intent string) (domainsuperagent.RunQueueItem, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsuperagent.RunQueueItem{}, false, fmt.Errorf("superagent sqlite store is closed")
+	}
+	if err := taskID.Validate(); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if strings.TrimSpace(intent) == "" || strings.TrimSpace(intent) != intent {
+		return domainsuperagent.RunQueueItem{}, false, fmt.Errorf("run queue intent is required")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM run_queue WHERE task_id=? AND json_extract(payload, '$.idempotency_key')=? ORDER BY rowid ASC LIMIT 1`, string(taskID), intent).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domainsuperagent.RunQueueItem{}, false, nil
+	}
+	if err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	var item domainsuperagent.RunQueueItem
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	return item, true, nil
+}
+
+// InsertRunQueueItemIfAbsent atomically inserts one first-run intent for a
+// canonical Task. A retry returns the existing receipt without replacing its
+// QueueItemID, status, lease, RunID, or history.
+func (s *SQLiteStore) InsertRunQueueItemIfAbsent(ctx context.Context, item domainsuperagent.RunQueueItem) (domainsuperagent.RunQueueItem, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsuperagent.RunQueueItem{}, false, fmt.Errorf("superagent sqlite store is closed")
+	}
+	if strings.TrimSpace(item.IdempotencyKey) == "" || strings.TrimSpace(item.IdempotencyKey) != item.IdempotencyKey {
+		return domainsuperagent.RunQueueItem{}, false, fmt.Errorf("run queue intent is required")
+	}
+	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO run_queue (queue_item_id, task_id, status, created_at, payload)
+		SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (
+			SELECT 1 FROM run_queue WHERE task_id=? AND json_extract(payload, '$.idempotency_key')=?
+		)`, string(item.QueueItemID), string(item.TaskID), item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload), string(item.TaskID), item.IdempotencyKey)
+	if err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	insertedRows, err := result.RowsAffected()
+	if err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	if insertedRows == 1 {
+		return item, true, nil
+	}
+	existing, found, err := s.FindRunQueueItemByTaskIntent(ctx, item.TaskID, item.IdempotencyKey)
+	if err != nil {
+		return domainsuperagent.RunQueueItem{}, false, err
+	}
+	if !found {
+		return domainsuperagent.RunQueueItem{}, false, fmt.Errorf("run queue intent insert was skipped without an existing receipt")
+	}
+	return existing, false, nil
+}
+
 func (s *SQLiteStore) ListRunQueueItems(ctx context.Context, limit int) ([]domainsuperagent.RunQueueItem, error) {
 	return listSQLiteItems[domainsuperagent.RunQueueItem](ctx, s, "run_queue", limit)
 }
@@ -416,6 +486,9 @@ func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueItemID, leas
 }
 
 func runQueueItemClaimable(item domainsuperagent.RunQueueItem, now time.Time) bool {
+	if item.IdempotencyKey == domainsuperagent.RunQueueIntentPrivateFirstChat {
+		return false
+	}
 	if !item.NotBefore.IsZero() && item.NotBefore.After(now) {
 		return false
 	}

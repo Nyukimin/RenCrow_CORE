@@ -7,13 +7,26 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
+	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	eventpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type runtimeSuperAgentStore struct {
-	viewer.SuperAgentStateStore
+	runtimeSuperAgentStateStore
 	modulecore.EventStore
+}
+
+// runtimeSuperAgentStateStore keeps the optional queue methods needed by both
+// legacy scheduling and actor-planned dispatch in the composed method set.
+// The runtime only composes concrete JSONL/SQLite stores that implement this
+// complete contract.
+type runtimeSuperAgentStateStore interface {
+	viewer.SuperAgentStateStore
+	appsuperagent.RunQueueActorCandidateStore
+	appsuperagent.RunQueueExactLeaseStore
+	appsuperagent.RunQueueLeaseStore
+	taskEnqueueRunQueueStore
 }
 
 type runtimeAIWorkflowStore struct {
@@ -67,9 +80,9 @@ func appendRuntimeAdmittedEvent(ctx context.Context, events modulecore.EventStor
 	return events.Append(ctx, event)
 }
 
-func composeRuntimeSuperAgentStore(state viewer.SuperAgentStateStore, events modulecore.EventStore) viewer.SuperAgentStore {
+func composeRuntimeSuperAgentStore(state runtimeSuperAgentStateStore, events modulecore.EventStore) viewer.SuperAgentStore {
 	if state == nil || events == nil {
 		return nil
 	}
-	return &runtimeSuperAgentStore{SuperAgentStateStore: state, EventStore: events}
+	return &runtimeSuperAgentStore{runtimeSuperAgentStateStore: state, EventStore: events}
 }

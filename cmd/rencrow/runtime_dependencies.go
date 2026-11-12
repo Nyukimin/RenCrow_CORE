@@ -158,6 +158,7 @@ type Dependencies struct {
 	viewerSpeechCancel                  http.HandlerFunc                            // per-turn Viewer SpeechPlan cancellation
 	viewerSpeechProgress                http.HandlerFunc                            // turn-scoped Viewer playback pacing progress
 	agentOps                            http.HandlerFunc                            // local authenticated Agent OPS ingress
+	taskEnqueue                         http.HandlerFunc                            // local authenticated canonical Task first-run ingress
 	viewerGamesStatus                   http.HandlerFunc                            // RenCrow_GAMES bridge status API
 	viewerGamesResult                   http.HandlerFunc                            // RenCrow_GAMES result callback API
 	viewerGamesSessions                 http.HandlerFunc                            // RenCrow_GAMES recent session observer API
@@ -1818,7 +1819,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		deps.complexityHotspotCoderDiff = buildComplexityHotspotCoderDiffHandler(complexityStore, llmRuntime, workstreamArtifactSink, sandboxStore)
 	}
 	if cfg.SuperAgentHarness.IsEnabled() {
-		var superAgentStateStore viewer.SuperAgentStateStore
+		var superAgentStateStore runtimeSuperAgentStateStore
 		if cfg.SuperAgentHarness.Storage == "sqlite" {
 			store, err := superagentpersistence.NewSQLiteStoreWithWriteQueue(cfg.SuperAgentHarness.SQLitePath, cfg.SuperAgentHarness.MaxContextPackTokens, deps.persistenceQueue)
 			if err != nil {
@@ -2088,6 +2089,11 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		log.Fatalf("Failed to initialize local Agent OPS ingress: %v", err)
 	}
 	deps.agentOps = agentOpsHandler
+	taskEnqueueHandler, err := newConfiguredTaskEnqueueHandler(cfg, deps.taskManager, deps.superAgentStore)
+	if err != nil {
+		log.Fatalf("Failed to initialize local Task enqueue ingress: %v", err)
+	}
+	deps.taskEnqueue = taskEnqueueHandler
 	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore, conversationRuntime.L1Store)
 	buildPronunciationCheckRuntime(cfg, deps)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)

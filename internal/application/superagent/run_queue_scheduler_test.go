@@ -279,6 +279,48 @@ func TestRunQueueSchedulerRunOnceMarksFailure(t *testing.T) {
 	}
 }
 
+func TestRunQueueSchedulerClosesQueueWhenProcessorCancelledCanonicalTask(t *testing.T) {
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	store := &recordingRunQueueStore{
+		runs: []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, ActorID: "midori", Status: "running", StartedAt: now}},
+		items: []domainsuperagent.RunQueueItem{{
+			QueueItemID: "cancelled-q", TaskID: taskID, RunID: runID, RunStartReason: domaintask.RunStartReasonFirst,
+			Goal: "専用タスク", Action: "chat", Status: "queued", CreatedAt: now,
+		}},
+	}
+	owner := &recordingTaskOwner{
+		now:       func() time.Time { return now },
+		responses: []domaintask.Run{{RunID: runID, TaskID: taskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}},
+		tasks:     map[modulecore.TaskID]domaintask.Task{taskID: {TaskID: taskID, Status: domaintask.StatusRunning}},
+	}
+	processorErr := context.Canceled
+	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(_ context.Context, item domainsuperagent.RunQueueItem, _ modulecore.TraceID) (string, error) {
+		task := owner.tasks[item.TaskID]
+		task.Status, task.Summary = domaintask.StatusCancelled, "worker cancelled"
+		owner.tasks[item.TaskID] = task
+		return "", processorErr
+	}), owner, RunQueueSchedulerOptions{Now: func() time.Time { return now }, ClaimLimit: 1})
+
+	count, err := scheduler.RunOnce(context.Background())
+	if count != 0 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunOnce() count=%d err=%v, want cancelled processor error", count, err)
+	}
+	item := store.item("cancelled-q")
+	if item.Status != "cancelled" || item.Reason != "worker cancelled" || item.CompletedAt.IsZero() {
+		t.Fatalf("cancelled queue item=%+v, want terminal cancellation receipt", item)
+	}
+	if task := owner.tasks[taskID]; task.Status != domaintask.StatusCancelled || task.Summary != "worker cancelled" || len(owner.failCalls) != 0 {
+		t.Fatalf("canonical Task=%+v failure calls=%+v, want preserved cancellation without a second failure", task, owner.failCalls)
+	}
+	if len(store.runs) != 1 || store.runs[0].Status != "cancelled" || store.runs[0].Summary != "worker cancelled" {
+		t.Fatalf("AgentRun projection=%+v, want cancelled receipt", store.runs)
+	}
+	if len(store.traces) != 2 || store.traces[1].EventType != "run_queue.cancelled" {
+		t.Fatalf("queue traces=%+v, want claimed then cancelled", store.traces)
+	}
+}
+
 func TestRunQueueSchedulerPauseCancelsQueueAndPreservesPausedProjection(t *testing.T) {
 	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()

@@ -376,6 +376,10 @@ func (h *agentOpsHandler) acquireWorkerBusyLease() func() {
 }
 
 func (h *agentOpsHandler) authorized(headers http.Header) bool {
+	return h != nil && authorizedAgentOpsBearer(headers, h.token)
+}
+
+func authorizedAgentOpsBearer(headers http.Header, expected []byte) bool {
 	values := headers.Values("Authorization")
 	if len(values) != 1 {
 		return false
@@ -384,7 +388,7 @@ func (h *agentOpsHandler) authorized(headers http.Header) bool {
 	if !ok || scheme != "Bearer" || presented == "" || strings.IndexFunc(presented, unicode.IsSpace) >= 0 {
 		return false
 	}
-	return constantTimeAgentOpsTokenEqual(h.token, []byte(presented))
+	return constantTimeAgentOpsTokenEqual(expected, []byte(presented))
 }
 
 func exactlyOneAgentOpsHeader(headers http.Header, name string) (string, bool) {

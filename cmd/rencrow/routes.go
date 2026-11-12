@@ -327,6 +327,9 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		WebGatherDoctor: handleViewerWebGatherDoctor(dependencies.webGatherDeps),
 		AgentOps:        dependencies.agentOps,
 	}})
+	if dependencies.taskEnqueue != nil {
+		mux.HandleFunc("POST "+tasksEnqueuePath, dependencies.taskEnqueue)
+	}
 	backlogfeature.RegisterRoutes(mux, backlogfeature.Dependencies{Routes: backlogfeature.Routes{Atlas: dependencies.atlasHandler}})
 	workstreamfeature.RegisterRoutes(mux, workstreamfeature.Dependencies{Routes: workstreamfeature.Routes{
 		Status: dependencies.workstreamStatus, Goals: dependencies.workstreamGoal,

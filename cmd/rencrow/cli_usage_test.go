@@ -115,6 +115,7 @@ func TestTasksHelpAtTheEntryReadsAndWritesNothing(t *testing.T) {
 		{"tasks", "-h"},
 		{"tasks", "list", "--help"},
 		{"tasks", "list", "-h"},
+		{"tasks", "enqueue", "--help"},
 		{"tasks", "--help", "list"},
 		{"tasks", "--compact", "show", "--help"},
 		{"tasks", "create", "--title", "never created", "--help"},
@@ -156,6 +157,7 @@ func TestTasksHelpNamesTheSubcommandThatWasAsked(t *testing.T) {
 	for args, want := range map[string]string{
 		"tasks list --help":                "usage: rencrow tasks list",
 		"tasks show -h":                    "usage: rencrow tasks show <task_id>",
+		"tasks enqueue --help":             "usage: rencrow tasks enqueue <task_id>",
 		"tasks reap-queued --help":         "usage: rencrow tasks reap-queued --created-before",
 		"tasks layout concat --help":       "rencrow tasks layout concat [--apply]",
 		"actions verify -h":                "usage: rencrow actions verify [--check-runs]",

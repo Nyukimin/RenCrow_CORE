@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
@@ -605,7 +606,7 @@ type superAgentRunQueueTaskOwner interface {
 	superagentapp.InterruptedRunRecoveryTaskOwner
 }
 
-func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, taskOwner superAgentRunQueueTaskOwner, reporter backgroundJobFailureReporter) *superagentapp.RunQueueScheduler {
+func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, taskOwner superAgentRunQueueTaskOwner, reporter backgroundJobFailureReporter, privateRunner ...*privateTaskRunQueueRunner) *superagentapp.RunQueueScheduler {
 	if cfg == nil || (!cfg.SuperAgentHarness.RunQueueSchedulerEnabled && !cfg.Heartbeat.AgentSchedulerEnabled) {
 		return nil
 	}
@@ -639,7 +640,7 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 			return listOwner.List(ctx, domaintask.Filter{Assignee: actor, Status: domaintask.StatusQueued, Limit: limit})
 		}
 	}
-	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter), taskOwner, superagentapp.RunQueueSchedulerOptions{
+	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter, cfg.Heartbeat.AgentSchedulerEnabled, privateRunner...), taskOwner, superagentapp.RunQueueSchedulerOptions{
 		Interval: interval, ClaimLimit: claimLimit, ActorTaskLister: actorTaskLister,
 	})
 	if !cfg.Heartbeat.AgentSchedulerEnabled {
@@ -649,7 +650,7 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 	return scheduler
 }
 
-func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) superagentapp.RunQueueProcessorFunc {
+func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter, heartbeatSchedulerEnabled bool, privateRunner ...*privateTaskRunQueueRunner) superagentapp.RunQueueProcessorFunc {
 	return superagentapp.RunQueueProcessorFunc(func(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		fail := func(err error) (string, error) {
 			detail := fmt.Sprintf("queue_item_id=%s task_id=%s run_id=%s workstream_id=%s action=%s", string(item.QueueItemID), item.TaskID, item.RunID, strings.TrimSpace(item.WorkstreamID), strings.TrimSpace(item.Action))
@@ -669,17 +670,34 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 		if action != "resume" && action != "process_message" && action != "chat" {
 			return fail(fmt.Errorf("unsupported run queue action: %s", action))
 		}
+		if item.IdempotencyKey == domainsuperagent.RunQueueIntentPrivateFirstChat {
+			if action != "chat" {
+				return fail(errors.New("private first-chat queue intent requires chat action"))
+			}
+			if !heartbeatSchedulerEnabled {
+				return fail(errors.New("private first-chat queue execution requires the agent scheduler"))
+			}
+			if len(privateRunner) == 0 || privateRunner[0] == nil {
+				return fail(errors.New("private first-chat task runner is unavailable"))
+			}
+			summary, err := privateRunner[0].process(ctx, item, traceID)
+			if err != nil {
+				return fail(err)
+			}
+			return summary, nil
+		}
 		sessionID := strings.TrimSpace(item.WorkstreamID)
 		if sessionID == "" {
 			sessionID = "superagent:" + string(item.QueueItemID)
 		}
+		chatID := string(item.QueueItemID)
 		resp, err := processor.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 			TraceID:                  string(traceID),
 			RootTaskID:               item.TaskID.String(),
 			CanonicalRunID:           item.RunID,
 			SessionID:                sessionID,
 			Channel:                  "superagent",
-			ChatID:                   string(item.QueueItemID),
+			ChatID:                   chatID,
 			UserMessage:              strings.TrimSpace(item.Goal),
 			ResumeCheckpointID:       item.CheckpointID,
 			ResumeCheckpointRevision: item.CheckpointRevision,
