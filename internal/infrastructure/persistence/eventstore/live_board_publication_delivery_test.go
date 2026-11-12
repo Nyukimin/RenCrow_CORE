@@ -451,6 +451,72 @@ func TestGenericWorkAPIsExcludeBoardPublication(t *testing.T) {
 	}
 }
 
+func TestSafeErrorBoardPublicationUsesSourceBoundResponderForClaimAndCompletion(t *testing.T) {
+	ctx := context.Background()
+	fixture := newSafeErrorBoardPublicationDeliveryFixtureForResponder(t, "shiro", true)
+	response := externalResponseEvent(fixture.bundle.CanonicalEvents, fixture.bundle.PublicationIntent.CanonicalResponseMessageID)
+	if !fixture.bundle.SafeError || fixture.bundle.ExpectedLookup.SourceBinding.EffectiveResponderActorID() != "shiro" ||
+		response == nil || response.ActorID != "" || payloadString(response.Payload, "from") != "shiro" ||
+		payloadString(response.Payload, "kind") != "turn_error" {
+		t.Fatalf("safe-error fixture does not preserve its actorless canonical response and trusted Shiro binding: bundle=%#v response=%#v", fixture.bundle, response)
+	}
+
+	// The legacy pin allows the deliberately different Mio request to reach the
+	// canonical actor check; it must still be rejected without leasing the row.
+	if _, err := fixture.store.PinBoardConnection(ctx, BoardConnectionPin{
+		OwnerID: fixture.scope.OwnerID, JournalInstanceID: fixture.scope.JournalInstanceID,
+		PrincipalID: fixture.scope.PrincipalID, CutoverAt: fixture.accepted.InputEvent.OccurredAt.UTC(),
+	}); err != nil {
+		t.Fatalf("PinBoardConnection(legacy mismatch-path pin): %v", err)
+	}
+	if _, available, err := fixture.store.ClaimBoardPublication(ctx, BoardPublicationClaimInput{
+		Scope: fixture.scope, ResponderActorID: "mio", Now: fixture.now, LeaseDuration: time.Minute,
+	}); available || !errors.Is(err, ErrBoardPublicationScopeMismatch) {
+		t.Fatalf("ClaimBoardPublication(wrong Mio responder for safe-error Shiro source) = available %t, err %v; want scope error", available, err)
+	}
+	var state string
+	var attempt int
+	if err := fixture.store.db.QueryRowContext(ctx, `SELECT state,attempt FROM live_work_outbox WHERE work_id=?`, externalBoardPublicationWorkID(fixture.lookup.OperationID)).Scan(&state, &attempt); err != nil {
+		t.Fatalf("read safe-error work after wrong responder: %v", err)
+	}
+	if state != "pending" || attempt != 0 {
+		t.Fatalf("wrong safe-error responder mutated work: state=%q attempt=%d", state, attempt)
+	}
+
+	lease, available, err := fixture.store.ClaimBoardPublication(ctx, BoardPublicationClaimInput{
+		Scope: fixture.scope, ResponderActorID: "shiro", Now: fixture.now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !available || lease.CanonicalResponse.ActorID != "" ||
+		fixture.bundle.ExpectedLookup.SourceBinding.EffectiveResponderActorID() != "shiro" {
+		t.Fatalf("ClaimBoardPublication(safe-error Shiro source) = available %t lease=%#v err %v; want actorless response claimed by its bound responder", available, lease, err)
+	}
+	prepared := preparedBoardPublicationBytes(lease, "safe-error-claim", "synthetic-safe-error-claim-receipt")
+	attemptRecord, err := fixture.store.RecordBoardPublicationAttempt(ctx, BoardPublicationAttemptInput{
+		Lease: lease, Now: fixture.now, LogicalKey: lease.LogicalKey, PreparedBytes: prepared,
+		PayloadSHA256: boardPublicationPayloadHash(prepared), ProcessingClaimLeaseUntil: fixture.now.Add(30 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("RecordBoardPublicationAttempt(safe-error exact response): %v", err)
+	}
+	message := boardPublicationCanonicalMessage(lease)
+	receipt := BoardPublicationSendReceipt{MessageID: message.MessageID, ThreadID: message.ThreadID, StoredAt: fixture.now, Status: "stored"}
+	outcome, err := fixture.store.CompleteBoardPublication(ctx, BoardPublicationCompletionInput{
+		Lease: lease, Now: fixture.now, AttemptOrdinal: attemptRecord.Ordinal,
+		AttemptSHA256: attemptRecord.PayloadSHA256, SendReceipt: receipt, CanonicalMessage: message,
+	})
+	if err != nil {
+		t.Fatalf("CompleteBoardPublication(safe-error Shiro source): %v", err)
+	}
+	fixture.reopen(t)
+	loaded, found, err := fixture.store.LoadBoardPublicationByTurn(ctx, BoardPublicationTurnLookupInput{
+		Scope: fixture.scope, SessionID: fixture.accepted.SessionID, TurnID: fixture.accepted.TurnID,
+		ResponderActorID: "shiro",
+	})
+	if err != nil || !found || !reflect.DeepEqual(loaded, outcome) {
+		t.Fatalf("LoadBoardPublicationByTurn(completed safe-error Shiro source) = %#v found=%t err=%v; want exact outcome", loaded, found, err)
+	}
+}
+
 func TestBoardPublicationClaimUsesResponderScopedPin(t *testing.T) {
 	ctx := context.Background()
 	for _, actorID := range []string{"shiro", "midori", "kuro"} {
@@ -555,6 +621,14 @@ func newBoardPublicationDeliveryFixture(t *testing.T) *boardPublicationDeliveryF
 }
 
 func newBoardPublicationDeliveryFixtureForResponder(t *testing.T, responderActorID string, scopedPin bool) *boardPublicationDeliveryFixture {
+	return newBoardPublicationDeliveryFixtureForResponderOutcome(t, responderActorID, scopedPin, false)
+}
+
+func newSafeErrorBoardPublicationDeliveryFixtureForResponder(t *testing.T, responderActorID string, scopedPin bool) *boardPublicationDeliveryFixture {
+	return newBoardPublicationDeliveryFixtureForResponderOutcome(t, responderActorID, scopedPin, true)
+}
+
+func newBoardPublicationDeliveryFixtureForResponderOutcome(t *testing.T, responderActorID string, scopedPin, safeError bool) *boardPublicationDeliveryFixture {
 	t.Helper()
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "board-publication-delivery.sqlite")
@@ -589,6 +663,9 @@ func newBoardPublicationDeliveryFixtureForResponder(t *testing.T, responderActor
 		t.Fatalf("AcceptTurn(real external peer EventStore fixture): %v", err)
 	}
 	fixture.lookup, fixture.bundle = externalPublicationCommitFixture(t, fixture.input, fixture.accepted)
+	if safeError {
+		fixture.bundle = externalPublicationSafeErrorBundle(t, fixture.bundle)
+	}
 	pin := BoardConnectionPin{
 		OwnerID: fixture.lookup.OwnerID, JournalInstanceID: journalInstanceID,
 		PrincipalID: fixture.lookup.SourceBinding.RecipientPrincipalID, CutoverAt: fixture.accepted.InputEvent.OccurredAt.UTC(),
@@ -608,6 +685,34 @@ func newBoardPublicationDeliveryFixtureForResponder(t *testing.T, responderActor
 	}
 	fixture.now = fixture.accepted.InputEvent.OccurredAt.Add(5 * time.Minute)
 	return fixture
+}
+
+func externalPublicationSafeErrorBundle(t *testing.T, bundle conversationruntime.ExternalCommitBundle) conversationruntime.ExternalCommitBundle {
+	t.Helper()
+	const safeText = "A safe response could not be produced."
+	bundle.SafeError = true
+	bundle.FailureStage = conversationruntime.ExternalFailureStageGeneration
+	bundle.InvocationReceipt.Status = "generation_failed"
+	responseFound, receiptFound := false, false
+	for index := range bundle.CanonicalEvents {
+		event := &bundle.CanonicalEvents[index]
+		if event.MessageID == bundle.PublicationIntent.CanonicalResponseMessageID {
+			event.ActorKind, event.ActorID = "", ""
+			event.Payload["kind"] = "turn_error"
+			event.Payload["from"] = bundle.ExpectedLookup.SourceBinding.EffectiveResponderActorID()
+			event.Payload["source_actor_id"] = bundle.ExpectedLookup.SourceBinding.EffectiveResponderActorID()
+			event.Payload["text"], event.Payload["content"] = safeText, safeText
+			responseFound = true
+		} else if event.EventType == "conversation.mio_emission_receipt" {
+			event.Payload["status"] = bundle.InvocationReceipt.Status
+			receiptFound = true
+		}
+	}
+	if !responseFound || !receiptFound || len(bundle.MessageIndexes) != 1 {
+		t.Fatal("safe-error publication fixture is missing its canonical response, receipt, or message index")
+	}
+	bundle.MessageIndexes[0].Kind = "turn_error"
+	return bundle
 }
 
 func (fixture *boardPublicationDeliveryFixture) reopen(t *testing.T) {

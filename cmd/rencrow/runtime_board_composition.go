@@ -42,6 +42,7 @@ type boardCommunicationCompositionStore interface {
 	ReadPendingBoardOwnerRequestsForResponder(context.Context, eventstore.BoardPublicationScope, string, modulecore.EventSeq, int) (eventstore.BoardOwnerRequestPendingPage, error)
 	ReadBoardOwnerRequestStatusForResponder(context.Context, eventstore.BoardPublicationScope, modulecore.TurnID, string) (eventstore.BoardOwnerRequestReadback, bool, error)
 	LoadBoardPublicationByTurn(context.Context, eventstore.BoardPublicationTurnLookupInput) (eventstore.BoardPublicationOutcome, bool, error)
+	LoadBoardPublicationByParentMessage(context.Context, eventstore.BoardPublicationLookupInput) (eventstore.BoardPublicationOutcome, bool, error)
 	NextBoardPublicationDue(context.Context, eventstore.BoardPublicationScope, time.Time) (time.Time, error)
 	RecordBoardTerminalReply(context.Context, eventstore.BoardTerminalReplySource) (eventstore.BoardTerminalReplyReceipt, bool, error)
 	conversationruntime.BoardOwnerRequestJournal
@@ -730,7 +731,7 @@ func (c *boardCommunicationComposition) PlanScheduledBoardWork(ctx context.Conte
 		return agentheartbeat.Work{}, false, err
 	}
 
-	item, found, err := nextScheduledBoardInboxItemSkipping(ctx, c.boardClient, c.deps.InboxScope, c.deferredInboxSnapshot())
+	item, found, err := nextScheduledBoardInboxItemSkippingWithFilter(ctx, c.boardClient, c.deps.InboxScope, c.deferredInboxSnapshot(), c.scheduledReplyHasCanonicalParent)
 	if err != nil || !found {
 		return agentheartbeat.Work{}, found, err
 	}
@@ -767,6 +768,16 @@ func nextScheduledBoardInboxItem(ctx context.Context, client *boardcommunication
 }
 
 func nextScheduledBoardInboxItemSkipping(ctx context.Context, client *boardcommunication.Client, scope boardInboxScope, deferred map[string]time.Time) (boardcommunication.InboxItem, bool, error) {
+	return nextScheduledBoardInboxItemSkippingWithFilter(ctx, client, scope, deferred, nil)
+}
+
+func nextScheduledBoardInboxItemSkippingWithFilter(
+	ctx context.Context,
+	client *boardcommunication.Client,
+	scope boardInboxScope,
+	deferred map[string]time.Time,
+	filter func(context.Context, boardcommunication.InboxItem) (bool, error),
+) (boardcommunication.InboxItem, bool, error) {
 	if ctx == nil || client == nil || !validBoardInboxScope(scope) {
 		return boardcommunication.InboxItem{}, false, ErrBoardInboxInvalidScope
 	}
@@ -784,6 +795,15 @@ func nextScheduledBoardInboxItemSkipping(ctx context.Context, client *boardcommu
 		for _, item := range page.Items {
 			if !scheduledBoardInboxCandidate(scope, item) || deferred[item.ItemID].After(time.Now().UTC()) {
 				continue
+			}
+			if filter != nil {
+				eligible, err := filter(ctx, item)
+				if err != nil {
+					return boardcommunication.InboxItem{}, false, err
+				}
+				if !eligible {
+					continue
+				}
 			}
 			if selected.ItemID == "" || item.CreatedAt.Before(selected.CreatedAt) ||
 				(item.CreatedAt.Equal(selected.CreatedAt) && item.ItemID < selected.ItemID) {
@@ -803,6 +823,30 @@ func nextScheduledBoardInboxItemSkipping(ctx context.Context, client *boardcommu
 		cursor = page.NextCursor
 	}
 	return boardcommunication.InboxItem{}, false, ErrBoardInboxCursorStalled
+}
+
+func (c *boardCommunicationComposition) scheduledReplyHasCanonicalParent(ctx context.Context, item boardcommunication.InboxItem) (bool, error) {
+	if !scheduledInboxReplyMetadata(item) {
+		return true, nil
+	}
+	if c == nil || ctx == nil || c.deps.Store == nil {
+		return false, ErrBoardCommunicationCompositionUnavailable
+	}
+	scope := boardPublicationScope(c.deps.InboxScope.Pin)
+	outcome, found, err := c.deps.Store.LoadBoardPublicationByParentMessage(ctx, eventstore.BoardPublicationLookupInput{
+		Scope: scope, ParentMessageID: item.ReplyTo,
+	})
+	if err != nil || !found {
+		return false, err
+	}
+	message := outcome.CanonicalMessage
+	if outcome.Scope != scope || outcome.WorkID == "" || message.MessageID != item.ReplyTo ||
+		outcome.SendReceipt.MessageID != item.ReplyTo || outcome.SendReceipt.ThreadID != item.ThreadID ||
+		message.SenderPrincipalID != scope.PrincipalID || message.ChannelID != item.ChannelID || message.ThreadID != item.ThreadID ||
+		outcome.ExpectedPeerPrincipalID != item.SenderID || !containsBoardInboxID(message.Recipients, item.SenderID) {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (c *boardCommunicationComposition) deferredInboxSnapshot() map[string]time.Time {

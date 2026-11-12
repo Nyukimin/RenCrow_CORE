@@ -238,11 +238,15 @@ func (s *SQLiteStore) ClaimBoardPublication(ctx context.Context, input BoardPubl
 	if err != nil {
 		return BoardPublicationLease{}, false, err
 	}
-	lease, _, _, _, err := loadBoardPublicationSourceTx(ctx, tx, workID, input.Scope)
+	lease, bundle, _, _, err := loadBoardPublicationSourceTx(ctx, tx, workID, input.Scope)
 	if err != nil {
 		return BoardPublicationLease{}, false, err
 	}
-	if input.ResponderActorID != "" && !boardPublicationActorMatchesResponder(lease.CanonicalResponse.ActorID, input.ResponderActorID) {
+	storedResponderActorID := lease.CanonicalResponse.ActorID
+	if bundle.SafeError {
+		storedResponderActorID = bundle.Lookup.SourceBinding.EffectiveResponderActorID()
+	}
+	if input.ResponderActorID != "" && !boardPublicationActorMatchesResponder(storedResponderActorID, input.ResponderActorID) {
 		return BoardPublicationLease{}, false, ErrBoardPublicationScopeMismatch
 	}
 	token := string(modulecore.NewRequestID())

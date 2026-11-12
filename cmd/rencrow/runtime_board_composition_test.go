@@ -90,25 +90,111 @@ func TestScheduledBoardSourceDefersNoProgressItemAndFiltersUnsupportedMetadata(t
 	}
 }
 
+func TestScheduledBoardSourceSkipsUncorrelatedTerminalReplies(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		withRequest bool
+		parentFound bool
+		wantWorkID  string
+	}{
+		{name: "orphan reply does not starve newer request", withRequest: true, wantWorkID: "board-inbox:item-request"},
+		{name: "orphan reply alone yields no work", wantWorkID: ""},
+		{name: "correlated reply remains eligible", withRequest: true, parentFound: true, wantWorkID: "board-inbox:item-orphan-reply"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pin := boardInboxTestPin()
+			pin.PrincipalID = domainconversation.BoardCommunicationMeetingMioPrincipalID
+			h := newBoardInboxWireHarness(t, pin)
+			reply := boardInboxTestItem("item-orphan-reply", "message-orphan-reply", pin.CutoverAt.Add(time.Second), "old terminal reply")
+			reply.Kind = "reply"
+			reply.ReplyTo = "board-parent-without-core-receipt"
+			reply.Recipients = []string{pin.PrincipalID}
+			items := []boardcommunication.InboxItem{reply}
+			if test.withRequest {
+				request := boardInboxTestItem("item-request", "message-request", pin.CutoverAt.Add(2*time.Second), "new request")
+				request.Kind = "request"
+				request.Recipients = []string{pin.PrincipalID}
+				items = append(items, request)
+			}
+			h.inbox = func(_ int, cursor string) boardcommunication.InboxPage {
+				if cursor != "" {
+					return boardcommunication.InboxPage{}
+				}
+				return boardcommunication.InboxPage{Items: items}
+			}
+			store := &boardCompositionStoreFake{pin: pin}
+			if test.parentFound {
+				store.parentPublicationFound = true
+				store.parentPublicationOutcome = eventstore.BoardPublicationOutcome{
+					Scope: boardPublicationScope(pin), WorkID: "publication-work",
+					SendReceipt: eventstore.BoardPublicationSendReceipt{MessageID: reply.ReplyTo, ThreadID: reply.ThreadID},
+					CanonicalMessage: eventstore.BoardPublicationCanonicalMessage{
+						MessageID: reply.ReplyTo, ThreadID: reply.ThreadID, ChannelID: reply.ChannelID,
+						SenderPrincipalID: pin.PrincipalID, Recipients: []string{reply.SenderID},
+					},
+					ExpectedPeerPrincipalID: reply.SenderID,
+				}
+			}
+			deps := boardCommunicationCompositionDeps{
+				Store: store, Client: h.client, Pin: pin, InboxScope: boardInboxTestScope(pin),
+				ActorID: "mio", Now: func() time.Time { return pin.CutoverAt.Add(time.Hour) },
+				AllowedChannelIDs: []string{"channel-alpha"}, AllowedPeerIDs: []string{"peer-alpha"},
+			}
+			composition := &boardCommunicationComposition{deps: deps, boardClient: h.client, peerOwner: newBoardInboxTestOwner(h.trace, pin)}
+
+			work, found, err := composition.PlanScheduledBoardWork(context.Background(), "mio")
+			if err != nil {
+				t.Fatalf("PlanScheduledBoardWork(): %v", err)
+			}
+			if test.wantWorkID == "" {
+				if found {
+					t.Fatalf("PlanScheduledBoardWork() = %q, found true; want no work", work.ID)
+				}
+			} else if !found || work.ID != test.wantWorkID {
+				t.Fatalf("PlanScheduledBoardWork() = %q, found %t; want %q", work.ID, found, test.wantWorkID)
+			}
+			if store.parentPublicationLookupCalls != 1 ||
+				store.parentPublicationLookup.Scope != boardPublicationScope(pin) ||
+				store.parentPublicationLookup.ParentMessageID != reply.ReplyTo {
+				t.Fatalf("parent publication lookup = %+v calls=%d; want exact pinned scope and reply parent", store.parentPublicationLookup, store.parentPublicationLookupCalls)
+			}
+			if h.threadReads != 0 || h.claimCalls != 0 || h.ackCalls != 0 {
+				t.Fatalf("planning read thread=%d claims=%d ACKs=%d; want metadata and owner lookup only", h.threadReads, h.claimCalls, h.ackCalls)
+			}
+		})
+	}
+}
+
 type boardCompositionStoreFake struct {
 	boardCommunicationCompositionStore
-	steps                     *[]string
-	pin                       eventstore.BoardConnectionPin
-	sessionState              eventstore.SessionState
-	stateFound                bool
-	reservation               eventstore.BoardOwnerRequestReservation
-	reserveInput              eventstore.BoardOwnerRequestReservationInput
-	acceptInput               eventstore.BoardOwnerRequestAcceptInput
-	accepted                  eventstore.AcceptedTurn
-	publicationLookup         eventstore.BoardPublicationTurnLookupInput
-	publicationOutcome        eventstore.BoardPublicationOutcome
-	publicationFound          bool
-	publicationLookupErr      error
-	publicationLookupCalls    int
-	publicationDueCalls       int
-	responderPublicationDue   int
-	responderPublicationActor string
-	publicationDueTime        time.Time
+	steps                        *[]string
+	pin                          eventstore.BoardConnectionPin
+	sessionState                 eventstore.SessionState
+	stateFound                   bool
+	reservation                  eventstore.BoardOwnerRequestReservation
+	reserveInput                 eventstore.BoardOwnerRequestReservationInput
+	acceptInput                  eventstore.BoardOwnerRequestAcceptInput
+	accepted                     eventstore.AcceptedTurn
+	publicationLookup            eventstore.BoardPublicationTurnLookupInput
+	publicationOutcome           eventstore.BoardPublicationOutcome
+	publicationFound             bool
+	publicationLookupErr         error
+	publicationLookupCalls       int
+	parentPublicationLookup      eventstore.BoardPublicationLookupInput
+	parentPublicationOutcome     eventstore.BoardPublicationOutcome
+	parentPublicationFound       bool
+	parentPublicationLookupErr   error
+	parentPublicationLookupCalls int
+	publicationDueCalls          int
+	responderPublicationDue      int
+	responderPublicationActor    string
+	publicationDueTime           time.Time
+}
+
+func (s *boardCompositionStoreFake) LoadBoardPublicationByParentMessage(_ context.Context, input eventstore.BoardPublicationLookupInput) (eventstore.BoardPublicationOutcome, bool, error) {
+	s.parentPublicationLookupCalls++
+	s.parentPublicationLookup = input
+	return s.parentPublicationOutcome, s.parentPublicationFound, s.parentPublicationLookupErr
 }
 
 func (s *boardCompositionStoreFake) ReadBoardConnectionPin(context.Context) (eventstore.BoardConnectionPin, bool, error) {
