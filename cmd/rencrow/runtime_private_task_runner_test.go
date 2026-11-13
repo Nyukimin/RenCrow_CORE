@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -16,6 +17,7 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	superagentpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/superagent"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -24,6 +26,119 @@ func TestPrivateTaskRunQueueRunnerPersistsMidoriTextOnlyToCanonicalTaskAndRun(t 
 		t.Run(backend, func(t *testing.T) {
 			testPrivateTaskRunQueueRunnerPersistsMidoriTextOnlyToCanonicalTaskAndRun(t, backend)
 		})
+	}
+}
+
+func TestPrivateTaskRunQueueRunnerPausesAndResumesSameTaskFromSavedOutput(t *testing.T) {
+	ctx := context.Background()
+	title := "private request that remains outside queue receipts"
+	output := "private completed output saved before the stop signal"
+	owner, queue, task := newTaskEnqueueFixture(t, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "midori", Title: title,
+	}, domaintask.SharedRoleContext{})
+	events, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := events.Close(); err != nil {
+			t.Errorf("close event store: %v", err)
+		}
+	})
+	runtimeStore := composeRuntimeSuperAgentStore(queue, events)
+	response := serveTaskEnqueueRequest(&taskEnqueueHandler{
+		ownerID: "ren", token: []byte(taskEnqueueTestToken), tasks: owner,
+		queue: runtimeStore.(taskEnqueueRunQueueStore), agentSchedulerEnabled: true,
+	}, "POST", "127.0.0.1:1234", taskEnqueueTestToken, `{"task_id":"`+string(task.TaskID)+`"}`)
+	if response.Code != 200 {
+		t.Fatalf("enqueue status=%d body=%s", response.Code, response.Body.String())
+	}
+	stop := make(chan struct{})
+	provider := &privateTaskQueueLLMProvider{response: output, onGenerate: func() { close(stop) }}
+	wild := agent.NewWildAgent(provider, "Midori: write requested text only.")
+	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild)
+	legacyProcessor := &captureSuperAgentRunQueueProcessor{}
+	scheduler := appsuperagent.NewRunQueueScheduler(runtimeStore,
+		newSuperAgentRunQueueProcessor(legacyProcessor, backgroundJobFailureReporter{}, true, runner), owner,
+		appsuperagent.RunQueueSchedulerOptions{
+			LeaseDuration: time.Minute,
+			Now:           func() time.Time { return time.Now().UTC() },
+			LeaseToken:    func() (string, error) { return "private-task-pause-resume-lease", nil },
+			ActorTaskLister: func(ctx context.Context, actorID string, limit int) ([]domaintask.Task, error) {
+				return owner.List(ctx, domaintask.Filter{Assignee: actorID, Limit: limit})
+			},
+		},
+	)
+	first, _, err := scheduler.PlanForActor(ctx, "midori")
+	if err != nil || first == nil {
+		t.Fatalf("PlanForActor(first)=(%+v,%v), want private first run", first, err)
+	}
+	if ran, err := scheduler.RunPlannedWithStop(ctx, first.QueueItemID, "midori", stop); err != nil || !ran {
+		t.Fatalf("RunPlannedWithStop(first)=(%t,%v), want durable normal pause", ran, err)
+	}
+	if provider.calls != 1 || legacyProcessor.called {
+		t.Fatalf("provider calls=%d legacy called=%t, want one provider call and no generic route", provider.calls, legacyProcessor.called)
+	}
+	pausedTask, err := owner.Get(ctx, task.TaskID)
+	if err != nil || pausedTask.Status != domaintask.StatusWaiting || pausedTask.WaitingReason != domaintask.PrivateTextWaitingReason {
+		t.Fatalf("paused Task=%+v err=%v, want the fixed private waiting reason", pausedTask, err)
+	}
+	firstRuns, err := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID, Limit: 2})
+	if err != nil || len(firstRuns) != 1 || firstRuns[0].Status != domaintask.RunStatusWaiting {
+		t.Fatalf("first Runs=%+v err=%v, want exact waiting predecessor", firstRuns, err)
+	}
+	checkpoint, found, err := owner.GetPrivateTextCheckpoint(ctx, task.TaskID)
+	if err != nil || !found || checkpoint.RunID != firstRuns[0].RunID || checkpoint.QueueItemID != first.QueueItemID || checkpoint.Output != output {
+		t.Fatalf("paused checkpoint=%+v found=%t err=%v, want saved output bound to exact predecessor", checkpoint, found, err)
+	}
+	items, err := runtimeStore.ListRunQueueItems(ctx, 10)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("queue items=%+v err=%v, want source and successor receipts", items, err)
+	}
+	var successor *domainsuperagent.RunQueueItem
+	for i := range items {
+		if items[i].QueueItemID == first.QueueItemID {
+			if items[i].Status != "cancelled" || items[i].Reason != "private task paused" {
+				t.Fatalf("source receipt=%+v, want sanitized pause completion", items[i])
+			}
+			continue
+		}
+		candidate := items[i]
+		successor = &candidate
+	}
+	if successor == nil || successor.Status != "queued" || successor.RunStartReason != domaintask.RunStartReasonCheckpointResume ||
+		successor.Action != "chat" || successor.PredecessorRunID != firstRuns[0].RunID || successor.CheckpointDigest != checkpoint.Digest() ||
+		successor.IdempotencyKey != domainsuperagent.PrivateTextResumeQueueKey(firstRuns[0].RunID) {
+		t.Fatalf("successor receipt=%+v, want insert-only private cursor resume", successor)
+	}
+	for _, item := range items {
+		if strings.Contains(item.Goal, title) || strings.Contains(item.Reason, title) || strings.Contains(item.Goal, output) || strings.Contains(item.Reason, output) {
+			t.Fatalf("private text leaked into queue receipt: %+v", item)
+		}
+	}
+
+	resumed, resumedTask, err := scheduler.PlanForActor(ctx, "midori")
+	if err != nil || resumed == nil || resumed.QueueItemID != successor.QueueItemID || resumedTask.Status != domaintask.StatusWaiting {
+		t.Fatalf("PlanForActor(resume)=(%+v,%+v,%v), want the exact private successor", resumed, resumedTask, err)
+	}
+	if ran, err := scheduler.RunPlanned(ctx, resumed.QueueItemID, "midori"); err != nil || !ran {
+		t.Fatalf("RunPlanned(resume)=(%t,%v), want successful saved-output completion", ran, err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls=%d after resume, want saved checkpoint output to skip remote compute", provider.calls)
+	}
+	completedTask, err := owner.Get(ctx, task.TaskID)
+	if err != nil || completedTask.Status != domaintask.StatusSucceeded || completedTask.Summary != output {
+		t.Fatalf("completed Task=%+v err=%v, want original CLI result summary", completedTask, err)
+	}
+	items, err = runtimeStore.ListRunQueueItems(ctx, 10)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("queue items after resume=%+v err=%v, want two stable receipts", items, err)
+	}
+	for _, item := range items {
+		if item.QueueItemID == successor.QueueItemID && (item.Status != "completed" || strings.Contains(item.Reason, output)) {
+			t.Fatalf("resumed queue receipt=%+v, want completed redacted receipt", item)
+		}
 	}
 }
 
@@ -116,7 +231,14 @@ func testPrivateTaskRunQueueRunnerPersistsMidoriTextOnlyToCanonicalTaskAndRun(t 
 		t.Fatalf("canonical Runs=%+v err=%v, want one succeeded Run with actual generated text", runs, err)
 	}
 	items, err := runtimeStore.ListRunQueueItems(ctx, 10)
-	if err != nil || len(items) != 1 || items[0].Status != "completed" || items[0].Reason != privateTaskQueueProjectionSummary ||
+	if err != nil || len(items) != 1 {
+		t.Fatalf("run queue receipts=%+v err=%v, want one private first-run receipt", items, err)
+	}
+	checkpoint, found, err := owner.GetPrivateTextCheckpoint(ctx, task.TaskID)
+	if err != nil || !found || checkpoint.TaskID != task.TaskID || checkpoint.RunID != runs[0].RunID || checkpoint.QueueItemID != items[0].QueueItemID || checkpoint.Output != provider.response {
+		t.Fatalf("private checkpoint=%+v found=%t err=%v, want exact durable output cursor", checkpoint, found, err)
+	}
+	if items[0].Status != "completed" || items[0].Reason != privateTaskQueueProjectionSummary ||
 		strings.Contains(items[0].Reason, provider.response) || strings.Contains(items[0].Goal, title) {
 		t.Fatalf("queue projection=%+v err=%v, want generic summary and redacted goal", items, err)
 	}
@@ -280,6 +402,86 @@ func TestPrivateTaskRunQueueRunnerRejectsPrivateIntentWhenNoActorIsConfigured(t 
 	}
 }
 
+func TestPrivateTextStartupRecoveryRepairsIssuanceBeforeQueueAttachment(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	taskPath := filepath.Join(root, "tasks")
+	queue := superagentpersistence.NewJSONLStore(filepath.Join(root, "superagent"), 3000)
+	openOwner := func() *taskmanager.Manager {
+		taskStore, err := taskpersistence.NewJSONLStore(taskPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())
+	}
+	owner := openOwner()
+	task, err := owner.Create(ctx, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "midori", Title: "crash window private task",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	intent := domainsuperagent.RunQueueItem{
+		QueueItemID: modulecore.NewQueueItemID(), TaskID: task.TaskID,
+		RunStartReason: domaintask.RunStartReasonFirst, WorkstreamID: string(task.WorkstreamID),
+		Goal: domainsuperagent.RunQueueGoalPrivateFirstChat, Action: "chat", Status: "queued",
+		Priority: 2, IdempotencyKey: domainsuperagent.RunQueueIntentPrivateFirstChat, CreatedAt: task.CreatedAt,
+	}
+	if _, inserted, err := queue.InsertRunQueueItemIfAbsent(ctx, intent); err != nil || !inserted {
+		t.Fatalf("insert first private intent: inserted=%t err=%v", inserted, err)
+	}
+	claimed, err := queue.ClaimRunQueueItem(ctx, intent.QueueItemID, now, now.Add(time.Minute), "startup-recovery-lease")
+	if err != nil || claimed == nil {
+		t.Fatalf("claim first private intent: item=%+v err=%v", claimed, err)
+	}
+	issued, err := owner.StartPrivateTextRun(ctx, task.TaskID, intent.QueueItemID, "midori", "", "")
+	if err != nil {
+		t.Fatalf("issue private Run: %v", err)
+	}
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	owner = openOwner()
+	t.Cleanup(func() {
+		if err := owner.Close(); err != nil {
+			t.Errorf("close recovered TaskManager: %v", err)
+		}
+	})
+
+	result, err := appsuperagent.RecoverPrivateTextRunQueueReceipts(ctx, queue, owner, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("recover issuance-before-attachment window: %v", err)
+	}
+	if result.RecoveredRuns != 1 || result.QueuedResumes != 1 || result.ClosedReceipts != 1 {
+		t.Fatalf("recovery result=%+v, want one old Run, successor, and source receipt repaired", result)
+	}
+	recoveredTask, err := owner.Get(ctx, task.TaskID)
+	if err != nil || recoveredTask.Status != domaintask.StatusWaiting || recoveredTask.WaitingReason != domaintask.PrivateTextWaitingReason {
+		t.Fatalf("recovered Task=%+v err=%v, want fixed private waiting state", recoveredTask, err)
+	}
+	checkpoint, found, err := owner.GetPrivateTextCheckpoint(ctx, task.TaskID)
+	if err != nil || !found || checkpoint.RunID != issued.RunID || checkpoint.QueueItemID != intent.QueueItemID {
+		t.Fatalf("recovered cursor=%+v found=%t err=%v, want exact issued Run and queue item", checkpoint, found, err)
+	}
+	items, err := queue.ListRunQueueItems(ctx, 10)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("recovered queue items=%+v err=%v, want source and one successor", items, err)
+	}
+	for _, item := range items {
+		if item.QueueItemID == intent.QueueItemID && (item.Status != "cancelled" || item.RunID != issued.RunID) {
+			t.Fatalf("recovered source receipt=%+v, want attached and cancelled exact old Run", item)
+		}
+		if domainsuperagent.IsPrivateTextResumeQueueItem(item) && (item.Status != "queued" || item.PredecessorRunID != issued.RunID || item.CheckpointDigest != checkpoint.Digest()) {
+			t.Fatalf("recovered successor=%+v, want exact waiting cursor intent", item)
+		}
+	}
+	second, err := appsuperagent.RecoverPrivateTextRunQueueReceipts(ctx, queue, owner, now.Add(2*time.Second))
+	if err != nil || second.QueuedResumes != 0 || second.ClosedReceipts != 0 || second.DeferredReceipts != 0 {
+		t.Fatalf("second recovery=%+v err=%v, want idempotent no-op", second, err)
+	}
+}
+
 type privateTaskQueueLLMProvider struct {
 	response    string
 	ctx         context.Context
@@ -287,6 +489,7 @@ type privateTaskQueueLLMProvider struct {
 	userMessage string
 	calls       int
 	failure     error
+	onGenerate  func()
 }
 
 func (p *privateTaskQueueLLMProvider) Name() string { return "private-task-queue-test-provider" }
@@ -299,6 +502,9 @@ func (p *privateTaskQueueLLMProvider) Generate(ctx context.Context, request llm.
 		if message.Role == "user" {
 			p.userMessage = message.Content
 		}
+	}
+	if p.onGenerate != nil {
+		p.onGenerate()
 	}
 	if p.failure != nil {
 		return llm.GenerateResponse{}, p.failure

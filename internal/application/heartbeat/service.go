@@ -13,6 +13,7 @@ import (
 	"time"
 
 	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
@@ -99,6 +100,7 @@ type IdleChatSequenceCheck struct {
 type HeartbeatService struct {
 	taskOwner                TaskOwner
 	workerActor              string
+	actorAdmission           conversationruntime.ActorAdmission
 	workerAgent              WorkerAgent
 	sender                   NotificationSender
 	workspaceDir             string

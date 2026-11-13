@@ -1,6 +1,7 @@
 package superagent
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -169,6 +170,11 @@ func ValidateRunQueueItem(item RunQueueItem) error {
 			return fmt.Errorf("run_id is invalid: %w", err)
 		}
 	}
+	if item.PredecessorRunID != "" {
+		if err := item.PredecessorRunID.Validate(); err != nil {
+			return fmt.Errorf("predecessor_run_id is invalid: %w", err)
+		}
+	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("created_at is required")
 	}
@@ -201,12 +207,48 @@ func ValidateRunQueueItem(item RunQueueItem) error {
 	if item.AttemptCount < 0 || item.CheckpointRevision < 0 {
 		return fmt.Errorf("attempt_count and checkpoint_revision must be >= 0")
 	}
+	if hasPrivateTextResumeMetadata(item) && !IsPrivateTextResumeQueueItem(item) {
+		return fmt.Errorf("private text checkpoint resume intent is invalid")
+	}
 	if isCheckpointResumeQueueItem(item) {
 		if err := item.CheckpointID.Validate(); err != nil {
 			return fmt.Errorf("checkpoint_id is invalid: %w", err)
 		}
 	}
 	return nil
+}
+
+// PrivateTextResumeQueueKey binds one insert-only private text resume intent to
+// the exact predecessor Run. Queue summaries remain generic; the checkpoint
+// content and digest are never projected into goal, summary, or trace fields.
+func PrivateTextResumeQueueKey(predecessor modulecore.RunID) string {
+	return RunQueueIntentPrivateTextResumePrefix + string(predecessor)
+}
+
+// IsPrivateTextResumeQueueItem recognizes only the distinct private text
+// continuation intent. Generic Viewer resume items keep their existing
+// checkpoint_id/revision contract and do not match this predicate.
+func IsPrivateTextResumeQueueItem(item RunQueueItem) bool {
+	if item.RunStartReason != domaintask.RunStartReasonCheckpointResume ||
+		item.Goal != RunQueueGoalPrivateFirstChat || item.Action != "chat" ||
+		item.PredecessorRunID == "" || item.IdempotencyKey != PrivateTextResumeQueueKey(item.PredecessorRunID) ||
+		!validCheckpointDigest(item.CheckpointDigest) {
+		return false
+	}
+	return item.PredecessorRunID.Validate() == nil
+}
+
+func hasPrivateTextResumeMetadata(item RunQueueItem) bool {
+	return item.PredecessorRunID != "" || item.CheckpointDigest != "" ||
+		strings.HasPrefix(item.IdempotencyKey, RunQueueIntentPrivateTextResumePrefix)
+}
+
+func validCheckpointDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 32 && strings.ToLower(value) == value
 }
 
 func isCheckpointResumeQueueItem(item RunQueueItem) bool {

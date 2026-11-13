@@ -66,6 +66,72 @@ func TestTaskViewerRoutesExposeCanonicalTaskIdentity(t *testing.T) {
 	}
 }
 
+func TestTaskDetailRedactsPrivateTextCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
+	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+	task, err := manager.Create(ctx, domaintask.Task{
+		Title:           "public task",
+		Route:           domaintask.RouteGeneral,
+		OriginSessionID: modulecore.NewSessionID(),
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "private checkpoint output must not appear in Viewer JSON"
+	shared := domaintask.SharedRoleContext{
+		TaskID: task.TaskID,
+		PrivateText: &domaintask.PrivateTextCheckpoint{
+			TaskID:      task.TaskID,
+			RunID:       modulecore.NewRunID(),
+			QueueItemID: modulecore.NewQueueItemID(),
+			ActorID:     "mio",
+			InputSHA256: strings.Repeat("a", 64),
+			Output:      secret,
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := store.SaveContext(ctx, shared); err != nil {
+		t.Fatalf("save private test context: %v", err)
+	}
+
+	visibility := PublicTaskVisibility(func(_ context.Context, candidate domaintask.Task) (bool, error) {
+		return candidate.OriginSessionID == task.OriginSessionID, nil
+	})
+	recorder := httptest.NewRecorder()
+	HandleTaskDetailWithPublicVisibility(store, visibility)(recorder, httptest.NewRequest(http.MethodGet, "/viewer/task/detail?task_id="+string(task.TaskID), nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "private_text") || strings.Contains(recorder.Body.String(), secret) {
+		t.Fatalf("Viewer task detail exposed private checkpoint: %s", recorder.Body.String())
+	}
+	var response taskDetailResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode task detail: %v", err)
+	}
+	if response.Context.PrivateText != nil {
+		t.Fatalf("Viewer task context retained private checkpoint: %#v", response.Context.PrivateText)
+	}
+
+	listRecorder := httptest.NewRecorder()
+	HandleTasksWithPublicVisibility(store, visibility)(listRecorder, httptest.NewRequest(http.MethodGet, "/viewer/tasks", nil))
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("task-list status=%d body=%s", listRecorder.Code, listRecorder.Body.String())
+	}
+	if strings.Contains(listRecorder.Body.String(), "private_text") || strings.Contains(listRecorder.Body.String(), secret) {
+		t.Fatalf("Viewer task list exposed private checkpoint: %s", listRecorder.Body.String())
+	}
+}
+
 type taskDetailResponse struct {
 	Task    domaintask.Task              `json:"task"`
 	Runs    []domaintask.Run             `json:"runs"`

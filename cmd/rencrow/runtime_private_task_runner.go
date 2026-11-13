@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -60,9 +64,12 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 	if err := item.RunID.Validate(); err != nil {
 		return "", fmt.Errorf("private task run_id is invalid: %w", err)
 	}
-	if item.IdempotencyKey != domainsuperagent.RunQueueIntentPrivateFirstChat || strings.TrimSpace(item.Action) != "chat" ||
-		item.Goal != domainsuperagent.RunQueueGoalPrivateFirstChat || item.RunStartReason != domaintask.RunStartReasonFirst || item.AttemptCount <= 0 {
-		return "", errors.New("private task queue intent is not an exact first-chat run")
+	privateFirst := item.IdempotencyKey == domainsuperagent.RunQueueIntentPrivateFirstChat &&
+		item.RunStartReason == domaintask.RunStartReasonFirst
+	privateResume := domainsuperagent.IsPrivateTextResumeQueueItem(item)
+	if (!privateFirst && !privateResume) || strings.TrimSpace(item.Action) != "chat" ||
+		item.Goal != domainsuperagent.RunQueueGoalPrivateFirstChat || item.AttemptCount <= 0 {
+		return "", errors.New("private task queue intent is not an exact first or checkpoint-resume run")
 	}
 
 	task, err := r.tasks.Get(ctx, item.TaskID)
@@ -74,15 +81,21 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 		return "", fmt.Errorf("load private task run: %w", err)
 	}
 	if task.TaskID != item.TaskID || run.RunID != item.RunID || run.TaskID != item.TaskID || task.Status != domaintask.StatusRunning || run.Status != domaintask.RunStatusRunning ||
-		run.StartReason != domaintask.RunStartReasonFirst || run.Assignee != task.Assignee || run.TraceID != "" && run.TraceID != traceID {
+		run.StartReason != item.RunStartReason || run.Assignee != task.Assignee || run.TraceID != "" && run.TraceID != traceID {
 		return "", errors.New("private task queue item does not match its active canonical Task and Run")
 	}
-	runs, err := r.tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: item.TaskID, Limit: 2})
-	if err != nil {
-		return "", fmt.Errorf("read private task Run history: %w", err)
-	}
-	if len(runs) != 1 || runs[0].RunID != item.RunID {
-		return "", errors.New("private first-chat Task does not have exactly its active first Run")
+	if privateFirst {
+		if run.StartReason != domaintask.RunStartReasonFirst || item.PredecessorRunID != "" || item.CheckpointDigest != "" {
+			return "", errors.New("private first-chat queue intent does not match its exact first Run")
+		}
+	} else {
+		predecessor, err := r.tasks.GetRun(ctx, item.PredecessorRunID)
+		if err != nil {
+			return "", fmt.Errorf("read exact private text predecessor Run: %w", err)
+		}
+		if predecessor.RunID != item.PredecessorRunID || predecessor.TaskID != item.TaskID || predecessor.Status != domaintask.RunStatusWaiting || predecessor.CompletedAt == nil || predecessor.Validate() != nil {
+			return "", errors.New("private checkpoint-resume Task does not match its exact waiting predecessor Run")
+		}
 	}
 	if err := validatePrivateFirstChatTask(task, r.ownerID, domaintask.StatusRunning); err != nil {
 		return "", fmt.Errorf("private task is outside the first-chat execution scope: %w", err)
@@ -126,24 +139,99 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 	if _, err := r.tasks.ValidateExecutionContext(actorCtx); err != nil {
 		return "", fmt.Errorf("validate private task owner context: %w", err)
 	}
-
-	output, workErr := worker.ExecutePrivateWork(actorCtx, input, []string{})
+	checkpoint, found, err := r.tasks.GetPrivateTextCheckpoint(ctx, item.TaskID)
+	if err != nil {
+		return "", fmt.Errorf("read private task cursor: %w", err)
+	}
+	if !found || checkpoint.TaskID != item.TaskID || checkpoint.RunID != run.RunID || checkpoint.QueueItemID != item.QueueItemID ||
+		checkpoint.ActorID != actorID || checkpoint.InputSHA256 != privateTaskInputSHA256(task.Title) {
+		return "", errors.New("private task cursor does not match its canonical Task, Run, queue item, actor, and input")
+	}
+	if privateResume && run.StartCheckpointSHA256 != item.CheckpointDigest {
+		return "", errors.New("private checkpoint-resume Run does not retain its exact predecessor digest")
+	}
+	if checkpoint.Output != "" {
+		output := strings.TrimSpace(checkpoint.Output)
+		if !validPrivateTaskOutput(output) {
+			return "", r.closePrivateTaskFailure(ctx, task, run, actorID, errPrivateTaskExecutionFailed)
+		}
+		if err := r.completePrivateTaskRun(ctx, task, run, actorID, false); err != nil {
+			return "", err
+		}
+		return privateTaskQueueProjectionSummary, nil
+	}
+	if appsuperagent.RunQueueStopRequested(actorCtx) {
+		return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+	}
+	providerCtx, cancelProvider := context.WithCancel(actorCtx)
+	stopSignal := appsuperagent.RunQueueStopSignal(actorCtx)
+	watcherDone := make(chan struct{})
+	go func() {
+		select {
+		case <-stopSignal:
+			cancelProvider()
+		case <-watcherDone:
+		case <-actorCtx.Done():
+			cancelProvider()
+		}
+	}()
+	output, workErr := worker.ExecutePrivateWork(providerCtx, input, []string{})
+	close(watcherDone)
+	cancelProvider()
+	pauseRequested := appsuperagent.RunQueueStopRequested(actorCtx) || actorCtx.Err() != nil
 	if workErr != nil {
+		if pauseRequested {
+			return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+		}
 		return "", r.closePrivateTaskFailure(ctx, task, run, actorID, workErr)
 	}
-	if err := ctx.Err(); err != nil {
-		return "", r.closePrivateTaskFailure(ctx, task, run, actorID, err)
-	}
 	output = strings.TrimSpace(output)
-	if output == "" || !utf8.ValidString(output) || len(output) > conversation.MaxReportResultBytes {
+	if !validPrivateTaskOutput(output) {
 		return "", r.closePrivateTaskFailure(ctx, task, run, actorID, errPrivateTaskExecutionFailed)
 	}
-	if err := r.tasks.CloseStartedRun(ctx, task.TaskID, run.RunID, actorID, taskmanager.RunOutcome{
-		Status: domaintask.StatusSucceeded, Summary: output,
-	}, nil); err != nil {
+	persistCtx, cancelPersist := privateTaskPersistenceContext(actorCtx)
+	defer cancelPersist()
+	if err := r.tasks.SavePrivateTextOutput(persistCtx, task.TaskID, run.RunID, actorID, output); err != nil {
+		return "", err
+	}
+	if pauseRequested {
+		if err := r.tasks.CompletePrivateTextRun(persistCtx, task.TaskID, run.RunID, actorID, true); err != nil {
+			return "", err
+		}
+		return "", appsuperagent.RunQueuePauseOutcome{}
+	}
+	if err := r.tasks.CompletePrivateTextRun(persistCtx, task.TaskID, run.RunID, actorID, false); err != nil {
 		return "", err
 	}
 	return privateTaskQueueProjectionSummary, nil
+}
+
+func (r *privateTaskRunQueueRunner) pausePrivateTaskRun(ctx context.Context, task domaintask.Task, run domaintask.Run, actorID string) error {
+	persistCtx, cancel := privateTaskPersistenceContext(ctx)
+	defer cancel()
+	if err := r.tasks.CompletePrivateTextRun(persistCtx, task.TaskID, run.RunID, actorID, true); err != nil {
+		return err
+	}
+	return appsuperagent.RunQueuePauseOutcome{}
+}
+
+func (r *privateTaskRunQueueRunner) completePrivateTaskRun(ctx context.Context, task domaintask.Task, run domaintask.Run, actorID string, pause bool) error {
+	persistCtx, cancel := privateTaskPersistenceContext(ctx)
+	defer cancel()
+	return r.tasks.CompletePrivateTextRun(persistCtx, task.TaskID, run.RunID, actorID, pause)
+}
+
+func privateTaskPersistenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+}
+
+func privateTaskInputSHA256(input string) string {
+	digest := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(digest[:])
+}
+
+func validPrivateTaskOutput(output string) bool {
+	return output != "" && utf8.ValidString(output) && len(output) <= conversation.MaxReportResultBytes
 }
 
 func (r *privateTaskRunQueueRunner) closePrivateTaskFailure(ctx context.Context, task domaintask.Task, run domaintask.Run, actorID string, cause error) error {

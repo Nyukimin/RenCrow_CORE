@@ -113,6 +113,9 @@ func HandleTaskDetailWithPublicVisibility(store TaskStore, visibility PublicTask
 			http.Error(w, "task not found", http.StatusNotFound)
 			return
 		}
+		// SharedRoleContext may contain Task-owned private execution state. The
+		// public Task detail projection exposes only the non-private context.
+		shared.PrivateText = nil
 		writeMonitorJSON(w, map[string]any{"task": value, "context": shared, "runs": runs})
 	}
 }

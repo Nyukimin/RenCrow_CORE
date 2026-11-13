@@ -58,7 +58,7 @@ func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*do
 	tasksByID := make(map[modulecore.TaskID]domaintask.Task, len(tasks))
 	taskIDs := make([]modulecore.TaskID, 0, len(tasks))
 	for _, task := range tasks {
-		if task.Assignee != actor || task.Status != domaintask.StatusQueued {
+		if task.Assignee != actor || (task.Status != domaintask.StatusQueued && !isPrivateTextWaitingTask(task)) {
 			continue
 		}
 		if err := task.Validate(); err != nil {
@@ -90,8 +90,21 @@ func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*do
 	candidates := make([]actorRunQueueCandidate, 0, len(items))
 	for _, item := range items {
 		task, ok := tasksByID[item.TaskID]
-		if !ok || !actorPlannableRunQueueCandidate(item, now) {
+		if !ok || !actorPlannableRunQueueCandidate(item, now) || !actorPlannableTaskForQueueItem(task, item, item.TaskID, actor) {
 			continue
+		}
+		if task.Status == domaintask.StatusWaiting {
+			owner, ok := s.taskOwner.(RunQueuePrivateTextTaskOwner)
+			if !ok {
+				return nil, domaintask.Task{}, fmt.Errorf("canonical Task owner does not support private text checkpoint reads")
+			}
+			checkpoint, found, err := owner.GetPrivateTextCheckpoint(ctx, task.TaskID)
+			if err != nil {
+				return nil, domaintask.Task{}, fmt.Errorf("read private text checkpoint while planning task %s: %w", task.TaskID, err)
+			}
+			if !found || !privateTextResumeCheckpointMatches(task, item, checkpoint) {
+				continue
+			}
 		}
 		candidates = append(candidates, actorRunQueueCandidate{item: item, task: task})
 	}
@@ -139,6 +152,19 @@ func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*do
 // RunPlanned reserves and executes exactly the selected queue item. A false,
 // nil result means that the exact item was no longer eligible for this actor.
 func (s *RunQueueScheduler) RunPlanned(ctx context.Context, itemID modulecore.QueueItemID, actor string) (bool, error) {
+	return s.runPlanned(ctx, itemID, actor, nil)
+}
+
+// RunPlannedWithStop passes an actor-heartbeat stop signal to private text
+// provider work without cancelling the context used for durable Task writes.
+func (s *RunQueueScheduler) RunPlannedWithStop(ctx context.Context, itemID modulecore.QueueItemID, actor string, stop <-chan struct{}) (bool, error) {
+	return s.runPlanned(ctx, itemID, actor, stop)
+}
+
+func (s *RunQueueScheduler) runPlanned(ctx context.Context, itemID modulecore.QueueItemID, actor string, stop <-chan struct{}) (bool, error) {
+	if stop != nil {
+		ctx = withRunQueueStopSignal(ctx, stop)
+	}
 	if s == nil || s.store == nil || s.processor == nil || s.taskOwner == nil {
 		return false, fmt.Errorf("run queue scheduler is not configured")
 	}
@@ -184,7 +210,7 @@ func (s *RunQueueScheduler) RunPlanned(ctx context.Context, itemID modulecore.Qu
 		}
 		return release(fmt.Errorf("recheck canonical task %s before run: %w", item.TaskID, err))
 	}
-	if !actorPlannableTask(task, item.TaskID, actor) {
+	if !actorPlannableTaskForQueueItem(task, *item, item.TaskID, actor) {
 		return release(nil)
 	}
 	if admission, ok := s.taskOwner.(RunQueueTaskAdmissionChecker); ok {
@@ -210,7 +236,7 @@ func (s *RunQueueScheduler) RunPlanned(ctx context.Context, itemID modulecore.Qu
 		if getErr != nil {
 			return deferStart(errors.Join(startErr, fmt.Errorf("recheck canonical task after run start refusal: %w", getErr)))
 		}
-		if !actorPlannableTask(current, item.TaskID, actor) {
+		if !actorPlannableTaskForQueueItem(current, *item, item.TaskID, actor) {
 			return deferStart(nil)
 		}
 		if admission, ok := s.taskOwner.(RunQueueTaskAdmissionChecker); ok {
@@ -239,6 +265,19 @@ func actorPlannableTask(task domaintask.Task, taskID modulecore.TaskID, actor st
 		task.Validate() == nil
 }
 
+func actorPlannableTaskForQueueItem(task domaintask.Task, item domainsuperagent.RunQueueItem, taskID modulecore.TaskID, actor string) bool {
+	if task.Status == domaintask.StatusQueued {
+		return !domainsuperagent.IsPrivateTextResumeQueueItem(item) && actorPlannableTask(task, taskID, actor)
+	}
+	return task.TaskID == taskID && task.Assignee == actor && isPrivateTextWaitingTask(task) &&
+		domaintask.ValidPriority(task.Priority) && !task.CreatedAt.IsZero() && task.Validate() == nil &&
+		domainsuperagent.IsPrivateTextResumeQueueItem(item)
+}
+
+func isPrivateTextWaitingTask(task domaintask.Task) bool {
+	return task.Status == domaintask.StatusWaiting && task.WaitingReason == domaintask.PrivateTextWaitingReason
+}
+
 func actorPlannableRunQueueCandidate(item domainsuperagent.RunQueueItem, now time.Time) bool {
 	if actorPlannableRunQueueItem(item, "queued", 0, now) {
 		return true
@@ -261,6 +300,9 @@ func actorPlannableRunQueueItem(item domainsuperagent.RunQueueItem, status strin
 	case domaintask.RunStartReasonFirst, domaintask.RunStartReasonExplicitRerun:
 		return true
 	case domaintask.RunStartReasonCheckpointResume:
+		if domainsuperagent.IsPrivateTextResumeQueueItem(item) {
+			return true
+		}
 		// Preserve the explicit Viewer Resume contract. These descriptive fields
 		// are validated intent metadata; they are not a processor execution
 		// cursor and do not establish safe mid-work continuation by themselves.

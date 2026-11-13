@@ -356,18 +356,19 @@ type Task struct {
 }
 
 type SharedRoleContext struct {
-	TaskID        modulecore.TaskID `json:"task_id"`
-	UserIntent    string            `json:"user_intent,omitempty"`
-	ModuleID      string            `json:"module_id,omitempty"`
-	ModuleRoot    string            `json:"module_root,omitempty"`
-	RelevantFiles []string          `json:"relevant_files,omitempty"`
-	Decisions     []string          `json:"decisions,omitempty"`
-	Constraints   []string          `json:"constraints,omitempty"`
-	CurrentPlan   string            `json:"current_plan,omitempty"`
-	LatestStatus  string            `json:"latest_status,omitempty"`
-	Artifacts     []string          `json:"artifacts,omitempty"`
-	HandoffNotes  string            `json:"handoff_notes,omitempty"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	TaskID        modulecore.TaskID      `json:"task_id"`
+	PrivateText   *PrivateTextCheckpoint `json:"private_text,omitempty"`
+	UserIntent    string                 `json:"user_intent,omitempty"`
+	ModuleID      string                 `json:"module_id,omitempty"`
+	ModuleRoot    string                 `json:"module_root,omitempty"`
+	RelevantFiles []string               `json:"relevant_files,omitempty"`
+	Decisions     []string               `json:"decisions,omitempty"`
+	Constraints   []string               `json:"constraints,omitempty"`
+	CurrentPlan   string                 `json:"current_plan,omitempty"`
+	LatestStatus  string                 `json:"latest_status,omitempty"`
+	Artifacts     []string               `json:"artifacts,omitempty"`
+	HandoffNotes  string                 `json:"handoff_notes,omitempty"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 }
 
 type Notification struct {

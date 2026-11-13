@@ -336,6 +336,8 @@ func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task
 	if shared.ModuleRoot == "" {
 		shared.ModuleRoot = draft.ModuleRoot
 	}
+	// A generic create caller cannot seed Task-owned private-text state.
+	shared.PrivateText = nil
 	shared.UpdatedAt = now
 	if err := m.store.SaveContext(ctx, shared); err != nil {
 		return domaintask.Task{}, err
@@ -766,6 +768,14 @@ func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRol
 		if _, err := txManager.store.GetTask(ctx, shared.TaskID); err != nil {
 			return err
 		}
+		persisted, err := loadPrivateTextSharedContext(ctx, txManager.store, shared.TaskID)
+		if err != nil {
+			return err
+		}
+		// PrivateText is writable only through the private-text Task owner API.
+		// Generic context updates preserve the canonical cursor and ignore any
+		// cursor a caller tries to supply.
+		shared.PrivateText = persisted.PrivateText
 		shared.UpdatedAt = txManager.now()
 		return txManager.store.SaveContext(ctx, shared)
 	})
@@ -789,7 +799,12 @@ func (m *Manager) Context(ctx context.Context, taskID modulecore.TaskID) (domain
 	if m == nil || m.store == nil {
 		return domaintask.SharedRoleContext{}, errors.New("task manager store is unavailable")
 	}
-	return m.store.GetContext(ctx, taskID)
+	shared, err := m.store.GetContext(ctx, taskID)
+	if err != nil {
+		return domaintask.SharedRoleContext{}, err
+	}
+	shared.PrivateText = nil
+	return shared, nil
 }
 
 func (m *Manager) Notifications(ctx context.Context, limit int, interruptOnly bool) ([]domaintask.Notification, error) {

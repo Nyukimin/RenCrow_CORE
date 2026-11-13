@@ -265,6 +265,63 @@ func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domainta
 	}
 }
 
+// TryAcquire reserves the actor slot only when it is immediately idle. It does
+// not queue, cancel a scan, or request a stop from existing work.
+func (s *Scheduler) TryAcquire(ctx context.Context, actor string, priority domaintask.Priority) (func(), bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if s == nil {
+		return nil, false, ErrSchedulerClosed
+	}
+	if current, ok := ctx.Value(reservationContextKey{}).(*reservation); ok && current.scheduler == s && current.actor == actor {
+		s.mu.Lock()
+		state := s.agents[actor]
+		if state != nil && state.active == current {
+			s.mu.Unlock()
+			return func() {}, true, nil
+		}
+		s.mu.Unlock()
+	}
+
+	s.mu.Lock()
+	state := s.agents[actor]
+	if state == nil {
+		s.mu.Unlock()
+		return nil, false, ErrUnknownActor
+	}
+	if s.closed {
+		s.mu.Unlock()
+		return nil, false, ErrSchedulerClosed
+	}
+	// An in-progress scan may be about to discover BOARD work. Yield to it
+	// instead of canceling it for this legacy low-priority execution.
+	if state.scanning || state.active != nil || len(state.waiters) != 0 {
+		s.mu.Unlock()
+		return nil, false, nil
+	}
+	lease := &reservation{
+		scheduler: s,
+		actor:     actor,
+		priority:  priority,
+		stop:      make(chan struct{}),
+	}
+	state.active = lease
+	state.rescanAfterRun = true
+	state.rescanContext = ctx
+	s.signalChangedLocked()
+	s.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		s.releaseFunc(lease)()
+		return nil, false, err
+	}
+	return s.releaseFunc(lease), true, nil
+}
+
 // Select returns the highest-priority work, then the oldest item, then the
 // lexicographically smallest stable ID. Input order resolves a fully equal tie.
 func Select(works []Work) (Work, bool) {

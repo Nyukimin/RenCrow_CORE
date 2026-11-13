@@ -318,7 +318,7 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
 					return nil
 				}
 				log.Printf("agent heartbeat work started actor=%s source=private work_id=%s", actor, item.QueueItemID)
-				ran, runErr := scheduler.RunPlanned(runCtx, item.QueueItemID, actor)
+				ran, runErr := scheduler.RunPlannedWithStop(runCtx, item.QueueItemID, actor, stop)
 				outcome := "stale"
 				if ran {
 					outcome = "executed"

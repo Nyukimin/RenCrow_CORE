@@ -300,6 +300,115 @@ func (s *SQLiteStore) ListRunQueueItems(ctx context.Context, limit int) ([]domai
 	return listSQLiteItems[domainsuperagent.RunQueueItem](ctx, s, "run_queue", limit)
 }
 
+// GetRunQueueItem reads the exact durable queue receipt named by a Task cursor.
+func (s *SQLiteStore) GetRunQueueItem(ctx context.Context, queueID modulecore.QueueItemID) (domainsuperagent.RunQueueItem, bool, error) {
+	items, err := s.GetRunQueueItems(ctx, []modulecore.QueueItemID{queueID})
+	item, found := items[queueID]
+	return item, found, err
+}
+
+// GetRunQueueItems resolves a bounded set of exact receipts through their
+// primary keys, independent of queue history size.
+func (s *SQLiteStore) GetRunQueueItems(ctx context.Context, queueIDs []modulecore.QueueItemID) (map[modulecore.QueueItemID]domainsuperagent.RunQueueItem, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("superagent sqlite store is closed")
+	}
+	items := make(map[modulecore.QueueItemID]domainsuperagent.RunQueueItem, len(queueIDs))
+	unique := make([]modulecore.QueueItemID, 0, len(queueIDs))
+	seen := make(map[modulecore.QueueItemID]struct{}, len(queueIDs))
+	for _, queueID := range queueIDs {
+		if err := queueID.Validate(); err != nil {
+			return nil, fmt.Errorf("queue_item_id is invalid: %w", err)
+		}
+		if _, duplicate := seen[queueID]; duplicate {
+			continue
+		}
+		seen[queueID] = struct{}{}
+		unique = append(unique, queueID)
+	}
+	const maxQueueIDsPerQuery = 500
+	for start := 0; start < len(unique); start += maxQueueIDsPerQuery {
+		end := min(start+maxQueueIDsPerQuery, len(unique))
+		chunk := unique[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, 0, len(chunk))
+		for _, queueID := range chunk {
+			args = append(args, string(queueID))
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT queue_item_id, payload FROM run_queue WHERE queue_item_id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var storedID, payload string
+			if err := rows.Scan(&storedID, &payload); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			var item domainsuperagent.RunQueueItem
+			if err := json.Unmarshal([]byte(payload), &item); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if string(item.QueueItemID) != storedID {
+				rows.Close()
+				return nil, fmt.Errorf("stored queue_item_id %q does not match primary key %q", item.QueueItemID, storedID)
+			}
+			items[item.QueueItemID] = item
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+// ListActiveRunQueueItems returns only unfinished reserved/claimed receipts so
+// startup repair does not scan the lifetime queue history through this API.
+func (s *SQLiteStore) ListActiveRunQueueItems(ctx context.Context, limit int) ([]domainsuperagent.RunQueueItem, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("superagent sqlite store is closed")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("active run queue limit must be positive")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT status, payload FROM run_queue WHERE status IN ('reserved','claimed') ORDER BY created_at ASC, queue_item_id ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domainsuperagent.RunQueueItem, 0, limit)
+	for rows.Next() {
+		var status, payload string
+		if err := rows.Scan(&status, &payload); err != nil {
+			return nil, err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal([]byte(payload), &item); err != nil {
+			return nil, err
+		}
+		if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+			return nil, err
+		}
+		if item.Status != status {
+			return nil, fmt.Errorf("run queue status column %q does not match payload status %q", status, item.Status)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (s *SQLiteStore) ClaimNextRunQueueItem(ctx context.Context, now, leaseUntil time.Time, leaseToken string) (*domainsuperagent.RunQueueItem, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("superagent sqlite store is closed")

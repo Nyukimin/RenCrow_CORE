@@ -97,6 +97,49 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 	}
 }
 
+func TestPrivateTextResumeQueueIntentBindsExactPredecessorAndCheckpointDigest(t *testing.T) {
+	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	predecessor := validRunID()
+	digest := sha256.Sum256([]byte("private cursor"))
+	item := RunQueueItem{
+		QueueItemID: validQueueItemID(), TaskID: validTaskID(),
+		PredecessorRunID: predecessor, CheckpointDigest: hex.EncodeToString(digest[:]),
+		RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: RunQueueGoalPrivateFirstChat,
+		Action: "chat", Status: "queued", IdempotencyKey: PrivateTextResumeQueueKey(predecessor), CreatedAt: now,
+	}
+	if err := ValidateRunQueueItem(item); err != nil {
+		t.Fatalf("valid private text resume intent rejected: %v", err)
+	}
+	if !IsPrivateTextResumeQueueItem(item) {
+		t.Fatal("valid private text resume intent was not recognized")
+	}
+
+	for name, mutate := range map[string]func(*RunQueueItem){
+		"predecessor key mismatch": func(value *RunQueueItem) { value.IdempotencyKey = PrivateTextResumeQueueKey(validRunID()) },
+		"missing predecessor":      func(value *RunQueueItem) { value.PredecessorRunID = "" },
+		"missing digest":           func(value *RunQueueItem) { value.CheckpointDigest = "" },
+		"wrong action":             func(value *RunQueueItem) { value.Action = "resume" },
+		"wrong run reason":         func(value *RunQueueItem) { value.RunStartReason = domaintask.RunStartReasonFirst },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := item
+			mutate(&invalid)
+			if err := ValidateRunQueueItem(invalid); err == nil {
+				t.Fatal("malformed private text intent accepted")
+			}
+		})
+	}
+
+	genericResume := RunQueueItem{
+		QueueItemID: validQueueItemID(), TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume,
+		CheckpointID: validCheckpointID(), CheckpointRevision: 1, Goal: "continue run", Action: "resume", Status: "queued",
+		IdempotencyKey: "checkpoint-id", CreatedAt: now,
+	}
+	if err := ValidateRunQueueItem(genericResume); err != nil || IsPrivateTextResumeQueueItem(genericResume) {
+		t.Fatalf("generic Viewer resume contract changed: err=%v private=%t", err, IsPrivateTextResumeQueueItem(genericResume))
+	}
+}
+
 func TestValidateAgentRunRejectsLegacyProjectionRunID(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	err := ValidateAgentRun(AgentRun{

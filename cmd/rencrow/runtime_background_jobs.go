@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"os"
 	"path/filepath"
@@ -24,6 +23,7 @@ import (
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -637,7 +637,22 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 			return nil
 		}
 		actorTaskLister = func(ctx context.Context, actor string, limit int) ([]domaintask.Task, error) {
-			return listOwner.List(ctx, domaintask.Filter{Assignee: actor, Status: domaintask.StatusQueued, Limit: limit})
+			queued, err := listOwner.List(ctx, domaintask.Filter{Assignee: actor, Status: domaintask.StatusQueued, Limit: limit})
+			if err != nil {
+				return nil, fmt.Errorf("list queued Tasks for actor %s: %w", actor, err)
+			}
+			waiting, err := listOwner.List(ctx, domaintask.Filter{Assignee: actor, Status: domaintask.StatusWaiting, Limit: limit})
+			if err != nil {
+				return nil, fmt.Errorf("list waiting Tasks for actor %s: %w", actor, err)
+			}
+			candidates := make([]domaintask.Task, 0, len(queued)+len(waiting))
+			candidates = append(candidates, queued...)
+			for _, task := range waiting {
+				if task.WaitingReason == domaintask.PrivateTextWaitingReason {
+					candidates = append(candidates, task)
+				}
+			}
+			return candidates, nil
 		}
 	}
 	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter, cfg.Heartbeat.AgentSchedulerEnabled, privateRunner...), taskOwner, superagentapp.RunQueueSchedulerOptions{
@@ -670,19 +685,29 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 		if action != "resume" && action != "process_message" && action != "chat" {
 			return fail(fmt.Errorf("unsupported run queue action: %s", action))
 		}
-		if item.IdempotencyKey == domainsuperagent.RunQueueIntentPrivateFirstChat {
+		if strings.HasPrefix(item.IdempotencyKey, domainsuperagent.RunQueueIntentPrivateTextResumePrefix) && !domainsuperagent.IsPrivateTextResumeQueueItem(item) {
+			return fail(errors.New("private text checkpoint resume queue intent is malformed"))
+		}
+		privateTextItem := item.IdempotencyKey == domainsuperagent.RunQueueIntentPrivateFirstChat || domainsuperagent.IsPrivateTextResumeQueueItem(item)
+		if privateTextItem {
 			if action != "chat" {
-				return fail(errors.New("private first-chat queue intent requires chat action"))
+				return fail(errors.New("private text queue intent requires chat action"))
 			}
 			if !heartbeatSchedulerEnabled {
-				return fail(errors.New("private first-chat queue execution requires the agent scheduler"))
+				return fail(errors.New("private text queue execution requires the agent scheduler"))
 			}
 			if len(privateRunner) == 0 || privateRunner[0] == nil {
-				return fail(errors.New("private first-chat task runner is unavailable"))
+				return fail(errors.New("private text task runner is unavailable"))
 			}
 			summary, err := privateRunner[0].process(ctx, item, traceID)
 			if err != nil {
-				return fail(err)
+				if superagentapp.IsRunQueuePauseOutcome(err) {
+					return summary, err
+				}
+				privateErr := errors.New("private task execution failed")
+				reporter.FailedWithTrace(traceID, "superagent_run_queue", privateErr,
+					fmt.Sprintf("queue_item_id=%s task_id=%s run_id=%s action=chat", string(item.QueueItemID), item.TaskID, item.RunID))
+				return "", privateErr
 			}
 			return summary, nil
 		}

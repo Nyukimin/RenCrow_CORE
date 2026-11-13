@@ -302,6 +302,7 @@ type Dependencies struct {
 	superAgentRunResume                 http.HandlerFunc                            // viewer superagent run resume API
 	superAgentMessageChannel            http.HandlerFunc                            // viewer message channel API
 	superAgentStore                     viewer.SuperAgentStore                      // SuperAgent runtime telemetry store
+	superAgentStateStore                runtimeSuperAgentStateStore                 // one canonical SuperAgent queue state owner
 	superAgentStateCloser               interface{ Close() error }                  // queued SuperAgent state owner
 	superAgentRunController             *superagentapp.RunController                // SuperAgent runtime pause/resume controller
 	aiWorkflowStatus                    http.HandlerFunc                            // viewer AI workflow status API
@@ -432,14 +433,17 @@ func (d *Dependencies) Shutdown() {
 				queueOwnersSafeToClose = false
 			}
 		}
-		if d.agentHeartbeat != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			if err := d.agentHeartbeat.Wait(ctx); err != nil {
-				log.Printf("Agent heartbeat reservations did not drain before shutdown: %v", err)
-				queueOwnersSafeToClose = false
-			}
-			cancel()
+	}
+	if d.heartbeatSvc != nil {
+		d.heartbeatSvc.Stop()
+	}
+	if d.agentHeartbeatCancel != nil && d.agentHeartbeat != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if err := d.agentHeartbeat.Wait(ctx); err != nil {
+			log.Printf("Agent heartbeat reservations did not drain before shutdown: %v", err)
+			queueOwnersSafeToClose = false
 		}
+		cancel()
 	}
 	if d.boardCommunicationCancel != nil {
 		d.boardCommunicationCancel()
@@ -538,9 +542,6 @@ func (d *Dependencies) Shutdown() {
 	}
 	if d.gameAutoplay != nil {
 		d.gameAutoplay.Stop()
-	}
-	if d.heartbeatSvc != nil {
-		d.heartbeatSvc.Stop()
 	}
 	if d.surfacePresence != nil {
 		d.surfacePresence.Close()
@@ -846,6 +847,37 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if runtimeTaskStoreSupportsRAMAdmission(deps.taskStore) {
 		if err := bindRuntimeOwnerPersistenceQueue(deps.taskManager, deps.persistenceQueue); err != nil {
 			log.Fatalf("Failed to bind indexed Task owner to shared persistence queue: %v", err)
+		}
+	}
+	// Open the SuperAgent queue owner before generic Action and orphan Run
+	// recovery. Private checkpoint Tasks must first be fenced into their fixed
+	// waiting state and have their exact queue receipts reconciled. Reuse this
+	// same owner later for Viewer and scheduler wiring.
+	if cfg.SuperAgentHarness.IsEnabled() {
+		var stateStore runtimeSuperAgentStateStore
+		if cfg.SuperAgentHarness.Storage == "sqlite" {
+			store, err := superagentpersistence.NewSQLiteStoreWithWriteQueue(cfg.SuperAgentHarness.SQLitePath, cfg.SuperAgentHarness.MaxContextPackTokens, deps.persistenceQueue)
+			if err != nil {
+				log.Fatalf("Failed to initialize SuperAgent Harness SQLite store: %v", err)
+			}
+			stateStore = store
+		} else {
+			store, err := superagentpersistence.NewJSONLStoreWithWriteQueue(cfg.SuperAgentHarness.LogPath, cfg.SuperAgentHarness.MaxContextPackTokens, deps.persistenceQueue)
+			if err != nil {
+				log.Fatalf("Failed to initialize SuperAgent Harness JSONL store: %v", err)
+			}
+			stateStore = store
+		}
+		deps.superAgentStateStore = stateStore
+		if closer, ok := stateStore.(interface{ Close() error }); ok {
+			deps.superAgentStateCloser = closer
+		}
+		recovery, err := superagentapp.RecoverPrivateTextRunQueueReceipts(context.Background(), stateStore, deps.taskManager, time.Now().UTC())
+		if err != nil {
+			log.Fatalf("Failed to recover private-text checkpoint Runs before generic Run recovery: %v", err)
+		}
+		if recovery.RecoveredRuns+recovery.QueuedResumes+recovery.ClosedReceipts+recovery.FinalReceipts+recovery.DeferredReceipts > 0 {
+			log.Printf("Recovered private-text checkpoint queue state: runs=%d resumes=%d closed_receipts=%d final_receipts=%d deferred_receipts=%d", recovery.RecoveredRuns, recovery.QueuedResumes, recovery.ClosedReceipts, recovery.FinalReceipts, recovery.DeferredReceipts)
 		}
 	}
 	if err := startWorldProjection(cfg, deps); err != nil {
@@ -1819,24 +1851,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		deps.complexityHotspotCoderDiff = buildComplexityHotspotCoderDiffHandler(complexityStore, llmRuntime, workstreamArtifactSink, sandboxStore)
 	}
 	if cfg.SuperAgentHarness.IsEnabled() {
-		var superAgentStateStore runtimeSuperAgentStateStore
-		if cfg.SuperAgentHarness.Storage == "sqlite" {
-			store, err := superagentpersistence.NewSQLiteStoreWithWriteQueue(cfg.SuperAgentHarness.SQLitePath, cfg.SuperAgentHarness.MaxContextPackTokens, deps.persistenceQueue)
-			if err != nil {
-				log.Fatalf("Failed to initialize SuperAgent Harness SQLite store: %v", err)
-			}
-			superAgentStateStore = store
-		} else {
-			store, err := superagentpersistence.NewJSONLStoreWithWriteQueue(cfg.SuperAgentHarness.LogPath, cfg.SuperAgentHarness.MaxContextPackTokens, deps.persistenceQueue)
-			if err != nil {
-				log.Fatalf("Failed to initialize SuperAgent Harness JSONL store: %v", err)
-			}
-			superAgentStateStore = store
-		}
-		if closer, ok := superAgentStateStore.(interface{ Close() error }); ok {
-			deps.superAgentStateCloser = closer
-		}
-		superAgentStore := composeRuntimeSuperAgentStore(superAgentStateStore, canonicalEventStore)
+		superAgentStore := composeRuntimeSuperAgentStore(deps.superAgentStateStore, canonicalEventStore)
 		deps.superAgentStore = superAgentStore
 		if err := registerRuntimeDataRecallSuperAgentHarness(dataRecallRegistry, superAgentStore); err != nil {
 			log.Fatalf("Failed to register SuperAgent Harness data recall: %v", err)

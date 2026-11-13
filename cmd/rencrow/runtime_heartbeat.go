@@ -114,6 +114,7 @@ func buildHeartbeatRuntime(
 	if deps.taskManager != nil {
 		heartbeatSvc.WithTaskOwner(deps.taskManager, "shiro")
 	}
+	heartbeatSvc.WithActorAdmission(deps.agentAdmission)
 	heartbeatSvc.WithMemoryStore(memStore)
 	heartbeatSvc.WithEventListener(deps.eventRelay)
 	if g := cfg.Heartbeat.Gmail; g.Enabled && deps.gmailIntake != nil {

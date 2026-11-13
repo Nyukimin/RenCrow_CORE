@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	RunQueueIntentPrivateFirstChat = "rencrow:tasks.enqueue:first-chat-run:v1"
-	RunQueueGoalPrivateFirstChat   = "専用タスク"
+	RunQueueIntentPrivateFirstChat        = "rencrow:tasks.enqueue:first-chat-run:v1"
+	RunQueueIntentPrivateTextResumePrefix = "rencrow:tasks.enqueue:resume:v1:"
+	RunQueueGoalPrivateFirstChat          = "専用タスク"
 )
 
 type AgentRun struct {
@@ -76,6 +77,8 @@ type RunQueueItem struct {
 	QueueItemID        modulecore.QueueItemID    `json:"queue_item_id"`
 	TaskID             modulecore.TaskID         `json:"task_id"`
 	RunID              modulecore.RunID          `json:"run_id,omitempty"`
+	PredecessorRunID   modulecore.RunID          `json:"predecessor_run_id,omitempty"`
+	CheckpointDigest   string                    `json:"checkpoint_digest,omitempty"`
 	RunStartReason     domaintask.RunStartReason `json:"run_start_reason"`
 	WorkstreamID       string                    `json:"workstream_id,omitempty"`
 	Goal               string                    `json:"goal"`

@@ -26,6 +26,7 @@ type runtimeSuperAgentStateStore interface {
 	appsuperagent.RunQueueActorCandidateStore
 	appsuperagent.RunQueueExactLeaseStore
 	appsuperagent.RunQueueLeaseStore
+	appsuperagent.PrivateTextRestartQueueStore
 	taskEnqueueRunQueueStore
 }
 

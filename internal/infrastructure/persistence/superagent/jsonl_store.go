@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -406,6 +407,119 @@ func (s *JSONLStore) ListRunQueueItems(_ context.Context, limit int) ([]domainsu
 	s.runQueueMu.Lock()
 	defer s.runQueueMu.Unlock()
 	return s.listRunQueueItemsUnlocked(limit)
+}
+
+// GetRunQueueItem reads the latest append-only receipt for the exact ID.
+func (s *JSONLStore) GetRunQueueItem(ctx context.Context, queueID modulecore.QueueItemID) (domainsuperagent.RunQueueItem, bool, error) {
+	items, err := s.GetRunQueueItems(ctx, []modulecore.QueueItemID{queueID})
+	item, found := items[queueID]
+	return item, found, err
+}
+
+// GetRunQueueItems reads exact IDs in one append-only scan, avoiding a
+// full-history rescan for each bounded startup recovery candidate.
+func (s *JSONLStore) GetRunQueueItems(ctx context.Context, queueIDs []modulecore.QueueItemID) (map[modulecore.QueueItemID]domainsuperagent.RunQueueItem, error) {
+	if s == nil {
+		return nil, errors.New("superagent JSONL store is unavailable")
+	}
+	wanted := make(map[modulecore.QueueItemID]struct{}, len(queueIDs))
+	for _, queueID := range queueIDs {
+		if err := queueID.Validate(); err != nil {
+			return nil, fmt.Errorf("queue_item_id is invalid: %w", err)
+		}
+		wanted[queueID] = struct{}{}
+	}
+	items := make(map[modulecore.QueueItemID]domainsuperagent.RunQueueItem, len(wanted))
+	if len(wanted) == 0 {
+		return items, nil
+	}
+	if ctx == nil {
+		return nil, errors.New("run queue lookup context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	err := readJSONL(s.runQueuePath, func(line []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if _, ok := wanted[item.QueueItemID]; ok {
+			items[item.QueueItemID] = item
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for queueID, item := range items {
+		if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+			return nil, err
+		}
+		if item.QueueItemID != queueID {
+			return nil, fmt.Errorf("stored queue_item_id %q does not match requested ID %q", item.QueueItemID, queueID)
+		}
+	}
+	return items, nil
+}
+
+// ListActiveRunQueueItems returns bounded unfinished reserved/claimed receipts
+// after reconciling append-only updates by queue_item_id.
+func (s *JSONLStore) ListActiveRunQueueItems(ctx context.Context, limit int) ([]domainsuperagent.RunQueueItem, error) {
+	if s == nil {
+		return nil, errors.New("superagent JSONL store is unavailable")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("active run queue limit must be positive")
+	}
+	if ctx == nil {
+		return nil, errors.New("active run queue context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	latest := make(map[modulecore.QueueItemID]domainsuperagent.RunQueueItem)
+	err := readJSONL(s.runQueuePath, func(line []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		latest[item.QueueItemID] = item
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]domainsuperagent.RunQueueItem, 0)
+	for _, item := range latest {
+		if item.Status != "reserved" && item.Status != "claimed" {
+			continue
+		}
+		if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		}
+		return string(items[i].QueueItemID) < string(items[j].QueueItemID)
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
 }
 
 func latestRunQueueItems(items []domainsuperagent.RunQueueItem, limit int) []domainsuperagent.RunQueueItem {
