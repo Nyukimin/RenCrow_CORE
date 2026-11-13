@@ -39,6 +39,7 @@ type ParallelLimits struct {
 }
 
 const taskAdmissionRunningScanLimit = 10000
+const privateTextRecoveryTaskListMaxLimit = 5001
 
 func DefaultParallelLimits() ParallelLimits {
 	return ParallelLimits{Global: 3, PerModule: 1, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 1}
@@ -786,6 +787,25 @@ func (m *Manager) List(ctx context.Context, filter domaintask.Filter) ([]domaint
 		return nil, errors.New("task manager store is unavailable")
 	}
 	return m.store.ListTasks(ctx, filter)
+}
+
+// ListPrivateTextRecoveryTasks returns a bounded snapshot for the private
+// checkpoint startup reconciler. Only active and waiting Tasks can be
+// reconciled through this owner path.
+func (m *Manager) ListPrivateTextRecoveryTasks(ctx context.Context, status domaintask.Status, limit int) ([]domaintask.Task, error) {
+	if m == nil || m.store == nil {
+		return nil, errors.New("task manager store is unavailable")
+	}
+	if ctx == nil {
+		return nil, errors.New("private text recovery list context is required")
+	}
+	if status != domaintask.StatusRunning && status != domaintask.StatusWaiting {
+		return nil, fmt.Errorf("private text recovery list status %q is not allowed", status)
+	}
+	if limit <= 0 || limit > privateTextRecoveryTaskListMaxLimit {
+		return nil, fmt.Errorf("private text recovery list limit must be between 1 and %d", privateTextRecoveryTaskListMaxLimit)
+	}
+	return m.store.ListTasks(ctx, domaintask.Filter{Status: status, Limit: limit})
 }
 
 func (m *Manager) Get(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {

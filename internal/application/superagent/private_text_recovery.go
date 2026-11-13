@@ -16,7 +16,7 @@ const privateTextRestartRecoveryQueueLimit = 10000
 type privateTextRestartTaskOwner interface {
 	RunQueuePrivateTextTaskOwner
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
-	List(context.Context, domaintask.Filter) ([]domaintask.Task, error)
+	ListPrivateTextRecoveryTasks(context.Context, domaintask.Status, int) ([]domaintask.Task, error)
 	GetRun(context.Context, modulecore.RunID) (domaintask.Run, error)
 	RecoverRunAfterProcessRestart(context.Context, modulecore.TaskID, modulecore.RunID, string, domaintask.Status, string, string) (domaintask.Task, bool, error)
 }
@@ -73,7 +73,7 @@ func RecoverPrivateTextRunQueueReceipts(ctx context.Context, store PrivateTextRe
 
 	tasksByID := make(map[modulecore.TaskID]domaintask.Task)
 	for _, status := range []domaintask.Status{domaintask.StatusRunning, domaintask.StatusWaiting} {
-		tasks, err := owner.List(ctx, domaintask.Filter{Status: status, Limit: privateTextRestartRecoveryTaskLimit + 1})
+		tasks, err := owner.ListPrivateTextRecoveryTasks(ctx, status, privateTextRestartRecoveryTaskLimit+1)
 		if err != nil {
 			return result, fmt.Errorf("list bounded %s Tasks for private text recovery: %w", status, err)
 		}

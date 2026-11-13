@@ -82,6 +82,36 @@ func TestPrivateTextRunPersistsPrivateCursorAndGenericContextCannotWriteIt(t *te
 	}
 }
 
+func TestListPrivateTextRecoveryTasksRequiresExplicitStatusAndPositiveBound(t *testing.T) {
+	ctx := context.Background()
+	manager, _, task := newPrivateTextFixture(t)
+	queueID := modulecore.NewQueueItemID()
+	run, err := manager.StartPrivateTextRun(ctx, task.TaskID, queueID, "mio", "", "")
+	if err != nil {
+		t.Fatalf("StartPrivateTextRun: %v", err)
+	}
+	running, err := manager.ListPrivateTextRecoveryTasks(ctx, domaintask.StatusRunning, 1)
+	if err != nil || len(running) != 1 || running[0].TaskID != task.TaskID {
+		t.Fatalf("running recovery Tasks=%+v err=%v, want exact active Task", running, err)
+	}
+	if _, err := manager.ListPrivateTextRecoveryTasks(ctx, domaintask.StatusWaiting, 0); err == nil {
+		t.Fatal("zero recovery limit was accepted")
+	}
+	if _, err := manager.ListPrivateTextRecoveryTasks(ctx, domaintask.StatusRunning, privateTextRecoveryTaskListMaxLimit+1); err == nil {
+		t.Fatal("recovery limit above the owner bound was accepted")
+	}
+	if _, err := manager.ListPrivateTextRecoveryTasks(ctx, domaintask.StatusSucceeded, 1); err == nil {
+		t.Fatal("non-active recovery status was accepted")
+	}
+	if err := manager.CompletePrivateTextRun(ctx, task.TaskID, run.RunID, "mio", true); err != nil {
+		t.Fatalf("pause private Run: %v", err)
+	}
+	waiting, err := manager.ListPrivateTextRecoveryTasks(ctx, domaintask.StatusWaiting, 1)
+	if err != nil || len(waiting) != 1 || waiting[0].TaskID != task.TaskID || waiting[0].WaitingReason != domaintask.PrivateTextWaitingReason {
+		t.Fatalf("waiting recovery Tasks=%+v err=%v, want exact private waiting Task", waiting, err)
+	}
+}
+
 func TestPrivateTextOutputIsBoundedImmutableAndCanResumeAfterSave(t *testing.T) {
 	ctx := context.Background()
 	manager, _, task := newPrivateTextFixture(t)

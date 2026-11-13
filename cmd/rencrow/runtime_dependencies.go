@@ -849,10 +849,16 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			log.Fatalf("Failed to bind indexed Task owner to shared persistence queue: %v", err)
 		}
 	}
+	if err := startWorldProjection(cfg, deps); err != nil {
+		log.Fatalf("Failed to start WORLD projection: %v", err)
+	}
+	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
+		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)
+	}
 	// Open the SuperAgent queue owner before generic Action and orphan Run
-	// recovery. Private checkpoint Tasks must first be fenced into their fixed
-	// waiting state and have their exact queue receipts reconciled. Reuse this
-	// same owner later for Viewer and scheduler wiring.
+	// recovery, but only after storage-owner coverage has been validated. Private
+	// checkpoint Tasks are fenced into their fixed waiting state and their exact
+	// receipts reconciled here; the same owner is reused for later runtime wiring.
 	if cfg.SuperAgentHarness.IsEnabled() {
 		var stateStore runtimeSuperAgentStateStore
 		if cfg.SuperAgentHarness.Storage == "sqlite" {
@@ -879,12 +885,6 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		if recovery.RecoveredRuns+recovery.QueuedResumes+recovery.ClosedReceipts+recovery.FinalReceipts+recovery.DeferredReceipts > 0 {
 			log.Printf("Recovered private-text checkpoint queue state: runs=%d resumes=%d closed_receipts=%d final_receipts=%d deferred_receipts=%d", recovery.RecoveredRuns, recovery.QueuedResumes, recovery.ClosedReceipts, recovery.FinalReceipts, recovery.DeferredReceipts)
 		}
-	}
-	if err := startWorldProjection(cfg, deps); err != nil {
-		log.Fatalf("Failed to start WORLD projection: %v", err)
-	}
-	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
-		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)
 	}
 	runtimeActionOwner, err := newRuntimeActionOwner(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore), deps.persistenceQueue)
 	if err != nil {
