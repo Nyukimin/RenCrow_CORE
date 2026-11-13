@@ -135,6 +135,13 @@ var resilienceStackTargets = map[string]map[string]struct{}{
 }
 
 func validateResilienceStackPlan(plan resilienceStackPlan) error {
+	return validateResilienceStackPlanWithResolver(plan, canonicalResilienceStackPlistPath)
+}
+
+func validateResilienceStackPlanWithResolver(plan resilienceStackPlan, canonicalPlistPath func(domain, label string) (string, error)) error {
+	if canonicalPlistPath == nil {
+		return errors.New("launchd plist path resolver is required")
+	}
 	if plan.Schema != resilienceStackPlanSchema {
 		return fmt.Errorf("unsupported launchd stack plan schema %q", plan.Schema)
 	}
@@ -158,7 +165,7 @@ func validateResilienceStackPlan(plan resilienceStackPlan) error {
 		}
 		seen[service.Label] = struct{}{}
 
-		expectedPath, err := canonicalResilienceStackPlistPath(service.Domain, service.Label)
+		expectedPath, err := canonicalPlistPath(service.Domain, service.Label)
 		if err != nil {
 			return err
 		}
@@ -195,22 +202,49 @@ func validateResilienceStackPlan(plan resilienceStackPlan) error {
 	return nil
 }
 
-func canonicalResilienceStackPlistPath(domain, label string) (string, error) {
+func canonicalResilienceStackPlistPathForHome(domain, label, home string) (string, error) {
+	if filepath.Base(label) != label || label == "." || label == ".." {
+		return "", fmt.Errorf("invalid launchd target label %q", label)
+	}
 	switch domain {
 	case resilienceStackDomain:
 		return filepath.Join("/Library/LaunchDaemons", label+".plist"), nil
+	case resilienceStackGUI501, resilienceStackUser501:
+		volume := filepath.VolumeName(home)
+		volumeRoot := volume + string(filepath.Separator)
+		if !filepath.IsAbs(home) || filepath.Clean(home) != home || home == string(filepath.Separator) || home == volume || home == volumeRoot {
+			return "", errors.New("launchd gui/501 owner has no canonical absolute home directory")
+		}
+		return filepath.Join(home, "Library", "LaunchAgents", label+".plist"), nil
+	default:
+		return "", fmt.Errorf("unsupported launchd domain %q", domain)
+	}
+}
+
+func canonicalResilienceStackPlistPath(domain, label string) (string, error) {
+	switch domain {
+	case resilienceStackDomain:
+		return canonicalResilienceStackPlistPathForHome(domain, label, "")
 	case resilienceStackGUI501, resilienceStackUser501:
 		account, err := user.LookupId("501")
 		if err != nil {
 			return "", fmt.Errorf("resolve launchd %s owner: %w", domain, err)
 		}
-		if !filepath.IsAbs(account.HomeDir) {
-			return "", errors.New("launchd gui/501 owner has no absolute home directory")
-		}
-		return filepath.Join(account.HomeDir, "Library", "LaunchAgents", label+".plist"), nil
+		return canonicalResilienceStackPlistPathForHome(domain, label, account.HomeDir)
 	default:
 		return "", fmt.Errorf("unsupported launchd domain %q", domain)
 	}
+}
+
+type resilienceStackPlistPathProvider interface {
+	resilienceStackCanonicalPlistPath(domain, label string) (string, error)
+}
+
+func validateResilienceStackPlanForOperator(plan resilienceStackPlan, operator resilienceStackOperator) error {
+	if provider, ok := operator.(resilienceStackPlistPathProvider); ok {
+		return validateResilienceStackPlanWithResolver(plan, provider.resilienceStackCanonicalPlistPath)
+	}
+	return validateResilienceStackPlan(plan)
 }
 
 func validateResilienceStackReadiness(service resilienceStackService) error {
@@ -256,7 +290,7 @@ func validateResilienceStackReadiness(service resilienceStackService) error {
 }
 
 func reconcileResilienceStack(ctx context.Context, plan resilienceStackPlan, uid int, maintenance bool, state resilienceStackState, operator resilienceStackOperator, stateStore resilienceStackStateStore) (resilienceStackResult, error) {
-	if err := validateResilienceStackPlan(plan); err != nil {
+	if err := validateResilienceStackPlanForOperator(plan, operator); err != nil {
 		return resilienceStackResult{}, err
 	}
 	planHash, err := resilienceStackPlanSHA256(plan)
@@ -823,7 +857,7 @@ func resilienceStackReconcile() error {
 }
 
 func checkResilienceStack(ctx context.Context, plan resilienceStackPlan, maintenance bool, operator resilienceStackOperator) (resilienceStackResult, error) {
-	if err := validateResilienceStackPlan(plan); err != nil {
+	if err := validateResilienceStackPlanForOperator(plan, operator); err != nil {
 		return resilienceStackResult{}, err
 	}
 	if maintenance {

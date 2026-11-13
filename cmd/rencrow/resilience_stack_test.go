@@ -7,8 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"os/user"
 )
 
 func TestResilienceStackReconcileNoOpsForHealthyOrIntentionalMaintenance(t *testing.T) {
@@ -166,15 +164,14 @@ func TestResilienceStackReconcilePreflightsAllOwnersBeforeAnyStop(t *testing.T) 
 func TestResilienceStackAcceptsCanonicalUser501CoreTarget(t *testing.T) {
 	plan := resilienceStackFixture(t)
 	core := findResilienceStackService(t, plan, "com.rencrow.core")
-	account, err := user.LookupId("501")
+	wantPath, err := resilienceStackFixturePlistPath(resilienceStackUser501, "com.rencrow.core")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPath := filepath.Join(account.HomeDir, "Library", "LaunchAgents", "com.rencrow.core.plist")
 	if core.Domain != resilienceStackUser501 || core.PlistPath != wantPath {
-		t.Fatalf("CORE target = %s %s, want user/501 %s", core.Domain, core.PlistPath, wantPath)
+		t.Fatalf("CORE target = %s %s, want canonical user/501 path %s", core.Domain, core.PlistPath, wantPath)
 	}
-	if err := validateResilienceStackPlan(plan); err != nil {
+	if err := testResilienceStackPlan(plan); err != nil {
 		t.Fatalf("canonical user/501 CORE plan was rejected: %v", err)
 	}
 	if err := resilienceStackPermission(501, resilienceStackUser501); err != nil {
@@ -579,24 +576,48 @@ func TestResilienceStackReconcileRejectsPendingStateForDifferentManifestBeforeIn
 
 func TestResilienceStackAcceptsUser501BoardAndTailnetJobs(t *testing.T) {
 	plan := resilienceStackFixture(t)
-	account, err := user.LookupId("501")
+	board := findResilienceStackService(t, plan, "com.rencrow.board-gateway.public")
+	board.Domain = resilienceStackUser501
+	var err error
+	board.PlistPath, err = resilienceStackFixturePlistPath(board.Domain, board.Label)
 	if err != nil {
 		t.Fatal(err)
 	}
-	board := findResilienceStackService(t, plan, "com.rencrow.board-gateway.public")
-	board.Domain = resilienceStackUser501
-	board.PlistPath = filepath.Join(account.HomeDir, "Library", "LaunchAgents", board.Label+".plist")
 	plan.Services[4] = board
 	tailnet := resilienceStackService{
 		Label:        "com.rencrow.tailnet-browser",
 		Domain:       resilienceStackUser501,
-		PlistPath:    filepath.Join(account.HomeDir, "Library", "LaunchAgents", "com.rencrow.tailnet-browser.plist"),
 		Dependencies: []string{"com.rencrow.core"},
 		Readiness:    resilienceStackReadiness{Kind: "tcp", Address: "127.0.0.1:18891", TimeoutSeconds: 5},
 	}
+	tailnet.PlistPath, err = resilienceStackFixturePlistPath(tailnet.Domain, tailnet.Label)
+	if err != nil {
+		t.Fatal(err)
+	}
 	plan.Services = append(plan.Services, tailnet)
-	if err := validateResilienceStackPlan(plan); err != nil {
+	if err := testResilienceStackPlan(plan); err != nil {
 		t.Fatalf("existing user/501 board and tailnet jobs were rejected: %v", err)
+	}
+}
+
+func TestResilienceStackCanonicalPlistPathRejectsUnsafeUserHomes(t *testing.T) {
+	fixtureHome, err := resilienceStackFixtureHomePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	separator := string(filepath.Separator)
+	for _, home := range []string{
+		"relative",
+		filepath.VolumeName(fixtureHome) + separator,
+		separator + "Users" + separator + "example" + separator + ".." + separator + "other",
+		separator + "Users" + separator + separator + "example",
+	} {
+		if _, err := canonicalResilienceStackPlistPathForHome(resilienceStackUser501, "com.rencrow.core", home); err == nil {
+			t.Errorf("accepted unsafe user home %q", home)
+		}
+	}
+	if _, err := canonicalResilienceStackPlistPathForHome(resilienceStackUser501, "../com.rencrow.core", fixtureHome); err == nil {
+		t.Error("accepted a target label containing path traversal")
 	}
 }
 
@@ -674,6 +695,10 @@ func (f *fakeResilienceStackOperator) ValidateTarget(context.Context, resilience
 	return nil
 }
 
+func (f *fakeResilienceStackOperator) resilienceStackCanonicalPlistPath(domain, label string) (string, error) {
+	return resilienceStackFixturePlistPath(domain, label)
+}
+
 func (f *fakeResilienceStackOperator) Inspect(_ context.Context, service resilienceStackService) (resilienceStackSnapshot, error) {
 	f.events = append(f.events, "inspect:"+service.Label)
 	return f.states[service.Label], nil
@@ -746,11 +771,10 @@ func (f *fakeResilienceStackOperator) mutationCount() int {
 
 func resilienceStackFixture(t *testing.T) resilienceStackPlan {
 	t.Helper()
-	account, err := user.LookupId("501")
+	corePlist, err := resilienceStackFixturePlistPath(resilienceStackUser501, "com.rencrow.core")
 	if err != nil {
 		t.Fatal(err)
 	}
-	corePlist := filepath.Join(account.HomeDir, "Library", "LaunchAgents", "com.rencrow.core.plist")
 	return resilienceStackPlan{
 		Schema:   "rencrow.launchd-stack/v1",
 		Complete: true,
@@ -763,6 +787,22 @@ func resilienceStackFixture(t *testing.T) resilienceStackPlan {
 			{Label: "com.rencrow.portal", Domain: "system", PlistPath: "/Library/LaunchDaemons/com.rencrow.portal.plist", Dependencies: []string{"com.rencrow.core"}, Readiness: resilienceStackReadiness{Kind: "http", Address: "127.0.0.1:18791", Path: "/health/ready", TimeoutSeconds: 5}},
 		},
 	}
+}
+
+func resilienceStackFixtureHomePath() (string, error) {
+	return filepath.Abs(filepath.Join("testdata", "resilience-stack-user-home"))
+}
+
+func resilienceStackFixturePlistPath(domain, label string) (string, error) {
+	home, err := resilienceStackFixtureHomePath()
+	if err != nil {
+		return "", err
+	}
+	return canonicalResilienceStackPlistPathForHome(domain, label, home)
+}
+
+func testResilienceStackPlan(plan resilienceStackPlan) error {
+	return validateResilienceStackPlanWithResolver(plan, resilienceStackFixturePlistPath)
 }
 
 func findResilienceStackService(t *testing.T, plan resilienceStackPlan, label string) resilienceStackService {

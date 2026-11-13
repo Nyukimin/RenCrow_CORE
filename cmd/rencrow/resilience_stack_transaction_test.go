@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"os/user"
-	"path/filepath"
 	"testing"
 )
 
@@ -47,19 +45,22 @@ func TestResilienceStackRejectsDifferentPendingManifestBeforeLaunchdInspection(t
 
 func TestResilienceStackAllowsBoardAndTailnetJobsInUser501Domain(t *testing.T) {
 	plan := resilienceStackFixture(t)
-	account, err := user.LookupId("501")
-	if err != nil {
-		t.Fatal(err)
-	}
+	var err error
 	for _, index := range []int{4, 5} {
 		service := plan.Services[index]
 		service.Domain = resilienceStackUser501
-		service.PlistPath = filepath.Join(account.HomeDir, "Library", "LaunchAgents", service.Label+".plist")
+		service.PlistPath, err = resilienceStackFixturePlistPath(service.Domain, service.Label)
+		if err != nil {
+			t.Fatal(err)
+		}
 		plan.Services[index] = service
 	}
 	plan.Services[5].Label = "com.rencrow.tailnet-browser"
-	plan.Services[5].PlistPath = filepath.Join(account.HomeDir, "Library", "LaunchAgents", "com.rencrow.tailnet-browser.plist")
-	if err := validateResilienceStackPlan(plan); err != nil {
+	plan.Services[5].PlistPath, err = resilienceStackFixturePlistPath(plan.Services[5].Domain, plan.Services[5].Label)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := testResilienceStackPlan(plan); err != nil {
 		t.Fatalf("user/501 board and tailnet targets were rejected: %v", err)
 	}
 }
