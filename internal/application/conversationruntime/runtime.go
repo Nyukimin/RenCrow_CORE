@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -457,12 +458,7 @@ func (r *Runtime) acquireGenerationAdmission(ctx context.Context) (func(), error
 }
 
 func isOperativeHeartbeatActor(actorID string) bool {
-	switch strings.TrimSpace(actorID) {
-	case "mio", "shiro", "kuro", "midori":
-		return true
-	default:
-		return false
-	}
+	return domainsuperagent.IsPrivateChatQueueActorID(strings.TrimSpace(actorID))
 }
 
 func (r *Runtime) commitSafeError(ctx context.Context, input AcceptedTurnInput, receipt agent.InvocationReceipt, cause error, failureStage ...ExternalFailureStage) TurnResult {
@@ -526,12 +522,38 @@ func externalTurnLookup(request ReadViewRequest) (ExternalTurnLookup, error) {
 	if err != nil {
 		return ExternalTurnLookup{}, err
 	}
-	if err := binding.ValidateNewRequest(); err != nil {
-		return ExternalTurnLookup{}, err
+	switch binding.Classification {
+	case conversation.ExternalPeerClassificationRequest:
+		if err := binding.ValidateNewRequest(); err != nil {
+			return ExternalTurnLookup{}, err
+		}
+	case conversation.ExternalPeerClassificationBrowserReplyFollowup:
+		if err := binding.ValidateBrowserReplyFollowup(); err != nil {
+			return ExternalTurnLookup{}, err
+		}
+	default:
+		return ExternalTurnLookup{}, errors.New("external turn requires a new request or verified browser reply followup")
 	}
 	sourceActorID, err := binding.SourceActorID()
 	if err != nil || sourceActorID != accepted.ActorID {
 		return ExternalTurnLookup{}, errors.New("external turn source does not match its accepted actor")
+	}
+	sourceCausationID, sourceHopCount, causalChainFound, err := externalBoardSourceCausalChain(accepted.InputEvent.Payload)
+	if err != nil {
+		return ExternalTurnLookup{}, err
+	}
+	if binding.Classification == conversation.ExternalPeerClassificationRequest && causalChainFound &&
+		(sourceCausationID != binding.MessageID || sourceHopCount != 0) {
+		return ExternalTurnLookup{}, errors.New("external BOARD request is not an uncaused root message")
+	}
+	if binding.Classification == conversation.ExternalPeerClassificationRequest {
+		// Root request receipts predate causal-chain fields. Validate stored
+		// BOARD metadata when present, but keep the recovery key compatible.
+		sourceCausationID, sourceHopCount = "", 0
+	}
+	if binding.Classification == conversation.ExternalPeerClassificationBrowserReplyFollowup &&
+		(!causalChainFound || sourceCausationID == "" || sourceHopCount < 1 || sourceHopCount >= conversation.BoardCommunicationMaxHopCount) {
+		return ExternalTurnLookup{}, errors.New("external browser followup is missing a replyable BOARD causal chain")
 	}
 	encoded, err := json.Marshal(accepted.InputEvent.Payload)
 	if err != nil {
@@ -541,13 +563,53 @@ func externalTurnLookup(request ReadViewRequest) (ExternalTurnLookup, error) {
 	return ExternalTurnLookup{
 		OwnerID: request.Session.OwnerID, SessionID: accepted.SessionID, TurnID: accepted.TurnID,
 		GenerationEpoch: accepted.GenerationEpoch, OperationID: turnOperationID(accepted.TurnID),
-		SourceBinding: binding, SourceFingerprint: hex.EncodeToString(fingerprint[:]),
+		SourceBinding: binding, SourceCausationID: sourceCausationID, SourceHopCount: sourceHopCount,
+		SourceFingerprint: hex.EncodeToString(fingerprint[:]),
 	}, nil
+}
+
+func externalBoardSourceCausalChain(payload map[string]any) (string, int, bool, error) {
+	raw, exists := payload["board_source"]
+	if !exists {
+		return "", 0, false, nil
+	}
+	source, ok := raw.(map[string]any)
+	if !ok {
+		return "", 0, false, errors.New("external BOARD source metadata is invalid")
+	}
+	causationID, ok := source["causation_id"].(string)
+	if !ok || causationID == "" || strings.TrimSpace(causationID) != causationID {
+		return "", 0, false, errors.New("external BOARD source causation is invalid")
+	}
+	var hopCount int
+	switch value := source["hop_count"].(type) {
+	case int:
+		hopCount = value
+	case int64:
+		hopCount = int(value)
+	case float64:
+		if value != float64(int(value)) {
+			return "", 0, false, errors.New("external BOARD source hop count is invalid")
+		}
+		hopCount = int(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return "", 0, false, errors.New("external BOARD source hop count is invalid")
+		}
+		hopCount = int(parsed)
+	default:
+		return "", 0, false, errors.New("external BOARD source hop count is invalid")
+	}
+	if hopCount < 0 || hopCount >= conversation.BoardCommunicationMaxHopCount {
+		return "", 0, false, errors.New("external BOARD source hop count is not replyable")
+	}
+	return causationID, hopCount, true, nil
 }
 
 func externalPublicationIntent(lookup ExternalTurnLookup, responseMessageID modulecore.MessageID) ExternalPublicationIntent {
 	binding := lookup.SourceBinding
-	return ExternalPublicationIntent{
+	intent := ExternalPublicationIntent{
 		CanonicalResponseMessageID: responseMessageID,
 		Target: ExternalReplyTarget{
 			BoardInstanceID: binding.BoardInstanceID, CorePrincipalID: binding.RecipientPrincipalID,
@@ -556,6 +618,11 @@ func externalPublicationIntent(lookup ExternalTurnLookup, responseMessageID modu
 		},
 		StableLogicalKey: "external-publication:" + lookup.OperationID,
 	}
+	if lookup.SourceCausationID != "" {
+		intent.Target.CausationID = lookup.SourceCausationID
+		intent.Target.HopCount = lookup.SourceHopCount + 1
+	}
+	return intent
 }
 
 func (r *Runtime) commitExternalTurn(ctx context.Context, input AcceptedTurnInput, lookup ExternalTurnLookup, prepared CommitBundle, receipt agent.InvocationReceipt, safeError bool, failureStage ExternalFailureStage, cause error) TurnResult {
@@ -908,8 +975,17 @@ func (r *Runtime) externalPeerMessage(input AcceptedTurnInput, kind, indexKind, 
 	if err != nil {
 		return modulecore.EventEnvelope{}, MessageIndex{}, err
 	}
-	if err := binding.ValidateNewRequest(); err != nil {
-		return modulecore.EventEnvelope{}, MessageIndex{}, err
+	switch binding.Classification {
+	case conversation.ExternalPeerClassificationRequest:
+		if err := binding.ValidateNewRequest(); err != nil {
+			return modulecore.EventEnvelope{}, MessageIndex{}, err
+		}
+	case conversation.ExternalPeerClassificationBrowserReplyFollowup:
+		if err := binding.ValidateBrowserReplyFollowup(); err != nil {
+			return modulecore.EventEnvelope{}, MessageIndex{}, err
+		}
+	default:
+		return modulecore.EventEnvelope{}, MessageIndex{}, errors.New("external peer response source classification is unsupported")
 	}
 	sourceActorID, err := binding.SourceActorID()
 	if err != nil || sourceActorID != accepted.ActorID || accepted.InputMessageID != accepted.InputEvent.MessageID {

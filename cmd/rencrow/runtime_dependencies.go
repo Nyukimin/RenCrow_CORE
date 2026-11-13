@@ -100,6 +100,7 @@ type runtimeCanonicalEventStore interface {
 }
 
 type Dependencies struct {
+	privateTextWorkers                  map[string]privateTaskWorker
 	persistenceQueue                    *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 	transportPersistenceQueue           *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 	combinedChatProcessorEligible       bool
@@ -955,6 +956,9 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	aiWorkflowStore := composeRuntimeAIWorkflowStore(aiWorkflowStateStore, canonicalEventStore)
 	llmBusyTracker := newLLMBusyTracker()
 	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker, runtimeActionManager, deps.taskManager, deps.transportManager)
+	if cfg.Prompts != nil {
+		deps.privateTextWorkers = newPrivateTextWorkers(llmRuntime.Primary.PrivateTextProviders, cfg.Prompts.CharacterPrompts)
+	}
 	var classifier domainagent.Classifier
 	classifier, deps.classifierShadow, deps.classifierShadowCancel, err = buildRuntimeClassifier(llmRuntime.Chat, cfg.Prompts.Classifier, classifierTestConfig)
 	if err != nil {
@@ -2161,7 +2165,7 @@ func buildExtensionHealthHandler(cfg *config.Config, deps *Dependencies) http.Ha
 	if cfg.Heartbeat.AgentSchedulerEnabled {
 		heartbeatMessage = "10s scheduler configured"
 		if deps.agentHeartbeatStarted {
-			heartbeatMessage = "10s scheduler started; actors=mio,shiro,kuro,midori"
+			heartbeatMessage = "10s scheduler started; actors=" + strings.Join(agentHeartbeatActorIDs, ",")
 		}
 	}
 	items := []viewer.ExtensionHealthItem{

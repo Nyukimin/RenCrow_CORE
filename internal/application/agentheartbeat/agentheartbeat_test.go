@@ -284,6 +284,246 @@ func TestTickContinuesTaskProbesDuringIdleWithoutStartingAnotherIdle(t *testing.
 	waitSignal(t, idleStopped, time.Second, "idle work did not finish")
 }
 
+func TestTickPreemptsLowerPriorityPrivateRunForHigherPriorityBoardWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	privateStarted := make(chan struct{})
+	privateStopSeen := make(chan struct{})
+	releasePrivate := make(chan struct{})
+	privateReturned := make(chan struct{})
+	boardProbeDuringPrivate := make(chan struct{})
+	boardStarted := make(chan struct{})
+	releaseBoard := make(chan struct{})
+	boardReturned := make(chan struct{})
+	var releasePrivateOnce sync.Once
+	var releaseBoardOnce sync.Once
+	defer releasePrivateOnce.Do(func() { close(releasePrivate) })
+	defer releaseBoardOnce.Do(func() { close(releaseBoard) })
+
+	var boardCalls atomic.Int32
+	var privateCalls atomic.Int32
+	var idleCalls atomic.Int32
+	scheduler := New([]string{"mio"}, Sources{
+		Board: func(context.Context, string) (Work, bool, error) {
+			call := boardCalls.Add(1)
+			if call == 1 {
+				return Work{}, false, nil
+			}
+			if call == 2 {
+				close(boardProbeDuringPrivate)
+			}
+			return Work{ID: "board-high", Priority: domaintask.PriorityHigh, Run: func(context.Context, <-chan struct{}) error {
+				if boardCalls.Load() < 3 {
+					t.Errorf("BOARD candidate ran after %d scans, want a fresh scan after interrupt", boardCalls.Load())
+				}
+				select {
+				case <-privateReturned:
+				default:
+					t.Error("BOARD work started before the private run returned")
+				}
+				close(boardStarted)
+				<-releaseBoard
+				close(boardReturned)
+				return nil
+			}}, true, nil
+		},
+		Private: func(context.Context, string) (Work, bool, error) {
+			if privateCalls.Add(1) != 1 {
+				return Work{}, false, nil
+			}
+			return heldPrivateWork("private-normal", domaintask.PriorityNormal, privateStarted, privateStopSeen, releasePrivate, privateReturned), true, nil
+		},
+		Idle: func(context.Context, string) (Work, bool, error) {
+			idleCalls.Add(1)
+			return Work{}, false, nil
+		},
+	}, nil)
+
+	scheduler.Tick(ctx)
+	waitSignal(t, privateStarted, time.Second, "private background work did not start")
+	scheduler.Tick(ctx)
+	waitSignal(t, boardProbeDuringPrivate, time.Second, "BOARD was not probed during active private work")
+	waitSignal(t, privateStopSeen, time.Second, "higher-priority BOARD candidate did not request the private run to stop")
+	if got := privateCalls.Load(); got != 1 {
+		t.Fatalf("private source calls during the active private run = %d, want 1", got)
+	}
+	if got := idleCalls.Load(); got != 0 {
+		t.Fatalf("idle source calls while work was active = %d, want 0", got)
+	}
+	select {
+	case <-boardStarted:
+		t.Fatal("BOARD work started before the private run returned")
+	default:
+	}
+
+	releasePrivateOnce.Do(func() { close(releasePrivate) })
+	waitSignal(t, privateReturned, time.Second, "private run did not return after its checkpoint was released")
+	waitSignal(t, boardStarted, time.Second, "BOARD candidate was not revalidated and started after the private run returned")
+	releaseBoardOnce.Do(func() { close(releaseBoard) })
+	waitSignal(t, boardReturned, time.Second, "BOARD work did not finish")
+}
+
+func TestTickDoesNotPreemptPrivateRunForEqualPriorityBoardWork(t *testing.T) {
+	privateStarted := make(chan struct{})
+	privateStopSeen := make(chan struct{})
+	finishPrivate := make(chan struct{})
+	privateReturned := make(chan struct{})
+	boardProbeDuringPrivate := make(chan struct{})
+	boardStarted := make(chan struct{})
+	releaseBoard := make(chan struct{})
+	boardReturned := make(chan struct{})
+	var releasePrivateOnce sync.Once
+	var releaseBoardOnce sync.Once
+	defer releasePrivateOnce.Do(func() { close(finishPrivate) })
+	defer releaseBoardOnce.Do(func() { close(releaseBoard) })
+
+	var boardCalls atomic.Int32
+	scheduler := New([]string{"mio"}, Sources{
+		Board: func(context.Context, string) (Work, bool, error) {
+			call := boardCalls.Add(1)
+			if call == 1 {
+				return Work{}, false, nil
+			}
+			if call == 2 {
+				close(boardProbeDuringPrivate)
+			}
+			return Work{ID: "board-high", Priority: domaintask.PriorityHigh, Run: func(context.Context, <-chan struct{}) error {
+				if boardCalls.Load() < 3 {
+					t.Errorf("equal-priority BOARD work ran after %d scans, want a fresh scan after private completion", boardCalls.Load())
+				}
+				close(boardStarted)
+				<-releaseBoard
+				close(boardReturned)
+				return nil
+			}}, true, nil
+		},
+		Private: func(context.Context, string) (Work, bool, error) {
+			return heldPrivateWork("private-high", domaintask.PriorityHigh, privateStarted, privateStopSeen, finishPrivate, privateReturned), true, nil
+		},
+	}, nil)
+
+	scheduler.Tick(context.Background())
+	waitSignal(t, privateStarted, time.Second, "private background work did not start")
+	scheduler.Tick(context.Background())
+	waitSignal(t, boardProbeDuringPrivate, time.Second, "BOARD was not probed during active private work")
+	waitForScanStopped(t, scheduler, "mio")
+	select {
+	case <-privateStopSeen:
+		t.Fatal("equal-priority BOARD work stopped the private run")
+	case <-time.After(30 * time.Millisecond):
+	}
+	scheduler.mu.Lock()
+	rescanAfterRun := scheduler.agents["mio"].rescanAfterRun
+	scheduler.mu.Unlock()
+	if rescanAfterRun {
+		t.Fatal("equal-priority BOARD work scheduled an unnecessary rescan after the private run")
+	}
+	select {
+	case <-boardStarted:
+		t.Fatal("equal-priority BOARD work started before the private run returned")
+	default:
+	}
+
+	releasePrivateOnce.Do(func() { close(finishPrivate) })
+	waitSignal(t, privateReturned, time.Second, "private run did not finish")
+	waitForReservationReleased(t, scheduler, "mio")
+	if got := boardCalls.Load(); got != 2 {
+		t.Fatalf("BOARD scans after equal-priority work finished = %d, want no immediate rescan", got)
+	}
+	scheduler.Tick(context.Background())
+	waitSignal(t, boardStarted, time.Second, "BOARD work did not start after the private run finished")
+	releaseBoardOnce.Do(func() { close(releaseBoard) })
+	waitSignal(t, boardReturned, time.Second, "BOARD work did not finish")
+}
+
+func TestAcquireInvalidatesPrivatePriorityScanBeforeForegroundReservation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	privateStarted := make(chan struct{})
+	privateStopSeen := make(chan struct{})
+	releasePrivate := make(chan struct{})
+	privateReturned := make(chan struct{})
+	boardScanStarted := make(chan struct{})
+	boardScanCanceled := make(chan struct{})
+	releaseBoardScan := make(chan struct{})
+	boardRun := make(chan struct{})
+	var releasePrivateOnce sync.Once
+	var releaseBoardScanOnce sync.Once
+	defer releasePrivateOnce.Do(func() { close(releasePrivate) })
+	defer releaseBoardScanOnce.Do(func() { close(releaseBoardScan) })
+
+	var boardCalls atomic.Int32
+	scheduler := New([]string{"mio"}, Sources{
+		Board: func(ctx context.Context, _ string) (Work, bool, error) {
+			call := boardCalls.Add(1)
+			if call == 1 {
+				return Work{}, false, nil
+			}
+			if call != 2 {
+				return Work{}, false, nil
+			}
+			close(boardScanStarted)
+			<-ctx.Done()
+			close(boardScanCanceled)
+			<-releaseBoardScan
+			return Work{ID: "stale-board", Priority: domaintask.PriorityHigh, Run: func(context.Context, <-chan struct{}) error {
+				close(boardRun)
+				return nil
+			}}, true, nil
+		},
+		Private: func(context.Context, string) (Work, bool, error) {
+			return heldPrivateWork("private-normal", domaintask.PriorityNormal, privateStarted, privateStopSeen, releasePrivate, privateReturned), true, nil
+		},
+	}, nil)
+
+	scheduler.Tick(ctx)
+	waitSignal(t, privateStarted, time.Second, "private background work did not start")
+	scheduler.Tick(ctx)
+	waitSignal(t, boardScanStarted, time.Second, "BOARD-only priority scan did not start")
+
+	acquired := make(chan func(), 1)
+	acquireErr := make(chan error, 1)
+	go func() {
+		release, err := scheduler.Acquire(ctx, "mio", domaintask.PriorityHigh)
+		if err != nil {
+			acquireErr <- err
+			return
+		}
+		acquired <- release
+	}()
+	waitSignal(t, boardScanCanceled, time.Second, "foreground Acquire did not cancel the stale BOARD scan")
+	waitSignal(t, privateStopSeen, time.Second, "foreground Acquire did not request the private run to stop")
+	select {
+	case release := <-acquired:
+		release()
+		t.Fatal("foreground reservation was granted before the private run returned")
+	case err := <-acquireErr:
+		t.Fatalf("Acquire() returned before the private run returned: %v", err)
+	default:
+	}
+
+	releaseBoardScanOnce.Do(func() { close(releaseBoardScan) })
+	waitForScanStopped(t, scheduler, "mio")
+	select {
+	case <-boardRun:
+		t.Fatal("a stale BOARD candidate ran after its scan was canceled")
+	default:
+	}
+	releasePrivateOnce.Do(func() { close(releasePrivate) })
+	waitSignal(t, privateReturned, time.Second, "private run did not return after its checkpoint")
+	release := receive(t, acquired, time.Second, "foreground reservation did not acquire after the private run returned")
+	defer func() {
+		cancel()
+		release()
+	}()
+	scheduler.Tick(ctx)
+	if got := boardCalls.Load(); got != 2 {
+		t.Fatalf("BOARD scans while the foreground reservation was active = %d, want 2", got)
+	}
+}
+
 func TestTickSkipsNonIdleWorkAndForegroundOwners(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -721,4 +961,52 @@ func waitForQueued(t *testing.T, scheduler *Scheduler, actor string, want int) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("queued waiter count did not reach %d", want)
+}
+
+func waitForScanStopped(t *testing.T, scheduler *Scheduler, actor string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		scheduler.mu.Lock()
+		state := scheduler.agents[actor]
+		scanning := state != nil && state.scanning
+		scheduler.mu.Unlock()
+		if !scanning {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("canceled BOARD scan did not finish")
+}
+
+func waitForReservationReleased(t *testing.T, scheduler *Scheduler, actor string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		scheduler.mu.Lock()
+		state := scheduler.agents[actor]
+		active := state != nil && state.active != nil
+		scheduler.mu.Unlock()
+		if !active {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("actor reservation was not released")
+}
+
+func heldPrivateWork(id string, priority domaintask.Priority, started, stopSeen, finish, returned chan struct{}) Work {
+	return Work{ID: id, Priority: priority, Run: func(ctx context.Context, stop <-chan struct{}) error {
+		close(started)
+		defer close(returned)
+		select {
+		case <-stop:
+			close(stopSeen)
+			<-finish
+		case <-finish:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return nil
+	}}
 }

@@ -59,10 +59,11 @@ type agentState struct {
 
 	waiters []*waiter
 
-	scanning   bool
-	scanCancel context.CancelFunc
-	scanDirty  bool
-	nextScan   context.Context
+	scanning       bool
+	scanCancel     context.CancelFunc
+	scanDirty      bool
+	nextScan       context.Context
+	scanGeneration uint64
 
 	rescanAfterRun bool
 	rescanContext  context.Context
@@ -74,10 +75,20 @@ type reservation struct {
 	priority   domaintask.Priority
 	background bool
 	idle       bool
+	source     workSource
 	stop       chan struct{}
 	stopClosed bool
 	cancel     context.CancelFunc
 }
+
+type workSource uint8
+
+const (
+	workSourceNone workSource = iota
+	workSourceBoard
+	workSourcePrivate
+	workSourceIdle
+)
 
 type waiter struct {
 	priority domaintask.Priority
@@ -345,8 +356,9 @@ func (s *Scheduler) kickScan(parent context.Context, actor string) {
 	}
 	s.mu.Lock()
 	state := s.agents[actor]
+	activePrivate := state != nil && state.active != nil && state.active.background && state.active.source == workSourcePrivate && !state.active.idle
 	if state == nil || s.closed || parent.Err() != nil || len(state.waiters) != 0 ||
-		(state.active != nil && !state.active.idle) {
+		(state.active != nil && !state.active.idle && !activePrivate) {
 		s.mu.Unlock()
 		return
 	}
@@ -358,14 +370,20 @@ func (s *Scheduler) kickScan(parent context.Context, actor string) {
 	}
 	scanCtx, cancel := context.WithCancel(parent)
 	allowIdle := state.active == nil
+	var expectedActive *reservation
+	if activePrivate {
+		expectedActive = state.active
+	}
+	state.scanGeneration++
+	generation := state.scanGeneration
 	state.scanning = true
 	state.scanCancel = cancel
 	s.signalChangedLocked()
 	s.mu.Unlock()
-	go s.scanActor(parent, scanCtx, actor, allowIdle)
+	go s.scanActor(parent, scanCtx, actor, allowIdle, expectedActive, generation)
 }
 
-func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, allowIdle bool) {
+func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, allowIdle bool, expectedActive *reservation, generation uint64) {
 	defer func() {
 		var next context.Context
 		s.mu.Lock()
@@ -385,40 +403,41 @@ func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, all
 		}
 	}()
 
-	work, idle, found := s.discover(scanCtx, actor, allowIdle)
-	if !found || parent.Err() != nil || scanCtx.Err() != nil {
+	boardOnly := expectedActive != nil
+	work, source := s.discover(scanCtx, actor, allowIdle, boardOnly)
+	if source == workSourceNone || parent.Err() != nil || scanCtx.Err() != nil {
 		return
 	}
-	s.startWork(parent, actor, work, idle)
+	s.startWork(parent, actor, work, source, expectedActive, generation)
 }
 
-func (s *Scheduler) discover(ctx context.Context, actor string, allowIdle bool) (Work, bool, bool) {
+func (s *Scheduler) discover(ctx context.Context, actor string, allowIdle bool, boardOnly bool) (Work, workSource) {
 	if work, found, err := s.ask(s.sources.Board, ctx, actor); err != nil {
 		s.reportError(actor, "board", err, ctx)
 	} else if found {
-		return work, false, true
+		return work, workSourceBoard
 	}
-	if ctx.Err() != nil {
-		return Work{}, false, false
+	if ctx.Err() != nil || boardOnly {
+		return Work{}, workSourceNone
 	}
 
 	if work, found, err := s.ask(s.sources.Private, ctx, actor); err != nil {
 		s.reportError(actor, "private", err, ctx)
-		return Work{}, false, false
+		return Work{}, workSourceNone
 	} else if found {
-		return work, false, true
+		return work, workSourcePrivate
 	}
 	if ctx.Err() != nil || !allowIdle {
-		return Work{}, false, false
+		return Work{}, workSourceNone
 	}
 
 	if work, found, err := s.ask(s.sources.Idle, ctx, actor); err != nil {
 		s.reportError(actor, "idle", err, ctx)
-		return Work{}, false, false
+		return Work{}, workSourceNone
 	} else if found {
-		return work, true, true
+		return work, workSourceIdle
 	}
-	return Work{}, false, false
+	return Work{}, workSourceNone
 }
 
 func (s *Scheduler) ask(source Source, parent context.Context, actor string) (work Work, found bool, err error) {
@@ -459,16 +478,27 @@ func (s *Scheduler) ask(source Source, parent context.Context, actor string) (wo
 	return work, true, nil
 }
 
-func (s *Scheduler) startWork(parent context.Context, actor string, work Work, idle bool) {
+func (s *Scheduler) startWork(parent context.Context, actor string, work Work, source workSource, expectedActive *reservation, generation uint64) {
 	s.mu.Lock()
 	state := s.agents[actor]
-	if state == nil || s.closed || parent.Err() != nil {
+	if state == nil || s.closed || parent.Err() != nil || state.scanGeneration != generation ||
+		(expectedActive != nil && state.active != expectedActive) {
+		s.mu.Unlock()
+		return
+	}
+	if expectedActive != nil {
+		if source == workSourceBoard && len(state.waiters) == 0 && expectedActive.background && expectedActive.source == workSourcePrivate &&
+			!expectedActive.idle && priorityRank(work.Priority) > priorityRank(expectedActive.priority) {
+			s.closeStopLocked(state.active)
+			state.rescanAfterRun = true
+			state.rescanContext = parent
+		}
 		s.mu.Unlock()
 		return
 	}
 	if state.active != nil || len(state.waiters) != 0 {
 		if state.active != nil && state.active.background &&
-			((state.active.idle && !idle) || (!idle && priorityRank(work.Priority) > priorityRank(state.active.priority))) {
+			((state.active.idle && source != workSourceIdle) || (source != workSourceIdle && priorityRank(work.Priority) > priorityRank(state.active.priority))) {
 			s.closeStopLocked(state.active)
 		}
 		state.rescanAfterRun = true
@@ -483,7 +513,8 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, i
 		actor:      actor,
 		priority:   work.Priority,
 		background: true,
-		idle:       idle,
+		idle:       source == workSourceIdle,
+		source:     source,
 		stop:       make(chan struct{}),
 		cancel:     cancel,
 	}
@@ -629,6 +660,7 @@ func (s *Scheduler) cancelScanLocked(state *agentState) {
 	if state.scanCancel != nil {
 		state.scanCancel()
 	}
+	state.scanGeneration++
 	state.scanDirty = false
 	state.nextScan = nil
 }

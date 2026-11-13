@@ -67,6 +67,47 @@ func TestScheduledBoardSourceChoosesOldestOwnItemAndIgnoresBodyPriority(t *testi
 	}
 }
 
+func TestScheduledBoardBrowserConversationPreemptsOlderWorkTask(t *testing.T) {
+	pin := boardInboxTestPin()
+	pin.PrincipalID = domainconversation.BoardCommunicationMeetingMioPrincipalID
+	h := newBoardInboxWireHarness(t, pin)
+	olderTask := boardInboxTestItem("item-task", "message-task", pin.CutoverAt.Add(time.Second), "a normal work request")
+	olderTask.SenderID = "ren-browser"
+	olderTask.Kind = "request"
+	olderTask.Recipients = []string{pin.PrincipalID}
+	browserChat := boardInboxTestItem("item-browser-chat", "message-browser-chat", pin.CutoverAt.Add(2*time.Second), "a direct browser conversation")
+	browserChat.SenderID = "ren-browser"
+	browserChat.Kind = ""
+	browserChat.ReplyTo = ""
+	browserChat.Recipients = []string{pin.PrincipalID}
+	h.inbox = func(_ int, cursor string) boardcommunication.InboxPage {
+		if cursor != "" {
+			return boardcommunication.InboxPage{}
+		}
+		return boardcommunication.InboxPage{Items: []boardcommunication.InboxItem{olderTask, browserChat}}
+	}
+	steps := []string{}
+	scope := boardInboxTestScope(pin)
+	scope.AllowedPeerIDs = []string{"ren-browser"}
+	deps := boardCommunicationCompositionDeps{
+		Store: &boardCompositionStoreFake{steps: &steps, pin: pin}, Client: h.client, Pin: pin,
+		InboxScope: scope, ActorID: "mio", Now: func() time.Time { return pin.CutoverAt.Add(time.Hour) },
+		AllowedChannelIDs: []string{"channel-alpha"}, AllowedPeerIDs: []string{"ren-browser"},
+	}
+	composition := &boardCommunicationComposition{deps: deps, boardClient: h.client, peerOwner: newBoardInboxTestOwner(h.trace, pin)}
+
+	work, found, err := composition.PlanScheduledBoardWork(context.Background(), "mio")
+	if err != nil {
+		t.Fatalf("PlanScheduledBoardWork(): %v", err)
+	}
+	if !found || work.ID != "board-inbox:item-browser-chat" || work.Priority != domaintask.PriorityHigh {
+		t.Fatalf("scheduled work = id:%q priority:%q found=%t; want direct ren-browser CHAT at high priority", work.ID, work.Priority, found)
+	}
+	if h.threadReads != 0 {
+		t.Fatalf("planning read %d threads; want inbox metadata only", h.threadReads)
+	}
+}
+
 func TestScheduledBoardSourceDefersNoProgressItemAndFiltersUnsupportedMetadata(t *testing.T) {
 	pin := boardInboxTestPin()
 	h := newBoardInboxWireHarness(t, pin)

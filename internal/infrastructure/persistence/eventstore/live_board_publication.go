@@ -426,6 +426,12 @@ func loadExternalAcceptedTurnTx(ctx context.Context, tx *sql.Tx, lookup conversa
 	if err := validateExternalPeerEnvelopeAndIndex(binding, accepted.ActorID, accepted.InputEvent, message, accepted.SessionID, accepted.TurnID); err != nil {
 		return conversationruntime.AcceptedTurn{}, "", "", fmt.Errorf("%w: accepted external source proof is invalid: %v", ErrExternalTurnScopeMismatch, err)
 	}
+	derivedLookup, err := conversationruntime.ExternalTurnLookupForRequest(conversationruntime.ReadViewRequest{
+		Session: conversationruntime.SessionState{OwnerID: lookup.OwnerID}, Accepted: accepted,
+	})
+	if err != nil || derivedLookup.SourceCausationID != lookup.SourceCausationID || derivedLookup.SourceHopCount != lookup.SourceHopCount {
+		return conversationruntime.AcceptedTurn{}, "", "", ErrExternalTurnScopeMismatch
+	}
 	fingerprint, err := externalSourceFingerprint(accepted.InputEvent.Payload)
 	if err != nil || fingerprint != lookup.SourceFingerprint {
 		return conversationruntime.AcceptedTurn{}, "", "", ErrExternalTurnScopeMismatch
@@ -457,9 +463,17 @@ func loadExternalPublicationIntentTx(ctx context.Context, tx *sql.Tx, workID str
 		return externalPublicationWork{}, conversationruntime.ExternalPublicationIntent{}, fmt.Errorf("%w: private BOARD publication target scope is invalid", errExternalTurnOutcomeCorrupt)
 	}
 	expectedTarget := externalReplyTarget(lookup)
-	if intent.Target != expectedTarget {
+	persistedTarget := intent.Target
+	persistedTarget.CausationID = ""
+	persistedTarget.HopCount = 0
+	expectedPersistedTarget := expectedTarget
+	expectedPersistedTarget.CausationID = ""
+	expectedPersistedTarget.HopCount = 0
+	if persistedTarget != expectedPersistedTarget {
 		return externalPublicationWork{}, conversationruntime.ExternalPublicationIntent{}, fmt.Errorf("%w: private BOARD publication target differs from the accepted source", errExternalTurnOutcomeCorrupt)
 	}
+	intent.Target.CausationID = expectedTarget.CausationID
+	intent.Target.HopCount = expectedTarget.HopCount
 	return work, intent, nil
 }
 
@@ -546,8 +560,28 @@ func validateExternalTurnLookup(lookup conversationruntime.ExternalTurnLookup) e
 	if lookup.OperationID != externalTurnOperationID(lookup.TurnID) {
 		return fmt.Errorf("%w: operation id is not derived from the accepted turn", ErrExternalTurnScopeMismatch)
 	}
-	if err := lookup.SourceBinding.ValidateNewRequest(); err != nil {
-		return fmt.Errorf("%w: invalid source binding: %v", ErrExternalTurnScopeMismatch, err)
+	switch lookup.SourceBinding.Classification {
+	case domainconversation.ExternalPeerClassificationRequest:
+		if err := lookup.SourceBinding.ValidateNewRequest(); err != nil {
+			return fmt.Errorf("%w: invalid source binding: %v", ErrExternalTurnScopeMismatch, err)
+		}
+	case domainconversation.ExternalPeerClassificationBrowserReplyFollowup:
+		if err := lookup.SourceBinding.ValidateBrowserReplyFollowup(); err != nil {
+			return fmt.Errorf("%w: invalid source binding: %v", ErrExternalTurnScopeMismatch, err)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported external source classification", ErrExternalTurnScopeMismatch)
+	}
+	if lookup.SourceCausationID == "" {
+		if lookup.SourceHopCount != 0 || lookup.SourceBinding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup {
+			return fmt.Errorf("%w: browser followup requires its durable BOARD causal chain", ErrExternalTurnScopeMismatch)
+		}
+	} else if !validBoardPublicationID(lookup.SourceCausationID) || lookup.SourceHopCount < 0 ||
+		lookup.SourceHopCount >= domainconversation.BoardCommunicationMaxHopCount ||
+		(lookup.SourceBinding.Classification == domainconversation.ExternalPeerClassificationRequest &&
+			(lookup.SourceCausationID != lookup.SourceBinding.MessageID || lookup.SourceHopCount != 0)) ||
+		(lookup.SourceBinding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup && lookup.SourceHopCount < 1) {
+		return fmt.Errorf("%w: external source causal chain is invalid", ErrExternalTurnScopeMismatch)
 	}
 	fingerprint, err := hex.DecodeString(lookup.SourceFingerprint)
 	if err != nil || len(fingerprint) != sha256.Size {
@@ -577,11 +611,16 @@ func cloneExternalCommitBundle(bundle conversationruntime.ExternalCommitBundle) 
 
 func externalReplyTarget(lookup conversationruntime.ExternalTurnLookup) conversationruntime.ExternalReplyTarget {
 	binding := lookup.SourceBinding
-	return conversationruntime.ExternalReplyTarget{
+	target := conversationruntime.ExternalReplyTarget{
 		BoardInstanceID: binding.BoardInstanceID, CorePrincipalID: binding.RecipientPrincipalID,
 		PeerPrincipalID: binding.SenderPrincipalID, ChannelID: binding.ChannelID,
 		ThreadID: binding.ThreadID, ReplyTo: binding.MessageID,
 	}
+	if lookup.SourceCausationID != "" {
+		target.CausationID = lookup.SourceCausationID
+		target.HopCount = lookup.SourceHopCount + 1
+	}
+	return target
 }
 
 func externalResponseEvent(events []modulecore.EventEnvelope, messageID modulecore.MessageID) *modulecore.EventEnvelope {

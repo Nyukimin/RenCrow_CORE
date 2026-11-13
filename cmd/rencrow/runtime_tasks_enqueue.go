@@ -194,13 +194,10 @@ func validatePrivateFirstChatTask(task domaintask.Task, ownerID string, required
 	if ownerID == "" || task.OwnerID != ownerID || task.Status != requiredStatus || task.Route != domaintask.RouteCHAT {
 		return errors.New("Task is outside the private first-run CHAT scope")
 	}
-	switch task.Assignee {
-	case "mio", "shiro", "midori":
-	default:
+	if !domainsuperagent.IsPrivateChatQueueActorID(task.Assignee) {
 		return errors.New("Task assignee is outside the canonical CHAT actor set")
 	}
-	if task.OriginSessionID != "" || task.OriginThreadID != "" || task.OriginTurnID != "" || task.OriginMessageID != "" ||
-		task.OriginPublication != nil || task.AcceptedOPSClaim != nil || len(task.NativeResumeClaims) != 0 || task.ParentTaskID != "" {
+	if !domainsuperagent.IsPrivateChatQueueTask(task) {
 		return errors.New("Task has external or parent provenance outside the private first-run CHAT scope")
 	}
 	return nil

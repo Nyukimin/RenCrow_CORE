@@ -14,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -25,15 +26,10 @@ const (
 	boardCommunicationOwnerActor  = "mio"
 )
 
-var agentHeartbeatActorIDs = []string{"mio", "shiro", "kuro", "midori"}
+var agentHeartbeatActorIDs = domainsuperagent.PrivateChatQueueActorIDs()
 
 func isAgentHeartbeatActor(actorID string) bool {
-	switch actorID {
-	case "mio", "shiro", "kuro", "midori":
-		return true
-	default:
-		return false
-	}
+	return domainsuperagent.IsPrivateChatQueueActorID(actorID)
 }
 
 type boardCommunicationBoot struct {

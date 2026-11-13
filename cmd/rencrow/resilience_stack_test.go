@@ -600,6 +600,39 @@ func TestResilienceStackAcceptsUser501BoardAndTailnetJobs(t *testing.T) {
 	}
 }
 
+func TestResilienceStackAcceptsUser501PortalWithPrivateLaunchdPlist(t *testing.T) {
+	plan := resilienceStackFixture(t)
+	portal := findResilienceStackService(t, plan, "com.rencrow.portal")
+	portal.Domain = resilienceStackUser501
+	home, err := resilienceStackFixtureHomePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	portal.PlistPath = filepath.Join(home, ".rencrow", "launchd", portal.Label+".plist")
+	var portalIndex int
+	for i := range plan.Services {
+		if plan.Services[i].Label == portal.Label {
+			portalIndex = i
+			break
+		}
+	}
+	plan.Services[portalIndex] = portal
+	if err := testResilienceStackPlan(plan); err != nil {
+		t.Fatalf("canonical user/501 PORTAL plan was rejected: %v", err)
+	}
+
+	plan.Services[portalIndex].PlistPath = filepath.Join(home, "Library", "LaunchAgents", portal.Label+".plist")
+	if err := testResilienceStackPlan(plan); err == nil {
+		t.Fatal("user/501 PORTAL plan accepted an incompatible LaunchAgents plist path")
+	}
+
+	plan.Services[portalIndex] = portal
+	plan.Services[portalIndex].Domain = resilienceStackGUI501
+	if err := testResilienceStackPlan(plan); err == nil {
+		t.Fatal("PORTAL was accepted in gui/501")
+	}
+}
+
 func TestResilienceStackCanonicalPlistPathRejectsUnsafeUserHomes(t *testing.T) {
 	fixtureHome, err := resilienceStackFixtureHomePath()
 	if err != nil {

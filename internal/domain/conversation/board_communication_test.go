@@ -146,6 +146,44 @@ func TestExternalPeerBindingOnlyAllowsUncorrelatedRequestShape(t *testing.T) {
 	}
 }
 
+func TestExternalPeerBindingBrowserReplyFollowupPreservesWireMetadata(t *testing.T) {
+	binding := externalPeerBindingFixture("reply", ExternalPeerClassification("browser_reply_followup"), "agent-reply-1")
+	binding.MessageID = "browser-reply-2"
+	binding.SenderPrincipalID = "ren-browser"
+	binding.RecipientPrincipalID = "shiro"
+	binding.ResponderActorID = "shiro"
+
+	parsed, err := ParseExternalPeerBinding(map[string]any{"external_peer_binding": binding.ToPayload()})
+	if err != nil {
+		t.Fatalf("ParseExternalPeerBinding(browser followup): %v", err)
+	}
+	if !parsed.Equal(binding) || parsed.WireKind != "reply" || parsed.ReplyTo != "agent-reply-1" {
+		t.Fatalf("parsed browser followup = %+v; want exact raw kind, reply target, and classification", parsed)
+	}
+	if err := parsed.ValidateNewRequest(); err == nil {
+		t.Fatal("ValidateNewRequest(browser followup) = nil; reply-only followup must not be treated as a request")
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*ExternalPeerBinding)
+	}{
+		{name: "non-browser sender", mutate: func(value *ExternalPeerBinding) { value.SenderPrincipalID = "grok" }},
+		{name: "empty wire kind", mutate: func(value *ExternalPeerBinding) { value.WireKind = "" }},
+		{name: "request wire kind", mutate: func(value *ExternalPeerBinding) { value.WireKind = "request" }},
+		{name: "missing reply target", mutate: func(value *ExternalPeerBinding) { value.ReplyTo = "" }},
+		{name: "recipient and responder differ", mutate: func(value *ExternalPeerBinding) { value.RecipientPrincipalID = "midori" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := binding
+			test.mutate(&changed)
+			if err := changed.Validate(); err == nil {
+				t.Fatalf("Validate() = nil for malformed browser reply followup: %+v", changed)
+			}
+		})
+	}
+}
+
 func TestParseExternalPeerBindingRejectsLegacyKindOnlyShape(t *testing.T) {
 	payload := externalPeerPayloadFixture("request", ExternalPeerClassificationRequest, "")
 	payload["kind"] = payload["wire_kind"]

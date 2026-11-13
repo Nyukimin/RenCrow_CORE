@@ -91,6 +91,76 @@ func TestBuildReadViewAcceptsBoardCharacterInputTargetKind(t *testing.T) {
 	}
 }
 
+func TestBuildReadViewIncludesVerifiedBrowserFollowupInSameThreadHistory(t *testing.T) {
+	request, tail, _ := externalPeerReadViewFixture(t)
+	const sourceActor = "board:test-instance:ren-browser"
+	prior := externalPeerMessageEvent(request.Session.SessionID, modulecore.NewTurnID(), 4, sourceActor,
+		"test-instance", "rencrow-comm", "ren-browser", "channel-a", "thread-a", "request-1", "", "", "Earlier browser chat.")
+	priorPayload := prior.Payload
+	priorPayload["board_source"] = map[string]any{"causation_id": "request-1", "hop_count": 0}
+	prior.Payload = priorPayload
+	priorReply := externalPeerReplyEvent(prior, "ren-browser", 7, "Earlier answer.")
+	current := request.Accepted.InputEvent
+	current.TurnID = request.Accepted.TurnID
+	current.MessageID = request.Accepted.InputMessageID
+	binding := domainconversation.ExternalPeerBinding{
+		BoardInstanceID: "test-instance", RecipientPrincipalID: "rencrow-comm", ChannelID: "channel-a",
+		ThreadID: "thread-a", MessageID: string(current.MessageID), SenderPrincipalID: "ren-browser",
+		WireKind: "reply", Classification: domainconversation.ExternalPeerClassificationBrowserReplyFollowup,
+		ReplyTo: string(priorReply.Event.MessageID),
+	}
+	current.Payload = map[string]any{
+		"from": "external_peer", "source_actor_id": sourceActor, "to": "mio", "visibility": "public",
+		"text": "Continuing the browser chat.", "content": "Continuing the browser chat.",
+		"body":                  map[string]any{"text": "Continuing the browser chat."},
+		"external_peer_binding": binding.ToPayload(),
+		"board_source":          map[string]any{"causation_id": "request-1", "hop_count": 2},
+	}
+	request.Principal.ActorID = sourceActor
+	request.Accepted.ActorID = sourceActor
+	request.Accepted.InputEvent = current
+	request.Accepted.InputMessageID = current.MessageID
+	tail.ThroughSeq = request.Accepted.AdmissionSeq
+	tail.Messages = []CanonicalMessage{
+		tail.Messages[0],
+		canonicalMessage(prior, sourceActor, "agent", "mio", "external_peer_message"),
+		priorReply,
+		canonicalMessage(current, sourceActor, "agent", "mio", "external_peer_message"),
+	}
+
+	view, err := NewReadViewService(&fakeTailReader{tail: tail}).BuildReadView(context.Background(), request)
+	if err != nil {
+		t.Fatalf("BuildReadView(browser followup): %v", err)
+	}
+	want := []string{"Earlier browser chat.", "Earlier answer.", "Continuing the browser chat."}
+	if len(view.Messages) != len(want) {
+		t.Fatalf("browser followup context = %#v; want %#v", view.Messages, want)
+	}
+	for index, text := range want {
+		if view.Messages[index].Text != text {
+			t.Fatalf("browser followup context[%d] = %q, want %q; all=%#v", index, view.Messages[index].Text, text, view.Messages)
+		}
+	}
+}
+
+func TestExternalTurnLookupKeepsLegacyRootReceiptKeyWithStoredBoardCausation(t *testing.T) {
+	request, _, _ := externalPeerReadViewFixture(t)
+	binding, err := domainconversation.ParseExternalPeerBinding(request.Accepted.InputEvent.Payload)
+	if err != nil {
+		t.Fatalf("ParseExternalPeerBinding(root): %v", err)
+	}
+	request.Accepted.InputEvent.Payload["board_source"] = map[string]any{
+		"causation_id": binding.MessageID, "hop_count": 0,
+	}
+	lookup, err := ExternalTurnLookupForRequest(request)
+	if err != nil {
+		t.Fatalf("ExternalTurnLookupForRequest(legacy root with durable BOARD source): %v", err)
+	}
+	if lookup.SourceCausationID != "" || lookup.SourceHopCount != 0 {
+		t.Fatalf("legacy root lookup causal fields = %q / %d; want zero fields for existing receipt compatibility", lookup.SourceCausationID, lookup.SourceHopCount)
+	}
+}
+
 func externalPeerReadViewFixture(t *testing.T) (ReadViewRequest, CanonicalTail, []string) {
 	t.Helper()
 	request, _ := runtimeInput(t, modulecore.NewSessionID(), 9, "unused user input")

@@ -114,6 +114,28 @@ func TestTaskEnqueueHandlerPersistsFixedPrivateGoalAndReturnsOriginalReceipt(t *
 	}
 }
 
+func TestTaskEnqueueHandlerAcceptsAdditionalPrivateChatActor(t *testing.T) {
+	owner, queue, task := newTaskEnqueueFixture(t, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "aka", Priority: domaintask.PriorityHigh,
+		Title: "private CHAT task for a BOARD character",
+	}, domaintask.SharedRoleContext{})
+	handler := &taskEnqueueHandler{ownerID: "ren", token: []byte(taskEnqueueTestToken), tasks: owner, queue: queue, agentSchedulerEnabled: true}
+
+	response := serveTaskEnqueueRequest(handler, http.MethodPost, "127.0.0.1:1234", taskEnqueueTestToken, `{"task_id":"`+string(task.TaskID)+`"}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("Aka enqueue status=%d body=%s, want private CHAT intent persisted", response.Code, response.Body.String())
+	}
+	items, err := queue.ListRunQueueItems(context.Background(), 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("Aka queue=%#v err=%v, want exactly one persisted item", items, err)
+	}
+	item := items[0]
+	if item.TaskID != task.TaskID || item.RunStartReason != domaintask.RunStartReasonFirst || item.Goal != domainsuperagent.RunQueueGoalPrivateFirstChat ||
+		item.Action != "chat" || item.Status != "queued" || item.IdempotencyKey != domainsuperagent.RunQueueIntentPrivateFirstChat {
+		t.Fatalf("Aka private queue item=%+v, want the shared private first-CHAT contract", item)
+	}
+}
+
 func TestTaskEnqueueHandlerRequiresHeartbeatAndOwnerEligibility(t *testing.T) {
 	owner, queue, task := newTaskEnqueueFixture(t, domaintask.Task{OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "shiro", Title: "eligible"}, domaintask.SharedRoleContext{})
 	disabled := &taskEnqueueHandler{ownerID: "ren", token: []byte(taskEnqueueTestToken), tasks: owner, queue: queue}
@@ -135,8 +157,8 @@ func TestTaskEnqueueHandlerRequiresHeartbeatAndOwnerEligibility(t *testing.T) {
 		{name: "wrong owner", owner: "other"},
 		{name: "wrong route", owner: "ren", mutate: func(value *domaintask.Task) { value.Route = domaintask.RouteGeneral }},
 		{name: "noncanonical assignee", owner: "ren", mutate: func(value *domaintask.Task) { value.Assignee = "Mio" }},
-		{name: "Kuro requires separately granted full access", owner: "ren", mutate: func(value *domaintask.Task) { value.Assignee = "kuro" }},
 		{name: "external session", owner: "ren", mutate: func(value *domaintask.Task) { value.OriginSessionID = modulecore.NewSessionID() }},
+		{name: "Kuro outside private CHAT scope", owner: "ren", mutate: func(value *domaintask.Task) { value.Assignee = "kuro"; value.Route = domaintask.RouteGeneral }},
 		{name: "parent task", owner: "ren", mutate: func(value *domaintask.Task) { value.ParentTaskID = modulecore.NewTaskID() }},
 		{name: "accepted OPS claim", owner: "ren", mutate: func(value *domaintask.Task) { value.AcceptedOPSClaim = &domaintask.AcceptedOPSClaim{} }},
 		{name: "native resume claim", owner: "ren", mutate: func(value *domaintask.Task) { value.NativeResumeClaims = []domaintask.NativeOPSResumeClaim{{}} }},
@@ -153,19 +175,19 @@ func TestTaskEnqueueHandlerRequiresHeartbeatAndOwnerEligibility(t *testing.T) {
 	}
 }
 
-func TestTaskEnqueueHandlerRejectsKuroBeforeQueueInsertion(t *testing.T) {
+func TestTaskEnqueueHandlerAcceptsKuroOnlyWithinPrivateChatScope(t *testing.T) {
 	owner, queue, task := newTaskEnqueueFixture(t, domaintask.Task{
 		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "kuro", Title: "private Kuro task",
 	}, domaintask.SharedRoleContext{})
 	handler := &taskEnqueueHandler{ownerID: "ren", token: []byte(taskEnqueueTestToken), tasks: owner, queue: queue, agentSchedulerEnabled: true}
 
 	response := serveTaskEnqueueRequest(handler, http.MethodPost, "127.0.0.1:1234", taskEnqueueTestToken, `{"task_id":"`+string(task.TaskID)+`"}`)
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "task_not_eligible") {
-		t.Fatalf("Kuro enqueue status=%d body=%s, want an eligibility refusal", response.Code, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("Kuro private CHAT enqueue status=%d body=%s, want private queue receipt", response.Code, response.Body.String())
 	}
 	items, err := queue.ListRunQueueItems(context.Background(), 10)
-	if err != nil || len(items) != 0 {
-		t.Fatalf("Kuro queue=%#v err=%v, want no private work queued", items, err)
+	if err != nil || len(items) != 1 || items[0].TaskID != task.TaskID || items[0].Goal != domainsuperagent.RunQueueGoalPrivateFirstChat || items[0].Action != "chat" {
+		t.Fatalf("Kuro queue=%#v err=%v, want only the bounded private CHAT item", items, err)
 	}
 }
 

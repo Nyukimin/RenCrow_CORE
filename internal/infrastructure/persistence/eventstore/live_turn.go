@@ -1,6 +1,7 @@
 package eventstore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -45,6 +46,7 @@ type AcceptInput struct {
 	InputEvent                   modulecore.EventEnvelope
 	InputMessage                 MessageIndex
 	ExternalPeerBinding          *ExternalPeerBinding          `json:"external_peer_binding,omitempty"`
+	BoardPeerSource              *BoardPeerRequestSource       `json:"board_peer_source,omitempty"`
 	BoardOwnerRequestReservation *BoardOwnerRequestReservation `json:"board_owner_request_reservation,omitempty"`
 }
 
@@ -617,6 +619,18 @@ func (s *SQLiteStore) AcceptTurn(ctx context.Context, input AcceptInput) (Accept
 			_ = tx.Rollback()
 		}
 	}()
+	if input.BoardPeerSource != nil {
+		if _, err := validateBoardPeerRequestSourceTx(ctx, tx, *input.BoardPeerSource); err != nil {
+			return AcceptedTurn{}, err
+		}
+		threadBinding, found, err := readBoardPeerThreadSessionTx(ctx, tx, boardPeerThreadSessionKeyForSource(*input.BoardPeerSource))
+		if err != nil {
+			return AcceptedTurn{}, err
+		}
+		if !found || threadBinding.SessionID != input.InputEvent.SessionID {
+			return AcceptedTurn{}, ErrBoardPeerIngressScopeMismatch
+		}
+	}
 	if input.TriggerKind == "board_owner_request" {
 		if err := validateBoardOwnerRequestAcceptTx(ctx, tx, input); err != nil {
 			return AcceptedTurn{}, err
@@ -1164,12 +1178,21 @@ func validateAcceptInput(input AcceptInput) error {
 		if err := validateExternalPeerAcceptInput(input); err != nil {
 			return err
 		}
+		if input.ExternalPeerBinding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup {
+			if input.BoardPeerSource == nil || !input.ExternalPeerBinding.Equal(input.BoardPeerSource.Binding) ||
+				input.BoardPeerSource.Scope.OwnerID != input.OwnerID ||
+				!boardPeerSourcePayloadMatches(input.InputEvent.Payload["board_source"], *input.BoardPeerSource) {
+				return errors.New("browser followup requires its exact authenticated BOARD source")
+			}
+		} else if input.BoardPeerSource != nil {
+			return errors.New("only a browser followup may carry BOARD peer acceptance source proof")
+		}
 	} else if input.TriggerKind == "board_owner_request" {
 		if err := validateBoardOwnerRequestAcceptInput(input); err != nil {
 			return err
 		}
 	} else {
-		if input.ExternalPeerBinding != nil || input.BoardOwnerRequestReservation != nil ||
+		if input.ExternalPeerBinding != nil || input.BoardPeerSource != nil || input.BoardOwnerRequestReservation != nil ||
 			input.InputEvent.EventType == "conversation.external_peer_message" || input.InputEvent.EventType == "conversation.board_owner_request" ||
 			payloadString(input.InputEvent.Payload, "from") == "external_peer" || hasExternalPeerBindingPayload(input.InputEvent.Payload) {
 			return errors.New("external peer input requires its dedicated trigger and typed binding")
@@ -1199,8 +1222,17 @@ func validateExternalPeerAcceptInput(input AcceptInput) error {
 }
 
 func validateExternalPeerEnvelopeAndIndex(binding ExternalPeerBinding, actorID string, event modulecore.EventEnvelope, message MessageIndex, sessionID modulecore.SessionID, turnID modulecore.TurnID) error {
-	if err := binding.ValidateNewRequest(); err != nil {
-		return err
+	switch binding.Classification {
+	case domainconversation.ExternalPeerClassificationRequest:
+		if err := binding.ValidateNewRequest(); err != nil {
+			return err
+		}
+	case domainconversation.ExternalPeerClassificationBrowserReplyFollowup:
+		if err := binding.ValidateBrowserReplyFollowup(); err != nil {
+			return err
+		}
+	default:
+		return errors.New("external peer turn must be a new request or verified browser followup")
 	}
 	sourceActorID, err := binding.SourceActorID()
 	if err != nil {
@@ -1260,6 +1292,15 @@ func validateExternalPeerEnvelopeAndIndex(binding ExternalPeerBinding, actorID s
 		return fmt.Errorf("validate external peer message index: %w", err)
 	}
 	return nil
+}
+
+func boardPeerSourcePayloadMatches(value any, source BoardPeerRequestSource) bool {
+	want, err := json.Marshal(boardPeerRequestSourcePayload(source))
+	if err != nil {
+		return false
+	}
+	got, err := json.Marshal(value)
+	return err == nil && bytes.Equal(got, want)
 }
 
 func validateExternalPeerMessageIndex(message MessageIndex, event modulecore.EventEnvelope, sessionID modulecore.SessionID, turnID modulecore.TurnID, sourceActorID, responderActorKind, responderActorID string) error {

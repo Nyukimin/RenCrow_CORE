@@ -629,6 +629,10 @@ func newSafeErrorBoardPublicationDeliveryFixtureForResponder(t *testing.T, respo
 }
 
 func newBoardPublicationDeliveryFixtureForResponderOutcome(t *testing.T, responderActorID string, scopedPin, safeError bool) *boardPublicationDeliveryFixture {
+	return newBoardPublicationDeliveryFixtureForSource(t, responderActorID, scopedPin, safeError, "grok")
+}
+
+func newBoardPublicationDeliveryFixtureForSource(t *testing.T, responderActorID string, scopedPin, safeError bool, senderPrincipalID string) *boardPublicationDeliveryFixture {
 	t.Helper()
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "board-publication-delivery.sqlite")
@@ -647,6 +651,7 @@ func newBoardPublicationDeliveryFixtureForResponderOutcome(t *testing.T, respond
 	const journalInstanceID = "journal_0123456789abcdef0123456789abcdef"
 	fixture.input = externalPeerAcceptInput(modulecore.NewSessionID(), "board-message-b2-delivery", "Synthetic publication delivery request.")
 	fixture.input.ExternalPeerBinding.BoardInstanceID = journalInstanceID
+	fixture.input.ExternalPeerBinding.SenderPrincipalID = senderPrincipalID
 	if responderActorID != "" {
 		fixture.input.ExternalPeerBinding.ResponderActorID = responderActorID
 		fixture.input.ExternalPeerBinding.RecipientPrincipalID = responderActorID

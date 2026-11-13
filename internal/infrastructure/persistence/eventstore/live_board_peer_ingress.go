@@ -14,15 +14,17 @@ import (
 	"unicode"
 
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var (
-	ErrBoardPeerIngressUnavailable   = errors.New("BOARD peer ingress store is unavailable")
-	ErrBoardPeerIngressPinMismatch   = errors.New("BOARD peer source does not match the pinned connection")
-	ErrBoardPeerIngressScopeMismatch = errors.New("BOARD peer ingress scope does not match the stored source")
-	ErrBoardPeerIngressConflict      = errors.New("BOARD peer ingress key conflicts with a different source")
-	ErrBoardPeerIngressCorrupt       = errors.New("BOARD peer ingress receipt is corrupt")
+	ErrBoardPeerIngressUnavailable              = errors.New("BOARD peer ingress store is unavailable")
+	ErrBoardPeerIngressPinMismatch              = errors.New("BOARD peer source does not match the pinned connection")
+	ErrBoardPeerIngressScopeMismatch            = errors.New("BOARD peer ingress scope does not match the stored source")
+	ErrBoardPeerIngressConflict                 = errors.New("BOARD peer ingress key conflicts with a different source")
+	ErrBoardPeerIngressCorrupt                  = errors.New("BOARD peer ingress receipt is corrupt")
+	ErrBoardPeerIngressBrowserReplyUncorrelated = errors.New("browser reply does not match a completed same-thread peer publication")
 )
 
 const (
@@ -32,9 +34,9 @@ const (
 	boardPeerRequestAcceptanceOperationPrefix = "board-peer-request-acceptance:"
 )
 
-// BoardPeerRequestSource is authenticated BOARD request metadata after the
-// caller has verified the connection, ACL, inbox row, and canonical thread.
-// The three timestamps are deliberately separate BOARD clock stages.
+// BoardPeerRequestSource is authenticated BOARD conversation input metadata
+// after the caller has verified the connection, ACL, inbox row, and canonical
+// thread. The three timestamps are deliberately separate BOARD clock stages.
 type BoardPeerRequestSource struct {
 	Scope           BoardPublicationScope                  `json:"scope"`
 	Binding         domainconversation.ExternalPeerBinding `json:"binding"`
@@ -231,6 +233,36 @@ func (s *SQLiteStore) FindAcceptedBoardPeerRequest(ctx context.Context, source B
 	return accepted, found, nil
 }
 
+// ValidateBoardBrowserReplyFollowup checks whether the exact browser reply is
+// eligible for CHAT admission without requiring an acceptance or thread lookup.
+// The acceptance path repeats this validation inside its own transaction.
+func (s *SQLiteStore) ValidateBoardBrowserReplyFollowup(ctx context.Context, source BoardPeerRequestSource) (bool, error) {
+	if err := s.ensureOpen(); err != nil {
+		return false, err
+	}
+	if ctx == nil {
+		return false, errors.New("BOARD browser reply validation context is required")
+	}
+	if source.Binding.Classification != domainconversation.ExternalPeerClassificationBrowserReplyFollowup {
+		return false, nil
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := validateBoardPeerRequestSourceTx(ctx, tx, source); err != nil {
+		if errors.Is(err, ErrBoardPeerIngressBrowserReplyUncorrelated) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // AcceptBoardPeerRequest durably accepts the exact authenticated BOARD root
 // request against its previously bound CORE session.
 func (s *SQLiteStore) AcceptBoardPeerRequest(ctx context.Context, input BoardPeerRequestAcceptInput) (AcceptedTurn, error) {
@@ -311,6 +343,9 @@ func (s *SQLiteStore) AcceptBoardPeerRequest(ctx context.Context, input BoardPee
 		ExternalPeerBinding: &input.Source.Binding,
 		CreateNewSession:    !sessionExists && threadBinding.CreateNewSession,
 	}
+	if input.Source.Binding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup {
+		acceptInput.BoardPeerSource = &input.Source
+	}
 	return s.AcceptTurn(ctx, acceptInput)
 }
 
@@ -318,14 +353,36 @@ func validateBoardPeerRequestSource(source BoardPeerRequestSource) error {
 	if err := validateBoardPublicationScope(source.Scope); err != nil {
 		return ErrBoardPeerIngressScopeMismatch
 	}
-	if err := source.Binding.ValidateNewRequest(); err != nil {
-		return fmt.Errorf("validate BOARD peer request binding: %w", err)
+	switch source.Binding.Classification {
+	case domainconversation.ExternalPeerClassificationRequest:
+		if err := source.Binding.ValidateNewRequest(); err != nil {
+			return fmt.Errorf("validate BOARD peer request binding: %w", err)
+		}
+	case domainconversation.ExternalPeerClassificationBrowserReplyFollowup:
+		if err := source.Binding.ValidateBrowserReplyFollowup(); err != nil {
+			return ErrBoardPeerIngressBrowserReplyUncorrelated
+		}
+		actorID := source.Binding.EffectiveResponderActorID()
+		if !superagent.IsPrivateChatQueueActorID(actorID) || source.Binding.RecipientPrincipalID != source.Scope.PrincipalID ||
+			(actorID == "mio" && (source.Binding.ResponderActorID != "" || source.Scope.PrincipalID != domainconversation.BoardCommunicationMeetingMioPrincipalID)) ||
+			(actorID != "mio" && (source.Binding.ResponderActorID != actorID || source.Scope.PrincipalID != actorID)) ||
+			!validBoardPublicationID(source.CausationID) || source.HopCount < 1 || source.HopCount >= domainconversation.BoardCommunicationMaxHopCount ||
+			len(source.Recipients) != 1 || source.Recipients[0] != source.Scope.PrincipalID ||
+			(len(source.Mentions) > 1 || (len(source.Mentions) == 1 && source.Mentions[0] != source.Scope.PrincipalID)) {
+			return ErrBoardPeerIngressBrowserReplyUncorrelated
+		}
+	default:
+		return fmt.Errorf("validate BOARD peer request binding: unsupported classification %q", source.Binding.Classification)
 	}
 	if source.Binding.BoardInstanceID != source.Scope.JournalInstanceID || source.Binding.RecipientPrincipalID != source.Scope.PrincipalID {
 		return ErrBoardPeerIngressScopeMismatch
 	}
-	if source.InboxItemID == "" || strings.TrimSpace(source.InboxItemID) != source.InboxItemID || strings.TrimSpace(source.Body) == "" ||
-		source.CausationID != source.Binding.MessageID || source.HopCount != 0 {
+	causationValid := source.CausationID == source.Binding.MessageID && source.HopCount == 0
+	if source.Binding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup {
+		causationValid = validBoardPublicationID(source.CausationID) && source.HopCount >= 1 &&
+			source.HopCount < domainconversation.BoardCommunicationMaxHopCount
+	}
+	if source.InboxItemID == "" || strings.TrimSpace(source.InboxItemID) != source.InboxItemID || strings.TrimSpace(source.Body) == "" || !causationValid {
 		return errors.New("BOARD peer request source identity, body, or root causation is invalid")
 	}
 	for name, value := range map[string]time.Time{
@@ -360,7 +417,29 @@ func validateBoardPeerRequestSourceTx(ctx context.Context, tx *sql.Tx, source Bo
 	if !source.InboxCreatedAt.After(pin.CutoverAt) {
 		return BoardConnectionPin{}, ErrBoardPeerIngressPinMismatch
 	}
+	if source.Binding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup {
+		parent, found, err := loadBoardPublicationOutcomeByParentMessageTx(ctx, tx, source.Scope, source.Binding.ReplyTo)
+		if err != nil {
+			return BoardConnectionPin{}, err
+		}
+		if !found || !boardBrowserReplyFollowupMatchesPublication(source, parent) {
+			return BoardConnectionPin{}, ErrBoardPeerIngressBrowserReplyUncorrelated
+		}
+	}
 	return pin, nil
+}
+
+func boardBrowserReplyFollowupMatchesPublication(source BoardPeerRequestSource, parent BoardPublicationOutcome) bool {
+	message := parent.CanonicalMessage
+	return parent.Scope == source.Scope && parent.WorkID != "" &&
+		parent.SendReceipt.MessageID == source.Binding.ReplyTo && parent.SendReceipt.ThreadID == source.Binding.ThreadID &&
+		parent.ExpectedPeerPrincipalID == "ren-browser" && message.MessageID == source.Binding.ReplyTo &&
+		message.SenderPrincipalID == source.Scope.PrincipalID && message.ChannelID == source.Binding.ChannelID &&
+		message.ThreadID == source.Binding.ThreadID && message.ReplyTo != "" &&
+		len(message.Recipients) == 1 && message.Recipients[0] == "ren-browser" &&
+		validBoardPublicationID(message.CausationID) && message.HopCount >= 1 &&
+		message.HopCount+1 == source.HopCount && source.HopCount < domainconversation.BoardCommunicationMaxHopCount &&
+		message.CausationID == source.CausationID
 }
 
 func readBoardPeerConnectionPinTx(ctx context.Context, tx *sql.Tx, scope BoardPublicationScope, responderActorID string) (BoardConnectionPin, bool, error) {

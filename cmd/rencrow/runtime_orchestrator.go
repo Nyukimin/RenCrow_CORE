@@ -132,7 +132,7 @@ func buildOrchestratorRuntime(
 		deps.repairRunner = newAsyncRepairTaskRunner(deps.distOrch, deps.eventRelay)
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
-		privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild)
+		privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
 		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
 		configureAgentHeartbeatScheduler(cfg, deps)
 		return
@@ -265,7 +265,7 @@ func buildOrchestratorRuntime(
 	deps.entryHandler = bridges.EntryFromOrch(orch)
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)
 	deps.voiceDirectHandler = orch
-	privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild)
+	privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
 	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
 	configureAgentHeartbeatScheduler(cfg, deps)
 }

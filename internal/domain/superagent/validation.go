@@ -282,6 +282,35 @@ func isAgentRunStatus(status string) bool {
 	}
 }
 
+var privateChatQueueActorIDs = [...]string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"}
+
+// PrivateChatQueueActorIDs returns the exact assignees eligible for the
+// private first-CHAT queue. This is deliberately narrower than CORE Actor
+// identity and does not grant delegation or full-access execution rights.
+func PrivateChatQueueActorIDs() []string {
+	return append([]string(nil), privateChatQueueActorIDs[:]...)
+}
+
+// IsPrivateChatQueueActorID reports whether actorID is one of the exact
+// assignee identities supported by the private CHAT queue.
+func IsPrivateChatQueueActorID(actorID string) bool {
+	for _, candidate := range privateChatQueueActorIDs {
+		if actorID == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPrivateChatQueueTask recognizes the local, unparented CHAT Task shape
+// accepted by the private text queue. The caller still checks the exact owner
+// and lifecycle status for its own boundary.
+func IsPrivateChatQueueTask(task domaintask.Task) bool {
+	return task.Route == domaintask.RouteCHAT && task.OwnerID != "" && strings.TrimSpace(task.OwnerID) == task.OwnerID &&
+		task.OriginSessionID == "" && task.OriginThreadID == "" && task.OriginTurnID == "" && task.OriginMessageID == "" &&
+		task.OriginPublication == nil && task.AcceptedOPSClaim == nil && len(task.NativeResumeClaims) == 0 && task.ParentTaskID == ""
+}
+
 // ValidateActorID accepts only the exact identities of CORE-managed Actors.
 // Mechanism labels such as LeadAgent, worker, provider, or model names are not
 // Actor identities and must never be persisted in a projection.

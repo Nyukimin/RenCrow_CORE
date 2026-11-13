@@ -48,6 +48,12 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 			primaryProviders.BoardChats[actorID] = provider.WithExecutionSlot(conversationSlot)
 		}
 	}
+	privateTextProviders := make(map[string]llm.LLMProvider, len(primaryProviders.PrivateTextProviders))
+	for actorID, provider := range primaryProviders.PrivateTextProviders {
+		tracked := trackLLMProvider("private-text-"+actorID, provider, busyTracker)
+		textOnly := privateTaskTextOnlyLLMProvider{inner: tracked}
+		privateTextProviders[actorID] = requireActionOwnedLLMProvider("private-text-"+actorID, textOnly, actions, tasks, transport)
+	}
 	primaryProviders = primaryLLMProviders{
 		Chat:                    trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
 		Worker:                  trackLLMProvider("worker", primaryProviders.Worker, busyTracker),
@@ -56,6 +62,7 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Wild:                    trackLLMProvider("wild", primaryProviders.Wild, busyTracker),
 		Conversation:            primaryProviders.Conversation,
 		BoardChats:              primaryProviders.BoardChats,
+		PrivateTextProviders:    privateTextProviders,
 		Readback:                primaryProviders.Readback,
 		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}
@@ -67,6 +74,7 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Wild:                    requireActionOwnedLLMProvider("wild", primaryProviders.Wild, actions, tasks, transport),
 		Conversation:            primaryProviders.Conversation,
 		BoardChats:              primaryProviders.BoardChats,
+		PrivateTextProviders:    primaryProviders.PrivateTextProviders,
 		Readback:                primaryProviders.Readback,
 		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}

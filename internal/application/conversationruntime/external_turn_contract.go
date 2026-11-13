@@ -36,6 +36,8 @@ type ExternalTurnLookup struct {
 	GenerationEpoch   int64
 	OperationID       string
 	SourceBinding     domainconversation.ExternalPeerBinding
+	SourceCausationID string `json:"SourceCausationID,omitempty"`
+	SourceHopCount    int    `json:"SourceHopCount,omitempty"`
 	SourceFingerprint string
 }
 
@@ -47,6 +49,8 @@ type ExternalReplyTarget struct {
 	ChannelID       string
 	ThreadID        string
 	ReplyTo         string
+	CausationID     string `json:"CausationID,omitempty"`
+	HopCount        int    `json:"HopCount,omitempty"`
 }
 
 // ExternalPublicationIntent is private persistence metadata. It points at the

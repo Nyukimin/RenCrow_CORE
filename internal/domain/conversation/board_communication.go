@@ -57,6 +57,9 @@ type ExternalPeerClassification string
 
 const (
 	ExternalPeerClassificationRequest ExternalPeerClassification = "request"
+	// BrowserReplyFollowup is assigned only after CORE verifies the exact
+	// ren-browser reply against a completed same-thread peer publication.
+	ExternalPeerClassificationBrowserReplyFollowup ExternalPeerClassification = "browser_reply_followup"
 	// CorrelatedReplyTerminal is assigned only after CORE verifies the saved
 	// publication, expected peer, scope tuple, and causation.
 	ExternalPeerClassificationCorrelatedReplyTerminal ExternalPeerClassification = "correlated_reply_terminal"
@@ -64,6 +67,10 @@ const (
 	// not an accepted-turn classification.
 	ExternalPeerClassificationUnknownReply ExternalPeerClassification = "unknown_reply"
 )
+
+// BoardCommunicationMaxHopCount is the BOARD causal-chain limit. An inbound
+// message at this limit cannot receive another reply.
+const BoardCommunicationMaxHopCount = 8
 
 // ParseExternalPeerBinding reads the complete new-format binding with its one
 // optional CORE-derived responder field. It rejects legacy "kind" and all
@@ -164,6 +171,11 @@ func (binding ExternalPeerBinding) Validate() error {
 	switch binding.Classification {
 	case ExternalPeerClassificationRequest, ExternalPeerClassificationCorrelatedReplyTerminal, ExternalPeerClassificationUnknownReply:
 		return nil
+	case ExternalPeerClassificationBrowserReplyFollowup:
+		if binding.SenderPrincipalID != "ren-browser" || binding.WireKind != "reply" || binding.ReplyTo == "" {
+			return fmt.Errorf("browser reply followup requires the exact ren-browser reply wire shape")
+		}
+		return nil
 	default:
 		return fmt.Errorf("external peer classification %q is unsupported", binding.Classification)
 	}
@@ -177,6 +189,20 @@ func (binding ExternalPeerBinding) ValidateNewRequest() error {
 	if binding.Classification != ExternalPeerClassificationRequest ||
 		(binding.WireKind != "" && binding.WireKind != "request") || binding.ReplyTo != "" {
 		return fmt.Errorf("only BOARD requests without reply_to can start an external turn")
+	}
+	return nil
+}
+
+// ValidateBrowserReplyFollowup checks the immutable source shape only. The
+// event store must still verify the same-scope completed parent publication
+// and causal chain before accepting the turn.
+func (binding ExternalPeerBinding) ValidateBrowserReplyFollowup() error {
+	if err := binding.Validate(); err != nil {
+		return err
+	}
+	if binding.Classification != ExternalPeerClassificationBrowserReplyFollowup ||
+		binding.SenderPrincipalID != "ren-browser" || binding.WireKind != "reply" || binding.ReplyTo == "" {
+		return fmt.Errorf("only the exact ren-browser reply shape can start a browser followup turn")
 	}
 	return nil
 }

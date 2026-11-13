@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 )
 
@@ -57,6 +58,10 @@ type boardInboxOwner interface {
 	// CorrelateTerminalBoardReply is true only when this exact terminal reply
 	// receipt is durably stored for the correlated publication.
 	CorrelateTerminalBoardReply(context.Context, boardInboxSource) (bool, error)
+}
+
+type boardInboxBrowserReplyValidator interface {
+	ValidateBrowserReplyFollowup(context.Context, boardInboxSource) (bool, error)
 }
 
 type boardInboxDisposition string
@@ -318,6 +323,21 @@ func handleBoardInboxItemWithStop(ctx context.Context, client *boardcommunicatio
 		}
 		return processBoardInboxRequestWithStop(ctx, client, owner, scope, source, stop)
 	case isBoardInboxReplyCandidate(source.Message):
+		if source.Message.By == "ren-browser" && source.Message.Kind == "reply" &&
+			superagent.IsPrivateChatQueueActorID(boardInboxScopeActorID(scope)) {
+			if validator, ok := owner.(boardInboxBrowserReplyValidator); ok {
+				followup := source
+				followup.Binding.Classification = domainconversation.ExternalPeerClassificationBrowserReplyFollowup
+				eligible, err := validator.ValidateBrowserReplyFollowup(ctx, followup)
+				if err != nil {
+					if !errors.Is(err, eventstore.ErrBoardPublicationScopeMismatch) && !errors.Is(err, eventstore.ErrBoardPeerIngressScopeMismatch) {
+						return time.Time{}, err
+					}
+				} else if eligible {
+					return processBoardInboxRequestWithStop(ctx, client, owner, scope, followup, stop)
+				}
+			}
+		}
 		source.Binding.Classification = domainconversation.ExternalPeerClassificationUnknownReply
 		if err := source.Binding.Validate(); err != nil {
 			return scheduledBoardRetryDue(stop), nil
@@ -406,6 +426,8 @@ func canonicalBoardInboxMessageMatches(message boardcommunication.BoardMessage, 
 	messageTime, err := time.Parse(time.RFC3339Nano, message.At)
 	return err == nil && !messageTime.IsZero() && message.ID == item.MessageID && message.By == item.SenderID && message.Body == item.Body &&
 		message.ChannelID == item.ChannelID && message.ThreadID == item.ThreadID &&
+		(item.Kind == "" || message.Kind == item.Kind) && (item.ReplyTo == "" || message.ReplyTo == item.ReplyTo) &&
+		(item.CausationID == "" || message.CausationID == item.CausationID) && (item.HopCount == 0 || message.HopCount == item.HopCount) &&
 		equalBoardInboxIDs(message.Mentions, item.Mentions) && equalBoardInboxIDs(message.Recipients, item.Recipients)
 }
 
@@ -627,6 +649,7 @@ func equalBoardInboxIDs(left, right []string) bool {
 func equalBoardInboxItems(left, right boardcommunication.InboxItem) bool {
 	return left.ItemID == right.ItemID && left.MessageID == right.MessageID && left.ChannelID == right.ChannelID &&
 		left.ThreadID == right.ThreadID && left.SenderID == right.SenderID && left.CreatedAt.Equal(right.CreatedAt) &&
-		left.Body == right.Body && equalBoardInboxIDs(left.Mentions, right.Mentions) &&
+		left.Body == right.Body && left.Kind == right.Kind && left.ReplyTo == right.ReplyTo &&
+		left.CausationID == right.CausationID && left.HopCount == right.HopCount && equalBoardInboxIDs(left.Mentions, right.Mentions) &&
 		equalBoardInboxIDs(left.Recipients, right.Recipients) && left.AckReceipt == right.AckReceipt
 }

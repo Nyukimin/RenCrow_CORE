@@ -16,6 +16,7 @@ import (
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -64,11 +65,12 @@ type boardCommunicationConversationProvider interface {
 // external-only runtime seams. The private claim is forwarded only with the
 // exact accepted request and canonical source that produced it.
 type boardCommunicationPeerCallbacks struct {
-	FindAccepted func(context.Context, boardInboxSource) (conversationruntime.ReadViewRequest, bool, error)
-	Accept       func(context.Context, boardInboxSource) (conversationruntime.ReadViewRequest, error)
-	Process      func(context.Context, conversationruntime.ReadViewRequest, boardInboxSource, boardInboxClaim, *agent.MioAgent, boardCommunicationConversationProvider) (conversationruntime.TurnResult, error)
-	HasOutcome   func(context.Context, conversationruntime.ReadViewRequest) (bool, error)
-	Correlate    func(context.Context, boardInboxSource) (bool, error)
+	FindAccepted     func(context.Context, boardInboxSource) (conversationruntime.ReadViewRequest, bool, error)
+	Accept           func(context.Context, boardInboxSource) (conversationruntime.ReadViewRequest, error)
+	Process          func(context.Context, conversationruntime.ReadViewRequest, boardInboxSource, boardInboxClaim, *agent.MioAgent, boardCommunicationConversationProvider) (conversationruntime.TurnResult, error)
+	HasOutcome       func(context.Context, conversationruntime.ReadViewRequest) (bool, error)
+	Correlate        func(context.Context, boardInboxSource) (bool, error)
+	ValidateFollowup func(context.Context, boardInboxSource) (bool, error)
 }
 
 type boardCommunicationCompositionDeps struct {
@@ -193,6 +195,9 @@ func newBoardCommunicationComposition(deps boardCommunicationCompositionDeps) (*
 	}
 	if callbacks.Correlate == nil {
 		callbacks.Correlate = composition.correlateTerminalPeerReply
+	}
+	if callbacks.ValidateFollowup == nil {
+		callbacks.ValidateFollowup = composition.validateBrowserReplyFollowup
 	}
 	composition.peerOwner = boardCommunicationPeerOwner{
 		callbacks: callbacks, mio: deps.Mio, conversation: deps.Conversation,
@@ -389,6 +394,13 @@ func (o boardCommunicationPeerOwner) CorrelateTerminalBoardReply(ctx context.Con
 		return false, ErrBoardCommunicationCompositionUnavailable
 	}
 	return o.callbacks.Correlate(ctx, source)
+}
+
+func (o boardCommunicationPeerOwner) ValidateBrowserReplyFollowup(ctx context.Context, source boardInboxSource) (bool, error) {
+	if o.callbacks.ValidateFollowup == nil {
+		return false, ErrBoardCommunicationCompositionUnavailable
+	}
+	return o.callbacks.ValidateFollowup(ctx, source)
 }
 
 func (c *boardCommunicationComposition) findAcceptedPeerRequest(ctx context.Context, source boardInboxSource) (conversationruntime.ReadViewRequest, bool, error) {
@@ -705,6 +717,30 @@ func (c *boardCommunicationComposition) correlateTerminalPeerReply(ctx context.C
 	return true, nil
 }
 
+func (c *boardCommunicationComposition) validateBrowserReplyFollowup(ctx context.Context, source boardInboxSource) (bool, error) {
+	if c == nil || ctx == nil || c.deps.Store == nil || source.Message.By != "ren-browser" ||
+		source.Message.Kind != "reply" || source.Message.ReplyTo == "" ||
+		!superagent.IsPrivateChatQueueActorID(boardInboxScopeActorID(c.deps.InboxScope)) ||
+		!containsBoardInboxID(c.deps.InboxScope.AllowedPeerIDs, "ren-browser") {
+		return false, nil
+	}
+	if err := c.validateResponderBinding(source.Binding); err != nil {
+		return false, nil
+	}
+	source.Binding.Classification = domainconversation.ExternalPeerClassificationBrowserReplyFollowup
+	peerSource, err := boardPeerRequestSource(c.deps.InboxScope.Pin, source)
+	if err != nil {
+		return false, nil
+	}
+	validator, ok := c.deps.Store.(interface {
+		ValidateBoardBrowserReplyFollowup(context.Context, eventstore.BoardPeerRequestSource) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return validator.ValidateBoardBrowserReplyFollowup(ctx, peerSource)
+}
+
 // PlanScheduledBoardWork discovers one exact BOARD item without reading its
 // canonical thread. The ordinary request/reply handler remains the only path
 // that claims, processes, correlates, and acknowledges the selected item.
@@ -731,12 +767,12 @@ func (c *boardCommunicationComposition) PlanScheduledBoardWork(ctx context.Conte
 		return agentheartbeat.Work{}, false, err
 	}
 
-	item, found, err := nextScheduledBoardInboxItemSkippingWithFilter(ctx, c.boardClient, c.deps.InboxScope, c.deferredInboxSnapshot(), c.scheduledReplyHasCanonicalParent)
+	item, priority, found, err := nextScheduledBoardInboxItemSkippingWithPriorityFilter(ctx, c.boardClient, c.deps.InboxScope, c.deferredInboxSnapshot(), c.scheduledBoardInboxPriority)
 	if err != nil || !found {
 		return agentheartbeat.Work{}, found, err
 	}
 	return agentheartbeat.Work{
-		ID: "board-inbox:" + item.ItemID, Priority: domaintask.PriorityNormal, CreatedAt: item.CreatedAt.UTC(),
+		ID: "board-inbox:" + item.ItemID, Priority: priority, CreatedAt: item.CreatedAt.UTC(),
 		Run: func(runCtx context.Context, stop <-chan struct{}) error {
 			if boardWorkStopRequested(stop) {
 				return nil
@@ -778,75 +814,151 @@ func nextScheduledBoardInboxItemSkippingWithFilter(
 	deferred map[string]time.Time,
 	filter func(context.Context, boardcommunication.InboxItem) (bool, error),
 ) (boardcommunication.InboxItem, bool, error) {
+	priorityFilter := func(ctx context.Context, item boardcommunication.InboxItem) (domaintask.Priority, bool, error) {
+		if filter != nil {
+			eligible, err := filter(ctx, item)
+			if err != nil || !eligible {
+				return domaintask.PriorityNormal, eligible, err
+			}
+		}
+		return domaintask.PriorityNormal, true, nil
+	}
+	item, _, found, err := nextScheduledBoardInboxItemSkippingWithPriorityFilter(ctx, client, scope, deferred, priorityFilter)
+	return item, found, err
+}
+
+func nextScheduledBoardInboxItemSkippingWithPriorityFilter(
+	ctx context.Context,
+	client *boardcommunication.Client,
+	scope boardInboxScope,
+	deferred map[string]time.Time,
+	priorityFilter func(context.Context, boardcommunication.InboxItem) (domaintask.Priority, bool, error),
+) (boardcommunication.InboxItem, domaintask.Priority, bool, error) {
 	if ctx == nil || client == nil || !validBoardInboxScope(scope) {
-		return boardcommunication.InboxItem{}, false, ErrBoardInboxInvalidScope
+		return boardcommunication.InboxItem{}, domaintask.PriorityNormal, false, ErrBoardInboxInvalidScope
 	}
 	cursor := ""
 	visited := make(map[string]struct{})
 	var selected boardcommunication.InboxItem
+	selectedPriority := domaintask.PriorityNormal
 	for pageCount := 0; pageCount < 256; pageCount++ {
 		if err := ctx.Err(); err != nil {
-			return boardcommunication.InboxItem{}, false, err
+			return boardcommunication.InboxItem{}, domaintask.PriorityNormal, false, err
 		}
 		page, err := client.Inbox(ctx, boardcommunication.PageRequest{Limit: boardInboxPageSize, Cursor: cursor})
 		if err != nil {
-			return boardcommunication.InboxItem{}, false, err
+			return boardcommunication.InboxItem{}, domaintask.PriorityNormal, false, err
 		}
 		for _, item := range page.Items {
 			if !scheduledBoardInboxCandidate(scope, item) || deferred[item.ItemID].After(time.Now().UTC()) {
 				continue
 			}
-			if filter != nil {
-				eligible, err := filter(ctx, item)
+			priority := domaintask.PriorityNormal
+			if priorityFilter != nil {
+				var eligible bool
+				var err error
+				priority, eligible, err = priorityFilter(ctx, item)
 				if err != nil {
-					return boardcommunication.InboxItem{}, false, err
+					return boardcommunication.InboxItem{}, domaintask.PriorityNormal, false, err
 				}
 				if !eligible {
 					continue
 				}
 			}
-			if selected.ItemID == "" || item.CreatedAt.Before(selected.CreatedAt) ||
-				(item.CreatedAt.Equal(selected.CreatedAt) && item.ItemID < selected.ItemID) {
+			if selected.ItemID == "" || boardInboxPriorityHigher(priority, selectedPriority) ||
+				(priority == selectedPriority && (item.CreatedAt.Before(selected.CreatedAt) ||
+					(item.CreatedAt.Equal(selected.CreatedAt) && item.ItemID < selected.ItemID))) {
 				selected = item
+				selectedPriority = priority
 			}
 		}
 		if page.NextCursor == "" {
-			return selected, selected.ItemID != "", nil
+			return selected, selectedPriority, selected.ItemID != "", nil
 		}
 		if page.NextCursor == cursor {
-			return boardcommunication.InboxItem{}, false, ErrBoardInboxCursorStalled
+			return boardcommunication.InboxItem{}, domaintask.PriorityNormal, false, ErrBoardInboxCursorStalled
 		}
 		if _, ok := visited[page.NextCursor]; ok {
-			return boardcommunication.InboxItem{}, false, ErrBoardInboxCursorStalled
+			return boardcommunication.InboxItem{}, domaintask.PriorityNormal, false, ErrBoardInboxCursorStalled
 		}
 		visited[cursor] = struct{}{}
 		cursor = page.NextCursor
 	}
-	return boardcommunication.InboxItem{}, false, ErrBoardInboxCursorStalled
+	return boardcommunication.InboxItem{}, domaintask.PriorityNormal, false, ErrBoardInboxCursorStalled
+}
+
+func boardInboxPriorityHigher(left, right domaintask.Priority) bool {
+	return left == domaintask.PriorityHigh && right != domaintask.PriorityHigh
+}
+
+func (c *boardCommunicationComposition) scheduledBoardInboxPriority(ctx context.Context, item boardcommunication.InboxItem) (domaintask.Priority, bool, error) {
+	if c == nil || ctx == nil || c.deps.Store == nil {
+		return domaintask.PriorityNormal, false, ErrBoardCommunicationCompositionUnavailable
+	}
+	scope := c.deps.InboxScope
+	actorID := boardInboxScopeActorID(scope)
+	if item.SenderID == "ren-browser" && item.Kind == "" && item.ReplyTo == "" && item.HopCount == 0 &&
+		(item.CausationID == "" || item.CausationID == item.MessageID) &&
+		containsBoardInboxID(scope.AllowedPeerIDs, "ren-browser") && superagent.IsPrivateChatQueueActorID(actorID) {
+		return domaintask.PriorityHigh, true, nil
+	}
+	if !scheduledInboxReplyMetadata(item) {
+		return domaintask.PriorityNormal, true, nil
+	}
+	parent, parentMatches, err := c.scheduledReplyCanonicalParent(ctx, item)
+	if err != nil {
+		if errors.Is(err, eventstore.ErrBoardPublicationScopeMismatch) {
+			return domaintask.PriorityNormal, false, nil
+		}
+		return domaintask.PriorityNormal, false, err
+	}
+	if !parentMatches {
+		return domaintask.PriorityNormal, false, nil
+	}
+	if item.SenderID != "ren-browser" || item.Kind != "reply" || !superagent.IsPrivateChatQueueActorID(actorID) ||
+		!containsBoardInboxID(scope.AllowedPeerIDs, "ren-browser") {
+		return domaintask.PriorityNormal, true, nil
+	}
+	message := parent.CanonicalMessage
+	if message.ReplyTo != "" && message.CausationID != "" && message.HopCount >= 1 &&
+		message.HopCount < domainconversation.BoardCommunicationMaxHopCount &&
+		item.CausationID == message.CausationID && item.HopCount == message.HopCount+1 &&
+		item.HopCount < domainconversation.BoardCommunicationMaxHopCount &&
+		len(message.Recipients) == 1 && message.Recipients[0] == "ren-browser" &&
+		len(item.Recipients) == 1 && item.Recipients[0] == scope.Pin.PrincipalID &&
+		(len(item.Mentions) == 0 || (len(item.Mentions) == 1 && item.Mentions[0] == scope.Pin.PrincipalID)) {
+		return domaintask.PriorityHigh, true, nil
+	}
+	return domaintask.PriorityNormal, true, nil
 }
 
 func (c *boardCommunicationComposition) scheduledReplyHasCanonicalParent(ctx context.Context, item boardcommunication.InboxItem) (bool, error) {
+	_, found, err := c.scheduledReplyCanonicalParent(ctx, item)
+	return found, err
+}
+
+func (c *boardCommunicationComposition) scheduledReplyCanonicalParent(ctx context.Context, item boardcommunication.InboxItem) (eventstore.BoardPublicationOutcome, bool, error) {
 	if !scheduledInboxReplyMetadata(item) {
-		return true, nil
+		return eventstore.BoardPublicationOutcome{}, true, nil
 	}
 	if c == nil || ctx == nil || c.deps.Store == nil {
-		return false, ErrBoardCommunicationCompositionUnavailable
+		return eventstore.BoardPublicationOutcome{}, false, ErrBoardCommunicationCompositionUnavailable
 	}
 	scope := boardPublicationScope(c.deps.InboxScope.Pin)
 	outcome, found, err := c.deps.Store.LoadBoardPublicationByParentMessage(ctx, eventstore.BoardPublicationLookupInput{
 		Scope: scope, ParentMessageID: item.ReplyTo,
 	})
 	if err != nil || !found {
-		return false, err
+		return eventstore.BoardPublicationOutcome{}, false, err
 	}
 	message := outcome.CanonicalMessage
 	if outcome.Scope != scope || outcome.WorkID == "" || message.MessageID != item.ReplyTo ||
 		outcome.SendReceipt.MessageID != item.ReplyTo || outcome.SendReceipt.ThreadID != item.ThreadID ||
 		message.SenderPrincipalID != scope.PrincipalID || message.ChannelID != item.ChannelID || message.ThreadID != item.ThreadID ||
 		outcome.ExpectedPeerPrincipalID != item.SenderID || !containsBoardInboxID(message.Recipients, item.SenderID) {
-		return false, nil
+		return eventstore.BoardPublicationOutcome{}, false, nil
 	}
-	return true, nil
+	return outcome, true, nil
 }
 
 func (c *boardCommunicationComposition) deferredInboxSnapshot() map[string]time.Time {
@@ -1369,17 +1481,35 @@ func readBoardOwnerHTTPStatus(
 
 func boardPeerRequestSource(pin eventstore.BoardConnectionPin, source boardInboxSource) (eventstore.BoardPeerRequestSource, error) {
 	binding := source.Binding
-	binding.Classification = domainconversation.ExternalPeerClassificationRequest
+	if binding.Classification == "" {
+		binding.Classification = domainconversation.ExternalPeerClassificationRequest
+	}
 	messageAt, err := time.Parse(time.RFC3339Nano, source.Message.At)
 	if err != nil || messageAt.IsZero() || source.ThreadCreatedAt.IsZero() || source.Item.CreatedAt.IsZero() ||
 		source.Message.ID != source.Item.MessageID || source.Message.By != source.Item.SenderID ||
 		source.Message.Body != source.Item.Body || source.Message.ChannelID != source.Item.ChannelID ||
-		source.Message.ThreadID != source.Item.ThreadID || source.Message.ReplyTo != "" ||
-		!isBoardInboxRequest(source.Message) || pin.OwnerID == "" ||
+		source.Message.ThreadID != source.Item.ThreadID || pin.OwnerID == "" ||
 		!source.Item.CreatedAt.After(pin.CutoverAt) || source.Item.SenderID == pin.PrincipalID {
 		return eventstore.BoardPeerRequestSource{}, ErrBoardInboxCanonicalMismatch
 	}
-	if err := binding.ValidateNewRequest(); err != nil || binding.BoardInstanceID != pin.JournalInstanceID ||
+	switch binding.Classification {
+	case domainconversation.ExternalPeerClassificationRequest:
+		if source.Message.ReplyTo != "" || !isBoardInboxRequest(source.Message) || binding.ValidateNewRequest() != nil {
+			return eventstore.BoardPeerRequestSource{}, ErrBoardInboxCanonicalMismatch
+		}
+	case domainconversation.ExternalPeerClassificationBrowserReplyFollowup:
+		if source.Message.By != "ren-browser" || source.Message.Kind != "reply" || source.Message.ReplyTo == "" ||
+			source.Item.Kind != source.Message.Kind || source.Item.ReplyTo != source.Message.ReplyTo ||
+			source.Item.CausationID != source.Message.CausationID || source.Item.HopCount != source.Message.HopCount ||
+			!isBoardInboxReplyCandidate(source.Message) || binding.ValidateBrowserReplyFollowup() != nil ||
+			!superagent.IsPrivateChatQueueActorID(binding.EffectiveResponderActorID()) || source.Message.HopCount < 1 ||
+			source.Message.HopCount >= domainconversation.BoardCommunicationMaxHopCount || source.Message.CausationID == "" {
+			return eventstore.BoardPeerRequestSource{}, ErrBoardInboxCanonicalMismatch
+		}
+	default:
+		return eventstore.BoardPeerRequestSource{}, ErrBoardInboxCanonicalMismatch
+	}
+	if binding.BoardInstanceID != pin.JournalInstanceID ||
 		binding.RecipientPrincipalID != pin.PrincipalID || binding.ChannelID != source.Item.ChannelID ||
 		binding.ThreadID != source.Item.ThreadID || binding.MessageID != source.Item.MessageID ||
 		binding.SenderPrincipalID != source.Item.SenderID ||

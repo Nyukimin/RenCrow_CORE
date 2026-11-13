@@ -23,6 +23,7 @@ type primaryLLMProviders struct {
 	Wild                    llm.LLMProvider
 	Conversation            *llmmiddleware.ConversationProvider
 	BoardChats              map[string]*llmmiddleware.ConversationProvider
+	PrivateTextProviders    map[string]llm.LLMProvider
 	Readback                map[string]*llmmiddleware.ConversationProvider
 	GatewayWriteDiagnostics map[string]modulellm.GatewayRequestWriteDiagnosticsProvider
 }
@@ -75,6 +76,16 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 				gatewayProvider("board-chat", alias, actorID, false), alias, contextBudgetPolicyForConfig(cfg))
 		}
 	}
+	// Private Task text workers use the same explicit CHAT-only Gateway aliases
+	// as BOARD character chat, but their requests never traverse BOARD. Keep these
+	// providers available independently of BOARD configuration so the heartbeat
+	// scheduler can run private Tasks while BOARD is disabled or unavailable.
+	privateTextProviders := make(map[string]llm.LLMProvider, len(privateTextWorkerActorIDs))
+	for _, actorID := range privateTextWorkerActorIDs {
+		provider := gatewayProvider("board-chat", actorID+"-board-chat", actorID, false)
+		budgeted := llmmiddleware.NewContextBudgetProvider(provider, "private-text-"+actorID, contextBudgetPolicyForConfig(cfg), recorder)
+		privateTextProviders[actorID] = privateTaskTextOnlyLLMProvider{inner: llmmiddleware.NewDateTimeProvider(budgeted)}
+	}
 	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
 	return primaryLLMProviders{
 		Chat:       provider("chat", "mio", "mio", true),
@@ -84,7 +95,8 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 		Wild:       provider("wild", "midori", "midori", false),
 		Conversation: llmmiddleware.NewConversationProvider(
 			gatewayProvider("chat", "mio", "mio", false), "mio-conversation", contextBudgetPolicyForConfig(cfg)),
-		BoardChats: boardChats,
+		BoardChats:           boardChats,
+		PrivateTextProviders: privateTextProviders,
 		Readback: map[string]*llmmiddleware.ConversationProvider{
 			"shiro":  conversationProvider("shiro", "chatworker", "shiro"),
 			"kuro":   conversationProvider("kuro", "heavy", "kuro"),

@@ -410,7 +410,8 @@ func reconcilePrivateTextActiveTask(ctx context.Context, store PrivateTextRestar
 
 func validatePrivateTextRecoveryTask(task domaintask.Task, checkpoint domaintask.PrivateTextCheckpoint) error {
 	if err := task.Validate(); err != nil || task.TaskID != checkpoint.TaskID || task.Route != domaintask.RouteCHAT ||
-		task.Assignee != checkpoint.ActorID || domainsuperagent.ValidateActorID(task.Assignee) != nil {
+		task.Assignee != checkpoint.ActorID || !domainsuperagent.IsPrivateChatQueueActorID(task.Assignee) ||
+		(domainsuperagent.ValidateActorID(task.Assignee) != nil && !domainsuperagent.IsPrivateChatQueueTask(task)) {
 		return fmt.Errorf("private text restart Task %s is outside its canonical CHAT actor scope", task.TaskID)
 	}
 	return nil

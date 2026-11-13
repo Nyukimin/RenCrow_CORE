@@ -362,6 +362,10 @@ func loadBoardTerminalReplyParentTx(ctx context.Context, tx *sql.Tx, source Boar
 func validateBoardTerminalReplyAgainstParent(source BoardTerminalReplySource, parent boardTerminalReplyParent) error {
 	outcome, lease, message := parent.Outcome, parent.Lease, parent.Outcome.CanonicalMessage
 	target := lease.PublicationIntent.Target
+	wantCausationID, wantHopCount := target.ReplyTo, 1
+	if target.CausationID != "" {
+		wantCausationID, wantHopCount = target.CausationID, target.HopCount
+	}
 	validParentRoute := false
 	switch lease.TargetKind {
 	case boardPublicationTargetNewRoot:
@@ -370,7 +374,8 @@ func validateBoardTerminalReplyAgainstParent(source BoardTerminalReplySource, pa
 	case boardPublicationTargetReply:
 		validParentRoute = target.ThreadID != "" && target.ReplyTo != "" && lease.Title == "" &&
 			message.ThreadID == target.ThreadID && message.ReplyTo == target.ReplyTo &&
-			message.CausationID == target.ReplyTo && message.HopCount == 1
+			validBoardPublicationID(wantCausationID) && wantHopCount > 0 && wantHopCount <= domainconversation.BoardCommunicationMaxHopCount &&
+			message.CausationID == wantCausationID && message.HopCount == wantHopCount
 	}
 	if !validParentRoute || lease.Scope != source.Scope ||
 		target.BoardInstanceID != source.Scope.JournalInstanceID || target.CorePrincipalID != source.Scope.PrincipalID ||

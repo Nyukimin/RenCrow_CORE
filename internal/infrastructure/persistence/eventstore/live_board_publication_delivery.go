@@ -564,21 +564,40 @@ func (s *SQLiteStore) LoadBoardPublicationByParentMessage(ctx context.Context, i
 		return BoardPublicationOutcome{}, false, err
 	}
 	defer tx.Rollback()
-	if err := requireBoardPublicationPinCandidateTx(ctx, tx, input.Scope); err != nil {
+	outcome, found, err := loadBoardPublicationOutcomeByParentMessageTx(ctx, tx, input.Scope, input.ParentMessageID)
+	if err != nil {
+		return BoardPublicationOutcome{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return BoardPublicationOutcome{}, false, err
+	}
+	return outcome, found, nil
+}
+
+func loadBoardPublicationOutcomeByParentMessageTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	scope BoardPublicationScope,
+	parentMessageID string,
+) (BoardPublicationOutcome, bool, error) {
+	if err := validateBoardPublicationScope(scope); err != nil || !validBoardPublicationID(parentMessageID) {
+		if err != nil {
+			return BoardPublicationOutcome{}, false, err
+		}
+		return BoardPublicationOutcome{}, false, ErrBoardPublicationOutcomeNotFound
+	}
+	if err := requireBoardPublicationPinCandidateTx(ctx, tx, scope); err != nil {
 		return BoardPublicationOutcome{}, false, err
 	}
 	var workID string
-	err = tx.QueryRowContext(ctx, `SELECT work_id FROM live_board_publication_outcome WHERE board_message_id=?`, input.ParentMessageID).Scan(&workID)
+	err := tx.QueryRowContext(ctx, `SELECT work_id FROM live_board_publication_outcome WHERE board_message_id=?`, parentMessageID).Scan(&workID)
 	if errors.Is(err, sql.ErrNoRows) {
-		if err := tx.Commit(); err != nil {
-			return BoardPublicationOutcome{}, false, err
-		}
 		return BoardPublicationOutcome{}, false, nil
 	}
 	if err != nil {
 		return BoardPublicationOutcome{}, false, err
 	}
-	if _, _, _, _, err := loadBoardPublicationSourceTx(ctx, tx, workID, input.Scope); err != nil {
+	if _, _, _, _, err := loadBoardPublicationSourceTx(ctx, tx, workID, scope); err != nil {
 		return BoardPublicationOutcome{}, false, err
 	}
 	outcome, found, err := loadBoardPublicationOutcomeByWorkTx(ctx, tx, workID)
@@ -588,11 +607,8 @@ func (s *SQLiteStore) LoadBoardPublicationByParentMessage(ctx context.Context, i
 	if !found {
 		return BoardPublicationOutcome{}, false, ErrBoardPublicationOutcomeNotFound
 	}
-	if outcome.Scope != input.Scope || outcome.CanonicalMessage.MessageID != input.ParentMessageID {
+	if outcome.Scope != scope || outcome.CanonicalMessage.MessageID != parentMessageID {
 		return BoardPublicationOutcome{}, false, ErrBoardPublicationScopeMismatch
-	}
-	if err := tx.Commit(); err != nil {
-		return BoardPublicationOutcome{}, false, err
 	}
 	return outcome, true, nil
 }
@@ -835,7 +851,10 @@ func loadBoardPublicationSourceTx(ctx context.Context, tx *sql.Tx, workID string
 		if _, err := requireBoardPublicationPeerPinTx(ctx, tx, scope, bundle.Lookup.SourceBinding); err != nil {
 			return BoardPublicationLease{}, conversationruntime.ExternalCommittedBundle{}, LeasedWorkItem{}, "", err
 		}
-		if !found || bundle.PublicationIntent.Target != (conversationruntime.ExternalReplyTarget{
+		persistedTarget := bundle.PublicationIntent.Target
+		persistedTarget.CausationID = ""
+		persistedTarget.HopCount = 0
+		if !found || persistedTarget != (conversationruntime.ExternalReplyTarget{
 			BoardInstanceID: boardInstanceID, CorePrincipalID: corePrincipalID, PeerPrincipalID: peerPrincipalID,
 			ChannelID: channelID, ThreadID: threadID, ReplyTo: replyTo,
 		}) || bundle.PublicationIntent.CanonicalResponseMessageID != modulecore.MessageID(responseMessageID) {
@@ -1206,6 +1225,12 @@ func validateBoardPublicationCompletion(lease BoardPublicationLease, bundle conv
 	case boardPublicationTargetReply:
 		if target.ThreadID == "" || target.ReplyTo == "" || lease.Title != "" {
 			return ErrBoardPublicationAttemptConflict
+		}
+		if target.CausationID != "" {
+			if !validBoardPublicationID(target.CausationID) || target.HopCount < 1 || target.HopCount > domainconversation.BoardCommunicationMaxHopCount {
+				return ErrBoardPublicationAttemptConflict
+			}
+			wantCausationID, wantHopCount = target.CausationID, target.HopCount
 		}
 	case boardPublicationTargetNewRoot:
 		if target.ThreadID != "" || target.ReplyTo != "" || strings.TrimSpace(lease.Title) == "" {

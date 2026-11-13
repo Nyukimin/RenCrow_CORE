@@ -19,6 +19,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -89,6 +90,47 @@ func TestRunBoardPublicationDeliveryUsesCurrentClaimHintAndCommitsCanonicalReadb
 	}
 	if fixture.wire.ackCalls != 0 {
 		t.Fatal("C2b ACKed the inbox item; ACK ownership remains with C2a after durable completion")
+	}
+}
+
+func TestBoardPublicationRecoverySourceRequiresExactBrowserReplyProvenance(t *testing.T) {
+	item := boardInboxTestItem("item-browser-followup", "board-browser-reply-2", time.Date(2026, 11, 5, 3, 8, 0, 0, time.UTC), "Please continue.")
+	item.SenderID, item.Recipients = "ren-browser", []string{"shiro"}
+	const parentReplyTo = "board-shiro-reply-1"
+	target := conversationruntime.ExternalReplyTarget{
+		BoardInstanceID: boardInboxTestIdentity.JournalInstanceID, CorePrincipalID: "shiro", PeerPrincipalID: "ren-browser",
+		ChannelID: "channel-alpha", ThreadID: "thread-alpha", ReplyTo: item.MessageID,
+		CausationID: "board-root-message", HopCount: 3,
+	}
+	item.Kind, item.ReplyTo, item.CausationID, item.HopCount = "reply", parentReplyTo, target.CausationID, target.HopCount-1
+	message := boardcommunication.BoardMessage{
+		ID: item.MessageID, By: item.SenderID, At: item.CreatedAt.UTC().Format(time.RFC3339Nano), Body: item.Body,
+		Kind: item.Kind, ReplyTo: item.ReplyTo, CausationID: item.CausationID, HopCount: item.HopCount,
+		ChannelID: item.ChannelID, ThreadID: item.ThreadID, Recipients: []string{"shiro"}, Mentions: []string{},
+	}
+	source := boardInboxSource{
+		Item: item, Message: message,
+		Binding: domainconversation.ExternalPeerBinding{
+			BoardInstanceID: target.BoardInstanceID, RecipientPrincipalID: target.CorePrincipalID, ResponderActorID: "shiro",
+			ChannelID: target.ChannelID, ThreadID: target.ThreadID, MessageID: item.MessageID,
+			SenderPrincipalID: "ren-browser", WireKind: "reply",
+			Classification: domainconversation.ExternalPeerClassificationBrowserReplyFollowup, ReplyTo: parentReplyTo,
+		},
+	}
+	if !boardPublicationSourceMatchesTarget(source, target, "shiro") {
+		t.Fatal("recovered source did not preserve the exact browser reply binding and inherited causal chain")
+	}
+	for _, mutate := range []func(*boardInboxSource){
+		func(value *boardInboxSource) { value.Item.CausationID = "board-other-root" },
+		func(value *boardInboxSource) { value.Item.HopCount-- },
+		func(value *boardInboxSource) { value.Binding.WireKind = "request" },
+		func(value *boardInboxSource) { value.Binding.ReplyTo = "board-unbound-parent" },
+	} {
+		changed := source
+		mutate(&changed)
+		if boardPublicationSourceMatchesTarget(changed, target, "shiro") {
+			t.Fatalf("recovered browser source accepted mutation: %+v", changed)
+		}
 	}
 }
 

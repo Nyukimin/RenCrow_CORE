@@ -75,6 +75,22 @@ func TestRuntimeAcquiresMioHighAdmissionBeforeGeneration(t *testing.T) {
 	}
 }
 
+func TestOperativeHeartbeatActorIncludesExactlyEightChatActors(t *testing.T) {
+	for _, actor := range []string{"mio", "shiro", "midori", "kuro", "aka", "ao", "kin", "gin"} {
+		if !isOperativeHeartbeatActor(actor) {
+			t.Errorf("isOperativeHeartbeatActor(%q) = false, want true", actor)
+		}
+	}
+	for _, actor := range []string{"lumina", "MIO", "worker"} {
+		if isOperativeHeartbeatActor(actor) {
+			t.Errorf("isOperativeHeartbeatActor(%q) = true, want false", actor)
+		}
+	}
+	if !isOperativeHeartbeatActor(" aka ") {
+		t.Error("isOperativeHeartbeatActor(\" aka \") = false, want existing trim behavior preserved for all supported actors")
+	}
+}
+
 func TestExternalRuntimeUsesBoundResponderNormalAdmission(t *testing.T) {
 	request, _, _ := externalPeerReadViewFixture(t)
 	request = externalPeerRequestWithResponderActor(t, request, "shiro")

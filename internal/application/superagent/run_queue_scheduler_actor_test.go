@@ -112,6 +112,66 @@ func TestRunQueueSchedulerPlanForActorUsesCanonicalTaskOrderingAndIsReadOnly(t *
 	}
 }
 
+func TestRunQueueSchedulerPlanForAdditionalActorUsesOnlyPrivateChatQueueItems(t *testing.T) {
+	now := time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC)
+	actor := "aka"
+	privateTaskID, generalTaskID := modulecore.NewTaskID(), modulecore.NewTaskID()
+	privateQueueID, generalQueueID := modulecore.NewQueueItemID(), modulecore.NewQueueItemID()
+	privateTask := actorPlanningTask(privateTaskID, actor, domaintask.StatusQueued, domaintask.PriorityNormal, now.Add(-time.Minute))
+	privateTask.OwnerID = "ren"
+	privateTask.Route = domaintask.RouteCHAT
+	generalTask := actorPlanningTask(generalTaskID, actor, domaintask.StatusQueued, domaintask.PriorityCritical, now.Add(-time.Hour))
+	owner := &recordingTaskOwner{tasks: map[modulecore.TaskID]domaintask.Task{
+		privateTaskID: privateTask,
+		generalTaskID: generalTask,
+	}}
+	privateItem := domainsuperagent.RunQueueItem{
+		QueueItemID: privateQueueID, TaskID: privateTaskID, RunStartReason: domaintask.RunStartReasonFirst,
+		Goal: domainsuperagent.RunQueueGoalPrivateFirstChat, Action: "chat", Status: "queued",
+		IdempotencyKey: domainsuperagent.RunQueueIntentPrivateFirstChat, CreatedAt: now.Add(-time.Minute),
+	}
+	generalItem := actorPlanningItem(generalQueueID, generalTaskID, 0, now.Add(-time.Hour))
+	store := &actorPlanningQueueStore{recordingRunQueueStore: &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{generalItem, privateItem}}}
+	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(context.Context, domainsuperagent.RunQueueItem, modulecore.TraceID) (string, error) {
+		return "", nil
+	}), owner, RunQueueSchedulerOptions{Now: func() time.Time { return now }, ActorTaskLister: actorPlanningTaskLister(owner)})
+
+	item, task, err := requireActorPlannedScheduler(t, scheduler).PlanForActor(context.Background(), actor)
+	if err != nil {
+		t.Fatalf("PlanForActor(%q) error = %v", actor, err)
+	}
+	if item == nil || item.QueueItemID != privateQueueID || task.TaskID != privateTaskID || task.Assignee != actor {
+		t.Fatalf("PlanForActor(%q) = item %#v task %#v, want exact private CHAT queue item %s", actor, item, task, privateQueueID)
+	}
+}
+
+func TestRunQueueSchedulerRunPlannedAcceptsAdditionalActorButRejectsNonPrivateItem(t *testing.T) {
+	now := time.Date(2026, 11, 13, 8, 30, 0, 0, time.UTC)
+	taskID, queueID := modulecore.NewTaskID(), modulecore.NewQueueItemID()
+	item := actorPlanningItem(queueID, taskID, 1, now.Add(-time.Minute))
+	store := &actorPlanningQueueStore{recordingRunQueueStore: &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{item}}}
+	owner := &recordingTaskOwner{tasks: map[modulecore.TaskID]domaintask.Task{
+		taskID: actorPlanningTask(taskID, "aka", domaintask.StatusQueued, domaintask.PriorityNormal, now.Add(-time.Hour)),
+	}}
+	processorCalls := 0
+	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(context.Context, domainsuperagent.RunQueueItem, modulecore.TraceID) (string, error) {
+		processorCalls++
+		return "unexpected", nil
+	}), owner, RunQueueSchedulerOptions{Now: func() time.Time { return now }, LeaseDuration: time.Minute})
+
+	ran, err := requireActorPlannedScheduler(t, scheduler).RunPlanned(context.Background(), queueID, "aka")
+	if err != nil {
+		t.Fatalf("RunPlanned(non-private item, aka) error = %v; actor eligibility should be checked against item scope", err)
+	}
+	if ran {
+		t.Fatal("RunPlanned(non-private item, aka) = true, want new actor restricted to private CHAT work")
+	}
+	got := store.item(queueID)
+	if got.Status != "queued" || got.AttemptCount != 0 || got.LeaseToken != "" || processorCalls != 0 {
+		t.Fatalf("non-private item was not released unchanged: item=%#v processor_calls=%d", got, processorCalls)
+	}
+}
+
 func TestRunQueueSchedulerRunPlannedClaimsOnlyExactItem(t *testing.T) {
 	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
 	taskID, otherTaskID := modulecore.NewTaskID(), modulecore.NewTaskID()

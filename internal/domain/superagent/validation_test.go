@@ -235,6 +235,66 @@ func TestValidateAgentRunRequiresExactActorID(t *testing.T) {
 	}
 }
 
+func TestValidateActorIDRemainsLimitedToManagedExecutionActors(t *testing.T) {
+	for _, actorID := range []string{"mio", "shiro", "midori", "kuro"} {
+		if err := ValidateActorID(actorID); err != nil {
+			t.Errorf("ValidateActorID(%q) = %v, want existing managed Actor identity", actorID, err)
+		}
+	}
+	for _, actorID := range []string{"aka", "ao", "kin", "gin", "lumina", "worker"} {
+		if err := ValidateActorID(actorID); err == nil {
+			t.Errorf("ValidateActorID(%q) accepted a private CHAT/BOARD or mechanism identity", actorID)
+		}
+	}
+}
+
+func TestPrivateChatQueueActorIDsAreExactAndReturnedByCopy(t *testing.T) {
+	want := []string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"}
+	got := PrivateChatQueueActorIDs()
+	if len(got) != len(want) {
+		t.Fatalf("PrivateChatQueueActorIDs() = %v, want exactly %v", got, want)
+	}
+	for index, actorID := range want {
+		if got[index] != actorID || !IsPrivateChatQueueActorID(actorID) {
+			t.Errorf("private CHAT actor at %d = %q / eligible=%t, want %q / true", index, got[index], IsPrivateChatQueueActorID(actorID), actorID)
+		}
+	}
+	got[0] = "changed"
+	if next := PrivateChatQueueActorIDs(); next[0] != "mio" {
+		t.Fatalf("mutating a returned actor list changed the shared set: %v", next)
+	}
+	for _, actorID := range []string{"", "aka ", "Aka", "lumina", "worker"} {
+		if IsPrivateChatQueueActorID(actorID) {
+			t.Errorf("IsPrivateChatQueueActorID(%q) = true, want false", actorID)
+		}
+	}
+}
+
+func TestIsPrivateChatQueueTaskRequiresLocalUnparentedChatScope(t *testing.T) {
+	task := domaintask.Task{OwnerID: "ren", Route: domaintask.RouteCHAT}
+	if !IsPrivateChatQueueTask(task) {
+		t.Fatal("local, unparented CHAT Task was not recognized as private queue scope")
+	}
+	for name, mutate := range map[string]func(*domaintask.Task){
+		"missing owner":        func(value *domaintask.Task) { value.OwnerID = "" },
+		"noncanonical owner":   func(value *domaintask.Task) { value.OwnerID = "ren " },
+		"wrong route":          func(value *domaintask.Task) { value.Route = domaintask.RouteGeneral },
+		"external session":     func(value *domaintask.Task) { value.OriginSessionID = modulecore.NewSessionID() },
+		"external publication": func(value *domaintask.Task) { value.OriginPublication = &domaintask.OriginPublicationProvenance{} },
+		"accepted OPS claim":   func(value *domaintask.Task) { value.AcceptedOPSClaim = &domaintask.AcceptedOPSClaim{} },
+		"native resume claim":  func(value *domaintask.Task) { value.NativeResumeClaims = []domaintask.NativeOPSResumeClaim{{}} },
+		"parent Task":          func(value *domaintask.Task) { value.ParentTaskID = modulecore.NewTaskID() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := task
+			mutate(&candidate)
+			if IsPrivateChatQueueTask(candidate) {
+				t.Fatal("out-of-scope Task was recognized as private queue scope")
+			}
+		})
+	}
+}
+
 func TestValidateAgentRunUsesClosedStatusAndCompletionTimestampContract(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	valid := func(status string) AgentRun {

@@ -41,8 +41,8 @@ func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*do
 	if s == nil || s.store == nil || s.taskOwner == nil {
 		return nil, domaintask.Task{}, fmt.Errorf("run queue scheduler is not configured")
 	}
-	if err := domainsuperagent.ValidateActorID(actor); err != nil {
-		return nil, domaintask.Task{}, fmt.Errorf("plan run queue for actor: %w", err)
+	if !domainsuperagent.IsPrivateChatQueueActorID(actor) {
+		return nil, domaintask.Task{}, fmt.Errorf("plan run queue for actor: actor %q is outside the private CHAT queue set", actor)
 	}
 	if s.options.ActorTaskLister == nil {
 		return nil, domaintask.Task{}, fmt.Errorf("run queue scheduler has no actor task lister")
@@ -168,8 +168,8 @@ func (s *RunQueueScheduler) runPlanned(ctx context.Context, itemID modulecore.Qu
 	if s == nil || s.store == nil || s.processor == nil || s.taskOwner == nil {
 		return false, fmt.Errorf("run queue scheduler is not configured")
 	}
-	if err := domainsuperagent.ValidateActorID(actor); err != nil {
-		return false, fmt.Errorf("run planned queue item: %w", err)
+	if !domainsuperagent.IsPrivateChatQueueActorID(actor) {
+		return false, fmt.Errorf("run planned queue item: actor %q is outside the private CHAT queue set", actor)
 	}
 	if err := itemID.Validate(); err != nil {
 		return false, fmt.Errorf("run planned queue item: invalid queue_item_id: %w", err)
@@ -266,6 +266,10 @@ func actorPlannableTask(task domaintask.Task, taskID modulecore.TaskID, actor st
 }
 
 func actorPlannableTaskForQueueItem(task domaintask.Task, item domainsuperagent.RunQueueItem, taskID modulecore.TaskID, actor string) bool {
+	if domainsuperagent.ValidateActorID(actor) != nil &&
+		(!domainsuperagent.IsPrivateChatQueueTask(task) || !isPrivateTextQueueItem(item)) {
+		return false
+	}
 	if task.Status == domaintask.StatusQueued {
 		return !domainsuperagent.IsPrivateTextResumeQueueItem(item) && actorPlannableTask(task, taskID, actor)
 	}

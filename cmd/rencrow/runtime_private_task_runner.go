@@ -37,8 +37,8 @@ type privateTaskRunQueueRunner struct {
 	actors  map[string]privateTaskWorker
 }
 
-func newPrivateTaskRunQueueRunner(tasks *taskmanager.Manager, ownerID string, mio, shiroChat *agent.MioAgent, midori *agent.WildAgent) *privateTaskRunQueueRunner {
-	actors := make(map[string]privateTaskWorker, 3)
+func newPrivateTaskRunQueueRunner(tasks *taskmanager.Manager, ownerID string, mio, shiroChat *agent.MioAgent, midori *agent.WildAgent, privateTextWorkers map[string]privateTaskWorker) *privateTaskRunQueueRunner {
+	actors := make(map[string]privateTaskWorker, 3+len(privateTextWorkers))
 	if mio != nil {
 		actors["mio"] = mio
 	}
@@ -47,6 +47,12 @@ func newPrivateTaskRunQueueRunner(tasks *taskmanager.Manager, ownerID string, mi
 	}
 	if midori != nil {
 		actors["midori"] = midori
+	}
+	for actorID, worker := range privateTextWorkers {
+		if !isPrivateTextWorkerActor(actorID) || worker == nil {
+			continue
+		}
+		actors[actorID] = worker
 	}
 	return &privateTaskRunQueueRunner{tasks: tasks, ownerID: strings.TrimSpace(ownerID), actors: actors}
 }

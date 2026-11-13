@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -66,11 +68,13 @@ type boardPublicationDeliveryInput struct {
 // boardPublicationDeliveryRoute keeps a new-thread destination separate from
 // a peer reply. C2b initially handles the peer-reply route.
 type boardPublicationDeliveryRoute struct {
-	Kind      boardPublicationRouteKind
-	ChannelID string
-	ThreadID  string
-	Title     string
-	ReplyTo   string
+	Kind        boardPublicationRouteKind
+	ChannelID   string
+	ThreadID    string
+	Title       string
+	ReplyTo     string
+	CausationID string
+	HopCount    int
 }
 
 type boardPublicationRouteKind string
@@ -225,8 +229,16 @@ func boardPublicationRouteForLease(lease eventstore.BoardPublicationLease) (boar
 		if target.ThreadID == "" || target.ReplyTo == "" || lease.Title != "" {
 			return boardPublicationDeliveryRoute{}, ErrBoardInboxCanonicalMismatch
 		}
+		causationID, hopCount := target.CausationID, target.HopCount
+		if causationID == "" {
+			causationID, hopCount = target.ReplyTo, 1
+		}
+		if causationID == "" || hopCount < 1 || hopCount > domainconversation.BoardCommunicationMaxHopCount {
+			return boardPublicationDeliveryRoute{}, ErrBoardInboxCanonicalMismatch
+		}
 		return boardPublicationDeliveryRoute{
 			Kind: boardPublicationPeerReplyRoute, ChannelID: target.ChannelID, ThreadID: target.ThreadID, ReplyTo: target.ReplyTo,
+			CausationID: causationID, HopCount: hopCount,
 		}, nil
 	case "new_root":
 		if target.ThreadID != "" || target.ReplyTo != "" || strings.TrimSpace(lease.Title) == "" {
@@ -251,7 +263,8 @@ func validateBoardPublicationClaimHint(lease eventstore.BoardPublicationLease, s
 		hint.Source.Message.ID != hint.Source.Item.MessageID || hint.Source.Binding.BoardInstanceID != target.BoardInstanceID ||
 		hint.Source.Binding.RecipientPrincipalID != target.CorePrincipalID || hint.Source.Binding.ChannelID != target.ChannelID ||
 		hint.Source.Binding.ThreadID != target.ThreadID || hint.Source.Binding.MessageID != target.ReplyTo ||
-		hint.Source.Binding.SenderPrincipalID != target.PeerPrincipalID || hint.Source.Binding.Classification != "request" {
+		hint.Source.Binding.SenderPrincipalID != target.PeerPrincipalID ||
+		!boardPublicationSourceMatchesTarget(hint.Source, target, boardPublicationTargetActorID(target, lease.CanonicalResponse.ActorID)) {
 		return boardInboxSource{}, boardInboxClaim{}, ErrBoardInboxCanonicalMismatch
 	}
 	return hint.Source, hint.Claim, nil
@@ -315,19 +328,55 @@ func readCanonicalBoardPublicationSource(ctx context.Context, client *boardcommu
 	if err != nil {
 		return boardInboxSource{}, err
 	}
-	if !isBoardInboxRequest(source.Message) ||
-		source.Binding.BoardInstanceID != lease.PublicationIntent.Target.BoardInstanceID ||
-		source.Binding.RecipientPrincipalID != lease.PublicationIntent.Target.CorePrincipalID ||
-		source.Binding.SenderPrincipalID != lease.PublicationIntent.Target.PeerPrincipalID ||
-		source.Binding.MessageID != lease.PublicationIntent.Target.ReplyTo ||
-		source.Binding.ChannelID != lease.PublicationIntent.Target.ChannelID || source.Binding.ThreadID != lease.PublicationIntent.Target.ThreadID {
-		return boardInboxSource{}, ErrBoardInboxCanonicalMismatch
+	target := lease.PublicationIntent.Target
+	if target.CorePrincipalID != domainconversation.BoardCommunicationMeetingMioPrincipalID && domainconversation.IsExternalPeerResponderActor(target.CorePrincipalID) {
+		source.Binding.ResponderActorID = target.CorePrincipalID
 	}
-	source.Binding.Classification = domainconversation.ExternalPeerClassificationRequest
-	if err := source.Binding.ValidateNewRequest(); err != nil {
+	if target.CausationID == "" {
+		source.Binding.Classification = domainconversation.ExternalPeerClassificationRequest
+	} else {
+		source.Binding.Classification = domainconversation.ExternalPeerClassificationBrowserReplyFollowup
+	}
+	if !boardPublicationSourceMatchesTarget(source, target, boardPublicationTargetActorID(target, lease.CanonicalResponse.ActorID)) {
 		return boardInboxSource{}, ErrBoardInboxCanonicalMismatch
 	}
 	return source, nil
+}
+
+func boardPublicationTargetActorID(target conversationruntime.ExternalReplyTarget, canonicalActorID string) string {
+	if canonicalActorID != "" {
+		return canonicalActorID
+	}
+	if target.CorePrincipalID == domainconversation.BoardCommunicationMeetingMioPrincipalID {
+		return "mio"
+	}
+	if domainconversation.IsExternalPeerResponderActor(target.CorePrincipalID) {
+		return target.CorePrincipalID
+	}
+	return "mio"
+}
+
+func boardPublicationSourceMatchesTarget(source boardInboxSource, target conversationruntime.ExternalReplyTarget, expectedActorID string) bool {
+	binding, message, item := source.Binding, source.Message, source.Item
+	if expectedActorID == "" || binding.EffectiveResponderActorID() != expectedActorID ||
+		binding.BoardInstanceID != target.BoardInstanceID || binding.RecipientPrincipalID != target.CorePrincipalID ||
+		binding.ChannelID != target.ChannelID || binding.ThreadID != target.ThreadID || binding.MessageID != target.ReplyTo ||
+		binding.SenderPrincipalID != target.PeerPrincipalID || item.MessageID != message.ID || item.SenderID != message.By ||
+		item.ChannelID != message.ChannelID || item.ThreadID != message.ThreadID || !containsBoardInboxID(item.Recipients, target.CorePrincipalID) {
+		return false
+	}
+	if target.CausationID == "" {
+		return binding.Classification == domainconversation.ExternalPeerClassificationRequest && message.ReplyTo == "" &&
+			isBoardInboxRequest(message) && binding.ValidateNewRequest() == nil
+	}
+	return superagent.IsPrivateChatQueueActorID(expectedActorID) &&
+		target.PeerPrincipalID == "ren-browser" && binding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup &&
+		message.By == "ren-browser" && message.Kind == "reply" && message.ReplyTo != "" && binding.ReplyTo == message.ReplyTo &&
+		item.Kind == message.Kind && item.ReplyTo == message.ReplyTo && item.CausationID == message.CausationID &&
+		item.HopCount == message.HopCount && target.CausationID == message.CausationID &&
+		target.HopCount >= 2 && target.HopCount <= domainconversation.BoardCommunicationMaxHopCount &&
+		message.HopCount == target.HopCount-1 && message.HopCount < domainconversation.BoardCommunicationMaxHopCount &&
+		message.HopCount >= 1 && binding.ValidateBrowserReplyFollowup() == nil
 }
 
 func acquireFreshBoardPublicationClaim(ctx context.Context, client *boardcommunication.Client, scope eventstore.BoardPublicationScope, source boardInboxSource, now time.Time, priorReceiptSHA256 string) (boardInboxClaim, error) {
@@ -520,7 +569,7 @@ func readBoardPublicationCanonicalResult(ctx context.Context, client *boardcommu
 		cursor = page.NextCursor
 	}
 	mentions := preparedBoardPublicationMentions(prepared)
-	wantKind, wantCausationID, wantHopCount := "reply", route.ReplyTo, 1
+	wantKind, wantCausationID, wantHopCount := "reply", route.CausationID, route.HopCount
 	if route.Kind == boardPublicationNewThreadRoute {
 		wantKind, wantCausationID, wantHopCount = "request", receipt.MessageID, 0
 	}

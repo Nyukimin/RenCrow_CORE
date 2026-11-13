@@ -98,7 +98,7 @@ var resilienceStackTargets = map[string]map[string]struct{}{
 	"com.rencrow.redis":                   {resilienceStackDomain: {}},
 	"com.rencrow.qdrant":                  {resilienceStackDomain: {}},
 	"com.rencrow.llm-gateway":             {resilienceStackDomain: {}},
-	"com.rencrow.portal":                  {resilienceStackDomain: {}},
+	"com.rencrow.portal":                  {resilienceStackDomain: {}, resilienceStackUser501: {}},
 	"com.rencrow.board-gateway.public":    {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
 	"com.rencrow.board-gateway.lan":       {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
 	"com.rencrow.board-communication":     {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
@@ -214,6 +214,9 @@ func canonicalResilienceStackPlistPathForHome(domain, label, home string) (strin
 		volumeRoot := volume + string(filepath.Separator)
 		if !filepath.IsAbs(home) || filepath.Clean(home) != home || home == string(filepath.Separator) || home == volume || home == volumeRoot {
 			return "", errors.New("launchd gui/501 owner has no canonical absolute home directory")
+		}
+		if domain == resilienceStackUser501 && label == "com.rencrow.portal" {
+			return filepath.Join(home, ".rencrow", "launchd", label+".plist"), nil
 		}
 		return filepath.Join(home, "Library", "LaunchAgents", label+".plist"), nil
 	default:

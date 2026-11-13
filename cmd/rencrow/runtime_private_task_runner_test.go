@@ -56,7 +56,7 @@ func TestPrivateTaskRunQueueRunnerPausesAndResumesSameTaskFromSavedOutput(t *tes
 	stop := make(chan struct{})
 	provider := &privateTaskQueueLLMProvider{response: output, onGenerate: func() { close(stop) }}
 	wild := agent.NewWildAgent(provider, "Midori: write requested text only.")
-	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild)
+	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild, nil)
 	legacyProcessor := &captureSuperAgentRunQueueProcessor{}
 	scheduler := appsuperagent.NewRunQueueScheduler(runtimeStore,
 		newSuperAgentRunQueueProcessor(legacyProcessor, backgroundJobFailureReporter{}, true, runner), owner,
@@ -182,7 +182,7 @@ func testPrivateTaskRunQueueRunnerPersistsMidoriTextOnlyToCanonicalTaskAndRun(t 
 
 	provider := &privateTaskQueueLLMProvider{response: "A blue lantern glowed beside the river."}
 	wild := agent.NewWildAgent(provider, "Midori: write requested text only.")
-	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild)
+	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild, nil)
 	legacyProcessor := &captureSuperAgentRunQueueProcessor{}
 	scheduler := appsuperagent.NewRunQueueScheduler(runtimeStore,
 		newSuperAgentRunQueueProcessor(legacyProcessor, backgroundJobFailureReporter{}, true, runner), owner,
@@ -273,7 +273,7 @@ func TestPrivateTaskRunQueueRunnerTerminalizesProviderCancellationWithoutLeaking
 	}
 	provider := &privateTaskQueueLLMProvider{failure: context.Canceled}
 	wild := agent.NewWildAgent(provider, "Midori: write requested text only.")
-	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild)
+	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild, nil)
 	legacyProcessor := &captureSuperAgentRunQueueProcessor{}
 	listener := &captureBackgroundJobEventListener{}
 	scheduler := appsuperagent.NewRunQueueScheduler(runtimeStore,
@@ -341,7 +341,7 @@ func TestPrivateTaskRunQueueRunnerRejectsWrongOwnerBeforeProviderAndTerminalizes
 	runtimeStore := composeRuntimeSuperAgentStore(queue, events)
 	provider := &privateTaskQueueLLMProvider{response: "must never execute"}
 	wild := agent.NewWildAgent(provider, "Midori private task test.")
-	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild)
+	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, wild, nil)
 	legacyProcessor := &captureSuperAgentRunQueueProcessor{}
 	scheduler := appsuperagent.NewRunQueueScheduler(runtimeStore,
 		newSuperAgentRunQueueProcessor(legacyProcessor, backgroundJobFailureReporter{}, true, runner), owner,
@@ -392,7 +392,7 @@ func TestPrivateTaskRunQueueRunnerRejectsPrivateIntentWhenNoActorIsConfigured(t 
 		Goal: domainsuperagent.RunQueueGoalPrivateFirstChat, Action: "chat", IdempotencyKey: domainsuperagent.RunQueueIntentPrivateFirstChat,
 		WorkstreamID: string(task.WorkstreamID), AttemptCount: 3,
 	}
-	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, nil)
+	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, nil, nil)
 	if _, err := runner.process(ctx, item, modulecore.NewTraceID()); err == nil || !strings.Contains(err.Error(), "actor is unavailable") {
 		t.Fatalf("private runner error=%v, want a closed actor configuration refusal", err)
 	}

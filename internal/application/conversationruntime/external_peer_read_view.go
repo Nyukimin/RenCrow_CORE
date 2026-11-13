@@ -28,8 +28,8 @@ func validateAcceptedExternalPeerInput(request ReadViewRequest, event modulecore
 	if err != nil {
 		return fmt.Errorf("%w: accepted external peer binding is invalid", ErrReadViewInvalid)
 	}
-	if err := binding.ValidateNewRequest(); err != nil {
-		return fmt.Errorf("%w: accepted external peer source is not a request", ErrReadViewInvalid)
+	if err := validateExternalPeerBindingSource(binding, event.Payload); err != nil {
+		return fmt.Errorf("%w: accepted external peer source is not a validated request or browser followup", ErrReadViewInvalid)
 	}
 	sourceActorID, err := binding.SourceActorID()
 	if err != nil || sourceActorID != accepted.ActorID || sourceActorID != request.Principal.ActorID {
@@ -74,14 +74,45 @@ func validateExternalPeerBody(payload map[string]any) error {
 	return nil
 }
 
+func validateExternalPeerBindingSource(binding domainconversation.ExternalPeerBinding, payload map[string]any) error {
+	switch binding.Classification {
+	case domainconversation.ExternalPeerClassificationRequest:
+		if err := binding.ValidateNewRequest(); err != nil {
+			return err
+		}
+		causationID, hopCount, found, err := externalBoardSourceCausalChain(payload)
+		if err != nil {
+			return err
+		}
+		if found && (causationID != binding.MessageID || hopCount != 0) {
+			return errors.New("root BOARD source causal chain is inconsistent")
+		}
+		return nil
+	case domainconversation.ExternalPeerClassificationBrowserReplyFollowup:
+		if err := binding.ValidateBrowserReplyFollowup(); err != nil {
+			return err
+		}
+		causationID, hopCount, found, err := externalBoardSourceCausalChain(payload)
+		if err != nil {
+			return err
+		}
+		if !found || causationID == "" || hopCount < 1 || hopCount >= domainconversation.BoardCommunicationMaxHopCount {
+			return errors.New("browser followup BOARD causal chain is not replyable")
+		}
+		return nil
+	default:
+		return errors.New("external peer classification cannot start a conversation turn")
+	}
+}
+
 func buildExternalPeerReadView(ctx context.Context, request ReadViewRequest, tail CanonicalTail, tailAfter modulecore.EventSeq) (ReadView, error) {
 	accepted := request.Accepted
 	currentBinding, err := domainconversation.ParseExternalPeerBinding(accepted.InputEvent.Payload)
 	if err != nil {
 		return ReadView{}, fmt.Errorf("%w: accepted external peer binding is invalid", ErrReadViewInvalid)
 	}
-	if err := currentBinding.ValidateNewRequest(); err != nil {
-		return ReadView{}, fmt.Errorf("%w: accepted external peer source is not a request", ErrReadViewInvalid)
+	if err := validateExternalPeerBindingSource(currentBinding, accepted.InputEvent.Payload); err != nil {
+		return ReadView{}, fmt.Errorf("%w: accepted external peer source is invalid", ErrReadViewInvalid)
 	}
 
 	requestsByBinding := make(map[domainconversation.ExternalPeerBinding]externalPeerInput)
@@ -228,8 +259,8 @@ func validateExternalTailStructure(message CanonicalMessage, request ReadViewReq
 
 func validateExternalPeerRequestMessage(message CanonicalMessage, binding domainconversation.ExternalPeerBinding) error {
 	event, index := message.Event, message.Index
-	if err := binding.ValidateNewRequest(); err != nil {
-		return fmt.Errorf("%w: canonical external peer request classification is invalid", ErrReadViewInvalid)
+	if err := validateExternalPeerBindingSource(binding, event.Payload); err != nil {
+		return fmt.Errorf("%w: canonical external peer input classification is invalid", ErrReadViewInvalid)
 	}
 	sourceActorID, err := binding.SourceActorID()
 	if err != nil || event.EventType != "conversation.external_peer_message" || event.ComponentID != "orchestrator" ||

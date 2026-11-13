@@ -12,7 +12,7 @@ func TestAgentHeartbeatHealthDoesNotDegradeWithoutScheduledBoardActors(t *testin
 	cfg := &config.Config{}
 	cfg.Heartbeat.AgentSchedulerEnabled = true
 	cfg.BoardCommunication.Enabled = true
-	cfg.BoardCommunication.Responders = []config.BoardCommunicationResponderConfig{{ActorID: "aka"}}
+	cfg.BoardCommunication.Responders = []config.BoardCommunicationResponderConfig{{ActorID: "lumina"}}
 	deps := &Dependencies{
 		agentHeartbeat:        agentheartbeat.New(agentHeartbeatActorIDs, agentheartbeat.Sources{}, nil),
 		agentHeartbeatStarted: true,
@@ -24,5 +24,32 @@ func TestAgentHeartbeatHealthDoesNotDegradeWithoutScheduledBoardActors(t *testin
 	}
 	if strings.Contains(message, "BOARD degraded (0/0") {
 		t.Fatalf("agentHeartbeatHealth() message = %q, must not mark intentional BOARD-only event-driven responders degraded", message)
+	}
+}
+
+func TestAgentHeartbeatActorsIncludeEightExactChatActors(t *testing.T) {
+	want := []string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"}
+	if len(agentHeartbeatActorIDs) != len(want) {
+		t.Fatalf("agentHeartbeatActorIDs length=%d, want %d actors: %v", len(agentHeartbeatActorIDs), len(want), agentHeartbeatActorIDs)
+	}
+	for _, actor := range want {
+		found := false
+		for _, got := range agentHeartbeatActorIDs {
+			if got == actor {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("agentHeartbeatActorIDs=%v does not include %q", agentHeartbeatActorIDs, actor)
+		}
+		if !isAgentHeartbeatActor(actor) {
+			t.Errorf("isAgentHeartbeatActor(%q) = false, want true", actor)
+		}
+	}
+	for _, actor := range []string{"lumina", "worker", "MIO", "aka "} {
+		if isAgentHeartbeatActor(actor) {
+			t.Errorf("isAgentHeartbeatActor(%q) = true, want false", actor)
+		}
 	}
 }

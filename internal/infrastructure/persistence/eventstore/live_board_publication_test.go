@@ -14,6 +14,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/conversationruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -456,6 +457,27 @@ func externalPublicationCommitFixture(t *testing.T, input AcceptInput, accepted 
 		GenerationEpoch: accepted.GenerationEpoch, OperationID: operationID,
 		SourceBinding: binding, SourceFingerprint: hex.EncodeToString(fingerprint[:]),
 	}
+	if binding.Classification == domainconversation.ExternalPeerClassificationBrowserReplyFollowup {
+		boardSource, ok := accepted.InputEvent.Payload["board_source"].(map[string]any)
+		causationID, causeOK := boardSource["causation_id"].(string)
+		hopCount, hopOK := 0, false
+		switch value := boardSource["hop_count"].(type) {
+		case int:
+			hopCount, hopOK = value, true
+		case float64:
+			if value == float64(int(value)) {
+				hopCount, hopOK = int(value), true
+			}
+		case json.Number:
+			if parsed, err := value.Int64(); err == nil {
+				hopCount, hopOK = int(parsed), true
+			}
+		}
+		if !ok || !causeOK || !hopOK {
+			t.Fatal("browser followup commit fixture requires exact durable BOARD causation metadata")
+		}
+		lookup.SourceCausationID, lookup.SourceHopCount = causationID, hopCount
+	}
 
 	responseMessageID := modulecore.NewMessageID()
 	responderActorID := binding.EffectiveResponderActorID()
@@ -497,6 +519,10 @@ func externalPublicationCommitFixture(t *testing.T, input AcceptInput, accepted 
 			ThreadID: binding.ThreadID, ReplyTo: binding.MessageID,
 		},
 		StableLogicalKey: "external-publication:" + operationID,
+	}
+	if lookup.SourceCausationID != "" {
+		intent.Target.CausationID = lookup.SourceCausationID
+		intent.Target.HopCount = lookup.SourceHopCount + 1
 	}
 	return lookup, conversationruntime.ExternalCommitBundle{
 		ExpectedLookup: lookup, ResultState: "completed",

@@ -140,6 +140,125 @@ func TestAcceptBoardPeerRequestPersistsExactSourceAndReplaysAfterReopen(t *testi
 	}
 }
 
+func TestAcceptBrowserReplyFollowupUsesExactPublishedParentAndSameThread(t *testing.T) {
+	fixture := newBoardPublicationDeliveryFixtureForSource(t, "shiro", true, false, "ren-browser")
+	ctx := context.Background()
+	parent, _ := completePeerReplyPublicationForReadbackTest(t, fixture)
+	if parent.ExpectedPeerPrincipalID != "ren-browser" || parent.CanonicalMessage.SenderPrincipalID != "shiro" ||
+		parent.CanonicalMessage.ChannelID != fixture.lookup.SourceBinding.ChannelID ||
+		parent.CanonicalMessage.ThreadID != fixture.lookup.SourceBinding.ThreadID || parent.CanonicalMessage.ReplyTo == "" {
+		t.Fatalf("fixture did not create a completed Shiro reply to ren-browser in the original thread: %#v", parent)
+	}
+	threadCreatedAt := fixture.accepted.InputEvent.OccurredAt.Add(-time.Hour).UTC()
+	key := BoardPeerThreadSessionKey{
+		Scope: fixture.scope, ChannelID: fixture.lookup.SourceBinding.ChannelID, ThreadID: fixture.lookup.SourceBinding.ThreadID,
+		ThreadCreatedAt: threadCreatedAt, ResponderActorID: "shiro",
+	}
+	if _, err := fixture.store.BindBoardPeerThreadSession(ctx, BoardPeerThreadSessionBinding{Key: key, SessionID: fixture.accepted.SessionID}); err != nil {
+		t.Fatalf("BindBoardPeerThreadSession(original browser thread): %v", err)
+	}
+	source := BoardPeerRequestSource{
+		Scope: fixture.scope,
+		Binding: domainconversation.ExternalPeerBinding{
+			BoardInstanceID: fixture.scope.JournalInstanceID, RecipientPrincipalID: "shiro", ResponderActorID: "shiro",
+			ChannelID: key.ChannelID, ThreadID: key.ThreadID, MessageID: "board-browser-reply-2",
+			SenderPrincipalID: "ren-browser", WireKind: "reply",
+			Classification: domainconversation.ExternalPeerClassification("browser_reply_followup"),
+			ReplyTo:        parent.CanonicalMessage.MessageID,
+		},
+		InboxItemID: "inbox-browser-reply-2", InboxCreatedAt: fixture.now.Add(time.Second),
+		MessageAt: fixture.now.Add(2 * time.Second), ThreadCreatedAt: threadCreatedAt,
+		Body: "Please continue from that answer.", Recipients: []string{"shiro"}, Mentions: []string{"shiro"},
+		CausationID: parent.CanonicalMessage.CausationID, HopCount: parent.CanonicalMessage.HopCount + 1,
+	}
+	if got, found, err := fixture.store.FindAcceptedBoardPeerRequest(ctx, source); err != nil || found || got.TurnID != "" {
+		t.Fatalf("FindAcceptedBoardPeerRequest(valid unaccepted browser followup) = %#v, found %t, err %v; want valid exact source absent", got, found, err)
+	}
+	input := BoardPeerRequestAcceptInput{
+		Source: source, SessionID: fixture.accepted.SessionID, RuntimeVersion: "v2", GenerationEpoch: fixture.accepted.GenerationEpoch,
+	}
+	accepted, err := fixture.store.AcceptBoardPeerRequest(ctx, input)
+	if err != nil {
+		t.Fatalf("AcceptBoardPeerRequest(exact browser reply followup): %v", err)
+	}
+	if accepted.SessionID != fixture.accepted.SessionID || accepted.TurnID == fixture.accepted.TurnID {
+		t.Fatalf("browser followup turn session/turn = %q/%q; want the same BOARD-thread session and a new turn", accepted.SessionID, accepted.TurnID)
+	}
+	storedBinding, err := domainconversation.ParseExternalPeerBinding(accepted.InputEvent.Payload)
+	if err != nil || !storedBinding.Equal(source.Binding) || storedBinding.WireKind != "reply" || storedBinding.ReplyTo != parent.CanonicalMessage.MessageID {
+		t.Fatalf("accepted browser followup binding = %+v, %v; want exact raw reply provenance", storedBinding, err)
+	}
+
+	fixture.reopen(t)
+	loaded, found, err := fixture.store.FindAcceptedBoardPeerRequest(ctx, source)
+	if err != nil || !found || loaded.SessionID != fixture.accepted.SessionID || loaded.TurnID != accepted.TurnID || !sameBoardPeerJSON(loaded, accepted) {
+		t.Fatalf("FindAcceptedBoardPeerRequest(browser followup after reopen) = %#v, found %t, err %v; want exact durable same-thread turn", loaded, found, err)
+	}
+	replayed, err := fixture.store.AcceptBoardPeerRequest(ctx, input)
+	if err != nil || !sameBoardPeerJSON(replayed, accepted) {
+		t.Fatalf("AcceptBoardPeerRequest(browser followup after reopen) = %#v, err %v; want original acceptance", replayed, err)
+	}
+	followupCommitInput := AcceptInput{OwnerID: fixture.lookup.OwnerID, ExternalPeerBinding: &source.Binding}
+	followupLookup, followupBundle := externalPublicationCommitFixture(t, followupCommitInput, loaded)
+	if _, err := fixture.store.CommitExternalTurnBundle(ctx, followupBundle); err != nil {
+		t.Fatalf("CommitExternalTurnBundle(browser followup): %v", err)
+	}
+	claimAt := fixture.now.Add(10 * time.Minute)
+	followupLease, available, err := fixture.store.ClaimBoardPublication(ctx, BoardPublicationClaimInput{
+		Scope: fixture.scope, ResponderActorID: "shiro", Now: claimAt, LeaseDuration: time.Minute,
+	})
+	if err != nil || !available {
+		t.Fatalf("ClaimBoardPublication(browser followup): available %t, err %v", available, err)
+	}
+	if followupLookup.SourceCausationID != source.CausationID || followupLookup.SourceHopCount != source.HopCount ||
+		followupLease.PublicationIntent.Target.CausationID != source.CausationID ||
+		followupLease.PublicationIntent.Target.HopCount != source.HopCount+1 {
+		t.Fatalf("browser followup B2 causal target = lookup %q/%d target %q/%d; want durable source chain %q/%d then next hop",
+			followupLookup.SourceCausationID, followupLookup.SourceHopCount,
+			followupLease.PublicationIntent.Target.CausationID, followupLease.PublicationIntent.Target.HopCount,
+			source.CausationID, source.HopCount)
+	}
+	prepared := preparedBoardPublicationBytes(followupLease, "browser-followup-claim", "browser-followup-receipt")
+	attempt, err := fixture.store.RecordBoardPublicationAttempt(ctx, BoardPublicationAttemptInput{
+		Lease: followupLease, Now: claimAt, LogicalKey: followupLease.LogicalKey,
+		PreparedBytes: prepared, PayloadSHA256: boardPublicationPayloadHash(prepared),
+		ProcessingClaimLeaseUntil: claimAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("RecordBoardPublicationAttempt(browser followup): %v", err)
+	}
+	fixture.reopen(t)
+	reclaimed, available, err := fixture.store.ClaimBoardPublication(ctx, BoardPublicationClaimInput{
+		Scope: fixture.scope, ResponderActorID: "shiro", Now: followupLease.LeaseExpiresAt.Add(time.Second), LeaseDuration: time.Minute,
+	})
+	if err != nil || !available || reclaimed.PublicationIntent.Target.CausationID != source.CausationID ||
+		reclaimed.PublicationIntent.Target.HopCount != source.HopCount+1 || len(reclaimed.Attempts) != 1 ||
+		!reflect.DeepEqual(reclaimed.Attempts[0], attempt) {
+		t.Fatalf("ClaimBoardPublication(browser followup recovery) = %#v, available %t, err %v; want exact attempt and causal target after reopen", reclaimed, available, err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*BoardPeerRequestSource)
+	}{
+		{name: "unbound parent", mutate: func(value *BoardPeerRequestSource) { value.Binding.ReplyTo = "board-message-without-b2" }},
+		{name: "cross-thread parent", mutate: func(value *BoardPeerRequestSource) { value.Binding.ThreadID = "thread-other" }},
+		{name: "causation changed", mutate: func(value *BoardPeerRequestSource) { value.CausationID = "board-unrelated-root" }},
+		{name: "hop chain changed", mutate: func(value *BoardPeerRequestSource) { value.HopCount++ }},
+		{name: "unreplyable hop eight", mutate: func(value *BoardPeerRequestSource) { value.HopCount = 8 }},
+		{name: "non-browser sender", mutate: func(value *BoardPeerRequestSource) { value.Binding.SenderPrincipalID = "grok" }},
+		{name: "wire request instead of reply", mutate: func(value *BoardPeerRequestSource) { value.Binding.WireKind = "request" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := source
+			test.mutate(&changed)
+			if got, found, err := fixture.store.FindAcceptedBoardPeerRequest(ctx, changed); found || err == nil {
+				t.Fatalf("FindAcceptedBoardPeerRequest(changed %s) = %#v, found %t, err %v; want fail-closed mismatch", test.name, got, found, err)
+			}
+		})
+	}
+}
+
 func TestFindAcceptedBoardPeerRequestBeforeFirstThreadBindingReturnsNotFound(t *testing.T) {
 	fixture := newBoardPeerIngressFixture(t)
 	ctx := context.Background()
