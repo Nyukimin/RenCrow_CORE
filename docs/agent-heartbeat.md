@@ -35,9 +35,15 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 
 macOSでは、COREと独立したシステムサービスから `rencrow resilience stack-reconcile` を10秒間隔で実行する。設定ファイルは `/Library/Application Support/RenCrow/resilience-stack.v1.json`。`schema` を `rencrow.launchd-stack/v1`、`complete` を `true` とし、実機で確認した常駐サービスを `services` に起動順で列挙する。各要素に `label`、`domain`、`plist_path`、`dependencies`、`readiness` を記録する。COREの死活確認には `127.0.0.1:18790` の `/health/live` を使う。サービスの疎通は `http` または `tcp` でローカルの正規入口を確認する。サービス固有の監視口がない常駐プロセスは、`process` でlaunchdの稼働状態とPIDを照合する。
 
+`tcp` と `http` readinessの固定addressは、対象サービスが実際にlistenする固定loopback addressと一致させる。動的ポートの場合は、そのプロセスが公式に提供するdiscoveryから現在のlisten addressを取得して検証するprobeが必要になる。manifest v1は固定のIP:portだけを表せるため、probe追加前は動的listenerをreadinessに指定しない。
+
+Mac 207では既存planの他項目を変えず、2つのtunnelの `health.listen_addr` だけを `127.0.0.1:55363` と `127.0.0.1:55369` に合わせる。operatorの確認には、それぞれ `tunnel-client health --port 55363 --pid <PID> --require-control-plane-poll` と `tunnel-client health --port 55369 --pid <PID> --require-control-plane-poll` を使い、実プロセスのlistenとcontrol-plane pollを確認する。初回E2Eではポート不一致で起動が止まった際にmonitorがcursorを保存し、設定修正後のreconcileで復旧することを確認した。
+
 監視はCOREのPIDを保存し、launchdがCOREを先に自動再起動した場合もPIDの変化を検出する。復旧時は計画のハッシュ、停止と起動の段階、最後に確認したサービスの位置を保存する。停止が途中なら残りの停止を確認してから起動へ進み、起動が途中なら依存先と起動済みのサービスを確認して続ける。COREが稼働中のBOARD単独障害では、専用タスクを続けながらBOARDの復旧を待つ。
 
 Macの監視サービスは [LaunchDaemonの定義](../deploy/macos/com.rencrow.resilience-stack-monitor.plist.template) に従う。管理者がビルド済みの監視用バイナリを `/usr/local/libexec/rencrow-stack-monitor` に、実機で照合した計画を所定の場所にroot所有で設置する。`rencrow resilience stack-check` で構成と現在の状態を確認してから、LaunchDaemonをsystemドメインに登録する。計画停止の前後には、システムサービスの管理者が `rencrow resilience stack-maintenance enter` と `rencrow resilience stack-maintenance leave` を使う。
+
+障害試験用TaskはCOREが正規writerなので、CORE稼働中は `rencrow tasks create` がwriter lock busyで失敗する。`stack-maintenance enter` の後にCOREを計画停止してwriterを解放し、停止中に `rencrow tasks create` を実行する。COREを起動してreadinessを確認したら `stack-maintenance leave` を実行し、monitorの `baseline established` を確認してから `rencrow tasks enqueue <task_id>` を実行する。
 
 初回設置では、管理者が次の例の3ファイルを照合してから設置する。初回の `stack-reconcile` が `baseline established` と現在のCORE PIDを記録したことを確認する。
 

@@ -22,6 +22,7 @@ import (
 const resilienceStackLaunchctlPath = "/bin/launchctl"
 const resilienceStackInspectionCommandTimeout = 10 * time.Second
 const resilienceStackOperationCommandTimeout = 60 * time.Second
+const resilienceStackUnloadWaitTimeout = 75 * time.Second
 
 type darwinResilienceStackOperator struct{}
 
@@ -176,8 +177,53 @@ func (darwinResilienceStackOperator) Readiness(ctx context.Context, service resi
 }
 
 func (darwinResilienceStackOperator) Bootout(ctx context.Context, service resilienceStackService) error {
-	_, err := runResilienceStackLaunchctl(ctx, resilienceStackOperationCommandTimeout, "bootout", service.Domain+"/"+service.Label)
-	return err
+	operator := darwinResilienceStackOperator{}
+	return bootoutResilienceStackTarget(
+		ctx,
+		service,
+		resilienceStackUnloadWaitTimeout,
+		resilienceStackPollEvery,
+		func(ctx context.Context, service resilienceStackService) error {
+			_, err := runResilienceStackLaunchctl(ctx, resilienceStackOperationCommandTimeout, "bootout", service.Domain+"/"+service.Label)
+			return err
+		},
+		operator.Inspect,
+	)
+}
+
+func bootoutResilienceStackTarget(
+	ctx context.Context,
+	service resilienceStackService,
+	waitTimeout time.Duration,
+	pollInterval time.Duration,
+	bootout func(context.Context, resilienceStackService) error,
+	inspect func(context.Context, resilienceStackService) (resilienceStackSnapshot, error),
+) error {
+	if err := bootout(ctx, service); err != nil {
+		return err
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
+	defer cancel()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		snapshot, err := inspect(waitCtx, service)
+		if err != nil {
+			return fmt.Errorf("inspect launchd target %s while waiting for unload: %w", service.Label, err)
+		}
+		if err := context.Cause(waitCtx); err != nil {
+			return fmt.Errorf("wait for launchd target %s to unload: %w", service.Label, err)
+		}
+		if !snapshot.Loaded && !snapshot.Running && snapshot.PID <= 0 {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("wait for launchd target %s to unload: %w", service.Label, context.Cause(waitCtx))
+		case <-ticker.C:
+		}
+	}
 }
 
 func (darwinResilienceStackOperator) Bootstrap(ctx context.Context, service resilienceStackService) error {

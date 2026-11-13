@@ -45,6 +45,82 @@ func TestParseResilienceStackDisabledStateAcceptsLaunchctlValues(t *testing.T) {
 	}
 }
 
+func TestBootoutWaitsForLaunchdTargetToUnloadBeforeReturning(t *testing.T) {
+	service := resilienceStackService{Label: "com.rencrow.test", Domain: resilienceStackDomain}
+	bootoutCalls := 0
+	inspectCalls := 0
+	snapshots := []resilienceStackSnapshot{
+		{Loaded: true, Running: true, PID: 123},
+		{Loaded: true, Disabled: true, Running: false, PID: 123},
+		{Disabled: true},
+	}
+	err := bootoutResilienceStackTarget(
+		context.Background(), service, time.Second, time.Millisecond,
+		func(context.Context, resilienceStackService) error {
+			bootoutCalls++
+			return nil
+		},
+		func(context.Context, resilienceStackService) (resilienceStackSnapshot, error) {
+			index := inspectCalls
+			inspectCalls++
+			if index >= len(snapshots) {
+				index = len(snapshots) - 1
+			}
+			return snapshots[index], nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("bootoutResilienceStackTarget() error = %v", err)
+	}
+	if bootoutCalls != 1 {
+		t.Fatalf("bootout calls = %d, want exactly one", bootoutCalls)
+	}
+	if inspectCalls != 3 {
+		t.Fatalf("inspect calls = %d, want loaded/stopping/unloaded observations", inspectCalls)
+	}
+}
+
+func TestBootoutWaitTimesOutWhileLaunchdTargetRemainsLoaded(t *testing.T) {
+	service := resilienceStackService{Label: "com.rencrow.test", Domain: resilienceStackDomain}
+	bootoutCalls := 0
+	err := bootoutResilienceStackTarget(
+		context.Background(), service, 30*time.Millisecond, time.Millisecond,
+		func(context.Context, resilienceStackService) error {
+			bootoutCalls++
+			return nil
+		},
+		func(context.Context, resilienceStackService) (resilienceStackSnapshot, error) {
+			return resilienceStackSnapshot{Loaded: true, Running: false, PID: 123}, nil
+		},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bootoutResilienceStackTarget() error = %v, want bounded wait timeout", err)
+	}
+	if bootoutCalls != 1 {
+		t.Fatalf("timed-out bootout calls = %d, want exactly one", bootoutCalls)
+	}
+}
+
+func TestBootoutWaitHonorsEarlierCallerDeadline(t *testing.T) {
+	service := resilienceStackService{Label: "com.rencrow.test", Domain: resilienceStackDomain}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := bootoutResilienceStackTarget(
+		ctx, service, time.Second, time.Millisecond,
+		func(context.Context, resilienceStackService) error { return nil },
+		func(context.Context, resilienceStackService) (resilienceStackSnapshot, error) {
+			return resilienceStackSnapshot{Loaded: true, Running: true, PID: 123}, nil
+		},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bootoutResilienceStackTarget() error = %v, want caller deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("caller deadline took %s to stop unload wait", elapsed)
+	}
+}
+
 func TestRunResilienceStackLaunchctlReturnsCallerCancelCause(t *testing.T) {
 	want := errors.New("resilience stack transaction stopped")
 	ctx, cancel := context.WithCancelCause(context.Background())
