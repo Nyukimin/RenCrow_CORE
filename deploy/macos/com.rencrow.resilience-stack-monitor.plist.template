@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.rencrow.resilience-stack-monitor</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/libexec/rencrow-stack-monitor</string>
+		<string>resilience</string>
+		<string>stack-reconcile</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>10</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>Umask</key>
+	<integer>27</integer>
+	<key>StandardOutPath</key>
+	<string>/var/log/rencrow-stack-monitor.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/rencrow-stack-monitor.log</string>
+</dict>
+</plist>

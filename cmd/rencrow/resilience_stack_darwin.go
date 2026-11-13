@@ -132,6 +132,12 @@ func (darwinResilienceStackOperator) Inspect(ctx context.Context, service resili
 
 func (darwinResilienceStackOperator) Readiness(ctx context.Context, service resilienceStackService) error {
 	switch service.Readiness.Kind {
+	case "process":
+		snapshot, err := (darwinResilienceStackOperator{}).Inspect(ctx, service)
+		if err != nil {
+			return err
+		}
+		return validateResilienceStackProcessSnapshot(snapshot)
 	case "tcp":
 		dialer := net.Dialer{Timeout: 2 * time.Second}
 		connection, err := dialer.DialContext(ctx, "tcp", service.Readiness.Address)

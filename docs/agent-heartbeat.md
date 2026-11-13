@@ -33,9 +33,23 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 
 サービス管理機構は配備先で承認済みのサービスと依存関係を使う。再起動は依存するサービスから停止し、依存先から起動する。各サービスの正規readinessを確認してから次のサービスへ進む。計画停止は障害からの再起動の対象外とする。
 
-macOSでは、COREと独立したシステムサービスから `rencrow resilience stack-reconcile` を定期実行する。設定ファイルは `/Library/Application Support/RenCrow/resilience-stack.v1.json`。`schema` を `rencrow.launchd-stack/v1`、`complete` を `true` とし、実機で確認した `services` を起動順に列挙する。各要素に `label`、`domain`、`plist_path`、`dependencies`、`readiness` を記録する。COREの死活確認には `127.0.0.1:18790` の `/health/live` を使う。
+macOSでは、COREと独立したシステムサービスから `rencrow resilience stack-reconcile` を10秒間隔で実行する。設定ファイルは `/Library/Application Support/RenCrow/resilience-stack.v1.json`。`schema` を `rencrow.launchd-stack/v1`、`complete` を `true` とし、実機で確認した常駐サービスを `services` に起動順で列挙する。各要素に `label`、`domain`、`plist_path`、`dependencies`、`readiness` を記録する。COREの死活確認には `127.0.0.1:18790` の `/health/live` を使う。サービスの疎通は `http` または `tcp` でローカルの正規入口を確認する。サービス固有の監視口がない常駐プロセスは、`process` でlaunchdの稼働状態とPIDを照合する。
 
-監視はCOREのPIDを保存し、launchdがCOREを先に自動再起動した場合もPIDの変化を検出する。復旧を開始すると設定のハッシュを保存し、途中で止まった場合は次回の監視で各サービスを確認して起動を続ける。計画停止の前後には、システムサービスの管理者が `rencrow resilience stack-maintenance enter` と `rencrow resilience stack-maintenance leave` を使う。
+監視はCOREのPIDを保存し、launchdがCOREを先に自動再起動した場合もPIDの変化を検出する。復旧時は計画のハッシュ、停止と起動の段階、最後に確認したサービスの位置を保存する。停止が途中なら残りの停止を確認してから起動へ進み、起動が途中なら依存先と起動済みのサービスを確認して続ける。COREが稼働中のBOARD単独障害では、専用タスクを続けながらBOARDの復旧を待つ。
+
+Macの監視サービスは [LaunchDaemonの定義](../deploy/macos/com.rencrow.resilience-stack-monitor.plist.template) に従う。管理者がビルド済みの監視用バイナリを `/usr/local/libexec/rencrow-stack-monitor` に、実機で照合した計画を所定の場所にroot所有で設置する。`rencrow resilience stack-check` で構成と現在の状態を確認してから、LaunchDaemonをsystemドメインに登録する。計画停止の前後には、システムサービスの管理者が `rencrow resilience stack-maintenance enter` と `rencrow resilience stack-maintenance leave` を使う。
+
+初回設置では、管理者が次の例の3ファイルを照合してから設置する。初回の `stack-reconcile` が `baseline established` と現在のCORE PIDを記録したことを確認する。
+
+```sh
+sudo install -d -o root -g wheel -m 0755 /usr/local/libexec '/Library/Application Support/RenCrow'
+sudo install -o root -g wheel -m 0755 "$MONITOR_BINARY" /usr/local/libexec/rencrow-stack-monitor
+sudo install -o root -g wheel -m 0644 "$VERIFIED_PLAN" '/Library/Application Support/RenCrow/resilience-stack.v1.json'
+sudo /usr/local/libexec/rencrow-stack-monitor resilience stack-check
+sudo install -o root -g wheel -m 0644 "$MONITOR_PLIST" /Library/LaunchDaemons/com.rencrow.resilience-stack-monitor.plist
+sudo plutil -lint /Library/LaunchDaemons/com.rencrow.resilience-stack-monitor.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.rencrow.resilience-stack-monitor.plist
+```
 
 ## TDDと受入
 
@@ -54,7 +68,9 @@ macOSでは、COREと独立したシステムサービスから `rencrow resilie
 
 - `tasks enqueue` は、Mio、Shiro、Midoriが担当する登録済み・未実行のローカル所有 `CHAT` Taskを受け付ける。保存済みのTaskタイトルを入力に、各エージェントがテキスト作業を行う。入力と結果はTaskの所有者が管理し、共有キューの表示には共通ラベルを使う。`tasks create` と `tasks queue` はTaskの登録と状態更新を行う。
 - この登録経路の実行権限は、Taskにひも付くテキスト作業に限る。Kuroの現行実行先はフルアクセスの明示許可を前提とする。
-- BOARDは保存済み受付から継続できる実行境界を使う。専用キューでは実行前の予約を回収できる。実行途中のWorkerを止めて工程の途中から再開するには、各実行経路で永続的な再開位置を記録して読み戻す実装が必要。
+- 専用テキストTaskは、Runを発行するときに入力のハッシュと実行の所有情報を保存する。結果が返れば、Taskを完了する前に結果を保存する。割り込みでは現在のRunを待機として閉じ、同じTaskを再開するキューを作る。結果が保存済みなら後続Runは生成を省いて完了する。生成中に止まった場合は後続Runで生成するため、停止時点によっては推論先で計算が重複し得る。
+- 起動時は専用テキストTaskの実行記録を先に照合する。前のCOREが残したRunはチェックポイントから再開し、Taskが完了済みの場合はキューの記録を修復する。BOARDは保存済みの受付や応答を既存の配送経路で再利用する。外部変更を行う作業は、それぞれの実行経路で再開位置と副作用を確認する。
+- 既存の収集やWorkstream処理でShiroを使う場合も、実行枠を確保できる周期に着手する。すでに開始した外部操作は、処理とTaskの記録が終わるまで実行枠を保持する。
 - 空き時間の活動には、設定で有効にした既存のGames自発プレイを接続する。ゲームの判断と開始は既存の実行経路、各ターンの判断は参加エージェントの実行枠を使う。雑談、Web閲覧、制作の自動着手は未接続。
 - macOSの外部復旧コマンドは `rencrow resilience stack-reconcile`。実機での運用には、全サービスと依存順を記述したroot所有の `/Library/Application Support/RenCrow/resilience-stack.v1.json` と、COREの外でコマンドを定期実行する権限付きサービスが必要。個々のTaskや依存先の停止原因を自動修復する処理は、ownerごとの実装と受入が必要。
 

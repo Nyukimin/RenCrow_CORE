@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,8 @@ const (
 	resilienceStackGUI501     = "gui/501"
 	resilienceStackUser501    = "user/501"
 	resilienceStackPollEvery  = 250 * time.Millisecond
+	resilienceStackPhaseStop  = "stop"
+	resilienceStackPhaseStart = "start"
 )
 
 type resilienceStackPlan struct {
@@ -75,8 +78,11 @@ type resilienceStackOperator interface {
 }
 
 type resilienceStackState struct {
-	CorePID           int    `json:"core_pid"`
-	PendingPlanSHA256 string `json:"pending_plan_sha256,omitempty"`
+	CorePID            int    `json:"core_pid"`
+	PendingPlanSHA256  string `json:"pending_plan_sha256,omitempty"`
+	PendingPhase       string `json:"pending_phase,omitempty"`
+	PendingStopCursor  int    `json:"pending_stop_cursor,omitempty"`
+	PendingStartCursor int    `json:"pending_start_cursor,omitempty"`
 }
 
 type resilienceStackStateStore interface {
@@ -93,12 +99,12 @@ var resilienceStackTargets = map[string]map[string]struct{}{
 	"com.rencrow.qdrant":                  {resilienceStackDomain: {}},
 	"com.rencrow.llm-gateway":             {resilienceStackDomain: {}},
 	"com.rencrow.portal":                  {resilienceStackDomain: {}},
-	"com.rencrow.board-gateway.public":    {resilienceStackDomain: {}, resilienceStackGUI501: {}},
-	"com.rencrow.board-gateway.lan":       {resilienceStackDomain: {}, resilienceStackGUI501: {}},
-	"com.rencrow.board-communication":     {resilienceStackDomain: {}, resilienceStackGUI501: {}},
-	"com.rencrow.board-openai-mcp-tunnel": {resilienceStackDomain: {}, resilienceStackGUI501: {}},
-	"com.rencrow.board-lumina-mcp":        {resilienceStackDomain: {}, resilienceStackGUI501: {}},
-	"com.rencrow.tailnet-browser":         {resilienceStackDomain: {}, resilienceStackGUI501: {}},
+	"com.rencrow.board-gateway.public":    {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
+	"com.rencrow.board-gateway.lan":       {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
+	"com.rencrow.board-communication":     {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
+	"com.rencrow.board-openai-mcp-tunnel": {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
+	"com.rencrow.board-lumina-mcp":        {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
+	"com.rencrow.tailnet-browser":         {resilienceStackDomain: {}, resilienceStackGUI501: {}, resilienceStackUser501: {}},
 	"com.rencrow.fxembed-daily":           {resilienceStackGUI501: {}},
 	"com.rencrow.core-dependencies":       {resilienceStackDomain: {}},
 	"com.rencrow.irodori-tts":             {resilienceStackDomain: {}},
@@ -211,6 +217,12 @@ func validateResilienceStackReadiness(service resilienceStackService) error {
 	if service.Readiness.TimeoutSeconds < 1 || service.Readiness.TimeoutSeconds > 300 {
 		return errors.New("timeout_seconds must be between 1 and 300")
 	}
+	if service.Readiness.Kind == "process" {
+		if service.Readiness.Address != "" || service.Readiness.Path != "" {
+			return errors.New("process readiness cannot include an address or path")
+		}
+		return nil
+	}
 	host, portText, err := net.SplitHostPort(service.Readiness.Address)
 	if err != nil {
 		return fmt.Errorf("address must be a loopback host and port: %w", err)
@@ -245,6 +257,13 @@ func validateResilienceStackReadiness(service resilienceStackService) error {
 
 func reconcileResilienceStack(ctx context.Context, plan resilienceStackPlan, uid int, maintenance bool, state resilienceStackState, operator resilienceStackOperator, stateStore resilienceStackStateStore) (resilienceStackResult, error) {
 	if err := validateResilienceStackPlan(plan); err != nil {
+		return resilienceStackResult{}, err
+	}
+	planHash, err := resilienceStackPlanSHA256(plan)
+	if err != nil {
+		return resilienceStackResult{}, err
+	}
+	if err := validateResilienceStackStateForPlan(state, planHash, len(plan.Services)); err != nil {
 		return resilienceStackResult{}, err
 	}
 	if maintenance {
@@ -287,16 +306,9 @@ func reconcileResilienceStack(ctx context.Context, plan resilienceStackPlan, uid
 		return resilienceStackResult{Action: "noop", Reason: "launchd target disabled for maintenance"}, nil
 	}
 
-	planHash, err := resilienceStackPlanSHA256(plan)
-	if err != nil {
-		return resilienceStackResult{}, err
-	}
 	if state.PendingPlanSHA256 != "" {
 		if stateStore == nil {
 			return resilienceStackResult{}, errors.New("pending stack recovery requires a durable state store")
-		}
-		if state.PendingPlanSHA256 != planHash {
-			return resilienceStackResult{}, errors.New("pending stack recovery belongs to a different launchd plan; preserving the receipt")
 		}
 		return resumeResilienceStackRecovery(ctx, plan, state, operator, stateStore)
 	}
@@ -348,104 +360,299 @@ func reconcileResilienceStack(ctx context.Context, plan resilienceStackPlan, uid
 		return resilienceStackResult{}, errors.New("stack recovery requires a durable state store")
 	}
 	state.PendingPlanSHA256 = planHash
+	state.PendingPhase = resilienceStackPhaseStop
+	state.PendingStopCursor = 0
+	state.PendingStartCursor = 0
 	if err := stateStore.Save(state); err != nil {
-		return resilienceStackResult{}, fmt.Errorf("save pending stack recovery receipt before stopping: %w", err)
+		return resilienceStackResult{}, fmt.Errorf("save pending stack recovery phase before stopping: %w", err)
 	}
-	result := resilienceStackResult{Action: "partial", Reason: "CORE loss or unexpected restart; pending receipt will resume without repeating the stop phase"}
-	for index := len(plan.Services) - 1; index >= 0; index-- {
-		service := plan.Services[index]
-		if !snapshots[service.Label].Loaded {
-			continue
-		}
-		if err := operator.Bootout(ctx, service); err != nil {
-			return result, fmt.Errorf("stack recovery partial while stopping %s; pending receipt is preserved: %w", service.Label, err)
-		}
-		result.Stopped = append(result.Stopped, service.Label)
-	}
-	for _, service := range plan.Services {
-		if err := operator.Bootstrap(ctx, service); err != nil {
-			return result, fmt.Errorf("stack recovery partial while starting %s; next run resumes without repeating stops: %w", service.Label, err)
-		}
-		result.Started = append(result.Started, service.Label)
-		if err := waitResilienceStackReadiness(ctx, service, operator); err != nil {
-			return result, fmt.Errorf("stack recovery partial while waiting for %s readiness; next run resumes without repeating stops: %w", service.Label, err)
-		}
-	}
-	coreService := resilienceStackCoreService(plan)
-	coreSnapshot, err := operator.Inspect(ctx, coreService)
-	if err != nil {
-		return result, fmt.Errorf("stack recovery partial after start: inspect CORE: %w", err)
-	}
-	if !coreSnapshot.Loaded || !coreSnapshot.Running || coreSnapshot.PID <= 0 {
-		return result, errors.New("stack recovery partial after start: CORE is not running")
-	}
-	state.CorePID = coreSnapshot.PID
-	state.PendingPlanSHA256 = ""
-	if stateStore != nil {
-		if err := stateStore.Save(state); err != nil {
-			return result, fmt.Errorf("stack ready but pending receipt could not be cleared; next run will verify and resume: %w", err)
-		}
-	}
-	result.Action = "restarted"
-	result.Reason = "stack readiness verified"
-	result.CorePID = coreSnapshot.PID
-	return result, nil
+	return resumeResilienceStackRecovery(ctx, plan, state, operator, stateStore)
 }
 
 func resumeResilienceStackRecovery(ctx context.Context, plan resilienceStackPlan, state resilienceStackState, operator resilienceStackOperator, stateStore resilienceStackStateStore) (resilienceStackResult, error) {
 	if stateStore == nil {
 		return resilienceStackResult{}, errors.New("pending stack recovery requires a durable state store")
 	}
-	result := resilienceStackResult{Action: "partial", Reason: "resuming pending stack recovery without repeating the stop phase"}
-	for _, service := range plan.Services {
+	result := resilienceStackResult{Action: "partial", Reason: "resuming durable stack transaction"}
+
+	// Pending receipts written before phase/cursor support are ambiguous. Start a
+	// conservative full stop pass; Inspect makes that pass safe after old partial
+	// stops, and the forward start pass restarts every approved job once.
+	if state.PendingPhase == "" {
+		state.PendingPhase = resilienceStackPhaseStop
+		state.PendingStopCursor = 0
+		state.PendingStartCursor = 0
+		if err := stateStore.Save(state); err != nil {
+			return result, fmt.Errorf("migrate legacy pending receipt before stopping: %w", err)
+		}
+	}
+
+	for state.PendingPhase == resilienceStackPhaseStop {
+		if state.PendingStopCursor >= len(plan.Services) {
+			next := state
+			next.PendingPhase = resilienceStackPhaseStart
+			next.PendingStartCursor = 0
+			if err := stateStore.Save(next); err != nil {
+				return result, fmt.Errorf("save start phase after complete stop pass: %w", err)
+			}
+			state = next
+			break
+		}
+
+		index := len(plan.Services) - 1 - state.PendingStopCursor
+		service := plan.Services[index]
 		snapshot, err := operator.Inspect(ctx, service)
 		if err != nil {
-			return result, fmt.Errorf("pending stack recovery partial: inspect %s: %w", service.Label, err)
+			return result, fmt.Errorf("pending stack stop phase: inspect %s: %w", service.Label, err)
 		}
 		if snapshot.Disabled {
-			state.CorePID = 0
-			if stateStore != nil {
-				if err := stateStore.Save(state); err != nil {
-					return result, fmt.Errorf("preserve pending recovery during disabled maintenance: %w", err)
-				}
-			}
-			return resilienceStackResult{Action: "noop", Reason: "launchd target disabled for maintenance; pending receipt preserved"}, nil
+			return preserveResilienceStackMaintenance(state, stateStore, "launchd target disabled during stack stop phase")
 		}
-		if snapshot.Loaded && snapshot.Running && snapshot.PID > 0 && operator.Readiness(ctx, service) == nil {
-			continue
-		}
-		if snapshot.Loaded {
+		if snapshot.Loaded || snapshot.Running || snapshot.PID > 0 {
 			if err := operator.Bootout(ctx, service); err != nil {
-				return result, fmt.Errorf("pending stack recovery partial while stopping unhealthy %s: %w", service.Label, err)
+				return result, fmt.Errorf("pending stack stop phase failed for %s; receipt preserved: %w", service.Label, err)
 			}
 			result.Stopped = append(result.Stopped, service.Label)
+			stopped, err := operator.Inspect(ctx, service)
+			if err != nil {
+				return result, fmt.Errorf("pending stack stop phase: verify %s bootout: %w", service.Label, err)
+			}
+			if stopped.Disabled {
+				return preserveResilienceStackMaintenance(state, stateStore, "launchd target disabled during stack stop phase")
+			}
+			if stopped.Loaded || stopped.Running || stopped.PID > 0 {
+				return result, fmt.Errorf("pending stack stop phase did not unload %s; receipt preserved", service.Label)
+			}
 		}
-		if err := operator.Bootstrap(ctx, service); err != nil {
-			return result, fmt.Errorf("pending stack recovery partial while starting %s: %w", service.Label, err)
+
+		next := state
+		next.PendingStopCursor++
+		if err := stateStore.Save(next); err != nil {
+			return result, fmt.Errorf("save stop cursor after %s; next run will inspect before retry: %w", service.Label, err)
 		}
-		result.Started = append(result.Started, service.Label)
-		if err := waitResilienceStackReadiness(ctx, service, operator); err != nil {
-			return result, fmt.Errorf("pending stack recovery partial while waiting for %s readiness: %w", service.Label, err)
+		state = next
+	}
+
+	for state.PendingStartCursor < len(plan.Services) {
+		service := plan.Services[state.PendingStartCursor]
+		if err := verifyResilienceStackDependencies(ctx, plan, service, operator); err != nil {
+			cursor, found, rewindErr := firstUnreadyResilienceStackService(ctx, plan, state.PendingStartCursor, operator)
+			if rewindErr != nil {
+				return result, errors.Join(
+					fmt.Errorf("pending stack start phase blocked before %s: %w", service.Label, err),
+					fmt.Errorf("locate earlier unready service for cursor rewind: %w", rewindErr),
+				)
+			}
+			if found {
+				state, rewindErr = rewindResilienceStackStartCursor(state, cursor, stateStore)
+				if rewindErr != nil {
+					return result, errors.Join(
+						fmt.Errorf("pending stack start phase blocked before %s: %w", service.Label, err),
+						fmt.Errorf("persist recovery cursor for %s: %w", plan.Services[cursor].Label, rewindErr),
+					)
+				}
+			}
+			return result, fmt.Errorf("pending stack start phase blocked before %s: %w", service.Label, err)
+		}
+		snapshot, err := operator.Inspect(ctx, service)
+		if err != nil {
+			return result, fmt.Errorf("pending stack start phase: inspect %s: %w", service.Label, err)
+		}
+		if snapshot.Disabled {
+			return preserveResilienceStackMaintenance(state, stateStore, "launchd target disabled during stack start phase")
+		}
+
+		alreadyReady := false
+		if snapshot.Loaded && snapshot.Running && snapshot.PID > 0 {
+			if err := operator.Readiness(ctx, service); err == nil {
+				alreadyReady = true
+			} else if waitErr := waitResilienceStackReadiness(ctx, service, operator); waitErr == nil {
+				// A loaded process may still be coming up after launchd reports it
+				// running. Give its configured readiness window to recover before
+				// deciding that it needs a bootout/bootstrap cycle.
+				readySnapshot, inspectErr := operator.Inspect(ctx, service)
+				if inspectErr != nil {
+					return result, fmt.Errorf("pending stack start phase: verify %s after readiness grace: %w", service.Label, inspectErr)
+				}
+				if readySnapshot.Disabled {
+					return preserveResilienceStackMaintenance(state, stateStore, "launchd target disabled during stack start phase")
+				}
+				alreadyReady = readySnapshot.Loaded && readySnapshot.Running && readySnapshot.PID > 0
+			}
+			if !alreadyReady && ctx.Err() != nil {
+				return result, fmt.Errorf("pending stack start phase waiting for %s readiness; cursor preserved: %w", service.Label, ctx.Err())
+			}
+		}
+		if !alreadyReady {
+			if snapshot.Loaded || snapshot.Running || snapshot.PID > 0 {
+				if err := operator.Bootout(ctx, service); err != nil {
+					return result, fmt.Errorf("pending stack start phase could not unload unhealthy %s: %w", service.Label, err)
+				}
+				result.Stopped = append(result.Stopped, service.Label)
+				stopped, err := operator.Inspect(ctx, service)
+				if err != nil {
+					return result, fmt.Errorf("pending stack start phase: verify %s bootout: %w", service.Label, err)
+				}
+				if stopped.Disabled {
+					return preserveResilienceStackMaintenance(state, stateStore, "launchd target disabled during stack start phase")
+				}
+				if stopped.Loaded || stopped.Running || stopped.PID > 0 {
+					return result, fmt.Errorf("pending stack start phase did not unload unhealthy %s", service.Label)
+				}
+			}
+			if err := operator.Bootstrap(ctx, service); err != nil {
+				return result, fmt.Errorf("pending stack start phase failed for %s; cursor preserved: %w", service.Label, err)
+			}
+			result.Started = append(result.Started, service.Label)
+			if err := waitResilienceStackReadiness(ctx, service, operator); err != nil {
+				return result, fmt.Errorf("pending stack start phase waiting for %s readiness; cursor preserved: %w", service.Label, err)
+			}
+		}
+		confirmed, err := operator.Inspect(ctx, service)
+		if err != nil {
+			return result, fmt.Errorf("pending stack start phase: verify %s before cursor save: %w", service.Label, err)
+		}
+		if confirmed.Disabled {
+			return preserveResilienceStackMaintenance(state, stateStore, "launchd target disabled during stack start phase")
+		}
+		if !confirmed.Loaded || !confirmed.Running || confirmed.PID <= 0 {
+			return result, fmt.Errorf("pending stack start phase: %s did not remain loaded and running before cursor save", service.Label)
+		}
+
+		next := state
+		next.PendingStartCursor++
+		if err := stateStore.Save(next); err != nil {
+			return result, fmt.Errorf("save start cursor after %s; next run will inspect readiness before retry: %w", service.Label, err)
+		}
+		state = next
+	}
+
+	var coreSnapshot resilienceStackSnapshot
+	for index, service := range plan.Services {
+		if err := ctx.Err(); err != nil {
+			return result, fmt.Errorf("pending stack recovery final verification cancelled: %w", err)
+		}
+		snapshot, err := operator.Inspect(ctx, service)
+		if err != nil {
+			return result, fmt.Errorf("pending stack recovery final verification: inspect %s: %w", service.Label, err)
+		}
+		if snapshot.Disabled {
+			return preserveResilienceStackMaintenance(state, stateStore, "launchd target disabled during final stack verification")
+		}
+		if !snapshot.Loaded || !snapshot.Running || snapshot.PID <= 0 {
+			if err := ctx.Err(); err != nil {
+				return result, fmt.Errorf("pending stack recovery final verification cancelled: %w", err)
+			}
+			if _, err := rewindResilienceStackStartCursor(state, index, stateStore); err != nil {
+				return result, fmt.Errorf("pending stack recovery final verification: %s is not running; persist recovery cursor: %w", service.Label, err)
+			}
+			return result, fmt.Errorf("pending stack recovery final verification: %s is not running", service.Label)
+		}
+		if err := operator.Readiness(ctx, service); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, fmt.Errorf("pending stack recovery final verification cancelled: %w", ctxErr)
+			}
+			if _, rewindErr := rewindResilienceStackStartCursor(state, index, stateStore); rewindErr != nil {
+				return result, errors.Join(
+					fmt.Errorf("pending stack recovery final verification: %s is not ready: %w", service.Label, err),
+					fmt.Errorf("persist recovery cursor: %w", rewindErr),
+				)
+			}
+			return result, fmt.Errorf("pending stack recovery final verification: %s is not ready: %w", service.Label, err)
+		}
+		if service.Label == "com.rencrow.core" {
+			coreSnapshot = snapshot
 		}
 	}
-	coreSnapshot, err := operator.Inspect(ctx, resilienceStackCoreService(plan))
-	if err != nil {
-		return result, fmt.Errorf("pending stack recovery partial after start: inspect CORE: %w", err)
-	}
-	if !coreSnapshot.Loaded || !coreSnapshot.Running || coreSnapshot.PID <= 0 {
-		return result, errors.New("pending stack recovery partial after start: CORE is not running")
-	}
+
 	state.CorePID = coreSnapshot.PID
 	state.PendingPlanSHA256 = ""
-	if stateStore != nil {
-		if err := stateStore.Save(state); err != nil {
-			return result, fmt.Errorf("stack ready but pending receipt could not be cleared: %w", err)
-		}
+	state.PendingPhase = ""
+	state.PendingStopCursor = 0
+	state.PendingStartCursor = 0
+	if err := stateStore.Save(state); err != nil {
+		return result, fmt.Errorf("stack ready but pending receipt could not be cleared; next run will verify and resume: %w", err)
 	}
 	result.Action = "restarted"
-	result.Reason = "pending stack recovery completed and readiness verified"
+	result.Reason = "complete stack readiness verified"
 	result.CorePID = coreSnapshot.PID
 	return result, nil
+}
+
+func verifyResilienceStackDependencies(ctx context.Context, plan resilienceStackPlan, service resilienceStackService, operator resilienceStackOperator) error {
+	services := make(map[string]resilienceStackService, len(plan.Services))
+	for _, candidate := range plan.Services {
+		services[candidate.Label] = candidate
+	}
+	for _, dependency := range service.Dependencies {
+		dependencyService, ok := services[dependency]
+		if !ok {
+			return fmt.Errorf("dependency %s is absent from the approved plan", dependency)
+		}
+		snapshot, err := operator.Inspect(ctx, dependencyService)
+		if err != nil {
+			return fmt.Errorf("inspect dependency %s: %w", dependency, err)
+		}
+		if snapshot.Disabled {
+			return fmt.Errorf("dependency %s is disabled for maintenance", dependency)
+		}
+		if !snapshot.Loaded || !snapshot.Running || snapshot.PID <= 0 {
+			return fmt.Errorf("dependency %s is not loaded and running", dependency)
+		}
+		if err := operator.Readiness(ctx, dependencyService); err != nil {
+			return fmt.Errorf("dependency %s is not ready: %w", dependency, err)
+		}
+	}
+	return nil
+}
+
+func firstUnreadyResilienceStackService(ctx context.Context, plan resilienceStackPlan, before int, operator resilienceStackOperator) (int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	for index := 0; index < before && index < len(plan.Services); index++ {
+		service := plan.Services[index]
+		snapshot, err := operator.Inspect(ctx, service)
+		if err != nil {
+			return 0, false, fmt.Errorf("inspect %s: %w", service.Label, err)
+		}
+		if snapshot.Disabled {
+			// Disabled jobs are intentional maintenance, not recovery candidates.
+			return 0, false, nil
+		}
+		if !snapshot.Loaded || !snapshot.Running || snapshot.PID <= 0 {
+			return index, true, nil
+		}
+		if err := operator.Readiness(ctx, service); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return 0, false, ctxErr
+			}
+			return index, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+func rewindResilienceStackStartCursor(state resilienceStackState, cursor int, stateStore resilienceStackStateStore) (resilienceStackState, error) {
+	if cursor >= state.PendingStartCursor {
+		return state, nil
+	}
+	next := state
+	next.PendingStartCursor = cursor
+	if err := stateStore.Save(next); err != nil {
+		return state, err
+	}
+	return next, nil
+}
+
+func preserveResilienceStackMaintenance(state resilienceStackState, stateStore resilienceStackStateStore, reason string) (resilienceStackResult, error) {
+	state.CorePID = 0
+	if stateStore != nil {
+		if err := stateStore.Save(state); err != nil {
+			return resilienceStackResult{Action: "partial", Reason: reason}, fmt.Errorf("clear CORE baseline while preserving pending transaction: %w", err)
+		}
+	}
+	return resilienceStackResult{Action: "noop", Reason: reason}, nil
 }
 
 func resilienceStackCoreService(plan resilienceStackPlan) resilienceStackService {
@@ -463,6 +670,73 @@ func resilienceStackPlanSHA256(plan resilienceStackPlan) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(encoded)), nil
+}
+
+func validateResilienceStackStateForPlan(state resilienceStackState, planHash string, serviceCount int) error {
+	if err := validateResilienceStackStateFields(state); err != nil {
+		return err
+	}
+	if state.PendingPlanSHA256 == "" {
+		return nil
+	}
+	if state.PendingPlanSHA256 != planHash {
+		return errors.New("pending stack recovery belongs to a different launchd plan; preserving the receipt")
+	}
+	switch state.PendingPhase {
+	case "":
+		// A pending hash with no phase is the v1 receipt written by older builds.
+		// It is deliberately accepted so reconcile can migrate it to a full stop.
+		return nil
+	case resilienceStackPhaseStop:
+		if state.PendingStopCursor > serviceCount || state.PendingStartCursor != 0 {
+			return errors.New("pending stack stop cursor is inconsistent with the approved launchd plan")
+		}
+	case resilienceStackPhaseStart:
+		if state.PendingStopCursor != serviceCount || state.PendingStartCursor > serviceCount {
+			return errors.New("pending stack start cursor is inconsistent with the approved launchd plan")
+		}
+	default:
+		return fmt.Errorf("unknown pending stack phase %q", state.PendingPhase)
+	}
+	return nil
+}
+
+func validateResilienceStackProcessSnapshot(snapshot resilienceStackSnapshot) error {
+	if snapshot.Disabled {
+		return errors.New("launchd process is disabled for maintenance")
+	}
+	if !snapshot.Loaded || !snapshot.Running || snapshot.PID <= 0 {
+		return errors.New("launchd process is not loaded and running with a valid PID")
+	}
+	return nil
+}
+
+func validateResilienceStackStateFields(state resilienceStackState) error {
+	if state.CorePID < 0 || state.PendingStopCursor < 0 || state.PendingStartCursor < 0 {
+		return errors.New("stack monitor state is invalid")
+	}
+	if state.PendingPlanSHA256 != "" && !resilienceStackStateHashPattern.MatchString(state.PendingPlanSHA256) {
+		return errors.New("stack monitor state is invalid")
+	}
+	if state.PendingPlanSHA256 == "" {
+		if state.PendingPhase != "" || state.PendingStopCursor != 0 || state.PendingStartCursor != 0 {
+			return errors.New("stack monitor state has a phase without a pending plan")
+		}
+		return nil
+	}
+	if state.PendingPhase == "" {
+		if state.PendingStopCursor != 0 || state.PendingStartCursor != 0 {
+			return errors.New("legacy pending stack state cannot contain phase cursors")
+		}
+		return nil
+	}
+	if state.PendingPhase != resilienceStackPhaseStop && state.PendingPhase != resilienceStackPhaseStart {
+		return fmt.Errorf("unknown pending stack phase %q", state.PendingPhase)
+	}
+	if state.PendingPhase == resilienceStackPhaseStop && state.PendingStartCursor != 0 {
+		return errors.New("pending stack stop state cannot contain a start cursor")
+	}
+	return nil
 }
 
 func resilienceStackPermission(uid int, domain string) error {
@@ -546,6 +820,79 @@ func resilienceStackReconcile() error {
 		return err
 	}
 	return reconcileErr
+}
+
+func checkResilienceStack(ctx context.Context, plan resilienceStackPlan, maintenance bool, operator resilienceStackOperator) (resilienceStackResult, error) {
+	if err := validateResilienceStackPlan(plan); err != nil {
+		return resilienceStackResult{}, err
+	}
+	if maintenance {
+		return resilienceStackResult{Action: "noop", Reason: "maintenance"}, nil
+	}
+	for _, service := range plan.Services {
+		if err := operator.ValidateTarget(ctx, service); err != nil {
+			return resilienceStackResult{}, fmt.Errorf("check plist for %s: %w", service.Label, err)
+		}
+	}
+	result := resilienceStackResult{Action: "checked"}
+	for _, service := range plan.Services {
+		snapshot, err := operator.Inspect(ctx, service)
+		if err != nil {
+			return resilienceStackResult{}, fmt.Errorf("check launchd target %s: %w", service.Label, err)
+		}
+		if snapshot.Disabled {
+			return resilienceStackResult{Action: "noop", Reason: "launchd target disabled for maintenance"}, nil
+		}
+		if service.Label == "com.rencrow.core" {
+			result.CorePID = snapshot.PID
+		}
+		if !snapshot.Loaded || !snapshot.Running || snapshot.PID <= 0 {
+			result.Degraded = append(result.Degraded, service.Label)
+			continue
+		}
+		if err := operator.Readiness(ctx, service); err != nil {
+			result.Degraded = append(result.Degraded, service.Label)
+		}
+	}
+	if len(result.Degraded) == 0 {
+		result.Reason = "healthy"
+	}
+	if result.Reason == "" {
+		for _, label := range result.Degraded {
+			if label == "com.rencrow.core" {
+				result.Reason = "CORE degraded"
+				break
+			}
+		}
+		if result.Reason == "" {
+			result.Reason = "CORE healthy; dependencies degraded"
+		}
+	}
+	return result, nil
+}
+
+func resilienceStackCheck() error {
+	plan, err := readResilienceStackPlan()
+	if err != nil {
+		return fmt.Errorf("load stack plan: %w", err)
+	}
+	maintenance, err := resilienceStackMaintenanceActive()
+	if err != nil {
+		return err
+	}
+	result, checkErr := checkResilienceStack(context.Background(), plan, maintenance, newResilienceStackOperator())
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(result); err != nil {
+		return err
+	}
+	if checkErr != nil {
+		return checkErr
+	}
+	if result.Action == "checked" && len(result.Degraded) > 0 {
+		return fmt.Errorf("stack check found degraded services: %s", strings.Join(result.Degraded, ", "))
+	}
+	return nil
 }
 
 func resilienceStackMaintenance(action string) error {
@@ -662,15 +1009,18 @@ func readResilienceStackState() (resilienceStackState, error) {
 		return resilienceStackState{}, err
 	}
 	var state resilienceStackState
-	if err := json.Unmarshal(data, &state); err != nil || state.CorePID < 0 || (state.PendingPlanSHA256 != "" && !resilienceStackStateHashPattern.MatchString(state.PendingPlanSHA256)) {
-		return resilienceStackState{}, errors.New("stack monitor state is invalid")
+	if err := json.Unmarshal(data, &state); err != nil {
+		return resilienceStackState{}, fmt.Errorf("stack monitor state is invalid: %w", err)
+	}
+	if err := validateResilienceStackStateFields(state); err != nil {
+		return resilienceStackState{}, fmt.Errorf("stack monitor state is invalid: %w", err)
 	}
 	return state, nil
 }
 
 func writeResilienceStackState(state resilienceStackState) error {
-	if state.CorePID < 0 || (state.PendingPlanSHA256 != "" && !resilienceStackStateHashPattern.MatchString(state.PendingPlanSHA256)) {
-		return errors.New("stack monitor state is invalid")
+	if err := validateResilienceStackStateFields(state); err != nil {
+		return fmt.Errorf("stack monitor state is invalid: %w", err)
 	}
 	if err := validateResilienceStackProtectedFile(resilienceStackStatePath, 0, true); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -700,6 +1050,25 @@ func writeResilienceStackState(state resilienceStackState) error {
 	}
 	if err := os.Rename(temporaryPath, resilienceStackStatePath); err != nil {
 		return err
+	}
+	return syncResilienceStackStateDirectory()
+}
+
+func syncResilienceStackStateDirectory() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	directory, err := os.Open(filepath.Dir(resilienceStackStatePath))
+	if err != nil {
+		return fmt.Errorf("open stack state directory for sync: %w", err)
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return fmt.Errorf("sync stack state directory: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close stack state directory after sync: %w", closeErr)
 	}
 	return nil
 }
