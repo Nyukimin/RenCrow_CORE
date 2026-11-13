@@ -12,6 +12,39 @@ import (
 
 const resilienceStackCommandSleepHelperEnv = "RENCROW_RESILIENCE_STACK_COMMAND_SLEEP_HELPER"
 
+func TestParseResilienceStackDisabledStateAcceptsLaunchctlValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		output  string
+		label   string
+		want    bool
+		wantErr bool
+	}{
+		{name: "boolean true", output: `"com.rencrow.core" => true`, label: "com.rencrow.core", want: true},
+		{name: "boolean false", output: `"com.rencrow.core" => false`, label: "com.rencrow.core", want: false},
+		{name: "enabled", output: `"com.rencrow.core" => enabled`, label: "com.rencrow.core", want: false},
+		{name: "enabled CRLF", output: "\"com.rencrow.core\" => enabled\r\n", label: "com.rencrow.core", want: false},
+		{name: "disabled", output: `"com.rencrow.core" => disabled`, label: "com.rencrow.core", want: true},
+		{name: "label prefix is absent", output: `"com.rencrow.core-storage-204" => disabled`, label: "com.rencrow.core", want: false},
+		{name: "absent label", output: `"com.rencrow.other" => disabled`, label: "com.rencrow.core", want: false},
+		{name: "unknown value", output: `"com.rencrow.core" => pending`, label: "com.rencrow.core", wantErr: true},
+		{name: "value on next line is unknown", output: "\"com.rencrow.core\" =>\nenabled", label: "com.rencrow.core", wantErr: true},
+		{name: "duplicate exact label", output: "\"com.rencrow.core\" => enabled\n\"com.rencrow.core\" => disabled", label: "com.rencrow.core", wantErr: true},
+		{name: "unknown value on label prefix", output: `"com.rencrow.core-storage-204" => pending`, label: "com.rencrow.core", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseResilienceStackDisabledState([]byte(test.output), test.label)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parseResilienceStackDisabledState error = %v, wantErr %t", err, test.wantErr)
+			}
+			if err == nil && got != test.want {
+				t.Fatalf("parseResilienceStackDisabledState = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRunResilienceStackLaunchctlReturnsCallerCancelCause(t *testing.T) {
 	want := errors.New("resilience stack transaction stopped")
 	ctx, cancel := context.WithCancelCause(context.Background())

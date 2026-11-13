@@ -214,10 +214,21 @@ func launchdServiceIsUnloaded(output []byte) bool {
 }
 
 func parseResilienceStackDisabledState(output []byte, label string) (bool, error) {
-	pattern := regexp.MustCompile(`(?m)^\s*"` + regexp.QuoteMeta(label) + `"\s*=>\s*(true|false)\s*$`)
-	match := pattern.FindSubmatch(output)
-	if len(match) == 2 {
-		return string(match[1]) == "true", nil
+	pattern := regexp.MustCompile(`(?m)^[\t ]*"` + regexp.QuoteMeta(label) + `"[\t ]*=>[\t ]*([^\r\n]*)\r?$`)
+	matches := pattern.FindAllSubmatch(output, -1)
+	if len(matches) == 0 {
+		return false, nil
 	}
-	return false, nil
+	if len(matches) > 1 {
+		return false, fmt.Errorf("launchctl disabled state for %q appears multiple times", label)
+	}
+	value := strings.TrimSpace(string(matches[0][1]))
+	switch value {
+	case "true", "disabled":
+		return true, nil
+	case "false", "enabled":
+		return false, nil
+	default:
+		return false, fmt.Errorf("launchctl disabled state for %q is unrecognized: %q", label, value)
+	}
 }
