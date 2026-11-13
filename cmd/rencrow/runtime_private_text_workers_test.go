@@ -137,8 +137,9 @@ func TestPrivateActorTextWorkerSendsOnlyAuthoredPromptAndPrivateUserText(t *test
 		t.Fatalf("provider calls = %d, want exactly one", provider.calls)
 	}
 	if len(provider.request.Messages) != 2 || provider.request.Messages[0].Role != "system" ||
-		provider.request.Messages[0].Content != "authored Aka character prompt" ||
-		provider.request.Messages[1].Role != "user" || provider.request.Messages[1].Content != "private user request" {
+		provider.request.Messages[0].Content != "authored Aka character prompt" || provider.request.Messages[0].Type != llm.PromptContextCharacter ||
+		provider.request.Messages[1].Role != "user" || provider.request.Messages[1].Content != "private user request" ||
+		provider.request.Messages[1].Type != llm.PromptContextUser {
 		t.Fatalf("private text request messages = %#v, want only the exact authored prompt and user text", provider.request.Messages)
 	}
 	if provider.request.ResponseFormat != llm.ResponseFormatText || provider.request.OnToken != nil {

@@ -85,8 +85,8 @@ func (w *privateActorTextWorker) ExecutePrivateWork(ctx context.Context, input c
 	})
 	response, err := w.provider.Generate(ctx, llm.GenerateRequest{
 		Messages: []llm.Message{
-			{Role: "system", Content: w.systemPrompt},
-			{Role: "user", Content: input.MessageText()},
+			{Role: "system", Content: w.systemPrompt, Type: llm.PromptContextCharacter},
+			{Role: "user", Content: input.MessageText(), Type: llm.PromptContextUser},
 		},
 		MaxTokens:      2048,
 		Temperature:    0.4,
