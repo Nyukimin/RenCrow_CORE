@@ -235,6 +235,9 @@ func TestViewerBridgeCarriesAuthenticatedCMDMioOwnerScopeIntoProcessMessage(t *t
 	}
 	handler := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo).ViewerSendFromOrch(processor)
 
+	if status := deps.persistenceQueue.Status(); status.Reserved != 0 || status.ReservedBytes != 0 {
+		t.Fatalf("viewer bridge fixture starts with queue capacity reserved: commands=%d bytes=%d", status.Reserved, status.ReservedBytes)
+	}
 	var firstSessionID string
 	for _, clientID := range []string{"cmd-owner-one", "cmd-owner-two"} {
 		body := `{"message":"private recall","to":"mio","user_id":"attacker","viewer_client_id":"` + clientID + `"}`
@@ -272,18 +275,19 @@ func TestViewerBridgeCarriesAuthenticatedCMDMioOwnerScopeIntoProcessMessage(t *t
 		case <-time.After(time.Second):
 			t.Fatal("authenticated request did not reach ProcessMessage")
 		}
-		// ProcessMessage's capture channel unblocks before the async send handler
-		// releases the CHAT persistence lease. Wait for that release before the
-		// next request so the test does not create concurrent turns on one relay.
-		deps.eventRelay.mu.RLock()
-		activeChat := deps.eventRelay.chatBinding
-		deps.eventRelay.mu.RUnlock()
-		if activeChat != nil {
-			select {
-			case <-activeChat.done:
-			case <-time.After(time.Second):
-				t.Fatal("authenticated CHAT persistence lease was not released")
+		// ProcessMessage is captured before the async send handler releases the
+		// CHAT admission. Wait for both reserved counters to drain: relay release
+		// then admission release have completed before the next BindChat attempt.
+		deadline := time.Now().Add(time.Second)
+		for {
+			status := deps.persistenceQueue.Status()
+			if status.Reserved == 0 && status.ReservedBytes == 0 {
+				break
 			}
+			if time.Until(deadline) <= 0 {
+				t.Fatalf("authenticated CHAT persistence reservation was not released: commands=%d bytes=%d", status.Reserved, status.ReservedBytes)
+			}
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	privateAddress, err := domainconversation.NewChannelAddress("viewer", "cmd:ren")

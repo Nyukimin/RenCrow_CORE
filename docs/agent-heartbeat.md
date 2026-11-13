@@ -31,7 +31,7 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 
 復旧できなかった実行には、どの段階で止まったかと、確認できた原因を残す。稼働中の旧実行がある場合は、その終了または実行権の失効を確認してから再開する。
 
-サービス管理機構は配備先で承認済みのサービスと依存関係を使う。再起動は依存するサービスから停止し、依存先から起動する。各サービスの正規readinessを確認してから次のサービスへ進む。計画停止は障害からの再起動の対象外とする。
+サービス管理機構は配備先で管理対象に指定されたサービスと依存関係を使う。再起動は依存するサービスから停止し、依存先から起動する。各サービスの正規readinessを確認してから次のサービスへ進む。計画停止は障害からの再起動の対象外とする。
 
 macOSでは、COREと独立したシステムサービスから `rencrow resilience stack-reconcile` を10秒間隔で実行する。設定ファイルは `/Library/Application Support/RenCrow/resilience-stack.v1.json`。`schema` を `rencrow.launchd-stack/v1`、`complete` を `true` とし、実機で確認した常駐サービスを `services` に起動順で列挙する。各要素に `label`、`domain`、`plist_path`、`dependencies`、`readiness` を記録する。COREの死活確認には `127.0.0.1:18790` の `/health/live` を使う。サービスの疎通は `http` または `tcp` でローカルの正規入口を確認する。サービス固有の監視口がない常駐プロセスは、`process` でlaunchdの稼働状態とPIDを照合する。
 
