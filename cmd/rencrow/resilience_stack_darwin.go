@@ -20,6 +20,8 @@ import (
 )
 
 const resilienceStackLaunchctlPath = "/bin/launchctl"
+const resilienceStackInspectionCommandTimeout = 10 * time.Second
+const resilienceStackOperationCommandTimeout = 60 * time.Second
 
 type darwinResilienceStackOperator struct{}
 
@@ -85,8 +87,7 @@ func (darwinResilienceStackOperator) ValidateTarget(ctx context.Context, service
 	if parentOwner != expectedOwner {
 		return fmt.Errorf("plist directory owner for %s is %d, expected %d", service.Label, parentOwner, expectedOwner)
 	}
-	command := exec.CommandContext(ctx, "/usr/libexec/PlistBuddy", "-c", "Print :Label", service.PlistPath)
-	output, err := command.Output()
+	output, err := runResilienceStackCommand(ctx, resilienceStackInspectionCommandTimeout, "/usr/libexec/PlistBuddy", "-c", "Print :Label", service.PlistPath)
 	if err != nil {
 		return fmt.Errorf("read launchd plist label for %s: %w", service.Label, err)
 	}
@@ -97,7 +98,7 @@ func (darwinResilienceStackOperator) ValidateTarget(ctx context.Context, service
 }
 
 func (darwinResilienceStackOperator) Inspect(ctx context.Context, service resilienceStackService) (resilienceStackSnapshot, error) {
-	disabledOutput, err := runResilienceStackLaunchctl(ctx, "print-disabled", service.Domain)
+	disabledOutput, err := runResilienceStackLaunchctl(ctx, resilienceStackInspectionCommandTimeout, "print-disabled", service.Domain)
 	if err != nil {
 		return resilienceStackSnapshot{}, fmt.Errorf("inspect launchd disabled state for %s: %w", service.Label, err)
 	}
@@ -105,8 +106,11 @@ func (darwinResilienceStackOperator) Inspect(ctx context.Context, service resili
 	if err != nil {
 		return resilienceStackSnapshot{}, err
 	}
-	output, err := runResilienceStackLaunchctl(ctx, "print", service.Domain+"/"+service.Label)
+	output, err := runResilienceStackLaunchctl(ctx, resilienceStackInspectionCommandTimeout, "print", service.Domain+"/"+service.Label)
 	if err != nil {
+		if context.Cause(ctx) != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return resilienceStackSnapshot{}, fmt.Errorf("inspect launchd target %s: %w", service.Label, err)
+		}
 		if launchdServiceIsUnloaded(output) {
 			return resilienceStackSnapshot{Disabled: disabled}, nil
 		}
@@ -172,20 +176,34 @@ func (darwinResilienceStackOperator) Readiness(ctx context.Context, service resi
 }
 
 func (darwinResilienceStackOperator) Bootout(ctx context.Context, service resilienceStackService) error {
-	_, err := runResilienceStackLaunchctl(ctx, "bootout", service.Domain+"/"+service.Label)
+	_, err := runResilienceStackLaunchctl(ctx, resilienceStackOperationCommandTimeout, "bootout", service.Domain+"/"+service.Label)
 	return err
 }
 
 func (darwinResilienceStackOperator) Bootstrap(ctx context.Context, service resilienceStackService) error {
-	_, err := runResilienceStackLaunchctl(ctx, "bootstrap", service.Domain, service.PlistPath)
+	_, err := runResilienceStackLaunchctl(ctx, resilienceStackOperationCommandTimeout, "bootstrap", service.Domain, service.PlistPath)
 	return err
 }
 
-func runResilienceStackLaunchctl(ctx context.Context, args ...string) ([]byte, error) {
-	command := exec.CommandContext(ctx, resilienceStackLaunchctlPath, args...)
-	output, err := command.CombinedOutput()
+func runResilienceStackLaunchctl(ctx context.Context, timeout time.Duration, args ...string) ([]byte, error) {
+	output, err := runResilienceStackCommand(ctx, timeout, resilienceStackLaunchctlPath, args...)
 	if err != nil {
 		return output, fmt.Errorf("launchctl %s: %w", args[0], err)
+	}
+	return output, nil
+}
+
+func runResilienceStackCommand(ctx context.Context, timeout time.Duration, executable string, args ...string) ([]byte, error) {
+	commandContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	command := exec.CommandContext(commandContext, executable, args...)
+	command.WaitDelay = 2 * time.Second
+	output, err := command.CombinedOutput()
+	if err != nil {
+		if cause := context.Cause(commandContext); cause != nil {
+			return output, cause
+		}
+		return output, err
 	}
 	return output, nil
 }

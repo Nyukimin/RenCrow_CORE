@@ -975,18 +975,20 @@ func resilienceStackMaintenance(action string) error {
 		if closeErr != nil {
 			return closeErr
 		}
+		if err := syncResilienceStackStateDirectory(); err != nil {
+			return fmt.Errorf("sync stack maintenance marker directory: %w", err)
+		}
 		_, err = fmt.Fprintln(os.Stdout, "maintenance=enabled")
 		return err
 	case "leave":
-		if err := validateResilienceStackProtectedFile(resilienceStackHoldPath, 0, true); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				_, writeErr := fmt.Fprintln(os.Stdout, "maintenance=disabled")
-				return writeErr
-			}
+		removed, err := removeResilienceStackMaintenanceMarkerAt(resilienceStackHoldPath, 0)
+		if err != nil {
 			return err
 		}
-		if err := os.Remove(resilienceStackHoldPath); err != nil {
-			return fmt.Errorf("remove stack maintenance marker: %w", err)
+		if removed {
+			if err := syncResilienceStackStateDirectory(); err != nil {
+				return fmt.Errorf("sync stack maintenance removal: %w", err)
+			}
 		}
 		_, err = fmt.Fprintln(os.Stdout, "maintenance=disabled")
 		return err
@@ -1021,24 +1023,29 @@ func readResilienceStackPlan() (resilienceStackPlan, error) {
 }
 
 func resilienceStackMaintenanceActive() (bool, error) {
-	err := validateResilienceStackProtectedFile(resilienceStackHoldPath, 0, true)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
+	return resilienceStackMaintenanceActiveAt(resilienceStackHoldPath, 0)
+}
+
+func resilienceStackMaintenanceActiveAt(path string, owner int) (bool, error) {
+	err := validateResilienceStackProtectedFileExists(path, owner)
+	if errors.Is(err, errResilienceStackMissingLeaf) {
 		return false, nil
 	}
-	return false, err
+	return err == nil, err
 }
 
 func readResilienceStackState() (resilienceStackState, error) {
-	if err := validateResilienceStackProtectedFile(resilienceStackStatePath, 0, true); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+	return readResilienceStackStateAt(resilienceStackStatePath, 0)
+}
+
+func readResilienceStackStateAt(path string, owner int) (resilienceStackState, error) {
+	if err := validateResilienceStackProtectedFileExists(path, owner); err != nil {
+		if errors.Is(err, errResilienceStackMissingLeaf) {
 			return resilienceStackState{}, nil
 		}
 		return resilienceStackState{}, err
 	}
-	data, err := os.ReadFile(resilienceStackStatePath)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return resilienceStackState{}, err
 	}
@@ -1050,6 +1057,22 @@ func readResilienceStackState() (resilienceStackState, error) {
 		return resilienceStackState{}, fmt.Errorf("stack monitor state is invalid: %w", err)
 	}
 	return state, nil
+}
+
+func removeResilienceStackMaintenanceMarkerAt(path string, owner int) (bool, error) {
+	if err := validateResilienceStackProtectedFileExists(path, owner); err != nil {
+		if errors.Is(err, errResilienceStackMissingLeaf) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("remove stack maintenance marker: %w", err)
+	}
+	return true, nil
 }
 
 func writeResilienceStackState(state resilienceStackState) error {
@@ -1123,6 +1146,14 @@ func clearResilienceStackPIDBaseline() error {
 }
 
 func validateResilienceStackProtectedFile(path string, owner int, allowMissing bool) error {
+	err := validateResilienceStackProtectedFileExists(path, owner)
+	if allowMissing && errors.Is(err, errResilienceStackMissingLeaf) {
+		return nil
+	}
+	return err
+}
+
+func validateResilienceStackProtectedFileExists(path string, owner int) error {
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) || clean != path {
 		return fmt.Errorf("protected stack path must be clean and absolute: %q", path)
@@ -1133,12 +1164,16 @@ func validateResilienceStackProtectedFile(path string, owner int, allowMissing b
 		current = filepath.Join(current, part)
 		info, err := os.Lstat(current)
 		if err != nil {
-			if allowMissing && index == len(parts)-1 && errors.Is(err, os.ErrNotExist) {
-				parentInfo, parentErr := os.Lstat(filepath.Dir(current))
+			if index == len(parts)-1 && errors.Is(err, os.ErrNotExist) {
+				parent := filepath.Dir(current)
+				parentInfo, parentErr := os.Lstat(parent)
 				if parentErr != nil {
 					return parentErr
 				}
-				return validateResilienceStackDirectory(filepath.Dir(current), parentInfo, owner)
+				if err := validateResilienceStackDirectory(parent, parentInfo, owner); err != nil {
+					return err
+				}
+				return errResilienceStackMissingLeaf
 			}
 			return err
 		}
@@ -1199,6 +1234,8 @@ func resilienceStackEffectiveUID() (int, error) {
 	}
 	return uid, nil
 }
+
+var errResilienceStackMissingLeaf = fmt.Errorf("protected stack file leaf is missing: %w", os.ErrNotExist)
 
 var resilienceStackLaunchdStatePattern = regexp.MustCompile(`(?m)^\s*state\s*=\s*([[:alnum:]_-]+)\s*$`)
 var resilienceStackLaunchdPIDPattern = regexp.MustCompile(`(?m)^\s*pid\s*=\s*([0-9]+)\s*$`)
