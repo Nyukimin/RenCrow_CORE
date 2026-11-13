@@ -1490,6 +1490,16 @@ func TestLegacyCMDMioTerminalErrorReachesAuthenticatedGlobalSSE(t *testing.T) {
 	if terminal.EventType == "" {
 		t.Fatal("timed out waiting for bridge-published viewer.error")
 	}
+	if terminal.EventSeq == 0 {
+		t.Fatalf("terminal viewer.error has no durable EventSeq: %+v", terminal)
+	}
+	durableDeadline := time.Now().Add(2 * time.Second)
+	for deps.eventRelay.DurableEventSeq() < terminal.EventSeq {
+		if time.Until(durableDeadline) <= 0 {
+			t.Fatalf("timed out waiting for relay publication to become durable: terminal=%d relay=%d", terminal.EventSeq, deps.eventRelay.DurableEventSeq())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if terminal.Payload["task_id"] != accepted.RootTaskID || terminal.Payload["trace_id"] != accepted.TraceID ||
 		terminal.Payload["session_id"] != accepted.SessionID || terminal.Payload["publication_incarnation"] != acceptedBinding.PublicationIncarnation() {
 		t.Fatalf("terminal event identity does not match the accepted current binding: payload=%#v accepted=%+v binding=%+v", terminal.Payload, accepted, acceptedBinding)
