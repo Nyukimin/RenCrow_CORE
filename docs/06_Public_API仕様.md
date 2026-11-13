@@ -2187,3 +2187,14 @@ receiptはCORE発行のrequest／turn／trace／message等の相関、BOARD参�
 観測stageは、CORE durable accepted、BOARD stored、notification attempted／accepted、recipient body read、processing claim、実Agent生成・canonical commit、BOARD reply stored、相関済みpeer reply受領を区別します。未観測時刻は空のまま保持します。配送callback成功やSSE cursor進行を既読・処理成功へ変換しません。
 
 BOARD wireは既存v1のcontexts、threads、send、inbox、receipt、processing-claim、ACK、message statusと認証済みSSEを使用します。接続identityの読取としてGET /api/v1/connectionを追加し、currentなscoped非admin Bearer本人のprincipal_idとjournal_instance_idだけを返します。既存contexts／flat inbox／senderとrecipientの双方が取得できるreceiptでは、期待principalとjournal継続性を観測できないための追加です。GETはidentity初期化を行いません。COREはX-BOARD-Journal-Instance-IDとX-BOARD-Principal-IDを後続要求へ付けます。両header無は既存peer互換、片方だけ・形式不正は400 connection_identity_precondition_invalid、認証後の期待tuple不一致は409 connection_identity_mismatchとし現在値を開示しません。BOARDはSend／新thread／claim／ACKのcanonical mutation lock内で現在credentialと期待tupleをcommit前に検証します。COREはprecondition無しへfallbackせず、mismatchを未commit証明や再pin許可にしません。各操作でchannel／thread／reply_to／mentions／recipient／ACL契約を維持し、旧管理routeへfallbackしません。CORE起点requestへのreplyはreply_to、expected peer、context、causation照合後に終端化し、新たなMio生成を起動しません。詳細は[アーキテクチャ](04_アーキテクチャ概要.md#board-communication)と[安全方針](07_安全・自動実行・データ方針.md#board-communication)を参照します。
+
+## BOARD Studioの読み取り投影
+
+`cmd/rencrow-board-studio` はCORE Viewerと同じホストで動かす読み取り用プロセスです。認証付き `GET /snapshot` で BOARD Studio 1.0 の表示用DTOを返します。通常のCOREバイナリやストレージを再起動・変更する必要はありません。
+
+- `-listen` の既定は `127.0.0.1:18804`。 `-core` の既定は `http://127.0.0.1:18790`。両方とも数値のループバックを使います。 `-token-file` は専用Bearerを保存した所有者のみ読めるファイルです。
+- 稼働は `/viewer/agents` の観測時刻と状態で表示します。Taskは `/viewer/tasks` が公開可能と判定し、`origin_publication.audience=public` のものに限ります。エージェントの観測が90秒を超えた場合は現在の稼働件数に含めません。
+- `agents[].task_stack_head` は各COREエージェントの公開Taskの先頭への参照です。対象は担当が一致する実行中・未着手・待機中・ブロック中のTaskです。新鮮な稼働観測が指す実行中Taskを優先し、次にViewerの一覧順で最初の実行中Task、続いて最初の未終了Taskを選びます。取得状態は `source_health.task_stack` に返し、対象が空の場合は参照を省略します。
+- 案件・ゴール・成果物は `/viewer/workstreams` から取得します。Atlasの工程・ブロックは `/viewer/atlas` の現在の実装単位と版でWorkstreamに関連付けます。進捗の分子はAtlasの `passed` 工程数です。
+- レスポンスは表示に必要なフィールドに限定します。会話本文、プレビュー、共有Context、ファイルのパス、成果物の本文、資格情報を中継しません。取得できなかった領域は `source_health` で示します。
+- 更新はBOARDが30秒おきに再取得します。この実装の投影はスナップショットのみです。取得範囲は既存Viewerの公開Task一覧およびWorkstream系の最大100件の範囲です。
