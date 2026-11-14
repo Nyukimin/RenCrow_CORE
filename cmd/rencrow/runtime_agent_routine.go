@@ -823,7 +823,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			return err
 		}
 	}
-	if err := r.completeRuns(activityCtx, prepared, routineTaskSummary(intent.Kind)); err != nil {
+	if err := r.completeRuns(activityCtx, prepared, routineTaskSummary(intent.Kind, progress)); err != nil {
 		return err
 	}
 	if err := r.recordRoutineFacts(activityCtx, intent, progress, progress.CompletedAt); err != nil {
@@ -1243,21 +1243,57 @@ func routineTaskTitle(kind agentroutine.ActivityKind) string {
 	}
 }
 
-func routineTaskSummary(kind agentroutine.ActivityKind) string {
+func routineTaskSummary(kind agentroutine.ActivityKind, progress routineProgress) string {
 	switch kind {
 	case agentroutine.ActivitySleep:
+		if routineWorldHasVerifiedEvent(progress, worldread.HomeActionSleep, "life.home.sleep.started") {
+			return "Started and verified sleep in the configured WORLD bed."
+		}
 		return "Logical sleep gate updated; no physical sleep or WORLD action was performed."
 	case agentroutine.ActivityWake:
+		if routineWorldHasVerifiedEvent(progress, worldread.HomeActionWake, "life.home.sleep.woke") {
+			return "Completed and verified the WORLD wake transition."
+		}
 		return "Logical wake gate updated; no physical WORLD action was performed."
 	case agentroutine.ActivityMorningChat:
 		return "Completed a private two-actor text exchange; dialogue remains local."
 	case agentroutine.ActivityHobby:
-		return "Read bounded public WebGather results and saved a private generated note."
+		if progress.Media != nil && progress.Media.Verified {
+			return "Recorded a verified bounded playback interval from configured media."
+		}
+		if routineWorldHasVerifiedEvent(progress, worldread.HomeActionFinish, "life.home.exercise.completed") {
+			return "Completed a verified WORLD exercise activity."
+		}
+		if routineWorldHasVerifiedEvent(progress, worldread.HomeActionFinish, "life.home.mirror_pose.completed") {
+			return "Completed a verified WORLD mirror pose activity."
+		}
+		if progress.SearchResult != "" && progress.HobbyText != "" {
+			return "Read bounded public WebGather results and saved a private generated note."
+		}
+		return "Completed a CORE hobby step; activity details were not confirmed."
+	case agentroutine.ActivityRelax:
+		if progress.World != nil && progress.World.RelaxRoomID != "" && !progress.World.RelaxObservedAt.IsZero() {
+			return "Confirmed quiet time in the configured home room."
+		}
+		return "Completed the scheduled relaxation step; no room activity was confirmed."
 	case agentroutine.ActivityDiary:
 		return "Submitted the exact saved diary revision to the pinned BOARD client."
 	default:
 		return "Completed a CORE routine bookkeeping step."
 	}
+}
+
+func routineWorldHasVerifiedEvent(progress routineProgress, action, eventKind string) bool {
+	if progress.World == nil {
+		return false
+	}
+	for _, operation := range progress.World.Operations {
+		if operation.Action == action && operation.EventKind == eventKind && operation.ReceiptID != "" &&
+			operation.ReceiptStatus == "committed" && operation.EventVerified && operation.ActivityID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *agentRoutineRuntime) executeMorningChat(ctx context.Context, stop <-chan struct{}, state agentroutine.State, progress routineProgress, prepared []routinePreparedRun) (agentroutine.State, routineProgress, error) {

@@ -70,6 +70,42 @@ func TestRoutineWorldSleepWakeBindingRequiresExactAuthenticatedStartAndTerminal(
 	}
 }
 
+func TestRoutineTaskSummaryMatchesConfirmedRoutinePath(t *testing.T) {
+	verifiedWorld := func(action, eventKind string) *routineWorldProgress {
+		return &routineWorldProgress{Operations: []routineWorldOperation{{
+			Action: action, EventKind: eventKind, ReceiptID: "receipt-1", ReceiptStatus: "committed", EventVerified: true, ActivityID: "activity-1",
+		}}}
+	}
+	tests := []struct {
+		name     string
+		kind     agentroutine.ActivityKind
+		progress routineProgress
+		want     string
+		avoid    string
+	}{
+		{name: "logical sleep fallback", kind: agentroutine.ActivitySleep, want: "Logical sleep gate", avoid: "verified sleep"},
+		{name: "WORLD sleep", kind: agentroutine.ActivitySleep, progress: routineProgress{World: verifiedWorld(worldread.HomeActionSleep, "life.home.sleep.started")}, want: "verified sleep", avoid: "no physical sleep"},
+		{name: "WORLD wake", kind: agentroutine.ActivityWake, progress: routineProgress{World: verifiedWorld(worldread.HomeActionWake, "life.home.sleep.woke")}, want: "WORLD wake transition", avoid: "no physical WORLD action"},
+		{name: "unverified WORLD wake fallback", kind: agentroutine.ActivityWake, progress: routineProgress{World: &routineWorldProgress{Operations: []routineWorldOperation{{
+			Action: worldread.HomeActionWake, EventKind: "life.home.sleep.woke", ReceiptStatus: "committed", ActivityID: "activity-1",
+		}}}}, want: "Logical wake gate", avoid: "verified WORLD wake"},
+		{name: "WebGather hobby", kind: agentroutine.ActivityHobby, progress: routineProgress{SearchResult: "public source", HobbyText: "PRIVATE_NOTE_SENTINEL"}, want: "WebGather", avoid: "PRIVATE_NOTE_SENTINEL"},
+		{name: "WORLD exercise", kind: agentroutine.ActivityHobby, progress: routineProgress{World: verifiedWorld(worldread.HomeActionFinish, "life.home.exercise.completed")}, want: "WORLD exercise", avoid: "WebGather"},
+		{name: "WORLD mirror pose", kind: agentroutine.ActivityHobby, progress: routineProgress{World: verifiedWorld(worldread.HomeActionFinish, "life.home.mirror_pose.completed")}, want: "mirror pose", avoid: "WebGather"},
+		{name: "media playback", kind: agentroutine.ActivityHobby, progress: routineProgress{Media: &routineMediaProgress{Verified: true, Title: "PRIVATE_MEDIA_TITLE_SENTINEL"}}, want: "verified bounded playback", avoid: "PRIVATE_MEDIA_TITLE_SENTINEL"},
+		{name: "observed relaxation", kind: agentroutine.ActivityRelax, progress: routineProgress{World: &routineWorldProgress{RelaxRoomID: "living", RelaxObservedAt: time.Now().UTC()}}, want: "Confirmed quiet time", avoid: "no room activity"},
+		{name: "unobserved relaxation", kind: agentroutine.ActivityRelax, want: "no room activity was confirmed", avoid: "Confirmed quiet time"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := routineTaskSummary(test.kind, test.progress)
+			if !strings.Contains(got, test.want) || strings.Contains(got, test.avoid) {
+				t.Fatalf("routineTaskSummary() = %q, want %q and not %q", got, test.want, test.avoid)
+			}
+		})
+	}
+}
+
 func TestRoutineWorldWakePreparedOperationCanRecoverMissingReceipt(t *testing.T) {
 	state := agentroutine.State{Pending: &agentroutine.Intent{ID: "intent-1"}}
 	binding := &routineWorldSleepBinding{
