@@ -3,11 +3,83 @@ package browseractor
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	modulebrowser "github.com/Nyukimin/RenCrow_CORE/modules/browseractor"
 )
+
+func TestExecCommandCancellationChild(t *testing.T) {
+	if os.Getenv("RENCROW_BROWSER_ACTOR_CANCEL_CHILD") != "1" {
+		return
+	}
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, syscall.SIGTERM)
+	if readyPath := os.Getenv("RENCROW_BROWSER_ACTOR_CANCEL_READY"); readyPath != "" {
+		if err := os.WriteFile(readyPath, []byte("ready"), 0600); err != nil {
+			os.Exit(2)
+		}
+	}
+	<-interrupt
+	_, _ = os.Stdout.Write([]byte(`{"status":"failed","error":{"code":"CANCELLED"}}`))
+	os.Exit(0)
+}
+
+func TestExecCommandSendsSoftSignalAndCapturesCancellationOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows keeps the native CommandContext hard-cancel behavior")
+	}
+	t.Setenv("RENCROW_BROWSER_ACTOR_CANCEL_CHILD", "1")
+	readyPath := filepath.Join(t.TempDir(), "ready")
+	t.Setenv("RENCROW_BROWSER_ACTOR_CANCEL_READY", readyPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	commandDone := make(chan struct{})
+	readyResult := make(chan error, 1)
+	go func() {
+		defer close(readyResult)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		timeout := time.NewTimer(5 * time.Second)
+		defer timeout.Stop()
+		for {
+			select {
+			case <-commandDone:
+				readyResult <- errors.New("sidecar exited before installing its cancellation handler")
+				return
+			case <-timeout.C:
+				cancel()
+				readyResult <- errors.New("timed out waiting for sidecar cancellation readiness")
+				return
+			case <-ticker.C:
+				if _, err := os.Stat(readyPath); err == nil {
+					cancel()
+					readyResult <- nil
+					return
+				} else if !errors.Is(err, os.ErrNotExist) {
+					cancel()
+					readyResult <- err
+					return
+				}
+			}
+		}
+	}()
+	stdout, _, exitCode, err := execCommand(ctx, os.Args[0], []string{"-test.run=^TestExecCommandCancellationChild$"}, nil)
+	close(commandDone)
+	if readyErr := <-readyResult; readyErr != nil {
+		t.Fatal(readyErr)
+	}
+	if !errors.Is(err, context.Canceled) || strings.TrimSpace(string(stdout)) != `{"status":"failed","error":{"code":"CANCELLED"}}` {
+		t.Fatalf("sidecar did not flush exact cancellation output before fallback: stdout=%q exit=%d err=%v", stdout, exitCode, err)
+	}
+}
 
 func TestRunnerRunPassesJSONToSidecar(t *testing.T) {
 	var stdinSeen string

@@ -42,6 +42,14 @@ type Presence struct {
 	ChatParticipants []string
 }
 
+type RelaxRoomScope uint8
+
+const (
+	RelaxRoomUnknown RelaxRoomScope = iota
+	RelaxRoomPrivate
+	RelaxRoomShared
+)
+
 // State is the actor's bounded, durable routine checkpoint. LogicalSleepUntil is a
 // CORE eligibility window; it is not evidence that WORLD moved or put the actor to sleep.
 type State struct {
@@ -61,6 +69,7 @@ type State struct {
 
 type Plan struct {
 	Kind         ActivityKind
+	RelaxRoom    RelaxRoomScope
 	Date         string
 	ScheduleDate string
 	PlannedSleep time.Time

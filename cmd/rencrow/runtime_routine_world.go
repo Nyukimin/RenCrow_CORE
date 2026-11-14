@@ -28,12 +28,29 @@ var routineMirrorPoseIDs = [...]string{
 }
 
 type routineWorldProgress struct {
-	Operations              []routineWorldOperation `json:"operations"`
-	MorningRoom             string                  `json:"morning_room,omitempty"`
-	MirrorPoseID            string                  `json:"mirror_pose_id,omitempty"`
-	MirrorCompletionBase    uint64                  `json:"mirror_completion_base,omitempty"`
-	MirrorCompletionBaseSet bool                    `json:"mirror_completion_base_set,omitempty"`
-	NextDueAt               time.Time               `json:"next_due_at,omitempty"`
+	Operations              []routineWorldOperation   `json:"operations"`
+	MorningRoom             string                    `json:"morning_room,omitempty"`
+	RelaxRoomID             string                    `json:"relax_room_id,omitempty"`
+	RelaxObservedAt         time.Time                 `json:"relax_observed_at,omitempty"`
+	SleepStart              *routineWorldSleepBinding `json:"sleep_start,omitempty"`
+	MirrorPoseID            string                    `json:"mirror_pose_id,omitempty"`
+	MirrorCompletionBase    uint64                    `json:"mirror_completion_base,omitempty"`
+	MirrorCompletionBaseSet bool                      `json:"mirror_completion_base_set,omitempty"`
+	NextDueAt               time.Time                 `json:"next_due_at,omitempty"`
+}
+
+type routineWorldSleepBinding struct {
+	ActorID       string    `json:"actor_id"`
+	WorldActorID  string    `json:"world_actor_id"`
+	ActivityID    string    `json:"activity_id"`
+	RoomID        string    `json:"room_id"`
+	SlotID        string    `json:"slot_id"`
+	StartedAt     time.Time `json:"started_at"`
+	EventID       string    `json:"event_id"`
+	TransactionID string    `json:"transaction_id"`
+	Seq           uint64    `json:"seq"`
+	LayoutSHA256  string    `json:"layout_sha256"`
+	SceneSHA256   string    `json:"scene_sha256"`
 }
 
 type routineWorldOperation struct {
@@ -143,6 +160,33 @@ func routineWorldExactOperation(progress routineProgress, purpose string) (int, 
 		}
 	}
 	return -1, false
+}
+
+func routineWorldActivityWasConfirmedStopped(progress routineProgress, actorID, activityID string) bool {
+	if progress.World == nil || actorID == "" || activityID == "" {
+		return false
+	}
+	for _, operation := range progress.World.Operations {
+		if operation.Action == worldread.HomeActionStop && operation.EventKind == "life.home.activity.stopped" &&
+			operation.ActorID == actorID && operation.Payload.ActivityID == activityID &&
+			operation.ReceiptStatus == "committed" && operation.EventVerified {
+			return true
+		}
+	}
+	return false
+}
+
+func routineWorldActivityWasConfirmedFinished(progress routineProgress, actorID, activityID string) (routineWorldOperation, bool) {
+	if progress.World == nil || actorID == "" || activityID == "" {
+		return routineWorldOperation{}, false
+	}
+	for _, operation := range progress.World.Operations {
+		if operation.Action == worldread.HomeActionFinish && operation.ActorID == actorID &&
+			operation.Payload.ActivityID == activityID && operation.ReceiptStatus == "committed" && operation.EventVerified {
+			return operation, true
+		}
+	}
+	return routineWorldOperation{}, false
 }
 
 func routineWorldRetryPurpose(progress routineProgress, base string) string {
@@ -337,7 +381,120 @@ func (r *agentRoutineRuntime) routineWorldReceiptEvent(ctx context.Context, oper
 	return selected, selectedFields, nil
 }
 
+func routineWorldSleepBindingFromFeed(feed worldread.Feed, current worldread.Snapshot, actorID, worldActorID, roomID, slotID string, active worldread.Actor) (routineWorldSleepBinding, error) {
+	if actorID == "" || worldActorID == "" || roomID == "" || slotID == "" || !active.Present || active.ActivityID == "" ||
+		active.ActivityKind != "sleep" || active.RoomID != roomID || active.SlotID != slotID || active.ActivityStartedAt.IsZero() {
+		return routineWorldSleepBinding{}, errors.New("fresh WORLD snapshot does not confirm the exact active bed sleep")
+	}
+	if feed.Snapshot.WorldID == "" || feed.Snapshot.WorldID != current.WorldID || feed.Snapshot.TimelineID != current.TimelineID ||
+		feed.Snapshot.TimelineEpoch != current.TimelineEpoch || feed.Snapshot.StateSeq < current.StateSeq || feed.Cursor < feed.Snapshot.StateSeq {
+		return routineWorldSleepBinding{}, errors.New("authenticated WORLD feed does not cover the current sleep snapshot scope")
+	}
+	var feedActor worldread.Actor
+	feedActorFound := false
+	for _, candidate := range feed.Snapshot.Actors {
+		if candidate.ActorID == worldActorID && candidate.Present {
+			feedActor, feedActorFound = candidate, true
+			break
+		}
+	}
+	if !feedActorFound || feedActor.ActivityID != active.ActivityID || feedActor.ActivityKind != "sleep" ||
+		feedActor.RoomID != roomID || feedActor.SlotID != slotID || !feedActor.ActivityStartedAt.Equal(active.ActivityStartedAt) {
+		return routineWorldSleepBinding{}, errors.New("authenticated WORLD feed snapshot changed the exact active sleep instance")
+	}
+	if active.HomeSceneSHA256 != "" && feedActor.HomeSceneSHA256 != active.HomeSceneSHA256 {
+		return routineWorldSleepBinding{}, errors.New("authenticated WORLD feed snapshot changed the sleep scene binding")
+	}
+	var binding routineWorldSleepBinding
+	found := false
+	for _, event := range feed.Events {
+		if event.Kind != "life.home.sleep.started" {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(event.Payload, &fields) != nil {
+			return routineWorldSleepBinding{}, errors.New("WORLD sleep-start event payload is invalid")
+		}
+		payloadActor, actorOK := routineWorldString(fields, "actor_id")
+		activityID, activityOK := routineWorldString(fields, "activity_id")
+		if !actorOK || payloadActor != worldActorID || !activityOK || activityID != active.ActivityID {
+			continue
+		}
+		if found {
+			return routineWorldSleepBinding{}, errors.New("WORLD feed contains duplicate sleep-start events for the active instance")
+		}
+		activityKind, kindOK := routineWorldString(fields, "activity_kind")
+		eventRoom, roomOK := routineWorldString(fields, "room_id")
+		eventSlot, slotOK := routineWorldString(fields, "slot_id")
+		startedAt := routineWorldTime(fields, "started_at")
+		layoutSHA256, _ := routineWorldString(fields, "layout_sha256")
+		sceneSHA256, _ := routineWorldString(fields, "scene_sha256")
+		if event.EventID == "" || event.TransactionID == "" || event.Seq == 0 || event.Seq > feed.Snapshot.StateSeq || event.RecordedAt.IsZero() ||
+			!kindOK || activityKind != "sleep" || !roomOK || eventRoom != roomID || !slotOK || eventSlot != slotID ||
+			!startedAt.Equal(active.ActivityStartedAt) ||
+			!routineWorldDigest(layoutSHA256) || !routineWorldDigest(sceneSHA256) {
+			return routineWorldSleepBinding{}, errors.New("WORLD sleep-start event does not match the exact bed, activity, and server time")
+		}
+		if (active.HomeSceneSHA256 != "" && active.HomeSceneSHA256 != sceneSHA256) ||
+			(feed.Snapshot.HomeSceneSHA256 != "" && feed.Snapshot.HomeSceneSHA256 != sceneSHA256) {
+			return routineWorldSleepBinding{}, errors.New("WORLD sleep-start event changed the pinned scene digest")
+		}
+		binding = routineWorldSleepBinding{
+			ActorID: actorID, WorldActorID: payloadActor, ActivityID: activityID, RoomID: eventRoom, SlotID: eventSlot, StartedAt: startedAt.UTC(),
+			EventID: event.EventID, TransactionID: event.TransactionID, Seq: event.Seq,
+			LayoutSHA256: layoutSHA256, SceneSHA256: sceneSHA256,
+		}
+		found = true
+	}
+	if !found {
+		return routineWorldSleepBinding{}, errors.New("authenticated WORLD event feed lacks the exact sleep-start event")
+	}
+	return binding, nil
+}
+
+func (r *agentRoutineRuntime) routineWorldSleepStartBinding(ctx context.Context, actorID string, current routineSnapshotRead, active worldread.Actor) (routineWorldSleepBinding, error) {
+	if r == nil || r.world == nil || r.cfg == nil {
+		return routineWorldSleepBinding{}, errors.New("WORLD sleep binding requires the configured actor and authenticated reader")
+	}
+	worldActorID, ok := r.routineWorldActorID(actorID)
+	if !ok {
+		return routineWorldSleepBinding{}, errors.New("WORLD sleep binding requires the configured actor and authenticated reader")
+	}
+	roomID := r.cfg.Heartbeat.Routine.PrivateRooms[actorID]
+	if roomID == "" {
+		return routineWorldSleepBinding{}, errors.New("WORLD sleep binding requires the actor's configured private room")
+	}
+	feed, err := r.world.ReadFeed(ctx, 0)
+	if err != nil {
+		return routineWorldSleepBinding{}, fmt.Errorf("read authenticated WORLD sleep-start feed: %w", err)
+	}
+	return routineWorldSleepBindingFromFeed(feed, current.snapshot, actorID, worldActorID, roomID, "bed-"+actorID, active)
+}
+
+func sameRoutineWorldSleepBinding(left, right routineWorldSleepBinding) bool {
+	return left.ActorID == right.ActorID && left.WorldActorID == right.WorldActorID && left.ActivityID == right.ActivityID && left.RoomID == right.RoomID &&
+		left.SlotID == right.SlotID && left.StartedAt.Equal(right.StartedAt) && left.EventID == right.EventID &&
+		left.TransactionID == right.TransactionID && left.Seq == right.Seq &&
+		left.LayoutSHA256 == right.LayoutSHA256 && left.SceneSHA256 == right.SceneSHA256
+}
+
 func (r *agentRoutineRuntime) verifyRoutineWorldActivityBinding(progress routineProgress, terminal routineWorldOperation) error {
+	if terminal.Action == worldread.HomeActionWake {
+		if progress.World == nil {
+			return errors.New("WORLD wake terminal event has no authenticated sleep-start binding")
+		}
+		binding := progress.World.SleepStart
+		if binding == nil || terminal.EventKind != "life.home.sleep.woke" || terminal.ActorID != binding.ActorID ||
+			terminal.Payload.ActorID != binding.ActorID || terminal.Payload.ActivityID != binding.ActivityID || terminal.ActivityID != binding.ActivityID ||
+			terminal.ActivityKind != "sleep" || terminal.RoomID != binding.RoomID || terminal.SlotID != binding.SlotID ||
+			!terminal.StartedAt.Equal(binding.StartedAt) || terminal.EndedAt.IsZero() || terminal.EndedAt.Before(binding.StartedAt) ||
+			terminal.FirstSeq == 0 || binding.Seq >= terminal.FirstSeq ||
+			terminal.LayoutSHA256 != binding.LayoutSHA256 || terminal.SceneSHA256 != binding.SceneSHA256 ||
+			binding.EventID == "" || binding.TransactionID == "" || binding.Seq == 0 {
+			return errors.New("WORLD wake terminal event does not match its authenticated sleep-start binding")
+		}
+		return nil
+	}
 	for _, start := range progress.World.Operations {
 		if start.ActivityID != terminal.Payload.ActivityID || start.ActivityID == "" || !strings.HasSuffix(start.EventKind, ".started") {
 			continue
@@ -468,19 +625,28 @@ func (r *agentRoutineRuntime) ensureRoutineWorldArrival(
 					}
 					return state, progress, actor, r.verifyRoutineWorldArrivalState(actor, roomID, slotID)
 				}
-				return state, progress, worldread.Actor{}, errors.New("checkpointed WORLD move is no longer active and has no arrival receipt")
+				if !routineWorldActivityWasConfirmedStopped(progress, actorID, move.ActivityID) {
+					return state, progress, worldread.Actor{}, errors.New("checkpointed WORLD move is no longer active and has no verified stop receipt")
+				}
+				movePurpose = routineWorldRetryPurpose(progress, movePurpose)
+				moveIndex, moveSaved = routineWorldExactOperation(progress, movePurpose)
 			}
 		}
-		state, progress, _, err = r.performRoutineWorldAction(ctx, state, progress, movePurpose, worldread.HomeActionMove,
+		var moveOperation routineWorldOperation
+		state, progress, moveOperation, err = r.performRoutineWorldAction(ctx, state, progress, movePurpose, worldread.HomeActionMove,
 			"life.home.move.started", worldread.HomeActionPayload{ActorID: actorID, RoomID: roomID, SlotID: slotID})
 		if err != nil {
 			return state, progress, worldread.Actor{}, err
+		}
+		moveIndex, moveSaved = routineWorldExactOperation(progress, moveOperation.Purpose)
+		if !moveSaved {
+			return state, progress, worldread.Actor{}, errors.New("WORLD move receipt was not checkpointed after its committed action")
 		}
 		read, actor, err = r.routineWorldFreshActor(ctx, actorID)
 		if err != nil {
 			return state, progress, worldread.Actor{}, err
 		}
-		if err := r.verifyRoutineWorldSnapshot(read, actor, progress.World.Operations[moveIndexSafe(r, progress, movePurpose)]); err != nil {
+		if err := r.verifyRoutineWorldSnapshot(read, actor, moveOperation); err != nil {
 			return state, progress, worldread.Actor{}, err
 		}
 	}
@@ -741,7 +907,7 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 		if roomID == "" {
 			return state, progress, errors.New("WORLD sleep requires the actor's configured private room")
 		}
-		state, progress, _, err := r.ensureRoutineWorldArrival(ctx, stop, state, progress, intent.ActorID, roomID, "bed-"+intent.ActorID, "sleep-bed", routineWorldMoveWait)
+		state, progress, _, err = r.ensureRoutineWorldArrival(ctx, stop, state, progress, intent.ActorID, roomID, "bed-"+intent.ActorID, "sleep-bed", routineWorldMoveWait)
 		if err != nil {
 			return state, progress, err
 		}
@@ -798,7 +964,25 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 		}
 		if actor.ActivityKind == "sleep" && actor.ActivityID != "" {
 			purpose := "wake:" + actor.ActivityID
-			state, progress, operation, err := r.performRoutineWorldAction(ctx, state, progress, purpose, worldread.HomeActionWake,
+			binding, bindingErr := r.routineWorldSleepStartBinding(ctx, intent.ActorID, read, actor)
+			if bindingErr != nil {
+				return state, progress, bindingErr
+			}
+			if progress.World == nil {
+				progress.World = &routineWorldProgress{}
+			}
+			if progress.World.SleepStart != nil && !sameRoutineWorldSleepBinding(*progress.World.SleepStart, binding) {
+				return state, progress, errors.New("persisted WORLD sleep-start binding changed during wake")
+			}
+			if progress.World.SleepStart == nil {
+				progress.World.SleepStart = &binding
+				state, progress, err = r.saveProgress(ctx, state, "world_sleep_start_bound", progress)
+				if err != nil {
+					return state, progress, err
+				}
+			}
+			var operation routineWorldOperation
+			state, progress, operation, err = r.performRoutineWorldAction(ctx, state, progress, purpose, worldread.HomeActionWake,
 				"life.home.sleep.woke", worldread.HomeActionPayload{ActorID: intent.ActorID, ActivityID: actor.ActivityID})
 			if err != nil {
 				return state, progress, err
@@ -813,8 +997,23 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 			progress.CompletedAt = operation.EndedAt
 		} else if index, exists := r.routineWorldOperationByAction(progress, worldread.HomeActionWake, intent.ActorID); exists {
 			operation := progress.World.Operations[index]
-			if operation.ReceiptID == "" || !operation.EventVerified {
-				return state, progress, errors.New("WORLD wake state lacks its verified completion receipt")
+			if !routineWorldWakeOperationCanReplay(state, progress, intent.ActorID, operation) {
+				return state, progress, errors.New("WORLD wake state lacks a matching prepared operation and authenticated sleep-start binding")
+			}
+			state, progress, operation, err = r.performRoutineWorldAction(ctx, state, progress, operation.Purpose,
+				worldread.HomeActionWake, "life.home.sleep.woke", operation.Payload)
+			if err != nil {
+				return state, progress, err
+			}
+			read, actor, err = r.routineWorldFreshActor(ctx, intent.ActorID)
+			if err != nil {
+				return state, progress, err
+			}
+			if err := r.verifyRoutineWorldSnapshot(read, actor, operation); err != nil || actor.ActivityID == operation.Payload.ActivityID {
+				return state, progress, errors.Join(err, errors.New("fresh WORLD snapshot still shows the prior sleep activity"))
+			}
+			if operation.EndedAt.IsZero() {
+				return state, progress, errors.New("verified WORLD wake event has no server end timestamp")
 			}
 			progress.CompletedAt = operation.EndedAt
 		} else {
@@ -830,15 +1029,34 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 			}
 		}
 	case agentroutine.ActivityRelax:
-		roomID := r.routineWorldPreferredSharedRoom()
-		if roomID == "" {
-			return state, progress, errors.New("WORLD relaxation requires a configured shared room")
+		fresh, _, freshErr := r.planFresh(ctx, intent.ActorID, true, nil)
+		if freshErr != nil {
+			return state, progress, freshErr
 		}
-		state, progress, _, err := r.ensureRoutineWorldArrival(ctx, stop, state, progress, intent.ActorID, roomID, "", "relax-living", routineWorldMoveWait)
+		if fresh.Kind != agentroutine.ActivityRelax {
+			return state, progress, errors.New("WORLD relaxation is no longer eligible under fresh routine policy")
+		}
+		roomID := r.routineWorldRelaxRoom(intent.ActorID, fresh.RelaxRoom)
+		if roomID == "" {
+			return state, progress, errors.New("WORLD relaxation requires a configured policy-selected room")
+		}
+		state, progress, _, err = r.ensureRoutineWorldArrival(ctx, stop, state, progress, intent.ActorID, roomID, "", "relax-room", routineWorldMoveWait)
 		if err != nil {
 			return state, progress, err
 		}
-		progress.CompletedAt = r.worldNowUTC()
+		read, actor, err := r.routineWorldFreshActor(ctx, intent.ActorID)
+		if err != nil {
+			return state, progress, err
+		}
+		if err := r.verifyRoutineWorldArrivalState(actor, roomID, ""); err != nil {
+			return state, progress, err
+		}
+		if progress.World == nil {
+			progress.World = &routineWorldProgress{}
+		}
+		progress.World.RelaxRoomID = actor.RoomID
+		progress.World.RelaxObservedAt = read.readAt.UTC()
+		progress.CompletedAt = read.readAt.UTC()
 	case agentroutine.ActivityHobby:
 		if intent.ActorID == "shiro" && intent.Label == "fitness_research" {
 			state, progress, err = r.executeRoutineWorldExercise(ctx, stop, state, progress)
@@ -858,6 +1076,19 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 	return state, progress, err
 }
 
+func (r *agentRoutineRuntime) routineWorldRelaxRoom(actorID string, scope agentroutine.RelaxRoomScope) string {
+	if r == nil || r.cfg == nil {
+		return ""
+	}
+	switch scope {
+	case agentroutine.RelaxRoomPrivate:
+		return r.cfg.Heartbeat.Routine.PrivateRooms[actorID]
+	case agentroutine.RelaxRoomShared:
+		return r.routineWorldPreferredSharedRoom()
+	default:
+		return ""
+	}
+}
 func (r *agentRoutineRuntime) routineWorldOperationByAction(progress routineProgress, action, actorID string) (int, bool) {
 	if progress.World == nil {
 		return -1, false
@@ -869,6 +1100,19 @@ func (r *agentRoutineRuntime) routineWorldOperationByAction(progress routineProg
 		}
 	}
 	return -1, false
+}
+
+func routineWorldWakeOperationCanReplay(state agentroutine.State, progress routineProgress, actorID string, operation routineWorldOperation) bool {
+	if state.Pending == nil || state.Pending.ID == "" || progress.World == nil || progress.World.SleepStart == nil {
+		return false
+	}
+	binding := progress.World.SleepStart
+	purpose := "wake:" + binding.ActivityID
+	return actorID != "" && binding.ActorID == actorID && binding.ActivityID != "" && binding.EventID != "" &&
+		binding.TransactionID != "" && binding.Seq != 0 && operation.Purpose == purpose &&
+		operation.Key == routineWorldOperationKey(state.Pending.ID, actorID, purpose) && operation.Action == worldread.HomeActionWake &&
+		operation.EventKind == "life.home.sleep.woke" && operation.ActorID == actorID && operation.Payload.ActorID == actorID &&
+		operation.Payload.ActivityID == binding.ActivityID
 }
 
 func (r *agentRoutineRuntime) executeRoutineWorldExercise(ctx context.Context, stop <-chan struct{}, state agentroutine.State, progress routineProgress) (agentroutine.State, routineProgress, error) {
@@ -948,6 +1192,28 @@ func (r *agentRoutineRuntime) executeRoutineWorldTimedActivity(
 	} else {
 		if actor.ActivityID != "" {
 			return state, progress, errRoutineWorldBusy
+		}
+		if startIndex, ok := r.routineWorldOperation(progress, startPurpose); ok {
+			previous := progress.World.Operations[startIndex]
+			if previous.ActivityID != "" {
+				if terminal, finished := routineWorldActivityWasConfirmedFinished(progress, actorID, previous.ActivityID); finished {
+					if terminal.EventKind != finishEvent || terminal.EndedAt.IsZero() {
+						return state, progress, errors.New("confirmed interrupted finish lacks the expected event or owner timestamp")
+					}
+					if read.snapshot.StateSeq < terminal.StateSeq {
+						return state, progress, errors.New("fresh WORLD snapshot predates the confirmed interrupted finish")
+					}
+					if activityKind == "mirror_pose" && actor.MirrorPoseCompletions != terminal.MirrorCompletions {
+						return state, progress, errors.New("WORLD mirror completion count changed after its confirmed finish")
+					}
+					progress.CompletedAt = terminal.EndedAt.UTC()
+					progress.World.NextDueAt = time.Time{}
+					return r.saveProgress(ctx, state, "world_interrupted_activity_finish_confirmed", progress)
+				}
+				if routineWorldActivityWasConfirmedStopped(progress, actorID, previous.ActivityID) {
+					startPurpose = routineWorldRetryPurpose(progress, startPurpose)
+				}
+			}
 		}
 		payload := worldread.HomeActionPayload{ActorID: actorID}
 		switch startAction {

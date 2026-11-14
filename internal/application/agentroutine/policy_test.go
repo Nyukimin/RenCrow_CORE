@@ -200,6 +200,38 @@ func TestDecideUsesConfirmedRoomForMorningRelaxAndDrainsDiaryBeforeNightHobby(t 
 	}
 }
 
+func TestDecideMarksPrivateNightRelaxAndSharedMorningRelax(t *testing.T) {
+	now := jst(2026, time.November, 14, 23, 30)
+	night := Decide(now, ActorState{ID: "Mio"}, State{}, Presence{OwnRoom: AvailabilityAvailable}, false)
+	if night.Kind != ActivityRelax || night.RelaxRoom != RelaxRoomPrivate {
+		t.Fatalf("night relax = %+v, want private-room relaxation", night)
+	}
+
+	beforeWake := Decide(jst(2026, time.November, 14, 5, 30), ActorState{ID: "Mio"}, State{
+		ScheduleDate: "2026-11-14", PlannedSleep: jst(2026, time.November, 14, 1, 0),
+		PlannedWake: jst(2026, time.November, 14, 6, 0),
+	}, Presence{OwnRoom: AvailabilityAvailable}, false)
+	if beforeWake.Kind != ActivityRelax || beforeWake.RelaxRoom != RelaxRoomPrivate {
+		t.Fatalf("pre-wake relax = %+v, want private-room relaxation", beforeWake)
+	}
+
+	morning := Decide(jst(2026, time.November, 14, 5, 30), ActorState{ID: "Mio", ActualWakeAt: jst(2026, time.November, 14, 5, 10)}, State{
+		ScheduleDate: "2026-11-14", PlannedSleep: jst(2026, time.November, 14, 1, 0),
+		PlannedWake: jst(2026, time.November, 14, 6, 0), LogicalSleepUntil: jst(2026, time.November, 14, 6, 0),
+	}, Presence{SharedRoom: AvailabilityAvailable}, false)
+	if morning.Kind != ActivityWake {
+		t.Fatalf("actual pre-schedule wake = %+v, want wake completion before morning policy", morning)
+	}
+
+	sharedMorning := Decide(jst(2026, time.November, 14, 7, 0), ActorState{ID: "Mio", ActualWakeAt: jst(2026, time.November, 14, 5, 10)}, State{
+		ScheduleDate: "2026-11-14", PlannedSleep: jst(2026, time.November, 14, 1, 0),
+		PlannedWake: jst(2026, time.November, 14, 6, 0),
+	}, Presence{SharedRoom: AvailabilityAvailable}, false)
+	if sharedMorning.Kind != ActivityRelax || sharedMorning.RelaxRoom != RelaxRoomShared {
+		t.Fatalf("post-wake relax = %+v, want shared-room morning relaxation", sharedMorning)
+	}
+}
+
 func TestDecideBuildsPreviousDiaryBeforeMorningActivityOnlyWhenAwake(t *testing.T) {
 	date := "2026-11-14"
 	wakeAt := jst(2026, time.November, 14, 6, 0)

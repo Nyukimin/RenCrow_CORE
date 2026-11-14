@@ -327,7 +327,7 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 			return agentheartbeat.Work{}, false, err
 		}
 		return agentheartbeat.Work{
-			ID: string(item.QueueItemID), Priority: task.Priority, CreatedAt: task.CreatedAt.UTC(),
+			ID: string(item.QueueItemID), Priority: task.Priority, CreatedAt: task.CreatedAt.UTC(), VisibilityTaskID: task.TaskID,
 			Run: func(runCtx context.Context, stop <-chan struct{}) error {
 				if boardWorkStopRequested(stop) {
 					return nil

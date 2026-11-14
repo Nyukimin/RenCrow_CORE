@@ -35,7 +35,8 @@ import (
 
 const (
 	agentRoutineModuleID        = "agent_routine"
-	agentRoutineDiaryBodyMax    = 24 * 1024
+	agentRoutineDiaryBodyMax    = 120 << 10
+	agentRoutineReflectionMax   = 24 << 10
 	agentRoutineSnapshotMaxAge  = 250 * time.Millisecond
 	agentRoutineProviderTimeout = 2 * time.Minute
 	agentRoutineWebTimeout      = 45 * time.Second
@@ -356,6 +357,7 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 		workID := "agent-routine:" + actorID + ":" + plan.Date + ":" + string(plan.Kind)
 		return agentheartbeat.Work{
 			ID: workID, Priority: domaintask.PriorityLow, CreatedAt: now.UTC(),
+			ActivityKind: agentheartbeat.ActivityKindRoutine,
 			Participants: participants,
 			Run: func(runCtx context.Context, stop <-chan struct{}) error {
 				return r.run(runCtx, stop, actorID, plan)
@@ -698,8 +700,18 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		}
 		if !pendingProgress.EffectCompleted && (state.Pending.Kind == agentroutine.ActivityHobby || state.Pending.Kind == agentroutine.ActivityMorningChat) &&
 			!r.pendingIntentStillEligible(activityCtx, state, now, fresh, pendingProgress) {
-			_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, pendingProgress)
-			return errors.Join(settleErr, r.cancelStaleIntent(activityCtx, state))
+			settledState, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, pendingProgress)
+			if settleErr != nil {
+				return settleErr
+			}
+			return r.cancelStaleIntent(activityCtx, settledState)
+		}
+		if !pendingProgress.EffectCompleted && state.Pending.Kind == agentroutine.ActivityRelax && fresh.Kind != agentroutine.ActivityRelax {
+			settledState, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, pendingProgress)
+			if settleErr != nil {
+				return settleErr
+			}
+			return r.cancelStaleIntent(activityCtx, settledState)
 		}
 		state, err = r.store.Load(activityCtx, actorID)
 		if err != nil {
@@ -1305,6 +1317,17 @@ func (r *agentRoutineRuntime) executeHobby(ctx context.Context, stop <-chan stru
 	if ctx.Err() != nil {
 		return state, progress, errAgentRoutineStopped
 	}
+	if r.worldLife != nil {
+		roomID := r.cfg.Heartbeat.Routine.PrivateRooms[state.Pending.ActorID]
+		if roomID == "" {
+			return state, progress, errors.New("WORLD WebGather hobby requires the actor's configured private room")
+		}
+		var err error
+		state, progress, _, err = r.ensureRoutineWorldArrival(ctx, stop, state, progress, state.Pending.ActorID, roomID, "", "hobby-private-room", routineWorldMoveWait)
+		if err != nil {
+			return state, progress, err
+		}
+	}
 	read, err := r.readSnapshotFresh(ctx)
 	if err != nil {
 		return state, progress, err
@@ -1618,7 +1641,7 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 			if routineStopRequested(ctx, stop) {
 				return state, progress, errAgentRoutineStopped
 			}
-			prompt := "次の日記の事実だけを踏まえて、短い中立的な内省を日本語で作成してください。記録にない出来事や物理的な行動を加えないでください。本文:\n" + progress.DiaryBody
+			prompt := routineDiaryReflectionPrompt(progress.DiaryBody)
 			reflection, err := r.executePrivateWorker(ctx, prepared, actorID, prompt)
 			if err != nil {
 				return state, progress, err
@@ -1726,21 +1749,86 @@ func (r *agentRoutineRuntime) buildDiaryBody(ctx context.Context, actorID, date 
 		return builder.String(), nil
 	}
 	builder.WriteString("\n")
-	for index, fact := range confirmed {
-		summary := truncateRoutineRunes(strings.TrimSpace(fact.Summary), 1200)
+	for _, fact := range confirmed {
+		summary := routineDiaryActivitySummary(fact)
 		line := ""
 		if !fact.At.IsZero() {
 			line = fmt.Sprintf("- %s %s\n", fact.At.In(r.location()).Format("15:04"), summary)
 		} else {
 			line = fmt.Sprintf("- %s\n", summary)
 		}
-		if builder.Len()+len(line)+128 > agentRoutineDiaryBodyMax {
-			fmt.Fprintf(&builder, "\n残り%d件のCORE記録は本文長の上限により省略しました。\n", len(confirmed)-index)
-			break
+		if builder.Len()+len(line) > agentRoutineDiaryBodyMax {
+			return "", fmt.Errorf("confirmed activity facts exceed the %d-byte BOARD diary body limit; refusing incomplete diary", agentRoutineDiaryBodyMax)
 		}
 		builder.WriteString(line)
 	}
 	return builder.String(), nil
+}
+
+func routineDiaryActivitySummary(fact agentroutine.Activity) string {
+	summary := truncateRoutineRunes(strings.TrimSpace(fact.Summary), 1200)
+	if fact.Source != "routine_media_playback" {
+		return summary
+	}
+	receipt, valid := validatedRoutineMediaFactReference(fact)
+	if !valid {
+		return summary + "（再生範囲は確認できません）"
+	}
+	return fmt.Sprintf("%s（再生範囲 %s〜%s）", summary, routineMediaOffsetLabel(receipt.StartMS), routineMediaOffsetLabel(receipt.EndMS))
+}
+
+func routineMediaOffsetLabel(milliseconds int64) string {
+	return fmt.Sprintf("%02d:%02d:%02d.%03d", milliseconds/3_600_000, (milliseconds/60_000)%60,
+		(milliseconds/1000)%60, milliseconds%1000)
+}
+
+func routineDiaryReflectionPrompt(body string) string {
+	const prefix = "日記本文の記録だけを根拠に、短く中立的な感想を日本語で作成してください。記録にない出来事や行動は加えないでください。本文:\n"
+	if len(prefix)+len(body) <= agentRoutineReflectionMax {
+		return prefix + body
+	}
+	const marker = "\n（本文が長いため先頭と末尾の一部を示します。中略した事実を推測せず、表示された記録だけを踏まえてください。）\n"
+	available := agentRoutineReflectionMax - len(prefix) - len(marker)
+	headLimit, tailLimit := available/2, available-available/2
+	headEnd := strings.LastIndexByte(body[:min(headLimit, len(body))], '\n')
+	if headEnd >= 0 {
+		headEnd++
+	}
+	tailStart := len(body) - tailLimit
+	if tailStart < 0 {
+		tailStart = 0
+	}
+	if nextLine := strings.IndexByte(body[tailStart:], '\n'); nextLine >= 0 {
+		tailStart += nextLine + 1
+	}
+	if headEnd == 0 {
+		headEnd = diaryUTF8PrefixEnd(body, headLimit)
+	}
+	if tailStart >= len(body) {
+		tailStart = diaryUTF8SuffixStart(body, tailLimit)
+	}
+	return prefix + body[:headEnd] + marker + body[tailStart:]
+}
+
+func diaryUTF8PrefixEnd(value string, limit int) int {
+	if limit >= len(value) {
+		return len(value)
+	}
+	for limit > 0 && value[limit]&0xc0 == 0x80 {
+		limit--
+	}
+	return limit
+}
+
+func diaryUTF8SuffixStart(value string, limit int) int {
+	start := len(value) - limit
+	if start < 0 {
+		return 0
+	}
+	for start < len(value) && value[start]&0xc0 == 0x80 {
+		start++
+	}
+	return start
 }
 
 func (r *agentRoutineRuntime) recordRoutineFacts(ctx context.Context, intent agentroutine.Intent, progress routineProgress, completedAt time.Time) error {
@@ -1758,6 +1846,20 @@ func (r *agentRoutineRuntime) recordRoutineFacts(ctx context.Context, intent age
 		kind = agentroutine.ActivityHobby
 		topic := routineHobbyTopic(intent.ActorID, intent.Label)
 		summary = fmt.Sprintf("%sに関する公開情報を読み、個人用の創作メモを作成しました。", topic)
+	case agentroutine.ActivityRelax:
+		if progress.World == nil || progress.World.RelaxRoomID == "" || progress.World.RelaxObservedAt.IsZero() || r.cfg == nil {
+			return nil
+		}
+		roomAllowed := r.cfg.Heartbeat.Routine.PrivateRooms[intent.ActorID] == progress.World.RelaxRoomID
+		for _, sharedRoom := range r.cfg.Heartbeat.Routine.SharedRooms {
+			roomAllowed = roomAllowed || sharedRoom == progress.World.RelaxRoomID
+		}
+		if !roomAllowed {
+			return nil
+		}
+		kind = agentroutine.ActivityRelax
+		completedAt = progress.World.RelaxObservedAt
+		summary = fmt.Sprintf("%sで静かに過ごしました。", routineWorldRoomDiaryLabel(progress.World.RelaxRoomID))
 	case agentroutine.ActivityDiary:
 		kind = agentroutine.ActivityDiary
 		summary = "日記の改訂版をBOARDへ投稿しました。"

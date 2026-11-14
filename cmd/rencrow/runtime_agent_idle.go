@@ -56,9 +56,10 @@ func newGameAutoplayIdleSource(runOnce gameAutoplayRunOnce, now func() time.Time
 		state.mu.Unlock()
 
 		return agentheartbeat.Work{
-			ID:        "games:autoplay",
-			Priority:  domaintask.PriorityLow,
-			CreatedAt: createdAt,
+			ID:           "games:autoplay",
+			Priority:     domaintask.PriorityLow,
+			CreatedAt:    createdAt,
+			ActivityKind: agentheartbeat.ActivityKindGame,
 			Run: func(runCtx context.Context, stop <-chan struct{}) error {
 				select {
 				case <-runCtx.Done():

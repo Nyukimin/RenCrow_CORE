@@ -28,7 +28,7 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 	"portal-living": {
 		client: "RenCrow_PORTAL",
 		allow: func(method, path string) bool {
-			return method == http.MethodGet && path == "/viewer/world/home"
+			return method == http.MethodGet && (path == "/viewer/world/home" || path == "/viewer/living/heartbeat")
 		},
 	},
 	"portal-other": {

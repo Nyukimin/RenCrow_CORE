@@ -134,6 +134,7 @@ func Decide(now time.Time, actor ActorState, state State, presence Presence, can
 			return plan
 		}
 		plan.Kind = ActivityRelax
+		plan.RelaxRoom = RelaxRoomPrivate
 		plan.Reason = "no executable hobby is available in the confirmed own room"
 		return plan
 	}
@@ -161,6 +162,7 @@ func Decide(now time.Time, actor ActorState, state State, presence Presence, can
 		}
 		if now.Hour() < 6 && isNightWindow(now) && !canHobby && presence.OwnRoom == AvailabilityAvailable {
 			plan.Kind = ActivityRelax
+			plan.RelaxRoom = RelaxRoomPrivate
 			plan.Reason = "no executable hobby is available in the confirmed own room"
 			return plan
 		}
@@ -257,11 +259,13 @@ func morningPlan(plan Plan, actor ActorState, state State, presence Presence, ca
 	}
 	if presence.SharedRoom == AvailabilityAvailable {
 		plan.Kind = ActivityRelax
+		plan.RelaxRoom = RelaxRoomShared
 		plan.Reason = "neither optional morning choice is valid; relax in confirmed shared room"
 		return plan
 	}
 	if presence.OwnRoom == AvailabilityAvailable {
 		plan.Kind = ActivityRelax
+		plan.RelaxRoom = RelaxRoomPrivate
 		plan.Reason = "neither optional morning choice is valid; relax in confirmed own room"
 		return plan
 	}

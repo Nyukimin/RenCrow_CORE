@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	modulebrowser "github.com/Nyukimin/RenCrow_CORE/modules/browseractor"
@@ -164,13 +166,22 @@ func applyDefaults(req modulebrowser.RunRequest, cfg Config) modulebrowser.RunRe
 
 func execCommand(ctx context.Context, command string, args []string, stdin []byte) ([]byte, []byte, int, error) {
 	cmd := exec.CommandContext(ctx, command, args...)
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = deadline
-	} else {
+	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		cmd = exec.CommandContext(ctx, command, args...)
+	}
+	if runtime.GOOS != "windows" {
+		// Let the sidecar handle SIGTERM and flush its cancellation receipt before
+		// CommandContext falls back to a hard kill.
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return os.ErrProcessDone
+			}
+			return cmd.Process.Signal(syscall.SIGTERM)
+		}
+		cmd.WaitDelay = 3 * time.Second
 	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)

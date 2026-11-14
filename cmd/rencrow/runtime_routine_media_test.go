@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -206,6 +207,25 @@ func TestRoutineMediaReceiptAllowsOnlySmallBrowserPollingOverrun(t *testing.T) {
 	if _, _, err := validateRoutineMediaReceipt(makeResponse(routineMediaSliceMS+101), item, "https://media.example.invalid", 0, routineMediaSliceMS); err == nil {
 		t.Fatal("media receipt beyond the one-frame tolerance was accepted")
 	}
+
+	interrupted := makeResponse(5000)
+	interrupted.Status = modulebrowser.StatusFailed
+	interrupted.Error = &modulebrowser.Error{Code: modulebrowser.ErrCancelled}
+	interrupted.Actions[0].Status = modulebrowser.StatusFailed
+	receipt, cancelled, err := validateRoutineMediaReceipt(interrupted, item, "https://media.example.invalid", 0, routineMediaSliceMS)
+	if err != nil || !cancelled || receipt.endMS != 5000 || receipt.elapsedMS != 5000 {
+		t.Fatalf("verified interrupted playback receipt=%+v cancelled=%v err=%v", receipt, cancelled, err)
+	}
+	interrupted.Actions[0].Playback.ElapsedMilliseconds = 0
+	if _, _, err := validateRoutineMediaReceipt(interrupted, item, "https://media.example.invalid", 0, routineMediaSliceMS); err == nil {
+		t.Fatal("cancelled receipt without measured elapsed progress was accepted")
+	}
+
+	wrongSource := makeResponse(5000)
+	wrongSource.Actions[0].Playback.SourceURL = "https://media.example.invalid/other.mp4"
+	if _, _, err := validateRoutineMediaReceipt(wrongSource, item, "https://media.example.invalid", 0, routineMediaSliceMS); err == nil {
+		t.Fatal("same-origin receipt from a different configured media URL was accepted")
+	}
 }
 
 func TestRoutineMediaResumePointUsesLatestConfirmedPerDayReceipt(t *testing.T) {
@@ -236,5 +256,167 @@ func TestRoutineMediaResumePointUsesLatestConfirmedPerDayReceipt(t *testing.T) {
 	offset, duration, resumeID, err := runtime.routineMediaResumePoint(ctx, "shiro", date, []config.RoutineMediaItem{item}, "film")
 	if err != nil || offset != 15000 || duration != 90000 || resumeID != item.ID {
 		t.Fatalf("resume point=(%d,%d,%q), err=%v", offset, duration, resumeID, err)
+	}
+}
+
+func TestRoutineMediaResumePointUsesLatestConfirmedReceiptOnOrBeforeDate(t *testing.T) {
+	ctx := context.Background()
+	store, err := agentroutine.Open(filepath.Join(t.TempDir(), "routine.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	item := config.RoutineMediaItem{ID: "film-1", Kind: "film"}
+	runtime := &agentRoutineRuntime{store: store}
+	for _, test := range []struct {
+		actorID   string
+		date      string
+		itemID    string
+		endMS     int64
+		confirmed bool
+	}{
+		{actorID: "shiro", date: "2026-11-12", itemID: item.ID, endMS: 15_000, confirmed: true},
+		{actorID: "shiro", date: "2026-11-13", itemID: item.ID, endMS: 30_000, confirmed: true},
+		{actorID: "shiro", date: "2026-11-13", itemID: item.ID, endMS: 40_000, confirmed: false},
+		{actorID: "shiro", date: "2026-11-14", itemID: "other-film", endMS: 60_000, confirmed: true},
+		{actorID: "shiro", date: "2026-11-15", itemID: item.ID, endMS: 50_000, confirmed: true},
+		{actorID: "mio", date: "2026-11-13", itemID: item.ID, endMS: 70_000, confirmed: true},
+	} {
+		dayStart, err := time.ParseInLocation("2006-01-02", test.date, time.FixedZone("JST", 9*60*60))
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishedAt := dayStart.Add(10*time.Hour + time.Duration(test.endMS)*time.Millisecond)
+		startedAt := finishedAt.Add(-12 * time.Second)
+		reference, err := json.Marshal(routineMediaFactReference{
+			ItemID: test.itemID, Kind: "film", StartMS: test.endMS - 12_000, EndMS: test.endMS,
+			ElapsedMS: 12_000, DurationMS: 900_000, StartedAt: startedAt, FinishedAt: finishedAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.SaveFact(ctx, agentroutine.Activity{
+			ActorID: test.actorID, Date: test.date, Key: fmt.Sprintf("%s-%s-%d", test.actorID, test.date, test.endMS),
+			Kind: agentroutine.ActivityHobby, At: finishedAt, Source: "routine_media_playback",
+			SourceID: "old-task:" + test.itemID, Confirmed: test.confirmed, Reference: string(reference),
+		}); err != nil {
+			t.Fatalf("SaveFact(%s/%s/%d): %v", test.actorID, test.date, test.endMS, err)
+		}
+	}
+
+	offset, duration, resumeID, err := runtime.routineMediaResumePoint(ctx, "shiro", "2026-11-14", []config.RoutineMediaItem{item}, "film")
+	if err != nil || offset != 30_000 || duration != 900_000 || resumeID != item.ID {
+		t.Fatalf("prior-date resume point=(%d,%d,%q), err=%v; want latest confirmed configured Shiro receipt not after requested date", offset, duration, resumeID, err)
+	}
+}
+
+func TestExecuteRoutineMediaResumesPriorDateReceiptOffset(t *testing.T) {
+	ctx := context.Background()
+	store, err := agentroutine.Open(filepath.Join(t.TempDir(), "routine.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	const mediaURL = "https://media.example.invalid/film.mp4"
+	item := config.RoutineMediaItem{ID: "film-1", Kind: "film", Title: "Film", Credit: "Library", URL: mediaURL}
+	cfg := &config.Config{
+		BrowserActor: config.BrowserActorConfig{Enabled: true},
+		Heartbeat: config.HeartbeatConfig{Routine: config.RoutineHeartbeatConfig{
+			Media: map[string][]config.RoutineMediaItem{"shiro": {item}},
+		}},
+	}
+	previousStart := time.Date(2026, time.November, 13, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	previousFinish := previousStart.Add(12 * time.Second)
+	reference, err := json.Marshal(routineMediaFactReference{
+		ItemID: item.ID, Kind: item.Kind, StartMS: 3_000, EndMS: 15_000, ElapsedMS: 12_000,
+		DurationMS: 90_000, StartedAt: previousStart, FinishedAt: previousFinish,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveFact(ctx, agentroutine.Activity{
+		ActorID: "shiro", Date: "2026-11-13", Key: "previous-intent:media:film-1", Kind: agentroutine.ActivityHobby,
+		At: previousFinish, Source: "routine_media_playback", SourceID: "previous-intent:film-1", Confirmed: true, Reference: string(reference),
+	}); err != nil {
+		t.Fatalf("SaveFact: %v", err)
+	}
+	state, err := store.DraftIntent(ctx, agentroutine.Intent{
+		ID: "today-intent", ActorID: "shiro", Date: "2026-11-14", Kind: agentroutine.ActivityHobby, Label: "film_research",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frameCount := int64(24)
+	runner := &routineMediaTestRunner{response: modulebrowser.RunResponse{
+		Status: modulebrowser.StatusCompleted,
+		Actions: []modulebrowser.ActionResult{{
+			Type: "play_media", Status: modulebrowser.StatusCompleted,
+			StartedAt: "2026-11-14T01:00:00Z", CompletedAt: "2026-11-14T01:00:12Z",
+			Playback: &modulebrowser.Playback{
+				Kind: "video", ElapsedMilliseconds: 12_000, MediaTimeMilliseconds: 27_000,
+				DurationMilliseconds: 90_000, SourceURL: mediaURL, VideoWidth: 640, VideoHeight: 360,
+				PresentedFrameCount: &frameCount,
+			},
+		}},
+	}}
+	runtime := &agentRoutineRuntime{
+		cfg: cfg, store: store, mediaRunner: runner,
+		now: func() time.Time {
+			return time.Date(2026, time.November, 14, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+		},
+	}
+	_, progress, err := runtime.executeRoutineMedia(ctx, nil, state, routineProgress{})
+	if err != nil {
+		t.Fatalf("executeRoutineMedia: %v", err)
+	}
+	if runner.calls != 1 || len(runner.request.Actions) != 1 || runner.request.Actions[0].StartMS != 15_000 ||
+		progress.Media == nil || progress.Media.StartOffsetMS != 15_000 || progress.Media.OffsetMS != 27_000 {
+		t.Fatalf("prior-day media resume request=%+v progress=%+v calls=%d", runner.request, progress.Media, runner.calls)
+	}
+}
+
+func TestRoutineMediaResumePointDoesNotResumeAfterEOF(t *testing.T) {
+	ctx := context.Background()
+	store, err := agentroutine.Open(filepath.Join(t.TempDir(), "routine.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	item := config.RoutineMediaItem{ID: "film-1", Kind: "film"}
+	runtime := &agentRoutineRuntime{store: store}
+	for _, test := range []struct {
+		date    string
+		key     string
+		startMS int64
+		endMS   int64
+		ended   bool
+	}{
+		{date: "2026-11-12", key: "partial", startMS: 0, endMS: 15_000},
+		{date: "2026-11-13", key: "eof", startMS: 78_000, endMS: 90_000, ended: true},
+	} {
+		dayStart, err := time.ParseInLocation("2006-01-02", test.date, time.FixedZone("JST", 9*60*60))
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishedAt := dayStart.Add(10 * time.Hour)
+		reference, err := json.Marshal(routineMediaFactReference{
+			ItemID: item.ID, Kind: item.Kind, StartMS: test.startMS, EndMS: test.endMS,
+			ElapsedMS: test.endMS - test.startMS, DurationMS: 90_000, Ended: test.ended,
+			StartedAt: finishedAt.Add(-12 * time.Second), FinishedAt: finishedAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.SaveFact(ctx, agentroutine.Activity{
+			ActorID: "shiro", Date: test.date, Key: test.key, Kind: agentroutine.ActivityHobby,
+			At: finishedAt, Source: "routine_media_playback", SourceID: test.key + ":" + item.ID,
+			Confirmed: true, Reference: string(reference),
+		}); err != nil {
+			t.Fatalf("SaveFact(%s): %v", test.key, err)
+		}
+	}
+	offset, duration, resumeID, err := runtime.routineMediaResumePoint(ctx, "shiro", "2026-11-14", []config.RoutineMediaItem{item}, "film")
+	if err != nil || offset != 0 || duration != 0 || resumeID != "" {
+		t.Fatalf("resume point after latest EOF=(%d,%d,%q), err=%v; want no continuation", offset, duration, resumeID, err)
 	}
 }

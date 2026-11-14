@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -24,13 +25,44 @@ var (
 // Work describes a task discovered without claiming or executing it. Run owns
 // those effects after the scheduler has reserved the actor's single work slot.
 type Work struct {
-	ID        string
-	Priority  domaintask.Priority
-	CreatedAt time.Time
+	ID               string
+	Priority         domaintask.Priority
+	CreatedAt        time.Time
+	ActivityKind     ActivityKind
+	VisibilityTaskID modulecore.TaskID
 	// Participants adds actors to reserve with idle Work. It is ignored for
 	// BOARD and private work.
 	Participants []string
 	Run          func(context.Context, <-chan struct{}) error
+}
+
+// ActivityKind is a fixed, safe category for a live activity projection.
+type ActivityKind string
+
+const (
+	ActivityKindBoard      ActivityKind = "board"
+	ActivityKindPrivate    ActivityKind = "private"
+	ActivityKindGame       ActivityKind = "game"
+	ActivityKindRoutine    ActivityKind = "routine"
+	ActivityKindForeground ActivityKind = "foreground"
+)
+
+func activityKindFor(source workSource, requested ActivityKind) ActivityKind {
+	switch source {
+	case workSourceBoard:
+		return ActivityKindBoard
+	case workSourcePrivate:
+		return ActivityKindPrivate
+	case workSourceIdle:
+		switch requested {
+		case ActivityKindGame, ActivityKindRoutine:
+			return requested
+		default:
+			return ""
+		}
+	default:
+		return ActivityKindForeground
+	}
 }
 
 // Source discovers and plans one candidate for an actor. It must honor ctx;
@@ -56,6 +88,7 @@ type Scheduler struct {
 	discoveryTimeout time.Duration
 	nextOrder        uint64
 	tickGeneration   uint64
+	started          bool
 	closed           bool
 	done             chan struct{}
 }
@@ -79,16 +112,18 @@ type agentState struct {
 }
 
 type reservation struct {
-	scheduler  *Scheduler
-	actor      string
-	actors     []string
-	priority   domaintask.Priority
-	background bool
-	idle       bool
-	source     workSource
-	stop       chan struct{}
-	stopClosed bool
-	cancel     context.CancelFunc
+	scheduler        *Scheduler
+	actor            string
+	actors           []string
+	priority         domaintask.Priority
+	background       bool
+	idle             bool
+	source           workSource
+	activityKind     ActivityKind
+	visibilityTaskID modulecore.TaskID
+	stop             chan struct{}
+	stopClosed       bool
+	cancel           context.CancelFunc
 }
 
 type workSource uint8
@@ -131,6 +166,84 @@ func New(actors []string, sources Sources, report func(actor, stage string, err 
 	return s
 }
 
+// LivingActivity is the privacy-safe activity state of one actor's scheduler
+// slot. It excludes work IDs, errors, and source payloads. Title is populated
+// only by an optional read-time lookup after publication visibility is checked.
+type LivingActivity struct {
+	ActorID      string
+	State        string
+	ActivityKind string
+	Title        string
+}
+
+// LivingSnapshot returns mutex-owned scheduler facts for the LIVING read
+// projection. Any optional title lookup runs after releasing the scheduler
+// mutex and must enforce the caller's publication-visibility policy. ok is
+// false until the owner has started and after it shuts down, so callers cannot
+// turn a lost scheduler into an idle-looking response.
+func (s *Scheduler) LivingSnapshot(ctx context.Context, titleLookup func(context.Context, modulecore.TaskID) (string, error)) ([]LivingActivity, bool) {
+	if s == nil {
+		return nil, false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mu.Lock()
+	if !s.started || s.closed {
+		s.mu.Unlock()
+		return nil, false
+	}
+
+	actors := make([]string, 0, len(s.agents))
+	for actor := range s.agents {
+		actors = append(actors, actor)
+	}
+	sort.Strings(actors)
+	activities := make([]LivingActivity, 0, len(actors))
+	titleCandidates := make([]struct {
+		activityIndex int
+		taskID        modulecore.TaskID
+	}, 0, len(actors))
+	for _, actor := range actors {
+		state := s.agents[actor]
+		activity := LivingActivity{ActorID: actor, State: "waiting"}
+		switch {
+		case state.active != nil:
+			activity.State = "running"
+			activity.ActivityKind = string(state.active.activityKind)
+			if activity.ActivityKind == "" && state.active.source == workSourceNone {
+				activity.ActivityKind = string(ActivityKindForeground)
+			}
+			if state.active.stopClosed {
+				activity.State = "stopping"
+			}
+			if state.active.source == workSourcePrivate && state.active.visibilityTaskID.Validate() == nil {
+				titleCandidates = append(titleCandidates, struct {
+					activityIndex int
+					taskID        modulecore.TaskID
+				}{activityIndex: len(activities), taskID: state.active.visibilityTaskID})
+			}
+		case state.scanning:
+			activity.State = "checking"
+		}
+		activities = append(activities, activity)
+	}
+	s.mu.Unlock()
+
+	if titleLookup != nil {
+		for _, candidate := range titleCandidates {
+			if err := ctx.Err(); err != nil {
+				break
+			}
+			title, err := titleLookup(ctx, candidate.taskID)
+			if err == nil && title != "" {
+				activities[candidate.activityIndex].Title = title
+			}
+		}
+	}
+	return activities, true
+}
+
 // Tick starts a nonblocking discovery pass for every registered actor.
 func (s *Scheduler) Tick(ctx context.Context) {
 	if s == nil {
@@ -166,6 +279,9 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		s.shutdown()
 		return nil
 	}
+	s.mu.Lock()
+	s.started = true
+	s.mu.Unlock()
 	s.Tick(ctx)
 	ticker := time.NewTicker(Interval)
 	defer ticker.Stop()
@@ -558,14 +674,18 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, s
 
 	runCtx, cancel := context.WithCancel(parent)
 	lease := &reservation{
-		scheduler:  s,
-		actor:      actor,
-		priority:   work.Priority,
-		background: true,
-		idle:       source == workSourceIdle,
-		source:     source,
-		stop:       make(chan struct{}),
-		cancel:     cancel,
+		scheduler:    s,
+		actor:        actor,
+		priority:     work.Priority,
+		background:   true,
+		idle:         source == workSourceIdle,
+		source:       source,
+		activityKind: activityKindFor(source, work.ActivityKind),
+		stop:         make(chan struct{}),
+		cancel:       cancel,
+	}
+	if source == workSourcePrivate {
+		lease.visibilityTaskID = work.VisibilityTaskID
 	}
 	state.active = lease
 	s.signalChangedLocked()
@@ -647,15 +767,16 @@ func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Wo
 
 	runCtx, cancel := context.WithCancel(parent)
 	lease := &reservation{
-		scheduler:  s,
-		actor:      actor,
-		actors:     append([]string(nil), actors...),
-		priority:   work.Priority,
-		background: true,
-		idle:       true,
-		source:     workSourceIdle,
-		stop:       make(chan struct{}),
-		cancel:     cancel,
+		scheduler:    s,
+		actor:        actor,
+		actors:       append([]string(nil), actors...),
+		priority:     work.Priority,
+		background:   true,
+		idle:         true,
+		source:       workSourceIdle,
+		activityKind: activityKindFor(workSourceIdle, work.ActivityKind),
+		stop:         make(chan struct{}),
+		cancel:       cancel,
 	}
 	for _, participant := range actors {
 		state := s.agents[participant]

@@ -533,37 +533,46 @@ func (s *Store) SaveFact(ctx context.Context, fact Activity) (Activity, error) {
 
 // ListFacts reads a single actor/date partition in deterministic chronological order.
 func (s *Store) ListFacts(ctx context.Context, actorID, date string) ([]Activity, error) {
+	return s.ListFactsInDateRange(ctx, actorID, date, date)
+}
+
+// ListFactsInDateRange reads one actor's inclusive date partitions in chronological order.
+func (s *Store) ListFactsInDateRange(ctx context.Context, actorID, fromDate, throughDate string) ([]Activity, error) {
 	if err := validateActorID(actorID); err != nil {
 		return nil, err
 	}
-	if !validDate(date) {
-		return nil, fmt.Errorf("activity date %q: %w", date, ErrInvalid)
+	if !validDate(fromDate) || !validDate(throughDate) || fromDate > throughDate {
+		return nil, fmt.Errorf("activity date range %q..%q: %w", fromDate, throughDate, ErrInvalid)
 	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM agent_routine_activity WHERE actor_id=? AND date=? ORDER BY activity_key`, actorID, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM agent_routine_activity WHERE actor_id=? AND date>=? AND date<=? ORDER BY date,activity_key`,
+		actorID, fromDate, throughDate)
 	if err != nil {
-		return nil, fmt.Errorf("list activity facts: %w", err)
+		return nil, fmt.Errorf("list activity facts in date range: %w", err)
 	}
 	defer rows.Close()
 	facts := make([]Activity, 0)
 	for rows.Next() {
 		var payload string
 		if err := rows.Scan(&payload); err != nil {
-			return nil, fmt.Errorf("scan activity fact: %w", err)
+			return nil, fmt.Errorf("scan activity fact in date range: %w", err)
 		}
 		var fact Activity
 		if err := json.Unmarshal([]byte(payload), &fact); err != nil {
-			return nil, fmt.Errorf("decode activity fact: %w", err)
+			return nil, fmt.Errorf("decode activity fact in date range: %w", err)
 		}
 		facts = append(facts, fact)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate activity facts: %w", err)
+		return nil, fmt.Errorf("iterate activity facts in date range: %w", err)
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		left, right := facts[i], facts[j]
+		if left.Date != right.Date {
+			return left.Date < right.Date
+		}
 		if left.At.IsZero() != right.At.IsZero() {
 			return !left.At.IsZero()
 		}

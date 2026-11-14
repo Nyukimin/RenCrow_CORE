@@ -19,6 +19,7 @@ import (
 
 const routineMediaSliceMS = 12000
 const routineMediaMaxDurationMS int64 = 24 * 60 * 60 * 1000
+const routineMediaResumeLookbackDays = 30
 
 var errRoutineMediaNotConfigured = errors.New("no operator-configured media matches this routine hobby")
 
@@ -232,7 +233,14 @@ func (r *agentRoutineRuntime) routineMediaResumePoint(ctx context.Context, actor
 	if r == nil || r.store == nil {
 		return 0, 0, "", nil
 	}
-	facts, err := r.store.ListFacts(ctx, actorID, date)
+	dayStart, _, err := routineFactDay(date)
+	if err != nil {
+		return 0, 0, "", errors.New("routine media resume date is invalid")
+	}
+	// A 30-day actor/date range covers long media across daily 30-minute hobby
+	// windows while keeping the canonical activity read bounded.
+	lookbackDate := dayStart.AddDate(0, 0, -(routineMediaResumeLookbackDays - 1)).Format("2006-01-02")
+	facts, err := r.store.ListFactsInDateRange(ctx, actorID, lookbackDate, date)
 	if err != nil {
 		return 0, 0, "", err
 	}
@@ -245,15 +253,16 @@ func (r *agentRoutineRuntime) routineMediaResumePoint(ctx context.Context, actor
 	var latest agentroutine.Activity
 	var latestReceipt routineMediaFactReference
 	for _, fact := range facts {
-		if fact.Source != "routine_media_playback" || fact.Kind != agentroutine.ActivityHobby || fact.Date != date {
+		if fact.ActorID != actorID || !fact.Confirmed || fact.Source != "routine_media_playback" ||
+			fact.Kind != agentroutine.ActivityHobby || fact.Date < lookbackDate || fact.Date > date || fact.At.IsZero() {
 			continue
 		}
 		for itemID := range configured {
 			if !strings.HasSuffix(fact.SourceID, ":"+itemID) {
 				continue
 			}
-			var receipt routineMediaFactReference
-			if err := json.Unmarshal([]byte(fact.Reference), &receipt); err != nil || receipt.ItemID != itemID || receipt.EndMS < 0 || receipt.DurationMS < 0 {
+			receipt, valid := validatedRoutineMediaFactReference(fact)
+			if !valid || receipt.ItemID != itemID || receipt.Kind != kind {
 				return 0, 0, "", errors.New("saved routine media resume receipt is invalid")
 			}
 			if latest.Key == "" || fact.At.After(latest.At) || (fact.At.Equal(latest.At) && fact.SourceID > latest.SourceID) {
@@ -266,6 +275,26 @@ func (r *agentRoutineRuntime) routineMediaResumePoint(ctx context.Context, actor
 		return 0, 0, "", nil
 	}
 	return latestReceipt.EndMS, latestReceipt.DurationMS, latestReceipt.ItemID, nil
+}
+
+func validatedRoutineMediaFactReference(fact agentroutine.Activity) (routineMediaFactReference, bool) {
+	if !fact.Confirmed || fact.Source != "routine_media_playback" || fact.Kind != agentroutine.ActivityHobby ||
+		fact.At.IsZero() || len(fact.Reference) > 4096 {
+		return routineMediaFactReference{}, false
+	}
+	var receipt routineMediaFactReference
+	if json.Unmarshal([]byte(fact.Reference), &receipt) != nil || receipt.ItemID == "" ||
+		!strings.HasSuffix(fact.SourceID, ":"+receipt.ItemID) ||
+		(receipt.Kind != "video" && receipt.Kind != "film" && receipt.Kind != "music") ||
+		receipt.StartMS < 0 || receipt.EndMS <= receipt.StartMS || receipt.EndMS > routineMediaMaxDurationMS ||
+		receipt.ElapsedMS <= 0 || receipt.ElapsedMS > routineMediaMaxDurationMS ||
+		receipt.DurationMS < 0 || receipt.DurationMS > routineMediaMaxDurationMS ||
+		(receipt.DurationMS > 0 && receipt.EndMS > receipt.DurationMS+1000) ||
+		receipt.StartedAt.IsZero() || receipt.FinishedAt.IsZero() || receipt.FinishedAt.Before(receipt.StartedAt) ||
+		!fact.At.Equal(receipt.FinishedAt) {
+		return routineMediaFactReference{}, false
+	}
+	return receipt, true
 }
 
 func routineMediaKindForLabel(label string) (string, bool) {
@@ -382,7 +411,7 @@ func validateRoutineMediaReceipt(response modulebrowser.RunResponse, item config
 		}
 	}
 	sourceOrigin, err := routineMediaOrigin(playback.SourceURL)
-	if err != nil || sourceOrigin != expectedOrigin {
+	if err != nil || sourceOrigin != expectedOrigin || playback.SourceURL != item.URL {
 		return routineMediaReceipt{}, cancelled, errors.New("routine media playback source left its configured origin")
 	}
 	startedAt, err := parseRoutineMediaTimestamp(result.StartedAt)

@@ -28,6 +28,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:   http.StatusForbidden,
 		},
 		{
+			name:    "portal living can read the heartbeat",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-living",
+			method:  http.MethodGet,
+			path:    "/viewer/living/heartbeat",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "portal living cannot write the heartbeat",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-living",
+			method:  http.MethodPost,
+			path:    "/viewer/living/heartbeat",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "portal chat can read its owner scoped v2 conversation stream",
 			client:  "RenCrow_PORTAL",
 			profile: "portal-chat",

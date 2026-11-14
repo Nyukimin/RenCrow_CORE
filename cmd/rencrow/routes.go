@@ -118,6 +118,11 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		HobbyGraphRelation:           viewer.HandleHobbyGraphRelation(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyMusicImport:             viewer.HandleHobbyMusicImport(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyTopicCandidatesGenerate: viewer.HandleHobbyTopicCandidatesGenerate(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
+		LivingHeartbeat: viewer.HandleLivingHeartbeat(
+			dependencies.agentHeartbeat,
+			dependencies.taskStore,
+			runtimePublicTaskVisibility(dependencies.sessionVisibility),
+		),
 	}})
 	avatarfeature.RegisterRoutes(mux, avatarfeature.Dependencies{Routes: avatarfeature.Routes{
 		CharacterRuntime: dependencies.characterRuntime,

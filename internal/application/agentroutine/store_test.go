@@ -243,6 +243,33 @@ func TestStoreFactsAreActorDayPartitionedAndIdempotentWithoutInventingTime(t *te
 	}
 }
 
+func TestStoreFactsInInclusiveDateRangeStayActorScoped(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "routine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	location := time.FixedZone("JST", 9*60*60)
+	for _, fact := range []Activity{
+		{ActorID: "Mio", Date: "2026-11-12", Key: "mio-12", Kind: ActivityHobby, At: time.Date(2026, 11, 12, 9, 0, 0, 0, location), Source: "test", Confirmed: true},
+		{ActorID: "Mio", Date: "2026-11-13", Key: "mio-13", Kind: ActivityHobby, At: time.Date(2026, 11, 13, 9, 0, 0, 0, location), Source: "test", Confirmed: true},
+		{ActorID: "Mio", Date: "2026-11-14", Key: "mio-14", Kind: ActivityHobby, At: time.Date(2026, 11, 14, 9, 0, 0, 0, location), Source: "test", Confirmed: true},
+		{ActorID: "Shiro", Date: "2026-11-13", Key: "shiro-13", Kind: ActivityHobby, At: time.Date(2026, 11, 13, 9, 0, 0, 0, location), Source: "test", Confirmed: true},
+	} {
+		if _, err := store.SaveFact(ctx, fact); err != nil {
+			t.Fatalf("SaveFact(%s): %v", fact.Key, err)
+		}
+	}
+	facts, err := store.ListFactsInDateRange(ctx, "Mio", "2026-11-12", "2026-11-13")
+	if err != nil || len(facts) != 2 || facts[0].Key != "mio-12" || facts[1].Key != "mio-13" {
+		t.Fatalf("inclusive actor date range facts=%+v err=%v", facts, err)
+	}
+	if _, err := store.ListFactsInDateRange(ctx, "Mio", "2026-11-14", "2026-11-13"); err == nil {
+		t.Fatal("reversed activity date range was accepted")
+	}
+}
+
 func TestStoreDiaryDraftRevisionsAndReceiptRetries(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(filepath.Join(t.TempDir(), "routine.db"))
