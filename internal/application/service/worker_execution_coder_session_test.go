@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -98,6 +99,60 @@ func TestBeginCoderTaskExecutionRequiresTaskRootAndExactIdentity(t *testing.T) {
 	if _, err := worker.BeginCoderTaskExecution(missingRootCtx, missingRootTask); err == nil || !strings.Contains(err.Error(), "ModuleRoot") {
 		t.Fatalf("missing authoritative Task.ModuleRoot was not rejected: %v", err)
 	}
+}
+
+func TestCanonicalCoderTaskRootAcceptsCaseAliasForSameGitRoot(t *testing.T) {
+	root := makeCanonicalImpactWorkspace(t)
+	alias := caseAliasForSameDirectory(root)
+	if alias == "" {
+		t.Skip("filesystem has no case-insensitive alias for this temporary directory")
+	}
+	output, err := exec.Command("git", "-C", alias, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Skipf("Git does not preserve a distinct case alias on this host: %v", err)
+	}
+	gitRoot, err := filepath.EvalSymlinks(strings.TrimRight(string(output), "\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestRoot, err := filepath.EvalSymlinks(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(gitRoot) == filepath.Clean(requestRoot) {
+		t.Skip("Git preserves the supplied case spelling, so this host does not reproduce the canonical-root mismatch")
+	}
+	got, scratch, err := canonicalCoderTaskRoot(alias, context.Background())
+	if err != nil {
+		t.Fatalf("canonicalCoderTaskRoot(case alias): %v", err)
+	}
+	if scratch || got != filepath.Clean(requestRoot) {
+		t.Fatalf("canonicalCoderTaskRoot(case alias) = (%q, %v), want the resolved request spelling %q", got, scratch, filepath.Clean(requestRoot))
+	}
+}
+
+func caseAliasForSameDirectory(path string) string {
+	original, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	for index := len(path) - 1; index >= 0; index-- {
+		candidateChar := path[index]
+		switch {
+		case candidateChar >= 'a' && candidateChar <= 'z':
+			candidateChar -= 'a' - 'A'
+		case candidateChar >= 'A' && candidateChar <= 'Z':
+			candidateChar += 'a' - 'A'
+		default:
+			continue
+		}
+		alias := path[:index] + string(candidateChar) + path[index+1:]
+		aliasInfo, statErr := os.Stat(alias)
+		if statErr == nil && os.SameFile(original, aliasInfo) {
+			return alias
+		}
+	}
+	return ""
 }
 
 func TestCoderTaskSessionReadOnlyRequiresObservationAndRejectsPatchAndTests(t *testing.T) {

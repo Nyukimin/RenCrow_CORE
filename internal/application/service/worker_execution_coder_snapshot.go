@@ -65,8 +65,12 @@ func canonicalCoderTaskRoot(raw string, ctx context.Context) (string, bool, erro
 		if err != nil {
 			return "", false, fmt.Errorf("canonicalize Git worktree root: %w", err)
 		}
-		if filepath.Clean(gitRoot) != root {
-			return "", false, fmt.Errorf("Task.ModuleRoot %q is not the independent Git worktree root %q", root, gitRoot)
+		gitRoot = filepath.Clean(gitRoot)
+		if gitRoot != root {
+			gitInfo, statErr := os.Stat(gitRoot)
+			if statErr != nil || !os.SameFile(info, gitInfo) {
+				return "", false, fmt.Errorf("Task.ModuleRoot %q is not the independent Git worktree root %q", root, gitRoot)
+			}
 		}
 		return root, false, nil
 	default:
