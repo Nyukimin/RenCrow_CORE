@@ -219,7 +219,7 @@ func TestAgentRoutineCheckpointFailureRequeuesStartedRun(t *testing.T) {
 	if returnedProgress.Actors[0].RunID == "" {
 		t.Fatal("failed checkpoint lost the exact Run ID needed for recovery")
 	}
-	if err := runtime.deferIntent(ctx, returnedState, returnedProgress, prepareErr.Error()); err == nil || !strings.Contains(err.Error(), "retry window") {
+	if err := runtime.deferIntent(ctx, returnedState, returnedProgress, prepareErr); err == nil || !strings.Contains(err.Error(), "retry window") {
 		t.Fatalf("deferIntent() error = %v, want a retry-window deferral", err)
 	}
 	task, err := runtime.tasks.Get(ctx, progress.Actors[0].TaskID)

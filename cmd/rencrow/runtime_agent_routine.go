@@ -736,7 +736,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		return err
 	}
 	if intent.Kind == agentroutine.ActivityDiary && r.boardClient(actorID) == nil {
-		return r.deferIntent(activityCtx, state, progress, "pinned BOARD diary writer is unavailable")
+		return r.deferIntent(activityCtx, state, progress, errors.New("pinned BOARD diary writer is unavailable"))
 	}
 	prepared, state, progress, err := r.prepareRuns(activityCtx, stop, state, progress)
 	if err != nil {
@@ -748,7 +748,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			}
 			return errors.Join(err, settleErr, pauseErr)
 		}
-		return r.deferIntent(activityCtx, state, progress, err.Error())
+		return r.deferIntent(activityCtx, state, progress, err)
 	}
 	if routineStopRequested(activityCtx, stop) {
 		_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
@@ -769,16 +769,20 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 				return errors.Join(err, settleErr, pauseErr)
 			}
 			pauseErr := r.pauseRuns(activityCtx, prepared, "WORLD choice location was not confirmed")
-			return errors.Join(r.deferIntent(activityCtx, state, progress, err.Error()), pauseErr)
+			return errors.Join(r.deferIntent(activityCtx, state, progress, err), pauseErr)
 		}
 	}
 	if state.Pending.ChoiceEligible && !state.Pending.ChoiceCommitted {
+		previousChoiceIndex := state.ChoiceIndex
 		state, err = routinePersist(activityCtx, func(persistCtx context.Context) (agentroutine.State, error) {
 			return r.store.CommitInitiatorSelection(persistCtx, actorID, state.Pending.ID, state.Revision, true)
 		})
 		if err != nil {
 			pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped or failed before candidate commit")
-			return errors.Join(r.deferIntent(activityCtx, state, progress, err.Error()), pauseErr)
+			return errors.Join(r.deferIntent(activityCtx, state, progress, err), pauseErr)
+		}
+		if state.Pending != nil && state.ChoiceIndex != previousChoiceIndex {
+			log.Printf("agent morning choice actor=%s position=%d kind=%s task_id=%s", actorID, state.ChoiceIndex, state.Pending.Kind, state.Pending.TaskID)
 		}
 	}
 	if !progress.EffectCompleted {
@@ -832,7 +836,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		}
 		if err != nil {
 			pauseErr := r.pauseRuns(activityCtx, prepared, "routine step failed; checkpoint retained")
-			return errors.Join(r.deferIntent(activityCtx, state, progress, err.Error()), pauseErr)
+			return errors.Join(r.deferIntent(activityCtx, state, progress, err), pauseErr)
 		}
 	}
 	if progress.Media != nil {
@@ -2207,9 +2211,12 @@ func (r *agentRoutineRuntime) pauseRuns(ctx context.Context, prepared []routineP
 	return firstErr
 }
 
-func (r *agentRoutineRuntime) deferIntent(ctx context.Context, state agentroutine.State, progress routineProgress, reason string) error {
+func (r *agentRoutineRuntime) deferIntent(ctx context.Context, state agentroutine.State, progress routineProgress, cause error) error {
+	if cause == nil {
+		cause = errors.New("routine intent deferred without a cause")
+	}
 	if state.Pending == nil {
-		return errors.New(reason)
+		return cause
 	}
 	prepared := make([]routinePreparedRun, 0, len(progress.Actors))
 	for index, actor := range progress.Actors {
@@ -2228,21 +2235,28 @@ func (r *agentRoutineRuntime) deferIntent(ctx context.Context, state agentroutin
 		latest := runs[len(runs)-1]
 		prepared = append(prepared, routinePreparedRun{progressIndex: index, task: task, run: latest})
 	}
+	reason := cause.Error()
 	pauseErr := r.pauseRuns(ctx, prepared, reason)
 	state, err := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
 		return r.store.Load(persistCtx, state.ActorID)
 	})
 	if err != nil || state.Pending == nil {
-		return errors.Join(errors.New(reason), err, pauseErr)
+		return errors.Join(cause, err, pauseErr)
 	}
-	state.Pending.RetryAfter = r.now().Add(agentRoutineRetryDelay)
+	retryDelay := agentRoutineRetryDelay
+	if errors.Is(cause, taskmanager.ErrParallelLimit) &&
+		!errors.Is(cause, taskmanager.ErrStartedRunNotClosed) &&
+		!errors.Is(pauseErr, taskmanager.ErrStartedRunNotClosed) {
+		retryDelay = agentheartbeat.Interval
+	}
+	state.Pending.RetryAfter = r.now().Add(retryDelay)
 	_, saveErr := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
 		return r.store.Save(persistCtx, state, state.Revision)
 	})
 	if saveErr != nil {
-		return errors.Join(errors.New(reason), saveErr, pauseErr)
+		return errors.Join(cause, saveErr, pauseErr)
 	}
-	deferredErr := fmt.Errorf("routine intent deferred until its retry window: %s", reason)
+	deferredErr := fmt.Errorf("routine intent deferred until its retry window: %w", cause)
 	return errors.Join(deferredErr, pauseErr)
 }
 
