@@ -305,14 +305,16 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 		canHobby := r.canHobby(actorID)
 		planState := state
 		if retryingDiary {
-			hour := now.In(r.location()).Hour()
-			if hour < 9 || hour >= 22 {
-				return agentheartbeat.Work{}, false, nil
-			}
 			planState.Pending = nil
 			planState.NextDiaryDate = "" // Retry backoff must not monopolize the daylight fallback.
 		}
 		plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, planState, presence, canHobby)
+		if retryingDiary && plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
+			hour := now.In(r.location()).Hour()
+			if hour < 9 || hour >= 22 {
+				return agentheartbeat.Work{}, false, nil
+			}
+		}
 		if state.Pending == nil && plan.Kind == agentroutine.ActivityDaytime && now.In(r.location()).Hour() >= 9 && now.In(r.location()).Hour() < 22 {
 			priorDate := now.In(r.location()).AddDate(0, 0, -1).Format("2006-01-02")
 			if state.ActivatedOn == "" || priorDate >= state.ActivatedOn {
@@ -333,7 +335,7 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			}
 			return daytimeFallback(ctx, actorID)
 		}
-		if retryingDiary {
+		if retryingDiary && plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
 			return agentheartbeat.Work{}, false, nil
 		}
 		if plan.Kind == agentroutine.ActivityDiary && r.boardClient(actorID) == nil {
@@ -683,9 +685,6 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			return err
 		}
 	} else {
-		if state.Pending.RetryAfter.After(r.now()) {
-			return nil
-		}
 		pendingProgress, decodeErr := decodeRoutineProgress(state.Pending.Output)
 		if decodeErr != nil {
 			return decodeErr
@@ -693,6 +692,16 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		fresh, now, err := r.planFresh(activityCtx, actorID, true, nil)
 		if err != nil {
 			return err
+		}
+		if state.Pending.Kind == agentroutine.ActivityDiary && (fresh.Kind == agentroutine.ActivitySleep || fresh.Kind == agentroutine.ActivityWake) {
+			state, err = r.pauseDiaryForBoundary(activityCtx, state, pendingProgress, fresh, now)
+			if err != nil || state.Pending == nil {
+				return err
+			}
+			return r.run(activityCtx, stop, actorID, fresh)
+		}
+		if state.Pending.RetryAfter.After(now) {
+			return nil
 		}
 		if routineStopRequested(activityCtx, stop) {
 			_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, pendingProgress)
@@ -794,6 +803,24 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			state, progress, err = r.executeDiary(activityCtx, stop, state, progress, prepared[0])
 		default:
 			err = fmt.Errorf("unsupported routine intent kind %q", intent.Kind)
+		}
+		if err != nil && intent.Kind == agentroutine.ActivityDiary && errors.Is(err, context.DeadlineExceeded) && !routineStopRequested(activityCtx, stop) {
+			boundary, boundaryAt, boundaryErr := r.planFresh(activityCtx, actorID, true, nil)
+			if boundaryErr == nil && (boundary.Kind == agentroutine.ActivitySleep || boundary.Kind == agentroutine.ActivityWake) {
+				state, progress, checkpointErr := r.saveProgress(activityCtx, state, "diary_window_checkpoint", progress)
+				if checkpointErr != nil {
+					pauseErr := r.pauseRuns(activityCtx, prepared, "routine reached sleep before its diary boundary checkpoint was saved")
+					return errors.Join(err, checkpointErr, pauseErr)
+				}
+				paused, pauseErr := r.pauseDiaryForBoundary(activityCtx, state, progress, boundary, boundaryAt)
+				if pauseErr != nil {
+					return pauseErr
+				}
+				if paused.Pending == nil {
+					return nil
+				}
+				return r.run(activityCtx, stop, actorID, boundary)
+			}
 		}
 		if routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) {
 			_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
@@ -950,27 +977,39 @@ func sameRoutineParticipants(left, right []string) bool {
 }
 
 func (r *agentRoutineRuntime) draftIntent(ctx context.Context, actorID string, plan agentroutine.Plan, now time.Time) (agentroutine.State, error) {
+	intent, err := r.newRoutineIntent(actorID, plan, now)
+	if err != nil || intent.ID == "" {
+		return agentroutine.State{}, err
+	}
+	state, err := r.store.DraftIntent(ctx, intent)
+	if err != nil {
+		return agentroutine.State{}, err
+	}
+	return state, nil
+}
+
+func (r *agentRoutineRuntime) newRoutineIntent(actorID string, plan agentroutine.Plan, now time.Time) (agentroutine.Intent, error) {
 	if plan.Kind == agentroutine.ActivityWait || plan.Kind == agentroutine.ActivityDaytime {
-		return agentroutine.State{}, nil
+		return agentroutine.Intent{}, nil
 	}
 	label := string(plan.Kind)
 	if plan.Kind == agentroutine.ActivityHobby {
 		slot := uint64(now.In(r.location()).UnixNano() / int64(30*time.Minute))
 		label = r.availableRoutineHobbyLabel(actorID, plan.Date, slot)
 		if label == "" {
-			return agentroutine.State{}, errors.New("no configured routine hobby execution is available")
+			return agentroutine.Intent{}, errors.New("no configured routine hobby execution is available")
 		}
 	}
 	progress := routineProgress{Actors: []routineActorProgress{{ActorID: actorID, TaskID: modulecore.NewTaskID()}}}
 	if plan.Kind == agentroutine.ActivityMorningChat {
 		if len(plan.Participants) != 1 || r.workers[actorID] == nil || r.workers[plan.Participants[0]] == nil {
-			return agentroutine.State{}, errors.New("morning chat does not have two eligible private workers")
+			return agentroutine.Intent{}, errors.New("morning chat does not have two eligible private workers")
 		}
 		progress.Actors = append(progress.Actors, routineActorProgress{ActorID: plan.Participants[0], TaskID: modulecore.NewTaskID()})
 	}
 	encoded, err := json.Marshal(progress)
 	if err != nil {
-		return agentroutine.State{}, err
+		return agentroutine.Intent{}, err
 	}
 	intentID := string(modulecore.NewRequestID())
 	intent := agentroutine.Intent{
@@ -978,11 +1017,7 @@ func (r *agentRoutineRuntime) draftIntent(ctx context.Context, actorID string, p
 		Kind: plan.Kind, Label: label, Participants: append([]string(nil), plan.Participants...),
 		ChoiceEligible: plan.CountChoice, Step: "planned", Output: string(encoded), CreatedAt: now.UTC(),
 	}
-	state, err := r.store.DraftIntent(ctx, intent)
-	if err != nil {
-		return agentroutine.State{}, err
-	}
-	return state, nil
+	return intent, nil
 }
 
 func decodeRoutineProgress(raw string) (routineProgress, error) {
@@ -1117,15 +1152,8 @@ func (r *agentRoutineRuntime) prepareRun(ctx context.Context, intent *agentrouti
 	}
 	switch {
 	case task.Status == domaintask.StatusRunning && latest.Status == domaintask.RunStatusRunning:
-		if latest.RunID != actorProgress.RunID && latest.StartReason != domaintask.RunStartReasonCheckpointResume &&
-			!(actorProgress.RunID == "" && latest.StartReason == domaintask.RunStartReasonFirst) {
-			return domaintask.Task{}, domaintask.Run{}, errors.New("running routine Run differs from its persisted checkpoint")
-		}
-		if latest.StartReason == domaintask.RunStartReasonCheckpointResume && latest.RunID != actorProgress.RunID && latest.StartCheckpointSHA256 != routineCheckpointDigest(intent) {
-			return domaintask.Task{}, domaintask.Run{}, errors.New("running routine checkpoint Run does not match the persisted progress digest")
-		}
-		if actorProgress.RunID != "" && latest.RunID != actorProgress.RunID && latest.StartReason != domaintask.RunStartReasonCheckpointResume {
-			return domaintask.Task{}, domaintask.Run{}, errors.New("unrecorded routine Run is not an exact checkpoint resume")
+		if !routineRunMatchesCheckpoint(intent, actorProgress, latest) {
+			return domaintask.Task{}, domaintask.Run{}, errors.New("running routine Run does not match its persisted checkpoint")
 		}
 		if err := r.validateRoutineRun(ctx, task, latest, actorProgress.ActorID); err == nil {
 			return task, latest, nil
@@ -1149,6 +1177,118 @@ func (r *agentRoutineRuntime) prepareRun(ctx context.Context, intent *agentrouti
 	default:
 		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("routine Task/Run lifecycle is not resumable: task=%s run=%s", task.Status, latest.Status)
 	}
+}
+
+func routineRunMatchesCheckpoint(intent *agentroutine.Intent, progress routineActorProgress, run domaintask.Run) bool {
+	if run.RunID == progress.RunID {
+		return true
+	}
+	if progress.RunID == "" && run.StartReason == domaintask.RunStartReasonFirst {
+		return true
+	}
+	return run.StartReason == domaintask.RunStartReasonCheckpointResume && run.StartCheckpointSHA256 == routineCheckpointDigest(intent)
+}
+
+func (r *agentRoutineRuntime) pauseDiaryForBoundary(ctx context.Context, state agentroutine.State, progress routineProgress, plan agentroutine.Plan, now time.Time) (agentroutine.State, error) {
+	if state.Pending == nil || state.Pending.Kind != agentroutine.ActivityDiary ||
+		(plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake) {
+		return agentroutine.State{}, errors.New("routine boundary cannot pause this pending intent")
+	}
+	if err := r.pauseExistingDiaryRuns(ctx, state.Pending, progress); err != nil {
+		return agentroutine.State{}, err
+	}
+	var boundary *agentroutine.Intent
+	alreadySleeping := plan.Kind == agentroutine.ActivitySleep && state.ScheduleDate == plan.ScheduleDate && state.LogicalSleepUntil.After(now)
+	if !alreadySleeping {
+		intent, err := r.newRoutineIntent(state.ActorID, plan, now)
+		if err != nil {
+			return agentroutine.State{}, err
+		}
+		boundary = &intent
+	}
+	saved, err := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
+		latest, loadErr := r.store.Load(persistCtx, state.ActorID)
+		if loadErr != nil {
+			return agentroutine.State{}, loadErr
+		}
+		if latest.Revision != state.Revision || latest.Pending == nil || latest.Pending.ID != state.Pending.ID {
+			return agentroutine.State{}, agentroutine.ErrConflict
+		}
+		if latest.PausedDiary != nil {
+			return agentroutine.State{}, agentroutine.ErrPendingIntent
+		}
+		latest.PausedDiary = latest.Pending
+		latest.Pending = boundary
+		return r.store.Save(persistCtx, latest, latest.Revision)
+	})
+	return saved, err
+}
+
+// pauseExistingDiaryRuns closes only the canonical Run already linked by the
+// pending checkpoint. It never creates or resumes a Run merely to defer sleep.
+func (r *agentRoutineRuntime) pauseExistingDiaryRuns(ctx context.Context, intent *agentroutine.Intent, progress routineProgress) error {
+	if r.tasks == nil {
+		return errors.New("routine boundary requires the canonical TaskManager to close a started Run")
+	}
+	if len(progress.Actors) != 1 || progress.Actors[0].ActorID != intent.ActorID {
+		return errors.New("pending diary checkpoint does not contain exactly its canonical actor")
+	}
+	for _, actor := range progress.Actors {
+		task, err := routinePersist(ctx, func(persistCtx context.Context) (domaintask.Task, error) {
+			return r.tasks.Get(persistCtx, actor.TaskID)
+		})
+		if errors.Is(err, domaintask.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read pending diary Task before sleep: %w", err)
+		}
+		if task.TaskID != actor.TaskID || task.OwnerID != r.ownerID || task.ModuleID != agentRoutineModuleID ||
+			task.Assignee != actor.ActorID || task.Route != domaintask.RouteCHAT {
+			return errors.New("pending diary Task does not match its exact owner/module/assignee/route")
+		}
+		runs, err := routinePersist(ctx, func(persistCtx context.Context) ([]domaintask.Run, error) {
+			return r.tasks.ListRuns(persistCtx, domaintask.RunFilter{TaskID: task.TaskID})
+		})
+		if err != nil {
+			return fmt.Errorf("list pending diary Task Runs before sleep: %w", err)
+		}
+		if len(runs) == 0 {
+			if task.Status == domaintask.StatusRunning {
+				return errors.Join(taskmanager.ErrStartedRunNotClosed, errors.New("pending diary Task is running without a verifiable Run"))
+			}
+			continue
+		}
+		latest := runs[len(runs)-1]
+		if latest.TaskID != task.TaskID || latest.Assignee != actor.ActorID || latest.Validate() != nil {
+			return errors.New("latest pending diary Run does not match its canonical Task")
+		}
+		if latest.Status != domaintask.RunStatusRunning && task.Status != domaintask.StatusRunning {
+			continue
+		}
+		if task.Status != domaintask.StatusRunning || latest.Status != domaintask.RunStatusRunning ||
+			!routineRunMatchesCheckpoint(intent, actor, latest) {
+			return errors.Join(taskmanager.ErrStartedRunNotClosed, errors.New("pending diary has a started Run that does not match its persisted checkpoint"))
+		}
+		if validateErr := r.validateRoutineRun(ctx, task, latest, actor.ActorID); validateErr != nil {
+			_, recovered, recoverErr := r.tasks.RecoverRunAfterProcessRestart(ctx, task.TaskID, latest.RunID, actor.ActorID,
+				domaintask.StatusWaiting, "CORE routine deferred for planned sleep", "started diary Run retained at its exact checkpoint")
+			if recoverErr != nil {
+				return errors.Join(taskmanager.ErrStartedRunNotClosed, fmt.Errorf("recover exact diary Run before sleep: %w", recoverErr))
+			}
+			if recovered {
+				continue
+			}
+		}
+		if err := routinePersistErr(ctx, func(persistCtx context.Context) error {
+			_, completeErr := r.tasks.CompleteRun(persistCtx, task.TaskID, latest.RunID, actor.ActorID,
+				domaintask.StatusWaiting, "CORE agent routine paused", "diary retained for after planned wake")
+			return completeErr
+		}); err != nil {
+			return errors.Join(taskmanager.ErrStartedRunNotClosed, fmt.Errorf("pause exact diary Run before sleep: %w", err))
+		}
+	}
+	return nil
 }
 
 func routineProgressHasEffect(intent *agentroutine.Intent, actorID string) bool {
@@ -1657,7 +1797,7 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 			progress.EffectCompleted = true
 			return r.saveProgress(ctx, state, "diary_receipt_recovered", progress)
 		}
-		latestBody, bodyErr := r.buildDiaryBody(ctx, actorID, state.Pending.Date)
+		latestBody, bodyErr := r.buildRoutineDiaryBody(ctx, state)
 		if bodyErr != nil {
 			return state, progress, bodyErr
 		}
@@ -1689,7 +1829,7 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 	}
 	if errors.Is(diaryErr, agentroutine.ErrNotFound) {
 		if progress.DiaryBody == "" {
-			body, err := r.buildDiaryBody(ctx, actorID, state.Pending.Date)
+			body, err := r.buildRoutineDiaryBody(ctx, state)
 			if err != nil {
 				return state, progress, err
 			}
@@ -1700,8 +1840,14 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 				return state, progress, errAgentRoutineStopped
 			}
 			prompt := routineDiaryReflectionPrompt(progress.DiaryBody)
-			reflection, err := r.executePrivateWorker(ctx, prepared, actorID, prompt)
+			windowCtx, cancelWindow := r.withRoutineWindow(ctx, state.Pending, state)
+			reflection, err := r.executePrivateWorker(windowCtx, prepared, actorID, prompt)
+			windowErr := windowCtx.Err()
+			cancelWindow()
 			if err != nil {
+				if errors.Is(windowErr, context.DeadlineExceeded) {
+					return state, progress, errors.Join(err, context.DeadlineExceeded)
+				}
 				return state, progress, err
 			}
 			progress.DiaryReflection = truncateRoutineRunes(strings.TrimSpace(reflection), 2000)
@@ -1737,11 +1883,18 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 	write := boardcommunication.DiaryWrite{
 		ActorID: actorID, Date: diary.Date, Revision: diary.Revision, Body: diary.Body, Reflection: diary.Reflection,
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, agentRoutineWebTimeout)
+	windowCtx, cancelWindow := r.withRoutineWindow(ctx, state.Pending, state)
+	writeCtx, cancel := context.WithTimeout(windowCtx, agentRoutineWebTimeout)
 	entry, putErr := boardClient.PutDiary(writeCtx, write)
+	writeErr := writeCtx.Err()
 	cancel()
+	cancelWindow()
 	if putErr != nil {
-		return state, progress, errors.New("publish exact routine diary to pinned BOARD failed; saved draft retained for exact retry")
+		publishErr := errors.New("publish exact routine diary to pinned BOARD failed; saved draft retained for exact retry")
+		if errors.Is(writeErr, context.DeadlineExceeded) {
+			return state, progress, errors.Join(publishErr, context.DeadlineExceeded)
+		}
+		return state, progress, publishErr
 	}
 	if entry.ActorID != write.ActorID || entry.Date != write.Date || entry.Revision != write.Revision ||
 		entry.Body != write.Body || entry.Reflection != write.Reflection || entry.UpdatedAt.IsZero() {
@@ -1762,6 +1915,17 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 	progress.DiaryReceipt, progress.DiaryReceiptRevision = acknowledged.Receipt, acknowledged.ReceiptRevision
 	progress.EffectCompleted = true
 	return r.saveProgress(ctx, state, "diary_receipt_saved", progress)
+}
+
+func (r *agentRoutineRuntime) buildRoutineDiaryBody(ctx context.Context, state agentroutine.State) (string, error) {
+	windowCtx, cancelWindow := r.withRoutineWindow(ctx, state.Pending, state)
+	body, err := r.buildDiaryBody(windowCtx, state.Pending.ActorID, state.Pending.Date)
+	windowErr := windowCtx.Err()
+	cancelWindow()
+	if err != nil && errors.Is(windowErr, context.DeadlineExceeded) {
+		return "", errors.Join(err, context.DeadlineExceeded)
+	}
+	return body, err
 }
 
 func (r *agentRoutineRuntime) buildDiaryBody(ctx context.Context, actorID, date string) (string, error) {
@@ -2190,11 +2354,13 @@ func (r *agentRoutineRuntime) boardClient(actorID string) *boardcommunication.Cl
 
 func routineCooldown(kind agentroutine.ActivityKind) time.Duration {
 	switch kind {
+	case agentroutine.ActivitySleep, agentroutine.ActivityWake, agentroutine.ActivityDiary:
+		return 0
 	case agentroutine.ActivityMorningChat:
 		return 15 * time.Minute
 	case agentroutine.ActivityHobby:
 		return 30 * time.Minute
-	case agentroutine.ActivityDiary:
+	case agentroutine.ActivityRelax:
 		return 45 * time.Minute
 	default:
 		return 45 * time.Minute
@@ -2256,17 +2422,21 @@ func (r *agentRoutineRuntime) withRoutineWindow(ctx context.Context, intent *age
 	now := r.now().In(r.location())
 	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, r.location())
 	var deadline time.Time
-	if intent != nil && now.Hour() < 2 {
+	if intent != nil && (intent.Kind == agentroutine.ActivityDiary || now.Hour() < 2) {
+		sleepDate := day
+		if now.Hour() >= 22 {
+			sleepDate = day.AddDate(0, 0, 1)
+		}
 		sleepAt := state.PlannedSleep.In(r.location())
-		if sleepAt.IsZero() || sleepAt.Format("2006-01-02") != day.Format("2006-01-02") || sleepAt.Hour() >= 2 {
-			if scheduled, _, err := agentroutine.ScheduleFor(intent.ActorID, day.Format("2006-01-02")); err == nil {
+		if sleepAt.IsZero() || sleepAt.Format("2006-01-02") != sleepDate.Format("2006-01-02") || sleepAt.Hour() >= 2 {
+			if scheduled, _, err := agentroutine.ScheduleFor(intent.ActorID, sleepDate.Format("2006-01-02")); err == nil {
 				sleepAt = scheduled.In(r.location())
 			}
 		}
 		if !sleepAt.IsZero() && sleepAt.Hour() < 2 {
 			if sleepAt.After(now) {
 				deadline = sleepAt
-			} else {
+			} else if now.Hour() < 2 {
 				deadline = now
 			}
 		}

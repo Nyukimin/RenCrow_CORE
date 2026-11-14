@@ -64,6 +64,7 @@ type State struct {
 	NextDiaryDate        string    `json:"next_diary_date,omitempty"`
 	CooldownUntil        time.Time `json:"cooldown_until,omitempty"`
 	Pending              *Intent   `json:"pending,omitempty"`
+	PausedDiary          *Intent   `json:"paused_diary,omitempty"`
 	LastFinishedIntentID string    `json:"last_finished_intent_id,omitempty"`
 }
 

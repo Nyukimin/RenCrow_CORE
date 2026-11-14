@@ -301,3 +301,56 @@ func TestStoreDiaryDraftRevisionsAndReceiptRetries(t *testing.T) {
 		t.Fatalf("GetDiary = %+v, %v", loaded, err)
 	}
 }
+
+func TestStorePausedDiarySurvivesSleepAndResumesAfterWake(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "routine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state, err := store.Load(ctx, "Mio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diary := Intent{ID: "diary-1", ActorID: "Mio", Date: "2026-11-14", TaskID: "task-diary", Kind: ActivityDiary,
+		Step: "diary_put_pending", Output: `{"diary_revision":1,"diary_body":"body","diary_reflection":"reflection","diary_receipt":"receipt-1"}`}
+	sleep := Intent{ID: "sleep-1", ActorID: "Mio", Date: "2026-11-15", TaskID: "task-sleep", Kind: ActivitySleep, Step: "planned"}
+	state.Pending, state.PausedDiary = &sleep, &diary
+	saved, err := store.Save(ctx, state, state.Revision)
+	if err != nil {
+		t.Fatalf("Save sleep with paused diary: %v", err)
+	}
+	if saved.PausedDiary == nil || saved.PausedDiary.ID != diary.ID || saved.PausedDiary.TaskID != diary.TaskID || saved.PausedDiary.Output != diary.Output {
+		t.Fatalf("paused diary changed during Save: %+v", saved.PausedDiary)
+	}
+	if _, err := store.Save(ctx, state, state.Revision); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale paused-diary Save error = %v, want ErrConflict", err)
+	}
+	first, err := store.SaveDiary(ctx, Diary{ActorID: "Mio", Date: diary.Date, Body: "body", Reflection: "reflection", Revision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack, err := store.SaveDiary(ctx, Diary{ActorID: "Mio", Date: diary.Date, Body: first.Body, Reflection: first.Reflection,
+		Revision: first.Revision, PostingKey: first.PostingKey, Receipt: "receipt-1", ReceiptRevision: "board-r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishedSleep, err := store.FinishIntent(ctx, "Mio", sleep.ID, saved.Revision, time.Time{})
+	if err != nil || finishedSleep.Pending != nil || finishedSleep.PausedDiary == nil {
+		t.Fatalf("FinishIntent(sleep) = %+v, %v; want diary retained while asleep", finishedSleep, err)
+	}
+	wake := Intent{ID: "wake-1", ActorID: "Mio", Date: "2026-11-15", TaskID: "task-wake", Kind: ActivityWake, Step: "planned"}
+	wakeState, err := store.DraftIntent(ctx, wake)
+	if err != nil {
+		t.Fatalf("DraftIntent(wake) with paused diary: %v", err)
+	}
+	resumed, err := store.FinishIntent(ctx, "Mio", wake.ID, wakeState.Revision, time.Time{})
+	if err != nil || resumed.Pending == nil || resumed.Pending.ID != diary.ID || resumed.Pending.TaskID != diary.TaskID || resumed.Pending.Output != diary.Output || resumed.PausedDiary != nil {
+		t.Fatalf("FinishIntent(wake) = %+v, %v; want exact original diary restored", resumed, err)
+	}
+	loaded, err := store.GetDiary(ctx, "Mio", diary.Date)
+	if err != nil || loaded.PostingKey != ack.PostingKey || loaded.Receipt != ack.Receipt || loaded.ReceiptRevision != ack.ReceiptRevision {
+		t.Fatalf("BOARD diary outbox after pause = %+v, %v; want exact receipt retained", loaded, err)
+	}
+}

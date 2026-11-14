@@ -18,6 +18,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentroutine"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -234,6 +235,72 @@ func newRoutineDiaryTestRuntime(t *testing.T, gameStore *viewer.GameBridgeStore)
 		store: store, tasks: taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()), ownerID: "ren",
 		cfg: &config.Config{}, deps: &Dependencies{gameBridgeStore: gameStore},
 		now: func() time.Time { return time.Date(2026, time.November, 14, 10, 0, 0, 0, time.UTC) },
+	}
+}
+
+func TestAgentRoutineRetryingDiaryPausesIntoSleepInSameWorkItem(t *testing.T) {
+	cfg, worldDeps, worldServer := newRoutineHouseViewTestRuntime(t, true)
+	defer worldServer.Close()
+	runtime := newRoutineDiaryTestRuntime(t, nil)
+	loc := runtime.location()
+	const actorID = "midori"
+	cfg.Heartbeat.Routine.PrivateRooms = map[string]string{actorID: "room-midori"}
+	runtime.cfg = cfg
+	runtime.world = worldDeps.agentRoutine.world
+	runtime.worldActorIDs = worldDeps.agentRoutine.worldActorIDs
+	now := time.Date(2026, time.November, 15, 1, 59, 50, 0, loc)
+	runtime.now = func() time.Time { return now }
+	sleepAt, wakeAt, err := agentroutine.ScheduleFor(actorID, "2026-11-15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := modulecore.NewTaskID()
+	startedTask, startedRun, err := runtime.tasks.CreateAndStartRun(context.Background(), domaintask.Task{
+		TaskID: taskID, Title: "routine diary", ModuleID: agentRoutineModuleID, OwnerID: runtime.ownerID,
+		Assignee: actorID, Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow,
+		InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true,
+	}, domaintask.SharedRoleContext{TaskID: taskID, UserIntent: "CORE routine step", CurrentPlan: "routine diary"})
+	if err != nil {
+		t.Fatalf("start existing canonical diary Run: %v", err)
+	}
+	progress := routineProgress{Actors: []routineActorProgress{{ActorID: actorID, TaskID: taskID, RunID: startedRun.RunID}}}
+	encodedProgress, err := json.Marshal(progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := runtime.store.Load(context.Background(), actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ActivatedOn, state.NextDiaryDate, state.ScheduleDate = "2026-11-14", "2026-11-14", "2026-11-15"
+	state.PlannedSleep, state.PlannedWake = sleepAt, wakeAt
+	state.Pending = &agentroutine.Intent{
+		ID: "diary-retry", ActorID: actorID, Date: "2026-11-14", TaskID: string(progress.Actors[0].TaskID),
+		Kind: agentroutine.ActivityDiary, Step: "diary_put_pending", Output: string(encodedProgress), RetryAfter: now.Add(15 * time.Minute),
+	}
+	if _, err := runtime.store.Save(context.Background(), state, state.Revision); err != nil {
+		t.Fatalf("save pending diary fixture: %v", err)
+	}
+	work, ok, err := runtime.idleSource(nil)(context.Background(), actorID)
+	if err != nil || !ok || !strings.HasSuffix(work.ID, ":sleep") {
+		t.Fatalf("idleSource at 01:59:50 = work %q, ok=%t, err=%v; want sleep despite diary retry backoff", work.ID, ok, err)
+	}
+	if err := work.Run(context.Background(), make(chan struct{})); err != nil {
+		t.Fatalf("same work item did not complete planned sleep: %v", err)
+	}
+	state, err = runtime.store.Load(context.Background(), actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Pending != nil || state.PausedDiary == nil || state.PausedDiary.ID != "diary-retry" || state.PausedDiary.TaskID != string(progress.Actors[0].TaskID) || state.PausedDiary.Output != string(encodedProgress) {
+		t.Fatalf("post-sleep checkpoint = %+v; want original diary paused with exact TaskID/progress", state)
+	}
+	if !state.LogicalSleepUntil.Equal(wakeAt) {
+		t.Fatalf("LogicalSleepUntil = %v, want planned wake %v", state.LogicalSleepUntil, wakeAt)
+	}
+	runs, err := runtime.tasks.ListRuns(context.Background(), domaintask.RunFilter{TaskID: startedTask.TaskID})
+	if err != nil || len(runs) != 1 || runs[0].RunID != startedRun.RunID || runs[0].Status != domaintask.RunStatusWaiting {
+		t.Fatalf("canonical diary Run after sleep pause = %+v, %v; want the exact Run closed to Waiting", runs, err)
 	}
 }
 

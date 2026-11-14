@@ -173,6 +173,7 @@ func (s *Store) Load(ctx context.Context, actorID string) (State, error) {
 	}
 	state.Revision = revision
 	state.Pending = cloneIntent(state.Pending)
+	state.PausedDiary = cloneIntent(state.PausedDiary)
 	return state, nil
 }
 
@@ -351,6 +352,9 @@ func (s *Store) DraftIntent(ctx context.Context, intent Intent) (State, error) {
 		}
 		return State{}, ErrPendingIntent
 	}
+	if state.PausedDiary != nil && intent.Kind != ActivitySleep && intent.Kind != ActivityWake {
+		return State{}, ErrPendingIntent
+	}
 	state.Pending = cloneIntent(&intent)
 	saved, err := saveStateTx(ctx, tx, state, state.Revision)
 	if err != nil {
@@ -476,7 +480,12 @@ func (s *Store) FinishIntent(ctx context.Context, actorID, intentID string, expe
 	if state.Revision != expectedRevision {
 		return State{}, ErrConflict
 	}
+	finishedKind := state.Pending.Kind
 	state.Pending = nil
+	if finishedKind == ActivityWake && state.PausedDiary != nil {
+		state.Pending = cloneIntent(state.PausedDiary)
+		state.PausedDiary = nil
+	}
 	state.LastFinishedIntentID = intentID
 	state.CooldownUntil = retryAfter
 	saved, err := saveStateTx(ctx, tx, state, expectedRevision)
@@ -744,6 +753,7 @@ func loadStateTx(ctx context.Context, tx *sql.Tx, actorID string) (State, error)
 	}
 	state.Revision = revision
 	state.Pending = cloneIntent(state.Pending)
+	state.PausedDiary = cloneIntent(state.PausedDiary)
 	return state, nil
 }
 
@@ -802,6 +812,15 @@ func validateState(state State) error {
 		}
 		if state.Pending.ActorID != state.ActorID {
 			return fmt.Errorf("pending intent actor does not match state actor: %w", ErrInvalid)
+		}
+	}
+	if state.PausedDiary != nil {
+		if err := validateIntent(*state.PausedDiary); err != nil {
+			return fmt.Errorf("paused diary intent: %w", err)
+		}
+		if state.PausedDiary.Kind != ActivityDiary || state.PausedDiary.ActorID != state.ActorID ||
+			(state.Pending != nil && (state.Pending.Kind != ActivitySleep && state.Pending.Kind != ActivityWake || state.Pending.ID == state.PausedDiary.ID)) {
+			return fmt.Errorf("paused diary does not match the actor's sleep/wake boundary: %w", ErrInvalid)
 		}
 	}
 	return nil

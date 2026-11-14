@@ -100,3 +100,38 @@ func TestAgentRoutineWindowStopsAtPlannedSleepBetweenMidnightAndTwo(t *testing.T
 		cancel()
 	}
 }
+
+func TestAgentRoutineDiaryWindowStopsAtPlannedSleepAndBoundaryActivitiesDoNotConsumeCooldown(t *testing.T) {
+	loc, err := time.LoadLocation(agentroutine.JST)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.November, 14, 23, 0, 0, 0, loc)
+	runtime := &agentRoutineRuntime{now: func() time.Time { return now }}
+	date := now.AddDate(0, 0, 1).Format("2006-01-02")
+	sleepAt, _, err := agentroutine.ScheduleFor("mio", date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diaryCtx, cancel := runtime.withRoutineWindow(context.Background(), &agentroutine.Intent{ActorID: "mio", Kind: agentroutine.ActivityDiary}, agentroutine.State{})
+	defer cancel()
+	deadline, ok := diaryCtx.Deadline()
+	remaining := sleepAt.Sub(now)
+	if !ok || time.Until(deadline) < remaining-time.Second || time.Until(deadline) > remaining+time.Second {
+		t.Fatalf("diary deadline = %v, has=%t; want planned sleep in %s", deadline, ok, remaining)
+	}
+	for _, kind := range []agentroutine.ActivityKind{agentroutine.ActivitySleep, agentroutine.ActivityWake, agentroutine.ActivityDiary} {
+		if got := routineCooldown(kind); got != 0 {
+			t.Errorf("routineCooldown(%s) = %s, want zero because schedule/diary state gates the next attempt", kind, got)
+		}
+	}
+	for kind, want := range map[agentroutine.ActivityKind]time.Duration{
+		agentroutine.ActivityMorningChat: 15 * time.Minute,
+		agentroutine.ActivityHobby:       30 * time.Minute,
+		agentroutine.ActivityRelax:       45 * time.Minute,
+	} {
+		if got := routineCooldown(kind); got != want {
+			t.Errorf("routineCooldown(%s) = %s, want %s", kind, got, want)
+		}
+	}
+}

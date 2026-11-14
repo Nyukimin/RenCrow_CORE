@@ -267,3 +267,27 @@ func TestDecideResumesPendingIntentWithoutConsumingChoice(t *testing.T) {
 		t.Fatalf("resume plan = %+v", plan)
 	}
 }
+
+func TestDecideDefersRetryingDiaryForPlannedSleepBeforeTwo(t *testing.T) {
+	const date = "2026-11-15"
+	sleepAt, wakeAt, err := ScheduleFor("midori", date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := sleepAt.Add(time.Minute)
+	if !now.Before(jst(2026, time.November, 15, 2, 0)) {
+		t.Fatalf("fixture time %v is outside the actual sleep window", now)
+	}
+	state := State{
+		ActivatedOn: "2026-11-14", NextDiaryDate: "2026-11-14",
+		ScheduleDate: date, PlannedSleep: sleepAt, PlannedWake: wakeAt,
+		Pending: &Intent{
+			ID: "diary-retry", ActorID: "midori", Date: "2026-11-14", Kind: ActivityDiary,
+			RetryAfter: now.Add(-time.Second),
+		},
+	}
+	plan := Decide(now, ActorState{ID: "midori"}, state, Presence{OwnRoom: AvailabilityAvailable}, true)
+	if plan.Kind != ActivitySleep {
+		t.Fatalf("due pending diary at %s bypassed planned sleep at %s: plan=%+v; want sleep while retaining diary for post-wake retry", now, sleepAt, plan)
+	}
+}

@@ -60,10 +60,18 @@ func Decide(now time.Time, actor ActorState, state State, presence Presence, can
 		plan.Reason = "actor ID is required"
 		return plan
 	}
+	actualWake := confirmedWakeToday(actor.ActualWakeAt, date, now)
+	logicalSleepActive := state.ScheduleDate == scheduleDate && state.LogicalSleepUntil.After(now) && actualWake.IsZero()
+	sleepEntryDue := scheduleDate == date && !now.Before(sleepAt) && now.Before(jstDateAt(date, 2, 0)) && actualWake.IsZero()
+	boundary, hasBoundary := projectedSleepBoundary(plan, now, scheduleDate, wakeAt, state, presence, actualWake, logicalSleepActive, sleepEntryDue)
 
 	if state.Pending != nil {
 		pending := state.Pending
 		if pending.ActorID == actor.ID && pending.ID != "" {
+			if pending.Kind == ActivityDiary && hasBoundary {
+				boundary.Reason = "planned sleep boundary takes precedence over the pending diary"
+				return boundary
+			}
 			plan.Kind = pending.Kind
 			plan.Date = pending.Date
 			if pending.Kind == ActivityMorningChat {
@@ -79,34 +87,8 @@ func Decide(now time.Time, actor ActorState, state State, presence Presence, can
 		return plan
 	}
 
-	actualWake := confirmedWakeToday(actor.ActualWakeAt, date, now)
-	logicalSleepActive := state.ScheduleDate == scheduleDate && state.LogicalSleepUntil.After(now) && actualWake.IsZero()
-	if logicalSleepActive {
-		plan.Kind = ActivitySleep
-		plan.LogicalSleep = true
-		plan.Reason = "logical sleep window remains active until planned wake"
-		return plan
-	}
-	if state.ScheduleDate == scheduleDate && !state.LogicalSleepUntil.IsZero() &&
-		!now.Before(state.LogicalSleepUntil) && state.LogicalSleepUntil.Equal(wakeAt) {
-		plan.Kind = ActivityWake
-		plan.LogicalSleep = false
-		plan.Reason = "logical sleep window reached its planned end"
-		return plan
-	}
-	if !actualWake.IsZero() && state.ScheduleDate == scheduleDate && state.LogicalSleepUntil.After(now) {
-		plan.Kind = ActivityWake
-		plan.LogicalSleep = false
-		plan.Reason = "confirmed wake observation ended the logical sleep window"
-		return plan
-	}
-
-	sleepEntryDue := scheduleDate == date && !now.Before(sleepAt) && now.Before(jstDateAt(date, 2, 0)) && actualWake.IsZero()
-	if sleepEntryDue && presence.OwnRoom == AvailabilityAvailable {
-		plan.Kind = ActivitySleep
-		plan.LogicalSleep = true
-		plan.Reason = "planned sleep start reached before 02:00 JST"
-		return plan
+	if hasBoundary {
+		return boundary
 	}
 
 	if awakeForRoutine(logicalSleepActive) {
@@ -140,12 +122,6 @@ func Decide(now time.Time, actor ActorState, state State, presence Presence, can
 	}
 
 	if sleepEntryDue {
-		if presence.OwnRoom == AvailabilityAvailable {
-			plan.Kind = ActivitySleep
-			plan.LogicalSleep = true
-			plan.Reason = "planned sleep start reached before 02:00 JST"
-			return plan
-		}
 		plan.Reason = "sleep requires confirmed own-room availability"
 		return plan
 	}
@@ -177,6 +153,32 @@ func Decide(now time.Time, actor ActorState, state State, presence Presence, can
 	plan.Kind = ActivityDaytime
 	plan.Reason = "daytime activity is delegated to existing idle-time handling"
 	return plan
+}
+
+func projectedSleepBoundary(plan Plan, now time.Time, scheduleDate string, wakeAt time.Time, state State, presence Presence,
+	actualWake time.Time, logicalSleepActive, sleepEntryDue bool) (Plan, bool) {
+	if logicalSleepActive {
+		plan.Kind, plan.LogicalSleep = ActivitySleep, true
+		plan.Reason = "logical sleep window remains active until planned wake"
+		return plan, true
+	}
+	if state.ScheduleDate == scheduleDate && !state.LogicalSleepUntil.IsZero() &&
+		!now.Before(state.LogicalSleepUntil) && state.LogicalSleepUntil.Equal(wakeAt) {
+		plan.Kind = ActivityWake
+		plan.Reason = "logical sleep window reached its planned end"
+		return plan, true
+	}
+	if !actualWake.IsZero() && state.ScheduleDate == scheduleDate && state.LogicalSleepUntil.After(now) {
+		plan.Kind = ActivityWake
+		plan.Reason = "confirmed wake observation ended the logical sleep window"
+		return plan, true
+	}
+	if sleepEntryDue && presence.OwnRoom == AvailabilityAvailable {
+		plan.Kind, plan.LogicalSleep = ActivitySleep, true
+		plan.Reason = "planned sleep start reached before 02:00 JST"
+		return plan, true
+	}
+	return plan, false
 }
 
 func scheduledTimes(actorID, date string, state State) (time.Time, time.Time) {
