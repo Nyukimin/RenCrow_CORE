@@ -29,6 +29,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -266,6 +267,26 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schedule isolated sleep/wake: %v", err)
 	}
+	akaState, err := routine.store.Load(ctx, "aka")
+	if err != nil {
+		t.Fatalf("load Aka state before sleep: %v", err)
+	}
+	pausedTaskID := modulecore.NewTaskID()
+	pausedOutput, err := json.Marshal(routineProgress{Actors: []routineActorProgress{{ActorID: "aka", TaskID: pausedTaskID}}})
+	if err != nil {
+		t.Fatalf("encode pending Aka diary checkpoint: %v", err)
+	}
+	pausedDiary := agentroutine.Intent{
+		ID: string(modulecore.NewRequestID()), ActorID: "aka",
+		Date:   parseNativeRoutineDate(day, loc).AddDate(0, 0, -1).Format("2006-01-02"),
+		TaskID: string(pausedTaskID), Kind: agentroutine.ActivityDiary, Step: "diary_put_pending",
+		Output: string(pausedOutput), RetryAfter: sleepAt.Add(15 * time.Minute),
+	}
+	akaState.ScheduleDate, akaState.PlannedSleep, akaState.PlannedWake = day, sleepAt, wakeAt
+	akaState.Pending = &pausedDiary
+	if _, err := routine.store.Save(ctx, akaState, akaState.Revision); err != nil {
+		t.Fatalf("save pending Aka diary before sleep: %v", err)
+	}
 	setScheduleNow(sleepAt.Add(time.Minute))
 	sleepWork := runNativeRoutineScheduler(t, routine, "aka")
 	if !strings.HasSuffix(sleepWork.id, ":sleep") {
@@ -278,6 +299,11 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	coreSleep, err := routine.store.Load(ctx, "aka")
 	if err != nil || !coreSleep.LogicalSleepUntil.Equal(coreSleep.PlannedWake) {
 		t.Fatalf("CORE logical sleep checkpoint: state=%+v err=%v", coreSleep, err)
+	}
+	if coreSleep.Pending != nil || coreSleep.PausedDiary == nil || coreSleep.PausedDiary.ID != pausedDiary.ID ||
+		coreSleep.PausedDiary.TaskID != pausedDiary.TaskID || coreSleep.PausedDiary.Output != pausedDiary.Output ||
+		!coreSleep.PausedDiary.RetryAfter.Equal(pausedDiary.RetryAfter) {
+		t.Fatalf("CORE did not retain the exact pending Diary while sleeping: %+v", coreSleep)
 	}
 	if err := stopNativeRoutineWorld(process); err != nil {
 		t.Fatalf("stop isolated WORLD for restart: %v", err)
@@ -331,6 +357,11 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	afterWake := readActor("aka")
 	if afterWake.ActivityID == beforeRestart.ActivityID || afterWake.ActivityKind == "sleep" {
 		t.Fatalf("WORLD did not confirm wake: before=%+v after=%+v", beforeRestart, afterWake)
+	}
+	coreWake, err := routine.store.Load(ctx, "aka")
+	if err != nil || coreWake.Pending == nil || coreWake.Pending.ID != pausedDiary.ID || coreWake.Pending.TaskID != pausedDiary.TaskID ||
+		coreWake.Pending.Output != pausedDiary.Output || !coreWake.Pending.RetryAfter.Equal(pausedDiary.RetryAfter) || coreWake.PausedDiary != nil {
+		t.Fatalf("CORE did not restore the exact Diary after wake: state=%+v err=%v", coreWake, err)
 	}
 
 	testDate := parseNativeRoutineDate(day, loc)
