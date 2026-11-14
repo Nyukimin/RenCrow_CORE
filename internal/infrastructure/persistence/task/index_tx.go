@@ -332,6 +332,9 @@ func (s *transactionStore) idxSaveRunChecks(value domaintask.Run) error {
 }
 
 func (s *transactionStore) idxListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	if filter.TaskIDAfter != nil {
+		return s.idxListTasksAfter(ctx, filter)
+	}
 	ix := s.parent.idx
 	pending := s.overlaySnapshot().tasks
 	unlock := s.indexLock()
@@ -349,6 +352,45 @@ func (s *transactionStore) idxListTasks(ctx context.Context, filter domaintask.F
 			continue
 		}
 		value, err := ix.readTaskAt(cand.pos, cand.key)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func (s *transactionStore) idxListTasksAfter(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	var cursorKey key16
+	if *filter.TaskIDAfter != "" {
+		key, err := parseCanonicalKey(string(*filter.TaskIDAfter), taskKeyPrefix)
+		if err != nil {
+			return nil, fmt.Errorf("parse TaskID page cursor: %w", err)
+		}
+		cursorKey = key
+	}
+	ix := s.parent.idx
+	pending := s.overlaySnapshot().tasks
+	unlock := s.indexLock()
+	page := newBestN(filter.Limit, taskCandByIDBefore)
+	ix.collectTasksLocked(filter, pending, func(candidate taskCand) {
+		if *filter.TaskIDAfter != "" && bytes.Compare(candidate.key[:], cursorKey[:]) <= 0 {
+			return
+		}
+		page.add(candidate)
+	})
+	candidates := page.result()
+	unlock()
+	result := make([]domaintask.Task, 0, len(candidates))
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if candidate.value != nil {
+			result = append(result, cloneTransactionTask(*candidate.value))
+			continue
+		}
+		value, err := ix.readTaskAt(candidate.pos, candidate.key)
 		if err != nil {
 			return nil, err
 		}

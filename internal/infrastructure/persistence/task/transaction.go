@@ -763,6 +763,30 @@ func (s *transactionStore) ListTasks(ctx context.Context, filter domaintask.Filt
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
+	if err := validateTaskListCursorFilter(filter); err != nil {
+		return nil, err
+	}
+	if filter.TaskIDAfter != nil && s.parent.idx == nil {
+		view, err := s.taskRunView(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if view.tasksErr != nil {
+			return nil, view.tasksErr
+		}
+		cursor := *filter.TaskIDAfter
+		page := newBestN(filter.Limit, func(a, b domaintask.Task) bool { return a.TaskID < b.TaskID })
+		for _, item := range view.tasks {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if item.TaskID <= cursor || !taskMatchesFilter(item, filter) {
+				continue
+			}
+			page.add(item)
+		}
+		return cloneTransactionTasks(page.result()), nil
+	}
 	if s.parent.idx != nil {
 		return s.idxListTasks(ctx, filter)
 	}
@@ -790,6 +814,21 @@ func (s *transactionStore) ListTasks(ctx context.Context, filter domaintask.Filt
 		filtered = filtered[:filter.Limit]
 	}
 	return filtered, nil
+}
+
+func validateTaskListCursorFilter(filter domaintask.Filter) error {
+	if filter.TaskIDAfter == nil {
+		return nil
+	}
+	if filter.Limit < 1 || filter.Limit > domaintask.MaxTaskListPageSize {
+		return fmt.Errorf("task ID cursor requires a limit between 1 and %d", domaintask.MaxTaskListPageSize)
+	}
+	if *filter.TaskIDAfter != "" {
+		if err := filter.TaskIDAfter.Validate(); err != nil {
+			return fmt.Errorf("task ID cursor is invalid: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *transactionStore) SaveContext(ctx context.Context, value domaintask.SharedRoleContext) error {

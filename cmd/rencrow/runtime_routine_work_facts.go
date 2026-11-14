@@ -12,9 +12,12 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var errRoutineWorkFactScope = errors.New("routine work fact scope is invalid")
+
+const routineWorkTaskPageSize = 128
 
 func collectRoutineWorkFacts(
 	ctx context.Context,
@@ -88,41 +91,56 @@ func collectRoutineWorkFacts(
 		}
 	}
 
-	canonicalTasks, err := tasks.List(ctx, domaintask.Filter{Assignee: actorID})
-	if err != nil {
-		return nil, fmt.Errorf("list canonical routine work tasks: %w", err)
-	}
-	sort.Slice(canonicalTasks, func(i, j int) bool { return canonicalTasks[i].TaskID < canonicalTasks[j].TaskID })
-
-	for _, task := range canonicalTasks {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if task.Assignee != actorID || task.OwnerID != ownerID || task.ModuleID == "agent_routine" {
-			continue
-		}
-		if !taskMayHaveWorkOnRoutineDate(task, dayStart, dayEnd) {
-			continue
-		}
-
-		runs, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	var taskCursor modulecore.TaskID
+	for {
+		pageCursor := taskCursor
+		canonicalTasks, err := tasks.List(ctx, domaintask.Filter{
+			Assignee: actorID, Limit: routineWorkTaskPageSize, TaskIDAfter: &pageCursor,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("list canonical routine work runs: %w", err)
+			return nil, fmt.Errorf("list canonical routine work task page: %w", err)
 		}
-		for _, run := range runs {
+		if len(canonicalTasks) == 0 {
+			break
+		}
+		for _, task := range canonicalTasks {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			if run.TaskID != task.TaskID || run.Assignee != actorID {
+			if task.Assignee != actorID || task.OwnerID != ownerID || task.ModuleID == "agent_routine" {
 				continue
 			}
-			if !domaintask.ValidRunStatus(run.Status) {
-				return nil, errors.New("canonical routine work run has a noncanonical status")
+			if !taskMayHaveWorkOnRoutineDate(task, dayStart, dayEnd) {
+				continue
 			}
-			facts = append(facts, runWorkActivities(run, actorID, date, dayStart, dayEnd)...)
+
+			runs, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+			if err != nil {
+				return nil, fmt.Errorf("list canonical routine work runs: %w", err)
+			}
+			for _, run := range runs {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if run.TaskID != task.TaskID || run.Assignee != actorID {
+					continue
+				}
+				if !domaintask.ValidRunStatus(run.Status) {
+					return nil, errors.New("canonical routine work run has a noncanonical status")
+				}
+				facts = append(facts, runWorkActivities(run, actorID, date, dayStart, dayEnd)...)
+			}
+			if len(runs) == 0 && task.StartedAt != nil && domaintask.ValidStatus(task.Status) {
+				facts = append(facts, taskWorkActivities(task, actorID, date, dayStart, dayEnd)...)
+			}
 		}
-		if len(runs) == 0 && task.StartedAt != nil && domaintask.ValidStatus(task.Status) {
-			facts = append(facts, taskWorkActivities(task, actorID, date, dayStart, dayEnd)...)
+		nextCursor := canonicalTasks[len(canonicalTasks)-1].TaskID
+		if nextCursor <= taskCursor {
+			return nil, errors.New("canonical routine work task page cursor did not advance")
+		}
+		taskCursor = nextCursor
+		if len(canonicalTasks) < routineWorkTaskPageSize {
+			break
 		}
 	}
 	sort.Slice(facts, func(i, j int) bool {

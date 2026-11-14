@@ -54,6 +54,22 @@ type nativeRoutineHomeSlot struct {
 	Anchor [3]float64 `json:"anchor"`
 }
 
+type nativeRoutineLifeEvent struct {
+	EventID       string
+	TransactionID string
+	Seq           uint64
+	Kind          string
+	ActorID       string
+	ActivityID    string
+	ActivityKind  string
+	RoomID        string
+	SlotID        string
+	PoseID        string
+	StartedAt     time.Time
+	EndedAt       time.Time
+	DueAt         time.Time
+}
+
 type nativeRoutineWorldProcess struct{ cmd *exec.Cmd }
 type nativeRoutineWork struct{ id string }
 type nativeRoutinePlanningWorker struct{}
@@ -319,6 +335,65 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 
 	testDate := parseNativeRoutineDate(day, loc)
 	setScheduleNow(time.Date(testDate.Year(), testDate.Month(), testDate.Day(), 22, 0, 0, 0, loc))
+	exerciseWork := runNativeRoutineScheduler(t, routine, "shiro")
+	if !strings.HasSuffix(exerciseWork.id, ":hobby") {
+		t.Fatalf("idleSource selected %q for Shiro's 22:00 home exercise", exerciseWork.id)
+	}
+	shiro := readActor("shiro")
+	if shiro.RoomID != layout.PrivateRooms["shiro"] || shiro.ActivityID != "" {
+		t.Fatalf("CORE exercise Work.Run did not finish in Shiro's private room: room=%q activity=%q", shiro.RoomID, shiro.ActivityID)
+	}
+	shiroEvents := nativeRoutineActorEvents(t, readClient, ctx, "shiro")
+	exerciseStarts, exerciseFinishes := nativeRoutineEventsOfKind(shiroEvents, "life.home.exercise.started"), nativeRoutineEventsOfKind(shiroEvents, "life.home.exercise.completed")
+	if len(exerciseStarts) != 1 || len(exerciseFinishes) != 1 || exerciseStarts[0].ActivityID == "" ||
+		exerciseStarts[0].ActivityID != exerciseFinishes[0].ActivityID || exerciseStarts[0].SlotID != "shiro-exercise" ||
+		exerciseStarts[0].DueAt.IsZero() || exerciseStarts[0].StartedAt.IsZero() || exerciseFinishes[0].EndedAt.Sub(exerciseStarts[0].StartedAt) < 24*time.Second ||
+		exerciseStarts[0].EventID == "" || exerciseStarts[0].TransactionID == "" || exerciseFinishes[0].EventID == "" || exerciseFinishes[0].TransactionID == "" {
+		t.Fatalf("Shiro exercise lacks one exact start/finish receipt pair: starts=%+v finishes=%+v", exerciseStarts, exerciseFinishes)
+	}
+	t.Logf("native Shiro exercise receipts: activity=%s start=%s finish=%s; owner duration elapsed in WORLD", exerciseStarts[0].ActivityID, exerciseStarts[0].EventID, exerciseFinishes[0].EventID)
+
+	setScheduleNow(time.Date(testDate.Year(), testDate.Month(), testDate.Day(), 22, 0, 0, 0, loc))
+	mirrorOneWork := runNativeRoutineScheduler(t, routine, "kuro")
+	if !strings.HasSuffix(mirrorOneWork.id, ":hobby") {
+		t.Fatalf("idleSource selected %q for Kuro's first 22:00 mirror pose", mirrorOneWork.id)
+	}
+	kuroAfterOne := readActor("kuro")
+	if kuroAfterOne.MirrorPoseCompletions != 1 || kuroAfterOne.ActivityID != "" {
+		t.Fatalf("first CORE mirror Work.Run count=%d activity=%q, want one completed pose", kuroAfterOne.MirrorPoseCompletions, kuroAfterOne.ActivityID)
+	}
+	kuroEventsAfterOne := nativeRoutineActorEvents(t, readClient, ctx, "kuro")
+	firstMirrorStarts, firstMirrorFinishes := nativeRoutineEventsOfKind(kuroEventsAfterOne, "life.home.mirror_pose.started"), nativeRoutineEventsOfKind(kuroEventsAfterOne, "life.home.mirror_pose.completed")
+	if len(firstMirrorStarts) != 1 || len(firstMirrorFinishes) != 1 || firstMirrorStarts[0].ActivityID == "" ||
+		firstMirrorStarts[0].ActivityID != firstMirrorFinishes[0].ActivityID || firstMirrorStarts[0].PoseID != "mirror-greeting" ||
+		firstMirrorStarts[0].StartedAt.IsZero() || firstMirrorStarts[0].DueAt.IsZero() || firstMirrorFinishes[0].EndedAt.Sub(firstMirrorStarts[0].StartedAt) < 3500*time.Millisecond ||
+		firstMirrorFinishes[0].PoseID != firstMirrorStarts[0].PoseID || firstMirrorStarts[0].EventID == "" || firstMirrorStarts[0].TransactionID == "" ||
+		firstMirrorFinishes[0].EventID == "" || firstMirrorFinishes[0].TransactionID == "" {
+		t.Fatalf("first Kuro mirror pose lacks exact greeting start/finish receipts: starts=%+v finishes=%+v", firstMirrorStarts, firstMirrorFinishes)
+	}
+	t.Logf("native Kuro mirror receipt 1/2: pose=%s activity=%s start=%s finish=%s count=%d", firstMirrorStarts[0].PoseID, firstMirrorStarts[0].ActivityID, firstMirrorStarts[0].EventID, firstMirrorFinishes[0].EventID, kuroAfterOne.MirrorPoseCompletions)
+
+	setScheduleNow(time.Date(testDate.Year(), testDate.Month(), testDate.Day(), 22, 31, 0, 0, loc))
+	mirrorTwoWork := runNativeRoutineScheduler(t, routine, "kuro")
+	if !strings.HasSuffix(mirrorTwoWork.id, ":hobby") {
+		t.Fatalf("idleSource selected %q for Kuro's second 22:31 mirror pose", mirrorTwoWork.id)
+	}
+	kuroAfterTwo := readActor("kuro")
+	if kuroAfterTwo.MirrorPoseCompletions != 2 || kuroAfterTwo.ActivityID != "" {
+		t.Fatalf("second CORE mirror Work.Run count=%d activity=%q, want two completed poses", kuroAfterTwo.MirrorPoseCompletions, kuroAfterTwo.ActivityID)
+	}
+	kuroEventsAfterTwo := nativeRoutineActorEvents(t, readClient, ctx, "kuro")
+	allMirrorStarts, allMirrorFinishes := nativeRoutineEventsOfKind(kuroEventsAfterTwo, "life.home.mirror_pose.started"), nativeRoutineEventsOfKind(kuroEventsAfterTwo, "life.home.mirror_pose.completed")
+	if len(allMirrorStarts) != 2 || len(allMirrorFinishes) != 2 || allMirrorStarts[1].ActivityID == "" ||
+		allMirrorStarts[1].ActivityID != allMirrorFinishes[1].ActivityID || allMirrorStarts[1].PoseID != "mirror-hero" ||
+		allMirrorStarts[1].StartedAt.IsZero() || allMirrorStarts[1].DueAt.IsZero() || allMirrorFinishes[1].EndedAt.Sub(allMirrorStarts[1].StartedAt) < 3900*time.Millisecond ||
+		allMirrorFinishes[1].PoseID != allMirrorStarts[1].PoseID || allMirrorStarts[1].PoseID == firstMirrorStarts[0].PoseID ||
+		allMirrorStarts[1].EventID == "" || allMirrorStarts[1].TransactionID == "" || allMirrorFinishes[1].EventID == "" || allMirrorFinishes[1].TransactionID == "" {
+		t.Fatalf("second Kuro mirror pose lacks distinct hero start/finish receipts: starts=%+v finishes=%+v", allMirrorStarts, allMirrorFinishes)
+	}
+	t.Logf("native Kuro mirror receipt 2/2: pose=%s activity=%s start=%s finish=%s count=%d", allMirrorStarts[1].PoseID, allMirrorStarts[1].ActivityID, allMirrorStarts[1].EventID, allMirrorFinishes[1].EventID, kuroAfterTwo.MirrorPoseCompletions)
+
+	setScheduleNow(time.Date(testDate.Year(), testDate.Month(), testDate.Day(), 22, 45, 0, 0, loc))
 	moveWork := runNativeRoutineScheduler(t, routine, "mio")
 	if !strings.HasSuffix(moveWork.id, ":relax") {
 		t.Fatalf("idleSource selected %q for Mio's isolated move", moveWork.id)
@@ -335,6 +410,7 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	required := map[string]map[string]bool{
 		"life.home.move.started": {"mio": false}, "life.home.move.arrived": {"mio": false},
 		"life.home.sleep.started": {"aka": false}, "life.home.sleep.woke": {"aka": false},
+		"life.home.exercise.started": {"shiro": false}, "life.home.exercise.completed": {"shiro": false},
 	}
 	for _, event := range events.Events {
 		var payload struct {
@@ -377,10 +453,33 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 			t.Errorf("Mio's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, mioDiary)
 		}
 	}
-	t.Logf("native diary builder read actual authenticated WORLD owner events for JST %s: Aka sleep/wake and Mio private-room move", worldEventDate)
+	shiroDiary, err := routine.buildDiaryBody(ctx, "shiro", worldEventDate)
+	if err != nil {
+		t.Fatalf("build Shiro diary from actual WORLD owner events: %v", err)
+	}
+	for _, line := range []string{"WORLDで運動の開始を確認しました。", "WORLDで運動の完了を確認しました。"} {
+		if !strings.Contains(shiroDiary, line) {
+			t.Errorf("Shiro's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, shiroDiary)
+		}
+	}
+	kuroDiary, err := routine.buildDiaryBody(ctx, "kuro", worldEventDate)
+	if err != nil {
+		t.Fatalf("build Kuro diary from actual WORLD owner events: %v", err)
+	}
+	for _, line := range []string{
+		"WORLDで鏡のポーズ「挨拶」の練習開始を確認しました。",
+		"WORLDで鏡のポーズ「挨拶」の完了を確認しました。",
+		"WORLDで鏡のポーズ「ヒーロー」の練習開始を確認しました。",
+		"WORLDで鏡のポーズ「ヒーロー」の完了を確認しました。",
+	} {
+		if !strings.Contains(kuroDiary, line) {
+			t.Errorf("Kuro's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, kuroDiary)
+		}
+	}
+	t.Logf("native diary builder read actual authenticated WORLD owner events for JST %s: Aka sleep/wake, Mio move, Shiro exercise, Kuro greeting/hero mirror poses", worldEventDate)
 	storedTasks, err := tasks.List(ctx, domaintask.Filter{ModuleID: agentRoutineModuleID, Limit: 20})
-	if err != nil || len(storedTasks) != 3 {
-		t.Fatalf("canonical Task count=%d err=%v, want sleep, wake, and move", len(storedTasks), err)
+	if err != nil || len(storedTasks) != 6 {
+		t.Fatalf("canonical Task count=%d err=%v, want sleep, wake, exercise, two mirror poses, and move", len(storedTasks), err)
 	}
 	for _, task := range storedTasks {
 		if task.OwnerID != nativeRoutineOwner || task.Status != domaintask.StatusSucceeded {
@@ -471,6 +570,17 @@ func nativeRoutineWorldConfig(t *testing.T, layoutBytes []byte, layout nativeRou
 			if !ok {
 				return "", "", "", "", fmt.Errorf("HOUSE layout lacks %s anchor", room)
 			}
+		}
+		if actorID == "shiro" || actorID == "kuro" {
+			slotID := "shiro-exercise"
+			if actorID == "kuro" {
+				slotID = "kuro-mirror"
+			}
+			slot, ok := nativeRoutineSlot(layout, slotID)
+			if !ok || slot.Actor != actorID || slot.RoomID != layout.PrivateRooms[actorID] {
+				return "", "", "", "", fmt.Errorf("HOUSE layout lacks %s's assigned activity slot", actorID)
+			}
+			room, position = slot.RoomID, slot.Anchor
 		}
 		actor := map[string]any{"room_id": room, "position": position}
 		if actorID == "aka" {
@@ -661,4 +771,46 @@ func runNativeRoutineScheduler(t *testing.T, routine *agentRoutineRuntime, actor
 func parseNativeRoutineDate(value string, location *time.Location) time.Time {
 	date, _ := time.ParseInLocation("2006-01-02", value, location)
 	return date
+}
+
+func nativeRoutineActorEvents(t *testing.T, client *worldread.Client, ctx context.Context, actorID string) []nativeRoutineLifeEvent {
+	t.Helper()
+	page, err := client.Events(ctx, 0)
+	if err != nil {
+		t.Fatalf("read WORLD receipts for %s: %v", actorID, err)
+	}
+	var result []nativeRoutineLifeEvent
+	for _, event := range page.Events {
+		var payload struct {
+			ActorID      string    `json:"actor_id"`
+			ActivityID   string    `json:"activity_id"`
+			ActivityKind string    `json:"activity_kind"`
+			RoomID       string    `json:"room_id"`
+			SlotID       string    `json:"slot_id"`
+			PoseID       string    `json:"pose_id"`
+			StartedAt    time.Time `json:"started_at"`
+			EndedAt      time.Time `json:"ended_at"`
+			DueAt        time.Time `json:"due_at"`
+		}
+		if json.Unmarshal(event.Payload, &payload) != nil || payload.ActorID != actorID {
+			continue
+		}
+		result = append(result, nativeRoutineLifeEvent{
+			EventID: event.EventID, TransactionID: event.TransactionID, Seq: event.Seq, Kind: event.Kind,
+			ActorID: payload.ActorID, ActivityID: payload.ActivityID, ActivityKind: payload.ActivityKind,
+			RoomID: payload.RoomID, SlotID: payload.SlotID, PoseID: payload.PoseID,
+			StartedAt: payload.StartedAt, EndedAt: payload.EndedAt, DueAt: payload.DueAt,
+		})
+	}
+	return result
+}
+
+func nativeRoutineEventsOfKind(events []nativeRoutineLifeEvent, kind string) []nativeRoutineLifeEvent {
+	var result []nativeRoutineLifeEvent
+	for _, event := range events {
+		if event.Kind == kind {
+			result = append(result, event)
+		}
+	}
+	return result
 }

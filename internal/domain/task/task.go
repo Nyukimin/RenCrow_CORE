@@ -386,12 +386,19 @@ type Notification struct {
 	CreatedAt   time.Time         `json:"created_at"`
 }
 
+const MaxTaskListPageSize = 256
+
 type Filter struct {
 	Status   Status
 	ModuleID string
 	Assignee string
 	Route    Route
 	Limit    int
+	// TaskIDAfter opts into stable ascending TaskID pagination. A non-nil
+	// pointer enables keyset paging; its zero value requests the first page.
+	// Use it with a Limit in [1, MaxTaskListPageSize]. Normal List order is
+	// unchanged when this cursor is nil.
+	TaskIDAfter *modulecore.TaskID
 }
 
 func (t *Task) ApplyDefaults(now time.Time) {

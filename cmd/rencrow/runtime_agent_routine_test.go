@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -175,6 +176,115 @@ func TestAgentRoutineCanonicalRunsPauseResumeAndRecoverAfterRestart(t *testing.T
 			t.Errorf("recovered canonical activity = task owner=%q module=%q run=%s, want exact owner/module and running successor", item.task.OwnerID, item.task.ModuleID, item.run.Status)
 		}
 	}
+}
+
+func TestAgentRoutineCheckpointFailureRequeuesStartedRun(t *testing.T) {
+	ctx := context.Background()
+	routineStore, err := agentroutine.Open(filepath.Join(t.TempDir(), "routine.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = routineStore.Close() })
+	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = taskStore.Close() })
+	runtime := &agentRoutineRuntime{
+		store: routineStore, tasks: taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()), ownerID: "ren",
+		now: func() time.Time { return time.Date(2026, time.November, 14, 7, 0, 0, 0, time.UTC) },
+	}
+	progress := routineProgress{Actors: []routineActorProgress{{ActorID: "mio", TaskID: modulecore.NewTaskID()}}}
+	encoded, err := json.Marshal(progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := routineStore.DraftIntent(ctx, agentroutine.Intent{
+		ID: string(modulecore.NewRequestID()), ActorID: "mio", Date: "2026-11-14", TaskID: string(progress.Actors[0].TaskID),
+		Kind: agentroutine.ActivityMorningChat, Label: "morning_chat", Participants: []string{"shiro"},
+		Step: "planned", Output: string(encoded), CreatedAt: time.Date(2026, time.November, 14, 7, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleState := state
+	staleState.Revision++ // Force the post-start routine checkpoint to fail its owner CAS.
+	prepared, returnedState, returnedProgress, prepareErr := runtime.prepareRuns(ctx, nil, staleState, progress)
+	if !errors.Is(prepareErr, agentroutine.ErrConflict) {
+		t.Fatalf("prepareRuns() error = %v, want routine checkpoint conflict", prepareErr)
+	}
+	if len(prepared) != 0 {
+		t.Fatalf("prepareRuns returned %d active Runs after successful requeue, want none", len(prepared))
+	}
+	if returnedProgress.Actors[0].RunID == "" {
+		t.Fatal("failed checkpoint lost the exact Run ID needed for recovery")
+	}
+	if err := runtime.deferIntent(ctx, returnedState, returnedProgress, prepareErr.Error()); err == nil || !strings.Contains(err.Error(), "retry window") {
+		t.Fatalf("deferIntent() error = %v, want a retry-window deferral", err)
+	}
+	task, err := runtime.tasks.Get(ctx, progress.Actors[0].TaskID)
+	if err != nil || task.Status != domaintask.StatusWaiting {
+		t.Fatalf("requeued routine Task=%+v err=%v, want waiting", task, err)
+	}
+	runs, err := runtime.tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: progress.Actors[0].TaskID})
+	if err != nil || len(runs) != 1 || runs[0].RunID != returnedProgress.Actors[0].RunID || runs[0].Status != domaintask.RunStatusWaiting {
+		t.Fatalf("requeued routine Runs=%+v err=%v, want exact started Run waiting", runs, err)
+	}
+}
+
+func TestAgentRoutineCheckpointResumeReadFailureRequeuesSuccessor(t *testing.T) {
+	ctx := context.Background()
+	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = taskStore.Close() })
+	owner := taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())
+	taskID := modulecore.NewTaskID()
+	task, predecessor, err := owner.CreateAndStartRun(ctx, domaintask.Task{
+		TaskID: taskID, Title: "routine resume test", ModuleID: agentRoutineModuleID, OwnerID: "ren", Assignee: "mio",
+		Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow, InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true,
+	}, domaintask.SharedRoleContext{TaskID: taskID, UserIntent: "routine test", CurrentPlan: "checkpoint resume"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.CompleteRun(ctx, task.TaskID, predecessor.RunID, "mio", domaintask.StatusWaiting, "paused", "test checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	faultStore := &failRoutineTaskReadStore{Store: taskStore, failNext: true}
+	runtime := &agentRoutineRuntime{tasks: taskmanager.New(faultStore, taskmanager.DefaultParallelLimits())}
+	intent := &agentroutine.Intent{ID: "routine-intent", ActorID: "mio", Step: "checkpoint", Output: "saved output"}
+	if _, _, err := runtime.resumeRoutineRun(ctx, task.TaskID, predecessor.RunID, "mio", intent); err == nil || !strings.Contains(err.Error(), "injected post-start Task read failure") {
+		t.Fatalf("resumeRoutineRun() error = %v, want injected post-start read failure", err)
+	}
+	currentTask, err := owner.Get(ctx, task.TaskID)
+	if err != nil || currentTask.Status != domaintask.StatusWaiting {
+		t.Fatalf("Task after failed readback=%+v err=%v, want waiting and resumable", currentTask, err)
+	}
+	runs, err := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(runs) != 2 || runs[1].Status != domaintask.RunStatusWaiting || runs[1].RunID == predecessor.RunID {
+		t.Fatalf("Runs after failed readback=%+v err=%v, want exact successor requeued as waiting", runs, err)
+	}
+	_, resumed, err := runtime.resumeRoutineRun(ctx, task.TaskID, runs[1].RunID, "mio", intent)
+	if err != nil || resumed.RunID == runs[1].RunID || resumed.Status != domaintask.RunStatusRunning {
+		t.Fatalf("resume after requeue = Run %+v err=%v, want a fresh running successor", resumed, err)
+	}
+	if _, err := owner.CompleteRun(ctx, task.TaskID, resumed.RunID, "mio", domaintask.StatusWaiting, "paused", "test cleanup"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type failRoutineTaskReadStore struct {
+	domaintask.Store
+	failNext bool
+}
+
+func (s *failRoutineTaskReadStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	if s.failNext {
+		s.failNext = false
+		return domaintask.Task{}, errors.New("injected post-start Task read failure")
+	}
+	return s.Store.GetTask(ctx, taskID)
 }
 
 func TestAgentRoutineExpiresPausedRunsAndPreservesTerminalSuccess(t *testing.T) {

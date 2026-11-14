@@ -164,6 +164,75 @@ func TestCollectRoutineWorkFactsUsesExactTaskOwnerAndAssigneeAndStatusOnly(t *te
 	}
 }
 
+func TestCollectRoutineWorkFactsPagesAllActorTasksWithoutTruncating(t *testing.T) {
+	ctx := context.Background()
+	baseStore, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := baseStore.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
+	store := &routineFactListRecordingStore{JSONLStore: baseStore}
+	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+	expectedTaskIDs := make(map[string]struct{}, routineWorkTaskPageSize+3)
+	started := time.Date(2026, time.November, 13, 10, 0, 0, 0, time.UTC)
+	for index := 0; index < routineWorkTaskPageSize+3; index++ {
+		task := routineFactTask("ren", "mio", "code", started.Add(-time.Hour), started)
+		task.Title = "routine work page fixture"
+		task.StartedAt = &started
+		if err := store.SaveTask(ctx, task); err != nil {
+			t.Fatalf("SaveTask(%d): %v", index, err)
+		}
+		expectedTaskIDs[string(task.TaskID)] = struct{}{}
+	}
+
+	facts, err := collectRoutineWorkFacts(ctx, manager, nil, "mio", "ren", "2026-11-13")
+	if err != nil {
+		t.Fatalf("collectRoutineWorkFacts: %v", err)
+	}
+	if len(facts) != routineWorkTaskPageSize+3 {
+		t.Fatalf("work facts = %d, want all %d matching Tasks across multiple pages", len(facts), routineWorkTaskPageSize+3)
+	}
+	for _, fact := range facts {
+		if fact.Source != "canonical_task" || fact.Summary != "作業を開始した" {
+			t.Errorf("unexpected fact for started Task: %+v", fact)
+		}
+		delete(expectedTaskIDs, fact.SourceID)
+	}
+	if len(expectedTaskIDs) != 0 {
+		t.Fatalf("page scan omitted %d matching Task IDs", len(expectedTaskIDs))
+	}
+	if len(store.listFilters) != 2 {
+		t.Fatalf("Task page calls = %d, want 2 pages", len(store.listFilters))
+	}
+	for index, filter := range store.listFilters {
+		if filter.Assignee != "mio" || filter.Limit != routineWorkTaskPageSize || filter.TaskIDAfter == nil {
+			t.Errorf("Task page filter %d = %+v, want exact assignee, cursor, and bounded page size", index, filter)
+		}
+	}
+	if *store.listFilters[0].TaskIDAfter != "" || *store.listFilters[1].TaskIDAfter == "" {
+		t.Fatalf("page cursors = %q, %q; want empty first cursor then continuation cursor", *store.listFilters[0].TaskIDAfter, *store.listFilters[1].TaskIDAfter)
+	}
+}
+
+type routineFactListRecordingStore struct {
+	*taskpersistence.JSONLStore
+	listFilters []domaintask.Filter
+}
+
+func (s *routineFactListRecordingStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	recorded := filter
+	if filter.TaskIDAfter != nil {
+		cursor := *filter.TaskIDAfter
+		recorded.TaskIDAfter = &cursor
+	}
+	s.listFilters = append(s.listFilters, recorded)
+	return s.JSONLStore.ListTasks(ctx, filter)
+}
+
 func TestCollectRoutineWorkFactsRejectsInvalidScope(t *testing.T) {
 	manager, _ := routineWorkFactsManager(t)
 	if _, err := collectRoutineWorkFacts(context.Background(), manager, nil, "Mio", "ren", "2026-11-13"); err == nil {

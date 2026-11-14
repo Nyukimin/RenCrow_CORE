@@ -96,6 +96,10 @@ func taskCandBefore(a, b taskCand) bool {
 	return bytes.Compare(a.key[:], b.key[:]) < 0
 }
 
+func taskCandByIDBefore(a, b taskCand) bool {
+	return bytes.Compare(a.key[:], b.key[:]) < 0
+}
+
 // collectTasksLocked finds the Tasks matching filter, layering the pending
 // Tasks over the committed ones. Caller holds mu (read).
 func (ix *taskIndex) collectTasksLocked(filter domaintask.Filter, pending map[key16]domaintask.Task, emit func(taskCand)) {

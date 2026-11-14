@@ -733,15 +733,18 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 	if err != nil {
 		if routineStopRequested(activityCtx, stop) {
 			_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
-			_ = r.pauseRuns(activityCtx, prepared, "routine stopped while starting canonical runs")
-			return settleErr
+			pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped while starting canonical runs")
+			if (errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled)) && !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
+				err = nil
+			}
+			return errors.Join(err, settleErr, pauseErr)
 		}
 		return r.deferIntent(activityCtx, state, progress, err.Error())
 	}
 	if routineStopRequested(activityCtx, stop) {
 		_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
-		_ = r.pauseRuns(activityCtx, prepared, "routine stopped before provider work")
-		return settleErr
+		pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped before provider work")
+		return errors.Join(settleErr, pauseErr)
 	}
 	if state.Pending.ChoiceEligible && !state.Pending.ChoiceCommitted && r.worldLife != nil {
 		windowCtx, cancelWindow := r.withRoutineWindow(activityCtx, state.Pending, state)
@@ -750,11 +753,14 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		if err != nil {
 			if routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) {
 				_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
-				_ = r.pauseRuns(activityCtx, prepared, "routine stopped before WORLD choice confirmation")
-				return settleErr
+				pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped before WORLD choice confirmation")
+				if (errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled)) && !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
+					err = nil
+				}
+				return errors.Join(err, settleErr, pauseErr)
 			}
-			_ = r.pauseRuns(activityCtx, prepared, "WORLD choice location was not confirmed")
-			return r.deferIntent(activityCtx, state, progress, err.Error())
+			pauseErr := r.pauseRuns(activityCtx, prepared, "WORLD choice location was not confirmed")
+			return errors.Join(r.deferIntent(activityCtx, state, progress, err.Error()), pauseErr)
 		}
 	}
 	if state.Pending.ChoiceEligible && !state.Pending.ChoiceCommitted {
@@ -762,8 +768,8 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			return r.store.CommitInitiatorSelection(persistCtx, actorID, state.Pending.ID, state.Revision, true)
 		})
 		if err != nil {
-			_ = r.pauseRuns(activityCtx, prepared, "routine stopped or failed before candidate commit")
-			return r.deferIntent(activityCtx, state, progress, err.Error())
+			pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped or failed before candidate commit")
+			return errors.Join(r.deferIntent(activityCtx, state, progress, err.Error()), pauseErr)
 		}
 	}
 	if !progress.EffectCompleted {
@@ -791,12 +797,15 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		}
 		if routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) {
 			_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
-			_ = r.pauseRuns(activityCtx, prepared, "routine stopped; checkpoint retained")
-			return settleErr
+			pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped; checkpoint retained")
+			if (errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled)) && !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
+				err = nil
+			}
+			return errors.Join(err, settleErr, pauseErr)
 		}
 		if err != nil {
-			_ = r.pauseRuns(activityCtx, prepared, "routine step failed; checkpoint retained")
-			return r.deferIntent(activityCtx, state, progress, err.Error())
+			pauseErr := r.pauseRuns(activityCtx, prepared, "routine step failed; checkpoint retained")
+			return errors.Join(r.deferIntent(activityCtx, state, progress, err.Error()), pauseErr)
 		}
 	}
 	if progress.Media != nil {
@@ -1048,19 +1057,25 @@ func routineStopRequested(ctx context.Context, stop <-chan struct{}) bool {
 
 func (r *agentRoutineRuntime) prepareRuns(ctx context.Context, stop <-chan struct{}, state agentroutine.State, progress routineProgress) ([]routinePreparedRun, agentroutine.State, routineProgress, error) {
 	prepared := make([]routinePreparedRun, 0, len(progress.Actors))
+	abortPrepared := func(cause error) ([]routinePreparedRun, agentroutine.State, routineProgress, error) {
+		if pauseErr := r.pauseRuns(ctx, prepared, "routine Run preparation ended before provider work: "+cause.Error()); pauseErr != nil {
+			return prepared, state, progress, errors.Join(cause, fmt.Errorf("pause partially prepared routine Runs: %w", pauseErr))
+		}
+		return nil, state, progress, cause
+	}
 	for index := range progress.Actors {
 		if routineStopRequested(ctx, stop) {
-			return prepared, state, progress, errAgentRoutineStopped
+			return abortPrepared(errAgentRoutineStopped)
 		}
 		task, run, err := r.prepareRun(ctx, state.Pending, progress.Actors[index])
 		if err != nil {
-			return prepared, state, progress, err
+			return abortPrepared(err)
 		}
 		prepared = append(prepared, routinePreparedRun{progressIndex: index, task: task, run: run})
 		progress.Actors[index].RunID = run.RunID
 		state, progress, err = r.saveProgress(ctx, state, "canonical_run_ready", progress)
 		if err != nil {
-			return prepared, state, progress, err
+			return abortPrepared(err)
 		}
 	}
 	return prepared, state, progress, nil
@@ -1163,7 +1178,14 @@ func (r *agentRoutineRuntime) resumeRoutineRun(ctx context.Context, taskID modul
 	}
 	task, err := r.tasks.Get(ctx, taskID)
 	if err != nil {
-		return domaintask.Task{}, domaintask.Run{}, err
+		cause := fmt.Errorf("read canonical Task after checkpoint resume: %w", err)
+		pauseErr := r.pauseRuns(ctx, []routinePreparedRun{{
+			task: domaintask.Task{TaskID: taskID, Assignee: actorID}, run: run,
+		}}, "CORE routine checkpoint resume Task read failed: "+err.Error())
+		if pauseErr != nil {
+			return domaintask.Task{}, domaintask.Run{}, errors.Join(cause, fmt.Errorf("requeue started checkpoint Run %s: %w", run.RunID, pauseErr))
+		}
+		return domaintask.Task{}, domaintask.Run{}, cause
 	}
 	return task, run, nil
 }
@@ -1979,7 +2001,7 @@ func (r *agentRoutineRuntime) pauseRuns(ctx context.Context, prepared []routineP
 				domaintask.StatusWaiting, "CORE agent routine paused", reason)
 			return completeErr
 		}); err != nil && firstErr == nil {
-			firstErr = err
+			firstErr = errors.Join(taskmanager.ErrStartedRunNotClosed, fmt.Errorf("pause exact routine Run %s for Task %s: %w", item.run.RunID, item.task.TaskID, err))
 		}
 	}
 	return firstErr
@@ -2006,21 +2028,22 @@ func (r *agentRoutineRuntime) deferIntent(ctx context.Context, state agentroutin
 		latest := runs[len(runs)-1]
 		prepared = append(prepared, routinePreparedRun{progressIndex: index, task: task, run: latest})
 	}
-	_ = r.pauseRuns(ctx, prepared, reason)
+	pauseErr := r.pauseRuns(ctx, prepared, reason)
 	state, err := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
 		return r.store.Load(persistCtx, state.ActorID)
 	})
 	if err != nil || state.Pending == nil {
-		return errors.Join(errors.New(reason), err)
+		return errors.Join(errors.New(reason), err, pauseErr)
 	}
 	state.Pending.RetryAfter = r.now().Add(agentRoutineRetryDelay)
 	_, saveErr := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
 		return r.store.Save(persistCtx, state, state.Revision)
 	})
 	if saveErr != nil {
-		return errors.Join(errors.New(reason), saveErr)
+		return errors.Join(errors.New(reason), saveErr, pauseErr)
 	}
-	return fmt.Errorf("routine intent deferred until its retry window: %s", reason)
+	deferredErr := fmt.Errorf("routine intent deferred until its retry window: %s", reason)
+	return errors.Join(deferredErr, pauseErr)
 }
 
 func (r *agentRoutineRuntime) cancelStaleIntent(ctx context.Context, state agentroutine.State) error {
