@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -35,7 +36,9 @@ const (
 	maxJSONSequence = uint64(9007199254740991)
 
 	// maxResponseBytes bounds one Snapshot or Event page response.
-	maxResponseBytes = 8 << 20
+	maxResponseBytes  = 8 << 20
+	maxHomeMoveActors = 64
+	maxHomeMovePoints = 8192
 
 	// maxFeedPages bounds one catch-up read. A larger backlog requires a fresh
 	// Snapshot rather than an unbounded loop.
@@ -71,21 +74,36 @@ type Config struct {
 // that are absent from the WORLD Snapshot are still returned with Present
 // false. Actors outside the allowlist are never returned.
 type Actor struct {
-	ActorID    string
-	Present    bool
-	RoomID     string
-	ActivityID string
+	ActorID               string
+	Present               bool
+	RoomID                string
+	ActivityID            string
+	ActivityKind          string
+	PoseID                string
+	ActivityStartedAt     time.Time
+	ActivityDueAt         time.Time
+	Position              [3]float64
+	HasPosition           bool
+	SlotID                string
+	TargetRoomID          string
+	TargetSlotID          string
+	MovePhase             string
+	MoveRouteID           string
+	MirrorPoseCompletions uint64
+	HomeSceneSHA256       string
 }
 
 // Snapshot is the CORE-visible part of a WORLD Snapshot.
 type Snapshot struct {
-	SchemaVersion int
-	WorldID       string
-	TimelineID    string
-	TimelineEpoch string
-	StateSeq      uint64
-	StateHash     string
-	Actors        []Actor
+	SchemaVersion   int
+	WorldID         string
+	TimelineID      string
+	TimelineEpoch   string
+	StateSeq        uint64
+	StateHash       string
+	Actors          []Actor
+	MovePoints      map[string][][3]float64
+	HomeSceneSHA256 string
 }
 
 // Event is one CORE-visible WORLD Event. Payload is the exact WORLD bytes for
@@ -266,33 +284,36 @@ func (c *Client) Snapshot(ctx context.Context) (Snapshot, error) {
 	}
 
 	actors := make([]Actor, 0, len(c.actorOrder))
+	actorByID := make(map[string]Actor, len(c.actorOrder))
 	for _, actorID := range c.actorOrder {
 		state, present := dto.State.Actors[actorID]
 		if !present {
-			actors = append(actors, Actor{ActorID: actorID})
+			actor := Actor{ActorID: actorID}
+			actors = append(actors, actor)
+			actorByID[actorID] = actor
 			continue
 		}
-		if state.RoomID != "" && !validID(state.RoomID) {
-			return Snapshot{}, &ReadError{Op: "snapshot", Err: fmt.Errorf("%w: actor %q room_id is invalid", ErrContract, actorID)}
+		actor, actorErr := projectActor(actorID, state)
+		if actorErr != nil {
+			return Snapshot{}, &ReadError{Op: "snapshot", Err: actorErr}
 		}
-		if state.ActivityID != "" && !validID(state.ActivityID) {
-			return Snapshot{}, &ReadError{Op: "snapshot", Err: fmt.Errorf("%w: actor %q activity_id is invalid", ErrContract, actorID)}
-		}
-		actors = append(actors, Actor{
-			ActorID:    actorID,
-			Present:    true,
-			RoomID:     state.RoomID,
-			ActivityID: state.ActivityID,
-		})
+		actors = append(actors, actor)
+		actorByID[actorID] = actor
+	}
+	movePoints, err := projectMovePoints(dto.HomeMovePoints, dto.HomeSceneSHA256, c.actors, actorByID)
+	if err != nil {
+		return Snapshot{}, &ReadError{Op: "snapshot", Err: err}
 	}
 	return Snapshot{
-		SchemaVersion: dto.SchemaVersion,
-		WorldID:       dto.WorldID,
-		TimelineID:    dto.TimelineID,
-		TimelineEpoch: dto.TimelineEpoch,
-		StateSeq:      dto.StateSeq,
-		StateHash:     dto.StateHash,
-		Actors:        actors,
+		SchemaVersion:   dto.SchemaVersion,
+		WorldID:         dto.WorldID,
+		TimelineID:      dto.TimelineID,
+		TimelineEpoch:   dto.TimelineEpoch,
+		StateSeq:        dto.StateSeq,
+		StateHash:       dto.StateHash,
+		Actors:          actors,
+		MovePoints:      movePoints,
+		HomeSceneSHA256: dto.HomeSceneSHA256,
 	}, nil
 }
 
@@ -392,11 +413,108 @@ type snapshotDTO struct {
 	State         *struct {
 		Actors map[string]actorDTO `json:"actors"`
 	} `json:"state"`
+	HomeMovePoints  map[string][][]float64 `json:"home_move_points"`
+	HomeSceneSHA256 string                 `json:"home_scene_sha256"`
 }
 
 type actorDTO struct {
-	RoomID     string `json:"room_id"`
-	ActivityID string `json:"activity_id"`
+	RoomID                string    `json:"room_id"`
+	ActivityID            string    `json:"activity_id"`
+	ActivityKind          string    `json:"activity_kind"`
+	PoseID                string    `json:"pose_id"`
+	ActivityStartedAt     time.Time `json:"activity_started_at"`
+	ActivityDueAt         time.Time `json:"activity_due_at"`
+	Position              []float64 `json:"position"`
+	SlotID                string    `json:"slot_id"`
+	TargetRoomID          string    `json:"target_room_id"`
+	TargetSlotID          string    `json:"target_slot_id"`
+	MovePhase             string    `json:"move_phase"`
+	MoveRouteID           string    `json:"move_route_id"`
+	MirrorPoseCompletions uint64    `json:"mirror_pose_completions"`
+	HomeSceneSHA256       string    `json:"home_scene_sha256"`
+}
+
+func projectActor(actorID string, dto actorDTO) (Actor, error) {
+	for field, value := range map[string]string{
+		"room_id": dto.RoomID, "activity_id": dto.ActivityID, "activity_kind": dto.ActivityKind,
+		"pose_id": dto.PoseID, "slot_id": dto.SlotID, "target_room_id": dto.TargetRoomID,
+		"target_slot_id": dto.TargetSlotID, "move_phase": dto.MovePhase, "move_route_id": dto.MoveRouteID,
+	} {
+		if value != "" && !validID(value) {
+			return Actor{}, fmt.Errorf("%w: actor %q %s is invalid", ErrContract, actorID, field)
+		}
+	}
+	if dto.MirrorPoseCompletions > maxJSONSequence {
+		return Actor{}, fmt.Errorf("%w: actor %q mirror_pose_completions is out of range", ErrContract, actorID)
+	}
+	if dto.HomeSceneSHA256 != "" {
+		if len(dto.HomeSceneSHA256) != 64 || strings.ToLower(dto.HomeSceneSHA256) != dto.HomeSceneSHA256 {
+			return Actor{}, fmt.Errorf("%w: actor %q home_scene_sha256 is not canonical lowercase SHA-256", ErrContract, actorID)
+		}
+		if _, err := hex.DecodeString(dto.HomeSceneSHA256); err != nil {
+			return Actor{}, fmt.Errorf("%w: actor %q home_scene_sha256 is not hexadecimal", ErrContract, actorID)
+		}
+	}
+	if !dto.ActivityStartedAt.IsZero() && !dto.ActivityDueAt.IsZero() && dto.ActivityDueAt.Before(dto.ActivityStartedAt) {
+		return Actor{}, fmt.Errorf("%w: actor %q activity_due_at precedes activity_started_at", ErrContract, actorID)
+	}
+	actor := Actor{
+		ActorID: actorID, Present: true, RoomID: dto.RoomID, ActivityID: dto.ActivityID,
+		ActivityKind: dto.ActivityKind, PoseID: dto.PoseID, ActivityStartedAt: dto.ActivityStartedAt,
+		ActivityDueAt: dto.ActivityDueAt, SlotID: dto.SlotID, TargetRoomID: dto.TargetRoomID,
+		TargetSlotID: dto.TargetSlotID, MovePhase: dto.MovePhase, MoveRouteID: dto.MoveRouteID,
+		MirrorPoseCompletions: dto.MirrorPoseCompletions, HomeSceneSHA256: dto.HomeSceneSHA256,
+	}
+	if len(dto.Position) != 0 {
+		if len(dto.Position) != 3 {
+			return Actor{}, fmt.Errorf("%w: actor %q position must contain three finite coordinates", ErrContract, actorID)
+		}
+		for index, coordinate := range dto.Position {
+			if math.IsNaN(coordinate) || math.IsInf(coordinate, 0) {
+				return Actor{}, fmt.Errorf("%w: actor %q position[%d] is not finite", ErrContract, actorID, index)
+			}
+			actor.Position[index] = coordinate
+		}
+		actor.HasPosition = true
+	}
+	return actor, nil
+}
+
+func projectMovePoints(raw map[string][][]float64, homeSceneSHA256 string, allowed map[string]struct{}, actors map[string]Actor) (map[string][][3]float64, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if len(raw) > maxHomeMoveActors {
+		return nil, fmt.Errorf("%w: home_move_points has too many actors", ErrContract)
+	}
+	total := 0
+	points := make(map[string][][3]float64)
+	for actorID, rawPoints := range raw {
+		if !validID(actorID) || len(rawPoints) > maxHomeMovePoints-total {
+			return nil, fmt.Errorf("%w: home_move_points is invalid or exceeds its bound", ErrContract)
+		}
+		total += len(rawPoints)
+		converted := make([][3]float64, 0, len(rawPoints))
+		for pointIndex, rawPoint := range rawPoints {
+			if len(rawPoint) != 3 {
+				return nil, fmt.Errorf("%w: home_move_points[%q][%d] must contain three coordinates", ErrContract, actorID, pointIndex)
+			}
+			var point [3]float64
+			for axis, coordinate := range rawPoint {
+				if math.IsNaN(coordinate) || math.IsInf(coordinate, 0) {
+					return nil, fmt.Errorf("%w: home_move_points[%q][%d][%d] is not finite", ErrContract, actorID, pointIndex, axis)
+				}
+				point[axis] = coordinate
+			}
+			converted = append(converted, point)
+		}
+		actor, present := actors[actorID]
+		if _, isAllowed := allowed[actorID]; isAllowed && present && actor.ActivityKind == "move" && actor.ActivityID != "" &&
+			actor.HomeSceneSHA256 != "" && actor.HomeSceneSHA256 == homeSceneSHA256 {
+			points[actorID] = converted
+		}
+	}
+	return points, nil
 }
 
 type eventDTO struct {
@@ -430,6 +548,14 @@ func (c *Client) validateSnapshot(dto snapshotDTO) error {
 	}
 	if _, err := hex.DecodeString(dto.StateHash); err != nil {
 		return fmt.Errorf("%w: state_hash is not hexadecimal", ErrContract)
+	}
+	if dto.HomeSceneSHA256 != "" {
+		if len(dto.HomeSceneSHA256) != 64 || strings.ToLower(dto.HomeSceneSHA256) != dto.HomeSceneSHA256 {
+			return fmt.Errorf("%w: home_scene_sha256 is not canonical lowercase SHA-256", ErrContract)
+		}
+		if _, err := hex.DecodeString(dto.HomeSceneSHA256); err != nil {
+			return fmt.Errorf("%w: home_scene_sha256 is not hexadecimal", ErrContract)
+		}
 	}
 	if dto.State == nil || dto.State.Actors == nil {
 		return fmt.Errorf("%w: state.actors is missing", ErrContract)

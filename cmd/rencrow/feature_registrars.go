@@ -35,5 +35,6 @@ func registerFeatureRoutes(
 	registerViewerDynamicRoutes(mux, dependencies)
 	registerPresenceRoutes(mux, dependencies)
 	registerIdleChatRoutes(mux, dependencies)
+	registerRuntimeRoutineHouseViewRoute(mux, cfg, dependencies)
 	registerHealthRoutes(mux, dependencies, cfg)
 }

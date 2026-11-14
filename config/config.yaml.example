@@ -472,6 +472,31 @@ heartbeat:
     command: "/absolute/path/to/rencrow-x-bookmarks"
     output_root: "/home/<user>/.local/share/rencrow/x_bookmarks/heartbeat_exports"
     max_scrolls: 100
+  routine:
+    enabled: false
+    # Optional authenticated WORLD read scope. Configure all fields together.
+    # Values below are examples only; add real values by uncommenting and replacing them.
+    # world_read_token_file: "/absolute/owner-only/path/world-read.token"
+    # world_life_token_file: "/absolute/owner-only/path/world-life.token"
+    # world_url: "https://world.example.invalid"
+    # world_id: "<WORLD ID>"
+    # timeline_id: "<Timeline ID>"
+    # timeline_epoch: "<Timeline epoch>"
+    # world_actors:
+    #   mio: "<WORLD Snapshot actor ID>"
+    #   shiro: "<WORLD Snapshot actor ID>"
+    # shared_rooms:
+    #   - "<WORLD room ID>"
+    # private_rooms:
+    #   mio: "<WORLD room ID>"
+    #   shiro: "<WORLD room ID>"
+    # media:
+    #   mio:
+    #     - id: "flower-short"
+    #       kind: "video"
+    #       title: "Flower"
+    #       url: "https://mdn.github.io/shared-assets/videos/flower.mp4"
+    #       credit: "MDN shared assets"
 
 # TTS実行能力
 # 音声サーバメモ:

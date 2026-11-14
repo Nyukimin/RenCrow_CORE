@@ -27,7 +27,10 @@ type Work struct {
 	ID        string
 	Priority  domaintask.Priority
 	CreatedAt time.Time
-	Run       func(context.Context, <-chan struct{}) error
+	// Participants adds actors to reserve with idle Work. It is ignored for
+	// BOARD and private work.
+	Participants []string
+	Run          func(context.Context, <-chan struct{}) error
 }
 
 // Source discovers and plans one candidate for an actor. It must honor ctx;
@@ -38,6 +41,9 @@ type Sources struct {
 	Board   Source
 	Private Source
 	Idle    Source
+	// IdleRequiresBoard blocks Idle unless Board is configured and successfully
+	// confirms no work. A nil Board is unavailable when this is true.
+	IdleRequiresBoard bool
 }
 
 type Scheduler struct {
@@ -49,6 +55,7 @@ type Scheduler struct {
 	changed          chan struct{}
 	discoveryTimeout time.Duration
 	nextOrder        uint64
+	tickGeneration   uint64
 	closed           bool
 	done             chan struct{}
 }
@@ -63,7 +70,9 @@ type agentState struct {
 	scanCancel     context.CancelFunc
 	scanDirty      bool
 	nextScan       context.Context
+	nextScanTick   uint64
 	scanGeneration uint64
+	scanTick       uint64
 
 	rescanAfterRun bool
 	rescanContext  context.Context
@@ -72,6 +81,7 @@ type agentState struct {
 type reservation struct {
 	scheduler  *Scheduler
 	actor      string
+	actors     []string
 	priority   domaintask.Priority
 	background bool
 	idle       bool
@@ -130,6 +140,7 @@ func (s *Scheduler) Tick(ctx context.Context) {
 		ctx = context.Background()
 	}
 	s.mu.Lock()
+	tickGeneration := s.nextTickGenerationLocked()
 	actors := make([]string, 0, len(s.agents))
 	for actor := range s.agents {
 		actors = append(actors, actor)
@@ -137,7 +148,7 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	s.mu.Unlock()
 	sort.Strings(actors)
 	for _, actor := range actors {
-		s.kickScan(ctx, actor)
+		s.kickScanAt(ctx, actor, tickGeneration)
 	}
 }
 
@@ -209,7 +220,7 @@ func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domainta
 	if s == nil {
 		return nil, ErrSchedulerClosed
 	}
-	if current, ok := ctx.Value(reservationContextKey{}).(*reservation); ok && current.scheduler == s && current.actor == actor {
+	if current, ok := ctx.Value(reservationContextKey{}).(*reservation); ok && current.scheduler == s && current.owns(actor) {
 		s.mu.Lock()
 		state := s.agents[actor]
 		if state != nil && state.active == current {
@@ -288,7 +299,7 @@ func (s *Scheduler) TryAcquire(ctx context.Context, actor string, priority domai
 	if s == nil {
 		return nil, false, ErrSchedulerClosed
 	}
-	if current, ok := ctx.Value(reservationContextKey{}).(*reservation); ok && current.scheduler == s && current.actor == actor {
+	if current, ok := ctx.Value(reservationContextKey{}).(*reservation); ok && current.scheduler == s && current.owns(actor) {
 		s.mu.Lock()
 		state := s.agents[actor]
 		if state != nil && state.active == current {
@@ -333,6 +344,18 @@ func (s *Scheduler) TryAcquire(ctx context.Context, actor string, priority domai
 	return s.releaseFunc(lease), true, nil
 }
 
+// CanStartIdle reports whether an actor currently has an unreserved work slot.
+// It is advisory; idle group admission rechecks every participant atomically.
+func (s *Scheduler) CanStartIdle(actorID string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.agents[actorID]
+	return !s.closed && state != nil && state.active == nil && len(state.waiters) == 0
+}
+
 // Select returns the highest-priority work, then the oldest item, then the
 // lexicographically smallest stable ID. Input order resolves a fully equal tie.
 func Select(works []Work) (Work, bool) {
@@ -351,6 +374,13 @@ func Select(works []Work) (Work, bool) {
 }
 
 func (s *Scheduler) kickScan(parent context.Context, actor string) {
+	s.mu.Lock()
+	tickGeneration := s.nextTickGenerationLocked()
+	s.mu.Unlock()
+	s.kickScanAt(parent, actor, tickGeneration)
+}
+
+func (s *Scheduler) kickScanAt(parent context.Context, actor string, tickGeneration uint64) {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -365,6 +395,7 @@ func (s *Scheduler) kickScan(parent context.Context, actor string) {
 	if state.scanning {
 		state.scanDirty = true
 		state.nextScan = parent
+		state.nextScanTick = tickGeneration
 		s.mu.Unlock()
 		return
 	}
@@ -376,30 +407,34 @@ func (s *Scheduler) kickScan(parent context.Context, actor string) {
 	}
 	state.scanGeneration++
 	generation := state.scanGeneration
+	state.scanTick = tickGeneration
 	state.scanning = true
 	state.scanCancel = cancel
 	s.signalChangedLocked()
 	s.mu.Unlock()
-	go s.scanActor(parent, scanCtx, actor, allowIdle, expectedActive, generation)
+	go s.scanActor(parent, scanCtx, actor, allowIdle, expectedActive, generation, tickGeneration)
 }
 
-func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, allowIdle bool, expectedActive *reservation, generation uint64) {
+func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, allowIdle bool, expectedActive *reservation, generation, tickGeneration uint64) {
 	defer func() {
 		var next context.Context
+		var nextTick uint64
 		s.mu.Lock()
 		if state := s.agents[actor]; state != nil {
 			state.scanning = false
 			state.scanCancel = nil
 			if state.scanDirty {
 				next = state.nextScan
+				nextTick = state.nextScanTick
 				state.scanDirty = false
 				state.nextScan = nil
+				state.nextScanTick = 0
 			}
 		}
 		s.signalChangedLocked()
 		s.mu.Unlock()
 		if next != nil && next.Err() == nil {
-			s.kickScan(next, actor)
+			s.kickScanAt(next, actor, nextTick)
 		}
 	}()
 
@@ -408,26 +443,15 @@ func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, all
 	if source == workSourceNone || parent.Err() != nil || scanCtx.Err() != nil {
 		return
 	}
-	s.startWork(parent, actor, work, source, expectedActive, generation)
+	s.startWork(parent, actor, work, source, expectedActive, generation, tickGeneration)
 }
 
 func (s *Scheduler) discover(ctx context.Context, actor string, allowIdle bool, boardOnly bool) (Work, workSource) {
-	if work, found, err := s.ask(s.sources.Board, ctx, actor); err != nil {
-		s.reportError(actor, "board", err, ctx)
-	} else if found {
-		return work, workSourceBoard
+	work, source, boardAvailable, tasksEmpty := s.discoverTasks(ctx, actor, boardOnly)
+	if source != workSourceNone {
+		return work, source
 	}
-	if ctx.Err() != nil || boardOnly {
-		return Work{}, workSourceNone
-	}
-
-	if work, found, err := s.ask(s.sources.Private, ctx, actor); err != nil {
-		s.reportError(actor, "private", err, ctx)
-		return Work{}, workSourceNone
-	} else if found {
-		return work, workSourcePrivate
-	}
-	if ctx.Err() != nil || !allowIdle {
+	if ctx.Err() != nil || boardOnly || !allowIdle || !tasksEmpty || (s.sources.IdleRequiresBoard && !boardAvailable) {
 		return Work{}, workSourceNone
 	}
 
@@ -438,6 +462,27 @@ func (s *Scheduler) discover(ctx context.Context, actor string, allowIdle bool, 
 		return work, workSourceIdle
 	}
 	return Work{}, workSourceNone
+}
+
+func (s *Scheduler) discoverTasks(ctx context.Context, actor string, boardOnly bool) (Work, workSource, bool, bool) {
+	boardAvailable := s.sources.Board != nil
+	if work, found, err := s.ask(s.sources.Board, ctx, actor); err != nil {
+		boardAvailable = false
+		s.reportError(actor, "board", err, ctx)
+	} else if found {
+		return work, workSourceBoard, boardAvailable, false
+	}
+	if ctx.Err() != nil || boardOnly {
+		return Work{}, workSourceNone, boardAvailable, false
+	}
+
+	if work, found, err := s.ask(s.sources.Private, ctx, actor); err != nil {
+		s.reportError(actor, "private", err, ctx)
+		return Work{}, workSourceNone, boardAvailable, false
+	} else if found {
+		return work, workSourcePrivate, boardAvailable, false
+	}
+	return Work{}, workSourceNone, boardAvailable, ctx.Err() == nil
 }
 
 func (s *Scheduler) ask(source Source, parent context.Context, actor string) (work Work, found bool, err error) {
@@ -478,7 +523,11 @@ func (s *Scheduler) ask(source Source, parent context.Context, actor string) (wo
 	return work, true, nil
 }
 
-func (s *Scheduler) startWork(parent context.Context, actor string, work Work, source workSource, expectedActive *reservation, generation uint64) {
+func (s *Scheduler) startWork(parent context.Context, actor string, work Work, source workSource, expectedActive *reservation, generation, tickGeneration uint64) {
+	if source == workSourceIdle && len(work.Participants) != 0 {
+		s.startIdleGroup(parent, actor, work, generation, tickGeneration)
+		return
+	}
 	s.mu.Lock()
 	state := s.agents[actor]
 	if state == nil || s.closed || parent.Err() != nil || state.scanGeneration != generation ||
@@ -525,6 +574,114 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, s
 	go s.runWork(runCtx, lease, work)
 }
 
+func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Work, generation, tickGeneration uint64) {
+	actors := make([]string, 1, len(work.Participants)+1)
+	actors[0] = actor
+	seen := map[string]struct{}{actor: {}}
+	for _, participant := range work.Participants {
+		if participant == "" {
+			s.reportError(actor, "idle", errors.New("idle work listed an empty participant"), parent)
+			return
+		}
+		if _, duplicate := seen[participant]; duplicate {
+			s.reportError(actor, "idle", fmt.Errorf("idle work listed participant %q more than once or as its primary actor", participant), parent)
+			return
+		}
+		seen[participant] = struct{}{}
+		actors = append(actors, participant)
+	}
+
+	// Fail early for participants already owned or queued. Repeat this check at
+	// commit because an Acquire or another scan may race the bounded probes.
+	s.mu.Lock()
+	primary := s.agents[actor]
+	if primary == nil || s.closed || parent.Err() != nil || primary.scanGeneration != generation || primary.scanTick != tickGeneration || primary.active != nil || len(primary.waiters) != 0 {
+		s.mu.Unlock()
+		return
+	}
+	for _, participant := range actors[1:] {
+		state := s.agents[participant]
+		if state == nil || state.active != nil || len(state.waiters) != 0 {
+			s.mu.Unlock()
+			return
+		}
+	}
+	s.mu.Unlock()
+
+	// Recheck every extra actor's task sources under one bounded context. These
+	// probes are read-only; the lock below decides whether their slots can join
+	// the same idle reservation.
+	probeCtx, cancelProbe := context.WithTimeout(parent, s.discoveryTimeout)
+	defer cancelProbe()
+	for _, participant := range actors[1:] {
+		_, source, boardAvailable, empty := s.discoverTasks(probeCtx, participant, false)
+		if source != workSourceNone {
+			// The probe itself never claims work. Ask the participant's normal
+			// scan to pick it up promptly if its current scan did not already do so.
+			if probeCtx.Err() == nil {
+				s.kickScan(parent, participant)
+			}
+			return
+		}
+		if probeCtx.Err() != nil || !empty || (s.sources.IdleRequiresBoard && !boardAvailable) {
+			return
+		}
+	}
+	if probeCtx.Err() != nil {
+		return
+	}
+
+	s.mu.Lock()
+	primary = s.agents[actor]
+	if primary == nil || s.closed || parent.Err() != nil || primary.scanGeneration != generation || primary.scanTick != tickGeneration || primary.active != nil || len(primary.waiters) != 0 {
+		s.mu.Unlock()
+		return
+	}
+	for _, participant := range actors[1:] {
+		state := s.agents[participant]
+		if state == nil || state.active != nil || len(state.waiters) != 0 {
+			s.mu.Unlock()
+			return
+		}
+	}
+
+	runCtx, cancel := context.WithCancel(parent)
+	lease := &reservation{
+		scheduler:  s,
+		actor:      actor,
+		actors:     append([]string(nil), actors...),
+		priority:   work.Priority,
+		background: true,
+		idle:       true,
+		source:     workSourceIdle,
+		stop:       make(chan struct{}),
+		cancel:     cancel,
+	}
+	for _, participant := range actors {
+		state := s.agents[participant]
+		if participant != actor && state.scanning {
+			nextScan, nextTick := state.nextScan, state.nextScanTick
+			keepNextScan := state.scanDirty && nextScan != nil
+			s.cancelScanLocked(state)
+			state.scanDirty = true
+			if keepNextScan {
+				// A newer heartbeat may already be queued. Preserve its context and
+				// generation instead of replacing them with this older routine scan.
+				state.nextScan = nextScan
+				state.nextScanTick = nextTick
+			} else {
+				state.nextScan = parent
+				state.nextScanTick = tickGeneration
+			}
+		}
+		state.active = lease
+	}
+	s.signalChangedLocked()
+	runCtx = context.WithValue(runCtx, reservationContextKey{}, lease)
+	s.mu.Unlock()
+	go s.runWork(runCtx, lease, work)
+}
+
 func (s *Scheduler) runWork(ctx context.Context, lease *reservation, work Work) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -547,16 +704,52 @@ func (s *Scheduler) releaseFunc(lease *reservation) func() {
 
 func (s *Scheduler) finishReservation(lease *reservation) {
 	s.mu.Lock()
-	state := s.agents[lease.actor]
-	var next context.Context
-	if state != nil {
-		next = s.releaseLocked(state, lease)
-		s.signalChangedLocked()
-	}
+	next := s.releaseGroupLocked(lease)
+	s.signalChangedLocked()
 	s.mu.Unlock()
-	if next != nil && next.Err() == nil {
-		s.kickScan(next, lease.actor)
+	for _, scan := range next {
+		if scan.ctx != nil && scan.ctx.Err() == nil {
+			s.kickScan(scan.ctx, scan.actor)
+		}
 	}
+}
+
+type rescanRequest struct {
+	actor string
+	ctx   context.Context
+}
+
+func (s *Scheduler) releaseGroupLocked(lease *reservation) []rescanRequest {
+	if lease == nil {
+		return nil
+	}
+	actors := lease.actors
+	if len(actors) == 0 {
+		actors = []string{lease.actor}
+	}
+	released := make([]*agentState, 0, len(actors))
+	for _, actor := range actors {
+		state := s.agents[actor]
+		if state == nil || state.active != lease {
+			continue
+		}
+		state.active = nil
+		released = append(released, state)
+	}
+	for _, state := range released {
+		s.grantNextLocked(state)
+	}
+	var next []rescanRequest
+	for _, state := range released {
+		if state.active == nil && len(state.waiters) == 0 && state.rescanAfterRun {
+			if state.rescanContext != nil {
+				next = append(next, rescanRequest{actor: state.actor, ctx: state.rescanContext})
+			}
+			state.rescanAfterRun = false
+			state.rescanContext = nil
+		}
+	}
+	return next
 }
 
 func (s *Scheduler) releaseLocked(state *agentState, lease *reservation) context.Context {
@@ -574,6 +767,21 @@ func (s *Scheduler) releaseLocked(state *agentState, lease *reservation) context
 		return next
 	}
 	return nil
+}
+
+func (lease *reservation) owns(actor string) bool {
+	if lease == nil {
+		return false
+	}
+	if len(lease.actors) == 0 {
+		return lease.actor == actor
+	}
+	for _, reservedActor := range lease.actors {
+		if reservedActor == actor {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scheduler) grantNextLocked(state *agentState) {
@@ -663,6 +871,7 @@ func (s *Scheduler) cancelScanLocked(state *agentState) {
 	state.scanGeneration++
 	state.scanDirty = false
 	state.nextScan = nil
+	state.nextScanTick = 0
 }
 
 func (s *Scheduler) drainedLocked() bool {
@@ -681,6 +890,11 @@ func (s *Scheduler) signalChangedLocked() {
 	}
 	close(s.changed)
 	s.changed = make(chan struct{})
+}
+
+func (s *Scheduler) nextTickGenerationLocked() uint64 {
+	s.tickGeneration++
+	return s.tickGeneration
 }
 
 func (s *Scheduler) reportError(actor, stage string, err error, ctx context.Context) {

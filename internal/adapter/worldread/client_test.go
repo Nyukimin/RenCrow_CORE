@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,6 +75,63 @@ func TestNewValidatesExactScopeAndDefaults(t *testing.T) {
 	}
 	if client.timeout != DefaultTimeout || client.maxEvents != DefaultMaxEvents {
 		t.Fatalf("defaults = %v, %d; want %v, %d", client.timeout, client.maxEvents, DefaultTimeout, DefaultMaxEvents)
+	}
+}
+
+func TestSnapshotExposesBoundedHomeProvenanceAndConfirmedActorState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body := validSnapshotBody()
+		actors(body)["mio"] = map[string]any{
+			"room_id": "upper-room-2-1", "activity_id": "home:mio:3", "activity_kind": "move",
+			"activity_started_at": "2026-11-14T01:02:03Z", "activity_due_at": "2026-11-14T01:02:08Z",
+			"position": []float64{1.25, 2.5, 0}, "slot_id": "bed-mio", "target_room_id": "upper-room-2-1",
+			"target_slot_id": "bed-mio", "move_phase": "moving", "move_route_id": "route-3",
+			"mirror_pose_completions": 2, "home_scene_sha256": testHash,
+		}
+		body["home_scene_sha256"] = testHash
+		body["home_move_points"] = map[string]any{
+			"mio":   [][]float64{{1.25, 2.5, 0}, {2, 2.5, 0}},
+			"shiro": [][]float64{{9, 9, 9}},
+		}
+		writeJSON(w, http.StatusOK, body)
+	}))
+	defer server.Close()
+
+	client := newClient(t, server.URL, "mio")
+	snapshot, err := client.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	value := reflect.ValueOf(snapshot)
+	homeScene := value.FieldByName("HomeSceneSHA256")
+	if !homeScene.IsValid() || homeScene.String() != testHash {
+		t.Fatalf("Snapshot.HomeSceneSHA256 = %v, want %q", homeScene, testHash)
+	}
+	movePoints := value.FieldByName("MovePoints")
+	if !movePoints.IsValid() || movePoints.Len() != 1 {
+		t.Fatalf("Snapshot.MovePoints = %v, want only the allowed moving actor", movePoints)
+	}
+	actor := reflect.ValueOf(snapshot.Actors[0])
+	for field, want := range map[string]string{
+		"ActivityKind": "move", "SlotID": "bed-mio", "TargetRoomID": "upper-room-2-1",
+		"TargetSlotID": "bed-mio", "MovePhase": "moving", "MoveRouteID": "route-3",
+	} {
+		got := actor.FieldByName(field)
+		if !got.IsValid() || got.String() != want {
+			t.Errorf("Actor.%s = %v, want %q", field, got, want)
+		}
+	}
+	position := actor.FieldByName("Position")
+	if !position.IsValid() || position.Len() != 3 || position.Index(0).Float() != 1.25 {
+		t.Errorf("Actor.Position = %v, want confirmed three-axis position", position)
+	}
+	startedAt := actor.FieldByName("ActivityStartedAt")
+	if !startedAt.IsValid() || startedAt.IsZero() {
+		t.Errorf("Actor.ActivityStartedAt = %v, want verified timestamp", startedAt)
+	}
+	completions := actor.FieldByName("MirrorPoseCompletions")
+	if !completions.IsValid() || completions.Uint() != 2 {
+		t.Errorf("Actor.MirrorPoseCompletions = %v, want 2", completions)
 	}
 }
 

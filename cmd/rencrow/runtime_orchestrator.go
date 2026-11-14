@@ -134,7 +134,7 @@ func buildOrchestratorRuntime(
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
 		privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
 		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
-		configureAgentHeartbeatScheduler(cfg, deps)
+		configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools)
 		return
 	}
 
@@ -267,12 +267,21 @@ func buildOrchestratorRuntime(
 	deps.voiceDirectHandler = orch
 	privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
 	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
-	configureAgentHeartbeatScheduler(cfg, deps)
+	configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools)
 }
 
-func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
+func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, routineWorkers map[string]privateTaskWorker, routineTools domainagent.ToolRunner) {
 	if cfg == nil || deps == nil || !cfg.Heartbeat.AgentSchedulerEnabled {
 		return
+	}
+	if cfg.Heartbeat.Routine.Enabled {
+		runtime, err := newAgentRoutineRuntime(cfg, deps, routineWorkers, routineTools)
+		if err != nil {
+			log.Printf("WARN: agent routine runtime unavailable; idle source is disabled: %v", err)
+		} else {
+			deps.agentRoutine = runtime
+		}
+		log.Printf("agent routine configured enabled=%t runtime_ready=%t", true, deps.agentRoutine != nil)
 	}
 	var reportMu sync.Mutex
 	lastReported := make(map[string]string)
@@ -294,6 +303,9 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
 	boardSource := func(ctx context.Context, actor string) (agentheartbeat.Work, bool, error) {
 		boot := deps.boardCommunicationActorBoots[actor]
 		if boot == nil {
+			if cfg.Heartbeat.Routine.Enabled && cfg.BoardCommunication.Enabled {
+				return agentheartbeat.Work{}, false, ErrBoardCommunicationCompositionUnavailable
+			}
 			return agentheartbeat.Work{}, false, nil
 		}
 		composition := boot.currentComposition()
@@ -305,6 +317,9 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
 	privateSource := func(ctx context.Context, actor string) (agentheartbeat.Work, bool, error) {
 		scheduler := deps.agentRunQueue
 		if scheduler == nil {
+			if cfg.Heartbeat.Routine.Enabled {
+				return agentheartbeat.Work{}, false, fmt.Errorf("private task queue is unavailable; idle no-work status is unproven")
+			}
 			return agentheartbeat.Work{}, false, nil
 		}
 		item, task, err := scheduler.PlanForActor(ctx, actor)
@@ -344,9 +359,21 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
 			return work, found, err
 		}
 	}(boardSource)
+	daytimeIdle := gameAutoplayIdleSource(deps.gameAutoplay)
+	idleSource := daytimeIdle
+	if cfg.Heartbeat.Routine.Enabled {
+		idleSource = nil
+		if deps.agentRoutine != nil {
+			idleSource = deps.agentRoutine.idleSource(daytimeIdle)
+		}
+	}
 	deps.agentHeartbeat = agentheartbeat.New(append([]string(nil), agentHeartbeatActorIDs...), agentheartbeat.Sources{
-		Board: boardSource, Private: privateSource, Idle: gameAutoplayIdleSource(deps.gameAutoplay),
+		Board: boardSource, Private: privateSource, Idle: idleSource,
+		IdleRequiresBoard: cfg.Heartbeat.Routine.Enabled && cfg.BoardCommunication.Enabled,
 	}, report)
+	if deps.agentRoutine != nil {
+		deps.agentRoutine.canStartIdle = deps.agentHeartbeat.CanStartIdle
+	}
 	deps.agentAdmission = deps.agentHeartbeat
 	if deps.responseFirst != nil && deps.responseFirst.runtime != nil {
 		deps.responseFirst.runtime.SetActorAdmission(deps.agentAdmission)

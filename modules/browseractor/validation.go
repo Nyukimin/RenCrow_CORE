@@ -81,6 +81,22 @@ func ValidateAction(action Action) error {
 		if strings.TrimSpace(action.Key) == "" {
 			return fmt.Errorf("key is required")
 		}
+	case "play_media":
+		if action.Selector != "" {
+			return fmt.Errorf("selector is not supported for play_media")
+		}
+		if action.Value != "audio" && action.Value != "video" {
+			return fmt.Errorf("play_media value must be audio or video")
+		}
+		if action.StartMS < 0 {
+			return fmt.Errorf("play_media start_ms must be nonnegative")
+		}
+		if action.MaxPlayMS < 1 || action.MaxPlayMS > 30000 {
+			return fmt.Errorf("play_media max_play_ms must be 1..30000")
+		}
+		if action.Key != "" || action.Name != "" || action.TimeoutMS != 0 {
+			return fmt.Errorf("play_media does not accept key, name, or timeout_ms")
+		}
 	case "screenshot":
 		name := strings.TrimSpace(action.Name)
 		if name == "" {

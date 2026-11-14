@@ -44,6 +44,16 @@ type GameBridgeSessionSummary struct {
 	MemoryMode     string `json:"memory_mode,omitempty"`
 }
 
+// GameBridgePlayedSessionFact is a metadata-only summary of played turns for
+// one GAMES session in a requested time window.
+type GameBridgePlayedSessionFact struct {
+	GameID    string    `json:"game_id"`
+	SessionID string    `json:"session_id"`
+	FirstAt   time.Time `json:"first_at"`
+	LastAt    time.Time `json:"last_at"`
+	TurnCount int       `json:"turn_count"`
+}
+
 type GameBridgeEventView struct {
 	EventID           string   `json:"event_id"`
 	CandidateMemoryID string   `json:"candidate_memory_id"`
@@ -194,6 +204,138 @@ func (s *GameBridgeStore) RecentGameBridgeSessions(_ context.Context, limit int)
 		summaries = summaries[:limit]
 	}
 	return summaries, skipped, nil
+}
+
+// PlayedGameSessionFacts returns one metadata-only fact per game/session for
+// the canonical persona and the exact half-open interval [from, until).
+func (s *GameBridgeStore) PlayedGameSessionFacts(_ context.Context, persona string, from time.Time, until time.Time) ([]GameBridgePlayedSessionFact, error) {
+	if s == nil || s.path == "" {
+		return nil, ErrGameBridgeStoreUnavailable
+	}
+	if !canonicalGameBridgePersona(persona) {
+		return nil, fmt.Errorf("persona must be a canonical game persona")
+	}
+	if !from.Before(until) {
+		return nil, fmt.Errorf("played game facts interval must have from before until")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events, _, err := s.readAllWithSkippedLocked(false)
+	if err != nil {
+		return nil, fmt.Errorf("read played game facts: %w", err)
+	}
+
+	type sessionKey struct {
+		gameID    string
+		sessionID string
+	}
+	aggregates := make(map[sessionKey]GameBridgePlayedSessionFact)
+	seenEventIDs := make(map[string]struct{})
+	from = from.UTC()
+	until = until.UTC()
+	for _, event := range events {
+		if _, duplicate := seenEventIDs[event.EventID]; duplicate {
+			continue
+		}
+		seenEventIDs[event.EventID] = struct{}{}
+
+		if event.Persona != persona || event.Turn < 0 || !validGameBridgeGameID(event.GameID) || !validGameBridgeSessionID(event.SessionID) {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, event.CreatedAt)
+		if err != nil {
+			continue
+		}
+		createdAt = createdAt.UTC()
+		if createdAt.Before(from) || !createdAt.Before(until) || !gameBridgeEventProvesPlayedTurn(event) {
+			continue
+		}
+
+		key := sessionKey{gameID: event.GameID, sessionID: event.SessionID}
+		fact, ok := aggregates[key]
+		if !ok {
+			fact = GameBridgePlayedSessionFact{
+				GameID:    event.GameID,
+				SessionID: event.SessionID,
+				FirstAt:   createdAt,
+				LastAt:    createdAt,
+			}
+		} else {
+			if createdAt.Before(fact.FirstAt) {
+				fact.FirstAt = createdAt
+			}
+			if createdAt.After(fact.LastAt) {
+				fact.LastAt = createdAt
+			}
+		}
+		fact.TurnCount++
+		aggregates[key] = fact
+	}
+
+	facts := make([]GameBridgePlayedSessionFact, 0, len(aggregates))
+	for _, fact := range aggregates {
+		facts = append(facts, fact)
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].GameID != facts[j].GameID {
+			return facts[i].GameID < facts[j].GameID
+		}
+		return facts[i].SessionID < facts[j].SessionID
+	})
+	return facts, nil
+}
+
+func canonicalGameBridgePersona(persona string) bool {
+	switch persona {
+	case "mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin":
+		return true
+	default:
+		return false
+	}
+}
+
+func validGameBridgeGameID(gameID string) bool {
+	switch gameID {
+	case "survival_garden", "territory_commander", "herzog_zwei", "nethack":
+		return true
+	default:
+		return false
+	}
+}
+
+func validGameBridgeSessionID(sessionID string) bool {
+	if sessionID == "" || len(sessionID) > 256 || strings.TrimSpace(sessionID) != sessionID {
+		return false
+	}
+	for _, r := range sessionID {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func gameBridgeEventProvesPlayedTurn(event GameBridgeEvent) bool {
+	success, ok := gameResultBool(event.Result, "success")
+	if !ok || !success {
+		return false
+	}
+	for _, action := range event.ExecutedActions {
+		if strings.TrimSpace(action) != "" {
+			return true
+		}
+	}
+	gameOver, ok := gameResultBool(event.Result, "game_over")
+	if !ok || !gameOver {
+		return false
+	}
+	for _, resultEvent := range gameBridgeResultEvents(event.Result) {
+		if strings.TrimSpace(resultEvent) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *GameBridgeStore) RecentGameBridgeEventViews(_ context.Context, gameID string, sessionID string, limit int) ([]GameBridgeEventView, int, error) {

@@ -11,6 +11,7 @@ docs/10_ログ仕様.md
 docs/10_保存host・物理ディスク移動Runbook.md
 docs/README.md
 docs/RenCrow_Atlas_Backlog_Implementation_Lifecycle_仕様.md
+docs/agent-heartbeat.md
 docs/architecture/identity/IDENTITY_CANONICAL.md
 docs/testing/routing_classifier_test.md
 docs/ubuntu-host-recovery/99-rencrow-host-recovery.conf

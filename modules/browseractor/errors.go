@@ -6,4 +6,5 @@ const (
 	ErrTimeout          = "TIMEOUT"
 	ErrNotFound         = "NOT_FOUND"
 	ErrInternalError    = "INTERNAL_ERROR"
+	ErrCancelled        = "CANCELLED"
 )

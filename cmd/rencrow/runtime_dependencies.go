@@ -396,6 +396,8 @@ type Dependencies struct {
 
 	boardCommunicationActorBoots map[string]*boardCommunicationBoot
 	agentHeartbeat               *agentheartbeat.Scheduler
+	agentRoutine                 *agentRoutineRuntime
+	gameBridgeStore              *viewer.GameBridgeStore
 	agentAdmission               conversationruntime.ActorAdmission
 	agentHeartbeatStarted        bool
 	agentHeartbeatCancel         context.CancelFunc
@@ -445,6 +447,14 @@ func (d *Dependencies) Shutdown() {
 			queueOwnersSafeToClose = false
 		}
 		cancel()
+	}
+	if queueOwnersSafeToClose && d.agentRoutine != nil {
+		if err := d.agentRoutine.Close(); err != nil {
+			log.Printf("Failed to close agent routine store: %v", err)
+		}
+		d.agentRoutine = nil
+	} else if d.agentRoutine != nil {
+		log.Printf("Agent routine store kept open because heartbeat reservations did not fully drain")
 	}
 	if d.boardCommunicationCancel != nil {
 		d.boardCommunicationCancel()
@@ -2247,6 +2257,20 @@ func agentHeartbeatHealth(cfg *config.Config, deps *Dependencies) (string, strin
 		}
 	} else {
 		message += "; idle game activity not configured"
+	}
+	if cfg.Heartbeat.Routine.Enabled {
+		if deps.agentRoutine == nil {
+			degraded = true
+			message += "; routine runtime unavailable"
+		} else {
+			message += "; agent routine ready (logical sleep gates only)"
+			if deps.agentRoutine.world == nil {
+				message += "; WORLD room activities unknown"
+			}
+			if !deps.agentRoutine.webReady {
+				message += "; WebGather hobby work unavailable"
+			}
+		}
 	}
 	if cfg.BoardCommunication.Enabled {
 		expected := make(map[string]struct{})

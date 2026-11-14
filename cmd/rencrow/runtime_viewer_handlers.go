@@ -79,6 +79,7 @@ func buildViewerRuntimeHandlers(
 		gameBridgeResultMode = "persisted_candidate"
 		log.Printf("Viewer game bridge candidate store enabled: %s", gameBridgeStorePath)
 	}
+	deps.gameBridgeStore = gameBridgeStore
 	gameBridgeStatusOptions := viewer.GameBridgeStatusOptions{
 		ConversationEngineEnabled: realMgr != nil,
 		L1StoreEnabled:            l1Store != nil,

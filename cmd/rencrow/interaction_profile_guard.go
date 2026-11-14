@@ -25,6 +25,12 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_PORTAL",
 		allow:  portalGamesInteractionAllowed,
 	},
+	"portal-living": {
+		client: "RenCrow_PORTAL",
+		allow: func(method, path string) bool {
+			return method == http.MethodGet && path == "/viewer/world/home"
+		},
+	},
 	"portal-other": {
 		client: "RenCrow_PORTAL",
 		allow: func(method, path string) bool {

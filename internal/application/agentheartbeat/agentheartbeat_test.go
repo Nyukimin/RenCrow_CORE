@@ -1010,3 +1010,395 @@ func heldPrivateWork(id string, priority domaintask.Priority, started, stopSeen,
 		return nil
 	}}
 }
+
+func TestTickIdleRequiresBoardErrorChecksPrivateAndBlocksIdle(t *testing.T) {
+	privateChecked := make(chan struct{})
+	idleCalls := make(chan struct{}, 1)
+	scheduler := New([]string{"mio"}, Sources{
+		IdleRequiresBoard: true,
+		Board: func(context.Context, string) (Work, bool, error) {
+			return Work{}, false, errors.New("board unavailable")
+		},
+		Private: func(context.Context, string) (Work, bool, error) {
+			close(privateChecked)
+			return Work{}, false, nil
+		},
+		Idle: func(context.Context, string) (Work, bool, error) {
+			idleCalls <- struct{}{}
+			return Work{}, false, nil
+		},
+	}, nil)
+
+	scheduler.Tick(context.Background())
+	waitSignal(t, privateChecked, time.Second, "private source was not checked after BOARD error")
+	select {
+	case <-idleCalls:
+		t.Fatal("idle activity ran after an unavailable required BOARD source")
+	case <-time.After(40 * time.Millisecond):
+	}
+}
+
+func TestTickIdleRequiresBoardTreatsNilSourceAsUnavailable(t *testing.T) {
+	idleCalls := make(chan struct{}, 1)
+	scheduler := New([]string{"mio"}, Sources{
+		IdleRequiresBoard: true,
+		Private:           func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+		Idle: func(context.Context, string) (Work, bool, error) {
+			idleCalls <- struct{}{}
+			return Work{}, false, nil
+		},
+	}, nil)
+
+	scheduler.Tick(context.Background())
+	select {
+	case <-idleCalls:
+		t.Fatal("idle source ran with a required but nil BOARD source")
+	case <-time.After(40 * time.Millisecond):
+	}
+}
+
+func TestIdleGroupReservesParticipantsAndForegroundAcquireWaitsForOwner(t *testing.T) {
+	idleStarted := make(chan struct{})
+	idleStopSeen := make(chan struct{})
+	finishIdle := make(chan struct{})
+	acquired := make(chan func(), 1)
+	scheduler := New([]string{"mio", "shiro"}, Sources{
+		Board:   func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+		Private: func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+		Idle: func(_ context.Context, actor string) (Work, bool, error) {
+			if actor != "mio" {
+				return Work{}, false, nil
+			}
+			return Work{ID: "mio-shiro-routine", Priority: domaintask.PriorityLow, Participants: []string{"shiro"}, Run: func(_ context.Context, stop <-chan struct{}) error {
+				close(idleStarted)
+				<-stop
+				close(idleStopSeen)
+				<-finishIdle
+				return nil
+			}}, true, nil
+		},
+	}, nil)
+
+	scheduler.Tick(context.Background())
+	waitSignal(t, idleStarted, time.Second, "multi-actor idle work did not start")
+	for _, actor := range []string{"mio", "shiro"} {
+		if release, acquired, err := scheduler.TryAcquire(context.Background(), actor, domaintask.PriorityLow); err != nil || acquired {
+			if release != nil {
+				release()
+			}
+			t.Fatalf("TryAcquire(%q) during group = (%t, %v), want deferral", actor, acquired, err)
+		}
+	}
+
+	go func() {
+		release, err := scheduler.Acquire(context.Background(), "shiro", domaintask.PriorityLow)
+		if err == nil {
+			acquired <- release
+		}
+	}()
+	waitSignal(t, idleStopSeen, time.Second, "participant Acquire did not stop the shared idle owner")
+	select {
+	case release := <-acquired:
+		release()
+		t.Fatal("participant Acquire returned before the shared owner finished")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(finishIdle)
+	release := receive(t, acquired, time.Second, "participant Acquire did not receive its slot after idle returned")
+	release()
+}
+
+func TestIdleGroupParticipantTaskStopsSharedOwner(t *testing.T) {
+	for _, target := range []string{"mio", "shiro"} {
+		t.Run(target, func(t *testing.T) {
+			var mu sync.Mutex
+			arrivedActor := ""
+			idleStarted := make(chan struct{})
+			idleStopSeen := make(chan struct{})
+			finishIdle := make(chan struct{})
+			idleReturned := make(chan struct{})
+			taskStarted := make(chan struct{})
+			var taskRan atomic.Bool
+			scheduler := New([]string{"mio", "shiro"}, Sources{
+				Board: func(_ context.Context, actor string) (Work, bool, error) {
+					mu.Lock()
+					arrived := actor == arrivedActor
+					mu.Unlock()
+					if !arrived || taskRan.Load() {
+						return Work{}, false, nil
+					}
+					return Work{ID: "new-task", Priority: domaintask.PriorityHigh, Run: func(context.Context, <-chan struct{}) error {
+						if taskRan.CompareAndSwap(false, true) {
+							close(taskStarted)
+						}
+						return nil
+					}}, true, nil
+				},
+				Private: func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+				Idle: func(_ context.Context, actor string) (Work, bool, error) {
+					if actor != "mio" {
+						return Work{}, false, nil
+					}
+					return Work{ID: "group-routine", Priority: domaintask.PriorityLow, Participants: []string{"shiro"}, Run: func(_ context.Context, stop <-chan struct{}) error {
+						close(idleStarted)
+						<-stop
+						close(idleStopSeen)
+						<-finishIdle
+						close(idleReturned)
+						return nil
+					}}, true, nil
+				},
+			}, nil)
+
+			scheduler.Tick(context.Background())
+			waitSignal(t, idleStarted, time.Second, "multi-actor idle work did not start")
+			mu.Lock()
+			arrivedActor = target
+			mu.Unlock()
+			scheduler.Tick(context.Background())
+			waitSignal(t, idleStopSeen, time.Second, "participant task did not stop the shared idle owner")
+			select {
+			case <-taskStarted:
+				t.Fatal("participant task overlapped the shared idle owner")
+			case <-time.After(30 * time.Millisecond):
+			}
+			close(finishIdle)
+			waitSignal(t, idleReturned, time.Second, "shared idle owner did not return")
+			waitSignal(t, taskStarted, time.Second, "participant task did not start after the idle owner returned")
+		})
+	}
+}
+
+func TestIdleGroupRejectsInvalidOrOccupiedParticipants(t *testing.T) {
+	tests := []struct {
+		name         string
+		participants []string
+		occupy       bool
+	}{
+		{name: "unknown", participants: []string{"unknown"}},
+		{name: "duplicate", participants: []string{"shiro", "shiro"}},
+		{name: "primary", participants: []string{"mio"}},
+		{name: "occupied", participants: []string{"shiro"}, occupy: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			idleStarted := make(chan struct{}, 1)
+			scheduler := New([]string{"mio", "shiro"}, Sources{
+				Board:   func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+				Private: func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+				Idle: func(_ context.Context, actor string) (Work, bool, error) {
+					if actor != "mio" {
+						return Work{}, false, nil
+					}
+					return Work{ID: "invalid-group", Priority: domaintask.PriorityLow, Participants: test.participants, Run: func(context.Context, <-chan struct{}) error {
+						idleStarted <- struct{}{}
+						return nil
+					}}, true, nil
+				},
+			}, nil)
+			var occupiedRelease func()
+			if test.occupy {
+				var err error
+				occupiedRelease, err = scheduler.Acquire(context.Background(), "shiro", domaintask.PriorityNormal)
+				if err != nil {
+					t.Fatalf("occupy participant: %v", err)
+				}
+				defer occupiedRelease()
+			}
+
+			scheduler.Tick(context.Background())
+			select {
+			case <-idleStarted:
+				t.Fatal("idle group ran with an invalid or occupied participant")
+			case <-time.After(40 * time.Millisecond):
+			}
+		})
+	}
+}
+
+func TestShutdownStopsAndWaitsForIdleGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	idleStarted := make(chan struct{})
+	idleStopSeen := make(chan struct{})
+	finishIdle := make(chan struct{})
+	startReturned := make(chan struct{})
+	scheduler := New([]string{"mio", "shiro"}, Sources{
+		Board:   func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+		Private: func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+		Idle: func(_ context.Context, actor string) (Work, bool, error) {
+			if actor != "mio" {
+				return Work{}, false, nil
+			}
+			return Work{ID: "shutdown-group", Priority: domaintask.PriorityLow, Participants: []string{"shiro"}, Run: func(_ context.Context, stop <-chan struct{}) error {
+				close(idleStarted)
+				<-stop
+				close(idleStopSeen)
+				<-finishIdle
+				return nil
+			}}, true, nil
+		},
+	}, nil)
+	defer func() {
+		cancel()
+		select {
+		case <-finishIdle:
+		default:
+			close(finishIdle)
+		}
+	}()
+	go func() {
+		_ = scheduler.Start(ctx)
+		close(startReturned)
+	}()
+	waitSignal(t, idleStarted, time.Second, "multi-actor idle work did not start")
+	cancel()
+	waitSignal(t, idleStopSeen, time.Second, "shutdown did not stop the shared idle owner")
+	waitSignal(t, startReturned, time.Second, "Start did not return after shutdown")
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer waitCancel()
+	if err := scheduler.Wait(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait before owner return = %v, want deadline exceeded", err)
+	}
+	close(finishIdle)
+	if err := scheduler.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait after owner return = %v", err)
+	}
+}
+
+func TestCanStartIdleReflectsReservationEligibilityButAllowsScanning(t *testing.T) {
+	var nilScheduler *Scheduler
+	if nilScheduler.CanStartIdle("mio") {
+		t.Fatal("nil scheduler reported an actor eligible for idle work")
+	}
+
+	scheduler := New([]string{"mio"}, Sources{}, nil)
+	if !scheduler.CanStartIdle("mio") {
+		t.Fatal("free registered actor was not eligible for idle work")
+	}
+	if scheduler.CanStartIdle("unknown") {
+		t.Fatal("unknown actor was eligible for idle work")
+	}
+
+	scheduler.mu.Lock()
+	state := scheduler.agents["mio"]
+	state.scanning = true
+	scheduler.mu.Unlock()
+	if !scheduler.CanStartIdle("mio") {
+		t.Fatal("an in-flight discovery scan blocked optional idle participant selection")
+	}
+
+	scheduler.mu.Lock()
+	state.waiters = []*waiter{{ready: make(chan struct{})}}
+	scheduler.mu.Unlock()
+	if scheduler.CanStartIdle("mio") {
+		t.Fatal("actor with a queued waiter was eligible for idle work")
+	}
+
+	scheduler.mu.Lock()
+	state.waiters = nil
+	state.active = &reservation{actor: "mio"}
+	scheduler.mu.Unlock()
+	if scheduler.CanStartIdle("mio") {
+		t.Fatal("actor with an active reservation was eligible for idle work")
+	}
+
+	scheduler.mu.Lock()
+	state.active = nil
+	scheduler.closed = true
+	scheduler.mu.Unlock()
+	if scheduler.CanStartIdle("mio") {
+		t.Fatal("closed scheduler reported an actor eligible for idle work")
+	}
+}
+
+func TestIdleGroupPreservesNewerParticipantRescanContext(t *testing.T) {
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel1()
+	defer cancel2()
+
+	participantScanStarted := make(chan struct{})
+	participantProbeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	participantRescanStarted := make(chan struct{})
+	releaseRescan := make(chan struct{})
+	idleStarted := make(chan struct{})
+	idleStopSeen := make(chan struct{})
+	finishIdle := make(chan struct{})
+	var finishOnce sync.Once
+	finish := func() { finishOnce.Do(func() { close(finishIdle) }) }
+	taskStarted := make(chan struct{})
+	var participantBoardCalls atomic.Int32
+	var taskAvailable atomic.Bool
+	var taskStartedOnce atomic.Bool
+	var groupStartedOnce atomic.Bool
+	var participantRescanOnce sync.Once
+
+	scheduler := New([]string{"mio", "shiro"}, Sources{
+		Board: func(ctx context.Context, actor string) (Work, bool, error) {
+			if actor != "shiro" {
+				return Work{}, false, nil
+			}
+			switch participantBoardCalls.Add(1) {
+			case 1:
+				close(participantScanStarted)
+				<-ctx.Done()
+				return Work{}, false, ctx.Err()
+			case 2:
+				close(participantProbeStarted)
+				<-releaseProbe
+				return Work{}, false, nil
+			default:
+				participantRescanOnce.Do(func() { close(participantRescanStarted) })
+				<-releaseRescan
+				if taskAvailable.Load() && !taskStartedOnce.Load() {
+					return Work{ID: "shiro-arrived", Priority: domaintask.PriorityHigh, Run: func(context.Context, <-chan struct{}) error {
+						if taskStartedOnce.CompareAndSwap(false, true) {
+							close(taskStarted)
+						}
+						return nil
+					}}, true, nil
+				}
+				return Work{}, false, nil
+			}
+		},
+		Private: func(context.Context, string) (Work, bool, error) { return Work{}, false, nil },
+		Idle: func(_ context.Context, actor string) (Work, bool, error) {
+			if actor != "mio" {
+				return Work{}, false, nil
+			}
+			select {
+			case <-participantScanStarted:
+			case <-time.After(time.Second):
+				return Work{}, false, context.DeadlineExceeded
+			}
+			return Work{ID: "mio-shiro-routine", Priority: domaintask.PriorityLow, Participants: []string{"shiro"}, Run: func(_ context.Context, stop <-chan struct{}) error {
+				if groupStartedOnce.CompareAndSwap(false, true) {
+					close(idleStarted)
+				}
+				<-stop
+				close(idleStopSeen)
+				<-finishIdle
+				return nil
+			}}, true, nil
+		},
+	}, nil)
+	defer func() {
+		scheduler.shutdown()
+		finish()
+	}()
+
+	scheduler.Tick(ctx1)
+	waitSignal(t, participantProbeStarted, time.Second, "participant eligibility probe did not start")
+	scheduler.Tick(ctx2)
+	close(releaseProbe)
+	waitSignal(t, idleStarted, time.Second, "idle group did not start after participant confirmation")
+	waitSignal(t, participantRescanStarted, time.Second, "participant did not start its queued newer rescan")
+	taskAvailable.Store(true)
+	cancel1()
+	close(releaseRescan)
+	waitSignal(t, idleStopSeen, time.Second, "newer participant rescan was lost when the older context was canceled")
+	finish()
+	waitSignal(t, taskStarted, time.Second, "participant task did not run after the idle owner returned")
+}

@@ -551,6 +551,31 @@ type HeartbeatConfig struct {
 	ChatID                string                   `yaml:"chat_id"`                 // 通知先ID（LINE user ID / Telegram chat ID / Discord channel ID / Slack channel ID）
 	XBookmarks            XBookmarkHeartbeatConfig `yaml:"x_bookmarks"`
 	Gmail                 GmailHeartbeatConfig     `yaml:"gmail"`
+	Routine               RoutineHeartbeatConfig   `yaml:"routine"`
+}
+
+// RoutineHeartbeatConfig scopes autonomous routine facts and optional WORLD reads.
+type RoutineHeartbeatConfig struct {
+	Enabled            bool                          `yaml:"enabled"`
+	Media              map[string][]RoutineMediaItem `yaml:"media"`
+	WorldReadTokenFile string                        `yaml:"world_read_token_file"`
+	WorldLifeTokenFile string                        `yaml:"world_life_token_file"`
+	WorldActors        map[string]string             `yaml:"world_actors"`
+	SharedRooms        []string                      `yaml:"shared_rooms"`
+	PrivateRooms       map[string]string             `yaml:"private_rooms"`
+	WorldURL           string                        `yaml:"world_url"`
+	WorldID            string                        `yaml:"world_id"`
+	TimelineID         string                        `yaml:"timeline_id"`
+	TimelineEpoch      string                        `yaml:"timeline_epoch"`
+}
+
+// RoutineMediaItem is operator-owned, direct media input for one canonical CORE actor.
+type RoutineMediaItem struct {
+	ID     string `yaml:"id"`
+	Kind   string `yaml:"kind"`
+	Title  string `yaml:"title"`
+	URL    string `yaml:"url"`
+	Credit string `yaml:"credit"`
 }
 
 // Gmail credentials are local secret files, never configuration values or LLM input.

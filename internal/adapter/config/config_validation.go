@@ -392,6 +392,9 @@ func (c *Config) Validate() error {
 	if err := c.validateGmailHeartbeat(); err != nil {
 		return err
 	}
+	if err := c.validateRoutineHeartbeat(); err != nil {
+		return err
+	}
 	if c.Heartbeat.XBookmarks.Enabled {
 		x := c.Heartbeat.XBookmarks
 		if !c.Heartbeat.Enabled {

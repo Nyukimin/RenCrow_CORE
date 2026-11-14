@@ -62,11 +62,14 @@ var pocWorldRouteOwners = map[string]bool{
 // stays undecided, and every entry must name the decision it closed.
 var pocRoutePromotionAllowlist = map[string]string{}
 
-// readBridgeConsumerAllowlist maps a repo-relative production file outside this
-// package to the reason it may consume the read client. It is empty while
-// D-27's production route/DTO stays undecided, and every entry must name the
-// decision it closed.
-var readBridgeConsumerAllowlist = map[string]string{}
+// readBridgeConsumerAllowlist maps reviewed internal CORE consumers of the
+// source-level client. These are private routine owners only; they do not add a
+// PORTAL route or promote the R04 PoC. D-27 and D-14 remain open for the future
+// authenticated CORE read bridge.
+var readBridgeConsumerAllowlist = map[string]string{
+	"cmd/rencrow/runtime_agent_routine.go": "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only discovers authenticated WORLD state for CORE's private agent routine scheduler.",
+	"cmd/rencrow/runtime_routine_world.go": "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only performs authenticated CORE-owned home lifecycle actions and reads their receipts/events.",
+}
 
 func TestPoCWorldRoutesStayOffProductionRoutes(t *testing.T) {
 	root := coreRepoRoot(t)
@@ -94,7 +97,10 @@ func TestWorldReadClientStaysSourceLevel(t *testing.T) {
 			strings.Join(violations, "\n"))
 	}
 	for path := range readBridgeConsumerAllowlist {
-		t.Errorf("stale read bridge allowlist entry %q names a file that no longer imports the read client", path)
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil || !strings.Contains(string(content), worldreadImportMarker) {
+			t.Errorf("stale read bridge allowlist entry %q names a file that no longer imports the read client", path)
+		}
 	}
 }
 

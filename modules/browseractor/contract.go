@@ -38,6 +38,8 @@ type Action struct {
 	Key       string `json:"key,omitempty"`
 	Name      string `json:"name,omitempty"`
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
+	StartMS   int64  `json:"start_ms,omitempty"`
+	MaxPlayMS int    `json:"max_play_ms,omitempty"`
 }
 
 type RunResponse struct {
@@ -58,12 +60,26 @@ type RunResponse struct {
 }
 
 type ActionResult struct {
-	ActionID    string `json:"action_id,omitempty"`
-	Type        string `json:"type,omitempty"`
-	Status      string `json:"status,omitempty"`
-	StartedAt   string `json:"started_at,omitempty"`
-	CompletedAt string `json:"completed_at,omitempty"`
-	Error       string `json:"error,omitempty"`
+	ActionID    string    `json:"action_id,omitempty"`
+	Type        string    `json:"type,omitempty"`
+	Status      string    `json:"status,omitempty"`
+	StartedAt   string    `json:"started_at,omitempty"`
+	CompletedAt string    `json:"completed_at,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	Playback    *Playback `json:"playback,omitempty"`
+}
+
+// Playback contains only typed execution evidence returned by the Browser Actor.
+type Playback struct {
+	Kind                  string `json:"kind"`
+	ElapsedMilliseconds   int64  `json:"elapsed_milliseconds"`
+	MediaTimeMilliseconds int64  `json:"media_time_milliseconds"`
+	DurationMilliseconds  int64  `json:"duration_milliseconds"`
+	Ended                 bool   `json:"ended"`
+	SourceURL             string `json:"source_url"`
+	VideoWidth            int    `json:"video_width,omitempty"`
+	VideoHeight           int    `json:"video_height,omitempty"`
+	PresentedFrameCount   *int64 `json:"presented_frame_count"`
 }
 
 type Error struct {
