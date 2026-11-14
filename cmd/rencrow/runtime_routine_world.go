@@ -562,6 +562,21 @@ func (r *agentRoutineRuntime) waitRoutineWorldDue(ctx context.Context, stop <-ch
 	return waitRoutineWorldDue(ctx, stop, r.worldNowUTC(), due, maxWait)
 }
 
+func (r *agentRoutineRuntime) waitRoutineWorldActivityDue(
+	ctx context.Context,
+	stop <-chan struct{},
+	due time.Time,
+	maxWait time.Duration,
+	state agentroutine.State,
+) error {
+	if state.Pending == nil || (state.Pending.Kind != agentroutine.ActivityHobby && state.Pending.Kind != agentroutine.ActivityRelax) {
+		return r.waitRoutineWorldDue(ctx, stop, due, maxWait)
+	}
+	windowCtx, cancelWindow := r.withRoutineWindow(ctx, state.Pending, state)
+	defer cancelWindow()
+	return r.waitRoutineWorldDue(windowCtx, stop, due, maxWait)
+}
+
 func (r *agentRoutineRuntime) routineWorldFreshActor(ctx context.Context, actorID string) (routineSnapshotRead, worldread.Actor, error) {
 	read, err := r.readSnapshotFresh(ctx)
 	if err != nil {
@@ -674,7 +689,7 @@ func (r *agentRoutineRuntime) ensureRoutineWorldArrival(
 	if err != nil {
 		return state, progress, worldread.Actor{}, err
 	}
-	if err := r.waitRoutineWorldDue(ctx, stop, actor.ActivityDueAt, maxWait); err != nil {
+	if err := r.waitRoutineWorldActivityDue(ctx, stop, actor.ActivityDueAt, maxWait, state); err != nil {
 		return state, progress, worldread.Actor{}, err
 	}
 	read, actor, err = r.routineWorldFreshActor(ctx, actorID)
@@ -1253,7 +1268,7 @@ func (r *agentRoutineRuntime) executeRoutineWorldTimedActivity(
 	if actor.ActivityDueAt.IsZero() {
 		return state, progress, errors.New("active WORLD activity has no server due time")
 	}
-	if err := r.waitRoutineWorldDue(ctx, stop, actor.ActivityDueAt, routineWorldMoveWait); err != nil {
+	if err := r.waitRoutineWorldActivityDue(ctx, stop, actor.ActivityDueAt, routineWorldMoveWait, state); err != nil {
 		return state, progress, err
 	}
 	read, actor, err = r.routineWorldFreshActor(ctx, actorID)

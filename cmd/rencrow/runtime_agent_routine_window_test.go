@@ -101,6 +101,39 @@ func TestAgentRoutineWindowStopsAtPlannedSleepBetweenMidnightAndTwo(t *testing.T
 	}
 }
 
+func TestAgentRoutineRelaxWindowStopsAtPlannedSleepAfter22(t *testing.T) {
+	loc, err := time.LoadLocation(agentroutine.JST)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.November, 14, 23, 0, 0, 0, loc)
+	sleepDate := now.AddDate(0, 0, 1).Format("2006-01-02")
+	sleepAt, _, err := agentroutine.ScheduleFor("mio", sleepDate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &agentRoutineRuntime{now: func() time.Time { return now }}
+	ctx, cancel := runtime.withRoutineWindow(context.Background(), &agentroutine.Intent{
+		ActorID: "mio", Kind: agentroutine.ActivityRelax,
+	}, agentroutine.State{})
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	remaining := sleepAt.Sub(now)
+	if !ok || time.Until(deadline) < remaining-time.Second || time.Until(deadline) > remaining+time.Second {
+		t.Fatalf("late-evening relax deadline = %v, has=%t; want planned sleep in %s", deadline, ok, remaining)
+	}
+
+	for _, kind := range []agentroutine.ActivityKind{agentroutine.ActivitySleep, agentroutine.ActivityWake} {
+		ctx, cancel := runtime.withRoutineWindow(context.Background(), &agentroutine.Intent{ActorID: "mio", Kind: kind}, agentroutine.State{})
+		if _, ok := ctx.Deadline(); ok {
+			cancel()
+			t.Errorf("%s unexpectedly received a routine window deadline", kind)
+			continue
+		}
+		cancel()
+	}
+}
+
 func TestAgentRoutineDiaryWindowStopsAtPlannedSleepAndBoundaryActivitiesDoNotConsumeCooldown(t *testing.T) {
 	loc, err := time.LoadLocation(agentroutine.JST)
 	if err != nil {

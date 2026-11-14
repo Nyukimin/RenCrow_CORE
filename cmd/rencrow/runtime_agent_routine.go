@@ -292,7 +292,10 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			return agentheartbeat.Work{}, false, err
 		}
 		retryingDiary := state.Pending != nil && state.Pending.Kind == agentroutine.ActivityDiary && state.Pending.RetryAfter.After(now)
-		if state.Pending != nil && state.Pending.RetryAfter.After(now) && !retryingDiary {
+		bedtimeCleanup := state.Pending != nil && r.pendingRoutineIntentAtBedtime(
+			state.Pending, state.ScheduleDate, state.PlannedSleep, now,
+		)
+		if state.Pending != nil && state.Pending.RetryAfter.After(now) && !retryingDiary && !bedtimeCleanup {
 			return agentheartbeat.Work{}, false, nil
 		}
 		read, snapshotErr := r.readSnapshot(ctx)
@@ -425,6 +428,69 @@ func (r *agentRoutineRuntime) location() *time.Location {
 		return time.FixedZone(agentroutine.JST, 9*60*60)
 	}
 	return loc
+}
+
+func (r *agentRoutineRuntime) pendingRoutineIntentAtBedtime(
+	intent *agentroutine.Intent,
+	scheduleDate string,
+	plannedSleep time.Time,
+	now time.Time,
+) bool {
+	deadline := routinePendingIntentSleepDeadline(intent, scheduleDate, plannedSleep, r.location())
+	return !deadline.IsZero() && !now.In(r.location()).Before(deadline)
+}
+
+func routinePendingIntentSleepDeadline(
+	intent *agentroutine.Intent,
+	scheduleDate string,
+	plannedSleep time.Time,
+	location *time.Location,
+) time.Time {
+	if intent == nil || (intent.Kind != agentroutine.ActivityHobby && intent.Kind != agentroutine.ActivityRelax) {
+		return time.Time{}
+	}
+	if location == nil {
+		location = time.FixedZone(agentroutine.JST, 9*60*60)
+	}
+
+	sleepDate := ""
+	createdAt := time.Time{}
+	if !intent.CreatedAt.IsZero() {
+		createdAt = intent.CreatedAt.In(location)
+		if createdAt.Hour() >= 2 && createdAt.Hour() < 22 {
+			return time.Time{} // Daytime and post-bedtime intentions are outside this expiry rule.
+		}
+		sleepDate = createdAt.Format("2006-01-02")
+		if createdAt.Hour() >= 22 {
+			sleepDate = createdAt.AddDate(0, 0, 1).Format("2006-01-02")
+		}
+	} else {
+		// Older persisted intents can lack CreatedAt. Only infer the original
+		// night when their saved date precedes this actor's current schedule date.
+		if intent.Date == "" || scheduleDate == "" || scheduleDate <= intent.Date {
+			return time.Time{}
+		}
+		sleepDate = scheduleDate
+	}
+
+	sleepAt := time.Time{}
+	if scheduleDate == sleepDate && !plannedSleep.IsZero() {
+		projected := plannedSleep.In(location)
+		if projected.Format("2006-01-02") == sleepDate && projected.Hour() < 2 {
+			sleepAt = projected
+		}
+	}
+	if sleepAt.IsZero() {
+		var err error
+		sleepAt, _, err = agentroutine.ScheduleFor(intent.ActorID, sleepDate)
+		if err != nil {
+			return time.Time{}
+		}
+	}
+	if !createdAt.IsZero() && createdAt.After(sleepAt) {
+		return time.Time{} // Do not invent a missed sleep for an activity started after bedtime.
+	}
+	return sleepAt.In(location)
 }
 
 func (r *agentRoutineRuntime) canHobby(actorID string) bool {
@@ -700,7 +766,43 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			}
 			return r.run(activityCtx, stop, actorID, fresh)
 		}
-		if state.Pending.RetryAfter.After(now) {
+		bedtimeCleanup := r.pendingRoutineIntentAtBedtime(
+			state.Pending, fresh.ScheduleDate, fresh.PlannedSleep, now,
+		)
+		if bedtimeCleanup {
+			latest, loadErr := r.store.Load(activityCtx, actorID)
+			if loadErr != nil {
+				return loadErr
+			}
+			if latest.Pending == nil || latest.Pending.ID != state.Pending.ID {
+				return nil // The exact pending reservation changed while its projected schedule was refreshed.
+			}
+			state = latest
+			pendingProgress, decodeErr = decodeRoutineProgress(state.Pending.Output)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if !pendingProgress.EffectCompleted {
+				if routineProgressNeedsWorldSettlement(pendingProgress) && (r.world == nil || r.worldLife == nil) {
+					return errors.Join(errRoutineWorldUnavailable, errors.New("exact active WORLD operation cannot be settled before the routine bedtime boundary"))
+				}
+				settledState, settledProgress, settleErr := r.routineWorldStopActiveOperations(activityCtx, state, pendingProgress)
+				if settleErr != nil {
+					return settleErr
+				}
+				state, pendingProgress = settledState, settledProgress
+				if completedAt, completed := r.routineVerifiedBedtimeHobbyCompletion(state.Pending, pendingProgress); completed {
+					pendingProgress.EffectCompleted = true
+					pendingProgress.CompletedAt = completedAt.UTC()
+					state, pendingProgress, err = r.saveProgress(activityCtx, state, "bedtime_world_hobby_completed", pendingProgress)
+					if err != nil {
+						return err
+					}
+				} else {
+					return r.cancelStaleIntent(activityCtx, state)
+				}
+			}
+		} else if state.Pending.RetryAfter.After(now) {
 			return nil
 		}
 		if routineStopRequested(activityCtx, stop) {
@@ -875,6 +977,82 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		return r.store.FinishIntent(persistCtx, actorID, intent.ID, state.Revision, r.now().Add(routineCooldown(intent.Kind)))
 	})
 	return err
+}
+
+func routineProgressNeedsWorldSettlement(progress routineProgress) bool {
+	if progress.World == nil {
+		return false
+	}
+	for _, operation := range progress.World.Operations {
+		if operation.ActivityID == "" || operation.ReceiptStatus != "committed" || !operation.EventVerified ||
+			(operation.ActivityKind != "move" && operation.ActivityKind != "exercise" && operation.ActivityKind != "mirror_pose") ||
+			operation.Action == worldread.HomeActionFinish || operation.Action == worldread.HomeActionStop {
+			continue
+		}
+		settled := false
+		for _, terminal := range progress.World.Operations {
+			if terminal.ActorID == operation.ActorID && terminal.ActivityID == operation.ActivityID &&
+				(terminal.Action == worldread.HomeActionFinish || terminal.Action == worldread.HomeActionStop) &&
+				terminal.ReceiptID != "" && terminal.ReceiptStatus == "committed" && terminal.EventVerified {
+				settled = true
+				break
+			}
+		}
+		if !settled {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *agentRoutineRuntime) routineVerifiedBedtimeHobbyCompletion(intent *agentroutine.Intent, progress routineProgress) (time.Time, bool) {
+	if intent == nil || intent.Kind != agentroutine.ActivityHobby || progress.World == nil ||
+		!routineWorldHomeHobby(intent.ActorID, intent.Label) {
+		return time.Time{}, false
+	}
+	activityKind, startPurpose, startAction, startEvent, finishEvent := "", "", "", "", ""
+	if intent.ActorID == "shiro" {
+		activityKind, startPurpose, startAction = "exercise", "exercise-start", worldread.HomeActionExercise
+		startEvent, finishEvent = "life.home.exercise.started", "life.home.exercise.completed"
+	} else {
+		activityKind, startPurpose, startAction = "mirror_pose", "mirror-pose-start", worldread.HomeActionMirror
+		startEvent, finishEvent = "life.home.mirror_pose.started", "life.home.mirror_pose.completed"
+	}
+	var start routineWorldOperation
+	startFound := false
+	for index := len(progress.World.Operations) - 1; index >= 0; index-- {
+		candidate := progress.World.Operations[index]
+		if (candidate.Purpose == startPurpose || strings.HasPrefix(candidate.Purpose, startPurpose+":retry:")) &&
+			candidate.Action == startAction && candidate.EventKind == startEvent && candidate.ActorID == intent.ActorID {
+			start, startFound = candidate, true
+			break
+		}
+	}
+	if !startFound || start.Key != routineWorldOperationKey(intent.ID, intent.ActorID, start.Purpose) || start.Action != startAction ||
+		start.EventKind != startEvent || start.ActorID != intent.ActorID || start.Payload.ActorID != intent.ActorID ||
+		start.ActivityKind != activityKind || start.ActivityID == "" || start.ReceiptID == "" ||
+		start.ReceiptStatus != "committed" || !start.EventVerified || start.StartedAt.IsZero() || start.DueAt.IsZero() {
+		return time.Time{}, false
+	}
+	terminal, ok := routineWorldActivityWasConfirmedFinished(progress, intent.ActorID, start.ActivityID)
+	if !ok || terminal.Action != worldread.HomeActionFinish || terminal.EventKind != finishEvent ||
+		terminal.ActorID != intent.ActorID || terminal.Payload.ActorID != intent.ActorID ||
+		terminal.Payload.ActivityID != start.ActivityID || terminal.ActivityKind != activityKind ||
+		terminal.ReceiptID == "" || terminal.ReceiptStatus != "committed" || !terminal.EventVerified || terminal.EndedAt.IsZero() {
+		return time.Time{}, false
+	}
+	regularFinishPurpose := start.Purpose + ":finish:" + start.ActivityID
+	interruptFinishPurpose := "interrupt-finish:" + start.ActivityID
+	if terminal.Purpose != regularFinishPurpose && terminal.Purpose != interruptFinishPurpose {
+		return time.Time{}, false
+	}
+	if terminal.Key != routineWorldOperationKey(intent.ID, intent.ActorID, terminal.Purpose) {
+		return time.Time{}, false
+	}
+	if activityKind == "mirror_pose" && (!progress.World.MirrorCompletionBaseSet || terminal.MirrorCompletions != progress.World.MirrorCompletionBase+1) {
+		return time.Time{}, false
+	}
+	return terminal.EndedAt.UTC(), true
 }
 
 func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, clearPending bool, reservedParticipants []string) (agentroutine.Plan, time.Time, error) {
@@ -2436,7 +2614,8 @@ func (r *agentRoutineRuntime) withRoutineWindow(ctx context.Context, intent *age
 	now := r.now().In(r.location())
 	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, r.location())
 	var deadline time.Time
-	if intent != nil && (intent.Kind == agentroutine.ActivityDiary || now.Hour() < 2) {
+	if intent != nil && (intent.Kind == agentroutine.ActivityDiary || now.Hour() < 2 ||
+		((intent.Kind == agentroutine.ActivityHobby || intent.Kind == agentroutine.ActivityRelax) && now.Hour() >= 22)) {
 		sleepDate := day
 		if now.Hour() >= 22 {
 			sleepDate = day.AddDate(0, 0, 1)
