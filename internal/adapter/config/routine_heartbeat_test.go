@@ -223,6 +223,89 @@ func TestRoutineHeartbeatRejectsAmbiguousWorldIdentityBinding(t *testing.T) {
 	}
 }
 
+func TestRoutineHeartbeatRetainsLegacyLuminaWorldBindingWithoutAddingRoutineActor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating a current-user-only token file is covered by platform secret-file tests")
+	}
+	tokenPath := filepath.Join(t.TempDir(), "world-read.token")
+	if err := os.WriteFile(tokenPath, []byte("world-read-token-with-enough-length-1234"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	bindings := map[string]string{
+		"mio": "world-mio", "shiro": "world-shiro", "midori": "world-midori", "kuro": "world-kuro",
+		"aka": "world-aka", "ao": "world-ao", "kin": "world-kin", "gin": "world-gin",
+		"lumina": "world-lumina",
+	}
+	cfg := validRoutineHeartbeatConfig()
+	cfg.Heartbeat.Routine.WorldURL = "http://127.0.0.1:9000"
+	cfg.Heartbeat.Routine.WorldID = "living-world"
+	cfg.Heartbeat.Routine.TimelineID = "main"
+	cfg.Heartbeat.Routine.TimelineEpoch = "epoch-1"
+	cfg.Heartbeat.Routine.WorldReadTokenFile = tokenPath
+	cfg.Heartbeat.Routine.WorldActors = bindings
+	cfg.Heartbeat.Routine.PrivateRooms = map[string]string{
+		"mio": "room-mio", "shiro": "room-shiro", "midori": "room-midori", "kuro": "room-kuro",
+		"aka": "room-aka", "ao": "room-ao", "kin": "room-kin", "gin": "room-gin",
+	}
+	if err := cfg.validateRoutineHeartbeat(); err != nil {
+		t.Fatalf("validate legacy Lumina WORLD binding: %v", err)
+	}
+	if len(cfg.Heartbeat.Routine.WorldActors) != 9 || cfg.Heartbeat.Routine.WorldActors["lumina"] != "world-lumina" {
+		t.Fatalf("legacy WORLD bindings were normalized or discarded: %#v", cfg.Heartbeat.Routine.WorldActors)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*Config)
+		want string
+	}{
+		{
+			name: "Lumina is not a private routine actor",
+			edit: func(c *Config) { c.Heartbeat.Routine.PrivateRooms["lumina"] = "room-lumina" },
+			want: "private_rooms keys must be canonical CORE actor IDs",
+		},
+		{
+			name: "unknown WORLD binding remains rejected",
+			edit: func(c *Config) { c.Heartbeat.Routine.WorldActors["other"] = "world-other" },
+			want: "world_actors keys must be canonical CORE actor IDs",
+		},
+		{
+			name: "case variant remains rejected",
+			edit: func(c *Config) { c.Heartbeat.Routine.WorldActors["Lumina"] = "world-lumina-cased" },
+			want: "world_actors keys must be canonical CORE actor IDs",
+		},
+		{
+			name: "Lumina alone is not a routine actor scope",
+			edit: func(c *Config) { c.Heartbeat.Routine.WorldActors = map[string]string{"lumina": "world-lumina"} },
+			want: "at least one canonical CORE actor binding",
+		},
+		{
+			name: "legacy binding still participates in WORLD ID uniqueness",
+			edit: func(c *Config) { c.Heartbeat.Routine.WorldActors["lumina"] = "world-mio" },
+			want: "world_actors values must be unique",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caseCfg := *cfg
+			caseCfg.Heartbeat.Routine = cfg.Heartbeat.Routine
+			caseCfg.Heartbeat.Routine.WorldActors = make(map[string]string, len(bindings))
+			for actorID, worldID := range bindings {
+				caseCfg.Heartbeat.Routine.WorldActors[actorID] = worldID
+			}
+			caseCfg.Heartbeat.Routine.PrivateRooms = make(map[string]string, len(cfg.Heartbeat.Routine.PrivateRooms))
+			for actorID, roomID := range cfg.Heartbeat.Routine.PrivateRooms {
+				caseCfg.Heartbeat.Routine.PrivateRooms[actorID] = roomID
+			}
+			tt.edit(&caseCfg)
+			if err := caseCfg.validateRoutineHeartbeat(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validateRoutineHeartbeat error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestRoutineHeartbeatValidatesConfiguredMedia(t *testing.T) {
 	cfg := validRoutineHeartbeatConfig()
 	cfg.BrowserActor.Enabled = true

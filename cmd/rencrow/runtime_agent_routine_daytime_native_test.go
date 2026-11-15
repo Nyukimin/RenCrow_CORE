@@ -102,6 +102,7 @@ func TestAgentRoutineNativeDaytimeRestAcceptance(t *testing.T) {
 		bindings[actorID] = actorID
 		privateRooms[actorID] = layout.PrivateRooms[actorID]
 	}
+	bindings["lumina"] = "legacy-world-lumina"
 	cfg := &config.Config{
 		WorkspaceDir:  filepath.Join(workspace, "core-workspace"),
 		LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, UserID: nativeRoutineOwner},
@@ -124,6 +125,9 @@ func TestAgentRoutineNativeDaytimeRestAcceptance(t *testing.T) {
 	})
 	if routine.world == nil || routine.worldLife == nil || routine.worldNow != nil {
 		t.Fatal("CORE did not load distinct authenticated reader/life credentials with the owner wall clock")
+	}
+	if len(cfg.Heartbeat.Routine.WorldActors) != 9 || len(routine.worldActorIDs) != 8 || !runtimeRoutineHouseViewHasCompleteActorScope(routine) {
+		t.Fatal("legacy Lumina binding changed the eight-actor routine execution scope")
 	}
 
 	loc := routine.location()

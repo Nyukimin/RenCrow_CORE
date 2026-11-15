@@ -89,9 +89,13 @@ func (c *Config) validateRoutineHeartbeat() error {
 		return errors.New("heartbeat.routine.world_actors must explicitly bind at least one CORE actor to a WORLD actor")
 	}
 	seenWorldActors := make(map[string]struct{}, len(routine.WorldActors))
+	canonicalWorldActorCount := 0
 	for coreActorID, worldActorID := range routine.WorldActors {
-		if !routineActorID(coreActorID) {
-			return errors.New("heartbeat.routine.world_actors keys must be canonical CORE actor IDs")
+		if !routineWorldActorID(coreActorID) {
+			return errors.New("heartbeat.routine.world_actors keys must be canonical CORE actor IDs or exact legacy lumina")
+		}
+		if routineActorID(coreActorID) {
+			canonicalWorldActorCount++
 		}
 		if !validRoutineWorldID(worldActorID) {
 			return errors.New("heartbeat.routine.world_actors values must be exact WORLD actor IDs")
@@ -100,6 +104,9 @@ func (c *Config) validateRoutineHeartbeat() error {
 			return errors.New("heartbeat.routine.world_actors values must be unique")
 		}
 		seenWorldActors[worldActorID] = struct{}{}
+	}
+	if canonicalWorldActorCount == 0 {
+		return errors.New("heartbeat.routine.world_actors must include at least one canonical CORE actor binding")
 	}
 	for actorID := range routine.PrivateRooms {
 		if _, bound := routine.WorldActors[actorID]; !bound {
@@ -123,6 +130,10 @@ func (c *Config) validateRoutineHeartbeat() error {
 		}
 	}
 	return nil
+}
+
+func routineWorldActorID(actorID string) bool {
+	return routineActorID(actorID) || actorID == "lumina"
 }
 
 func routineActorID(actorID string) bool {

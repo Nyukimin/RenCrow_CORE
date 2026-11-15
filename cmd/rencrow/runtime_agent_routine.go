@@ -132,6 +132,10 @@ func newAgentRoutineRuntime(cfg *config.Config, deps *Dependencies, workers map[
 		} else {
 			worldActorIDs := make([]string, 0, len(cfg.Heartbeat.Routine.WorldActors))
 			for coreActorID, worldActorID := range cfg.Heartbeat.Routine.WorldActors {
+				if coreActorID == "lumina" {
+					// Retain the legacy WORLD binding without granting Lumina heartbeat actor scope.
+					continue
+				}
 				runtime.worldActorIDs[worldActorID] = coreActorID
 				worldActorIDs = append(worldActorIDs, worldActorID)
 			}
