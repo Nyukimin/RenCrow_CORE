@@ -20,6 +20,7 @@ var (
 	errRoutineWorldUnavailable = errors.New("authenticated WORLD life actions are unavailable")
 	errRoutineWorldNotDue      = errors.New("WORLD activity is still in progress")
 	errRoutineWorldBusy        = errors.New("WORLD Actor has an unrelated active activity")
+	errRoutineWorldSleepWindow = errors.New("WORLD sleep start window ended at 02:00 JST")
 )
 
 var routineMirrorPoseIDs = [...]string{
@@ -220,6 +221,7 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 	if progress.World == nil {
 		progress.World = &routineWorldProgress{}
 	}
+	preparedInThisCall := false
 	index, found := r.routineWorldOperation(progress, purpose)
 	if found && progress.World.Operations[index].ReceiptStatus == "rejected" {
 		if progress.World.Operations[index].ReceiptReason != "resource_conflict" {
@@ -229,6 +231,7 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 		index, found = routineWorldExactOperation(progress, purpose)
 	}
 	if !found {
+		preparedInThisCall = true
 		operation := routineWorldOperation{
 			Purpose: purpose, Key: routineWorldOperationKey(state.Pending.ID, payload.ActorID, purpose),
 			Action: action, EventKind: eventKind, ActorID: payload.ActorID, Payload: payload,
@@ -251,6 +254,26 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 		return state, progress, operation, worldread.ErrCommandRejected
 	}
 	if operation.ReceiptID == "" {
+		if action == worldread.HomeActionSleep && state.Pending.Kind == agentroutine.ActivitySleep {
+			deadline := routinePendingSleepDeadline(state.Pending, r.location())
+			if deadline.IsZero() || !r.now().In(r.location()).Before(deadline) {
+				if preparedInThisCall && operation.ReceiptID == "" {
+					operations := progress.World.Operations
+					remaining := make([]routineWorldOperation, 0, len(operations)-1)
+					remaining = append(remaining, operations[:index]...)
+					remaining = append(remaining, operations[index+1:]...)
+					progress.World.Operations = remaining
+					var saveErr error
+					state, progress, saveErr = r.saveProgress(ctx, state, "world_sleep_start_not_sent", progress)
+					if saveErr != nil {
+						return state, progress, operation, errors.Join(errRoutineWorldSleepWindow,
+							fmt.Errorf("release newly prepared unsent WORLD sleep operation: %w", saveErr))
+					}
+					return state, progress, operation, errRoutineWorldSleepWindow
+				}
+				return state, progress, operation, errRoutineWorldSleepWindow
+			}
+		}
 		result, commandErr := r.worldLife.Command(ctx, operation.Key, operation.Action, operation.Payload)
 		receipt := result.Receipt
 		if receipt.ReceiptID != "" && receipt.Status != "retry" {
@@ -476,6 +499,104 @@ func sameRoutineWorldSleepBinding(left, right routineWorldSleepBinding) bool {
 		left.SlotID == right.SlotID && left.StartedAt.Equal(right.StartedAt) && left.EventID == right.EventID &&
 		left.TransactionID == right.TransactionID && left.Seq == right.Seq &&
 		left.LayoutSHA256 == right.LayoutSHA256 && left.SceneSHA256 == right.SceneSHA256
+}
+
+func (r *agentRoutineRuntime) routineMissedSleepCanResume(ctx context.Context, state agentroutine.State, progress routineProgress) (bool, error) {
+	intent := state.Pending
+	if intent == nil || intent.Kind != agentroutine.ActivitySleep {
+		return false, errors.New("missed-sleep recovery requires the exact pending Sleep intent")
+	}
+	if progress.EffectCompleted {
+		return true, nil
+	}
+	deadline := routinePendingSleepDeadline(intent, r.location())
+	if deadline.IsZero() {
+		return false, errors.New("pending Sleep intent has no valid original 02:00 boundary")
+	}
+	day, err := time.ParseInLocation("2006-01-02", intent.Date, r.location())
+	if err != nil {
+		return false, errors.New("pending Sleep intent has an invalid original date")
+	}
+
+	var sleepStart *routineWorldOperation
+	if progress.World != nil {
+		for index := range progress.World.Operations {
+			operation := progress.World.Operations[index]
+			if operation.ActorID != intent.ActorID || operation.Payload.ActorID != intent.ActorID {
+				continue
+			}
+			switch operation.Action {
+			case worldread.HomeActionSleep:
+				if operation.EventKind != "life.home.sleep.started" ||
+					(operation.Purpose != "sleep-start" && !strings.HasPrefix(operation.Purpose, "sleep-start:retry:")) {
+					return false, errors.New("pending Sleep checkpoint contains an unexpected WORLD sleep operation")
+				}
+				if operation.ReceiptStatus == "rejected" || operation.ReceiptStatus == "retry" {
+					continue
+				}
+				if operation.Key != routineWorldOperationKey(intent.ID, intent.ActorID, operation.Purpose) ||
+					operation.ReceiptStatus != "committed" || operation.ReceiptID == "" || !operation.EventVerified ||
+					operation.ActivityID == "" || operation.ActivityKind != "sleep" || operation.StartedAt.IsZero() {
+					return false, errors.New("pending WORLD sleep start has an ambiguous or incomplete receipt")
+				}
+				startedAt := operation.StartedAt.In(r.location())
+				if startedAt.Before(day) || !startedAt.Before(deadline) || startedAt.Format("2006-01-02") != intent.Date {
+					return false, errors.New("verified WORLD sleep began outside its original 00:00-02:00 window")
+				}
+				if sleepStart != nil && sleepStart.ActivityID != operation.ActivityID {
+					return false, errors.New("pending Sleep checkpoint has multiple committed sleep instances")
+				}
+				sleepStart = &operation
+			case worldread.HomeActionMove:
+				if operation.ReceiptStatus == "rejected" || operation.ReceiptStatus == "retry" {
+					continue
+				}
+				if operation.Purpose != "sleep-bed:move" && !strings.HasPrefix(operation.Purpose, "sleep-bed:move:retry:") {
+					continue
+				}
+				if operation.Key != routineWorldOperationKey(intent.ID, intent.ActorID, operation.Purpose) ||
+					operation.ReceiptStatus != "committed" || operation.ReceiptID == "" || !operation.EventVerified || operation.ActivityID == "" {
+					return false, errors.New("pending sleep-bed move has an ambiguous WORLD receipt")
+				}
+				if _, settled := routineWorldActivityWasConfirmedFinished(progress, intent.ActorID, operation.ActivityID); !settled &&
+					!routineWorldActivityWasConfirmedStopped(progress, intent.ActorID, operation.ActivityID) {
+					return false, errors.New("verified sleep-bed move remains unsettled after the sleep boundary")
+				}
+			}
+		}
+	}
+
+	if r.world == nil {
+		if sleepStart != nil || r.worldLife != nil || routineProgressNeedsWorldSettlement(progress) {
+			return false, errors.Join(errRoutineWorldUnavailable, errors.New("WORLD state is required to resolve the expired Sleep checkpoint"))
+		}
+		return false, nil
+	}
+	read, actor, err := r.routineWorldFreshActor(ctx, intent.ActorID)
+	if err != nil {
+		return false, fmt.Errorf("read WORLD actor before settling the expired Sleep intent: %w", err)
+	}
+	if actor.ActivityID != "" {
+		if actor.ActivityKind != "sleep" || sleepStart == nil || actor.ActivityID != sleepStart.ActivityID {
+			return false, errors.New("WORLD actor has an active activity that the expired Sleep checkpoint cannot verify")
+		}
+		roomID := ""
+		if r.cfg != nil {
+			roomID = r.cfg.Heartbeat.Routine.PrivateRooms[intent.ActorID]
+		}
+		if roomID == "" || actor.RoomID != roomID || actor.SlotID != "bed-"+intent.ActorID ||
+			!actor.ActivityStartedAt.Equal(sleepStart.StartedAt) {
+			return false, errors.New("active WORLD sleep does not match the exact original bed start")
+		}
+		if err := r.verifyRoutineWorldSnapshot(read, actor, *sleepStart); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if actor.ActivityKind == "sleep" || sleepStart != nil {
+		return false, errors.New("verified WORLD sleep start is no longer the exact active activity and has no completion checkpoint")
+	}
+	return false, nil
 }
 
 func (r *agentRoutineRuntime) verifyRoutineWorldActivityBinding(progress routineProgress, terminal routineWorldOperation) error {
@@ -932,6 +1053,10 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 		}
 		purpose := "sleep-start"
 		if actor.ActivityKind != "sleep" || actor.ActivityID == "" || actor.RoomID != roomID || actor.SlotID != "bed-"+intent.ActorID {
+			deadline := routinePendingSleepDeadline(intent, r.location())
+			if deadline.IsZero() || !r.now().In(r.location()).Before(deadline) {
+				return state, progress, errRoutineWorldSleepWindow
+			}
 			state, progress, _, err = r.performRoutineWorldAction(ctx, state, progress, purpose, worldread.HomeActionSleep,
 				"life.home.sleep.started", worldread.HomeActionPayload{ActorID: intent.ActorID})
 			if err != nil {

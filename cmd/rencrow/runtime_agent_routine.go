@@ -295,7 +295,8 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 		bedtimeCleanup := state.Pending != nil && r.pendingRoutineIntentAtBedtime(
 			state.Pending, state.ScheduleDate, state.PlannedSleep, now,
 		)
-		if state.Pending != nil && state.Pending.RetryAfter.After(now) && !retryingDiary && !bedtimeCleanup {
+		sleepCleanup := state.Pending != nil && r.pendingRoutineSleepExpired(state.Pending, now)
+		if state.Pending != nil && state.Pending.RetryAfter.After(now) && !retryingDiary && !bedtimeCleanup && !sleepCleanup {
 			return agentheartbeat.Work{}, false, nil
 		}
 		read, snapshotErr := r.readSnapshot(ctx)
@@ -438,6 +439,25 @@ func (r *agentRoutineRuntime) pendingRoutineIntentAtBedtime(
 ) bool {
 	deadline := routinePendingIntentSleepDeadline(intent, scheduleDate, plannedSleep, r.location())
 	return !deadline.IsZero() && !now.In(r.location()).Before(deadline)
+}
+
+func (r *agentRoutineRuntime) pendingRoutineSleepExpired(intent *agentroutine.Intent, now time.Time) bool {
+	deadline := routinePendingSleepDeadline(intent, r.location())
+	return !deadline.IsZero() && !now.In(r.location()).Before(deadline)
+}
+
+func routinePendingSleepDeadline(intent *agentroutine.Intent, location *time.Location) time.Time {
+	if intent == nil || intent.Kind != agentroutine.ActivitySleep || strings.TrimSpace(intent.Date) == "" {
+		return time.Time{}
+	}
+	if location == nil {
+		location = time.FixedZone(agentroutine.JST, 9*60*60)
+	}
+	day, err := time.ParseInLocation("2006-01-02", intent.Date, location)
+	if err != nil || day.Format("2006-01-02") != intent.Date {
+		return time.Time{}
+	}
+	return day.Add(2 * time.Hour)
 }
 
 func routinePendingIntentSleepDeadline(
@@ -769,7 +789,8 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		bedtimeCleanup := r.pendingRoutineIntentAtBedtime(
 			state.Pending, fresh.ScheduleDate, fresh.PlannedSleep, now,
 		)
-		if bedtimeCleanup {
+		sleepCleanup := r.pendingRoutineSleepExpired(state.Pending, now)
+		if bedtimeCleanup || sleepCleanup {
 			latest, loadErr := r.store.Load(activityCtx, actorID)
 			if loadErr != nil {
 				return loadErr
@@ -797,6 +818,14 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 					state, pendingProgress, err = r.saveProgress(activityCtx, state, "bedtime_world_hobby_completed", pendingProgress)
 					if err != nil {
 						return err
+					}
+				} else if sleepCleanup {
+					canResume, resumeErr := r.routineMissedSleepCanResume(activityCtx, state, pendingProgress)
+					if resumeErr != nil {
+						return resumeErr
+					}
+					if !canResume {
+						return r.cancelStaleIntentWithCooldown(activityCtx, state, time.Time{})
 					}
 				} else {
 					return r.cancelStaleIntent(activityCtx, state)
@@ -2439,6 +2468,10 @@ func (r *agentRoutineRuntime) deferIntent(ctx context.Context, state agentroutin
 }
 
 func (r *agentRoutineRuntime) cancelStaleIntent(ctx context.Context, state agentroutine.State) error {
+	return r.cancelStaleIntentWithCooldown(ctx, state, r.now().Add(30*time.Minute))
+}
+
+func (r *agentRoutineRuntime) cancelStaleIntentWithCooldown(ctx context.Context, state agentroutine.State, cooldownUntil time.Time) error {
 	if state.Pending == nil {
 		return nil
 	}
@@ -2524,7 +2557,7 @@ func (r *agentRoutineRuntime) cancelStaleIntent(ctx context.Context, state agent
 	}
 	actorID, intentID, revision := state.ActorID, state.Pending.ID, state.Revision
 	_, err = routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
-		return r.store.FinishIntent(persistCtx, actorID, intentID, revision, r.now().Add(30*time.Minute))
+		return r.store.FinishIntent(persistCtx, actorID, intentID, revision, cooldownUntil)
 	})
 	return err
 }
