@@ -260,6 +260,49 @@ type OriginPublicationProvenance struct {
 	OwnerID                string                       `json:"owner_id,omitempty"`
 }
 
+// AutonomousTask marks a bounded, actor-owned private task created by the
+// autonomous task-intake loop. Its source chain is metadata rather than Task
+// hierarchy: these Tasks remain unparented and cannot inherit capabilities.
+type AutonomousTask struct {
+	PolicyVersion      string             `json:"policy_version"`
+	Kind               AutonomousTaskKind `json:"kind"`
+	Date               string             `json:"date"`
+	RootTaskID         modulecore.TaskID  `json:"root_task_id"`
+	SourceTaskID       modulecore.TaskID  `json:"source_task_id,omitempty"`
+	SourceRunID        modulecore.RunID   `json:"source_run_id,omitempty"`
+	SourceOutputSHA256 string             `json:"source_output_sha256,omitempty"`
+	Depth              int                `json:"depth"`
+}
+
+type AutonomousTaskKind string
+
+const (
+	AutonomousTaskKindPlan      AutonomousTaskKind = "plan"
+	AutonomousTaskKindWork      AutonomousTaskKind = "work"
+	AutonomousPolicyVersion                        = "autonomous-task.v1"
+	AutonomousMaxDepth                             = 3
+	AutonomousPlanInputMaxBytes                    = 128 << 10
+	AutonomousWorkInputMaxBytes                    = 4096
+)
+
+// AutonomousDecision is the immutable result of evaluating an autonomous
+// plan. A continue decision names the deterministic work Task it authorizes.
+type AutonomousDecision struct {
+	Decision        AutonomousDecisionKind `json:"decision"`
+	Reason          string                 `json:"reason"`
+	Title           string                 `json:"title,omitempty"`
+	Objective       string                 `json:"objective,omitempty"`
+	Completion      string                 `json:"completion,omitempty"`
+	CandidateTaskID modulecore.TaskID      `json:"candidate_task_id,omitempty"`
+}
+
+const (
+	AutonomousDecisionStop     AutonomousDecisionKind = "stop"
+	AutonomousDecisionContinue AutonomousDecisionKind = "continue"
+)
+
+type AutonomousDecisionKind string
+
 // NewOriginPublicationProvenance copies only a verified immutable turn
 // binding. The Task owner separately checks that this proof came from the
 // current request context before the Task's first save.
@@ -341,6 +384,7 @@ type Task struct {
 	WorkstreamID             modulecore.WorkstreamID      `json:"workstream_id,omitempty"`
 	GoalID                   modulecore.GoalID            `json:"goal_id,omitempty"`
 	Production               *Production                  `json:"production,omitempty"`
+	Autonomous               *AutonomousTask              `json:"autonomous,omitempty"`
 	SupersedesTaskID         modulecore.TaskID            `json:"supersedes_task_id,omitempty"`
 	InterruptPolicy          InterruptPolicy              `json:"interrupt_policy"`
 	ReadOnly                 bool                         `json:"read_only"`
@@ -356,19 +400,20 @@ type Task struct {
 }
 
 type SharedRoleContext struct {
-	TaskID        modulecore.TaskID      `json:"task_id"`
-	PrivateText   *PrivateTextCheckpoint `json:"private_text,omitempty"`
-	UserIntent    string                 `json:"user_intent,omitempty"`
-	ModuleID      string                 `json:"module_id,omitempty"`
-	ModuleRoot    string                 `json:"module_root,omitempty"`
-	RelevantFiles []string               `json:"relevant_files,omitempty"`
-	Decisions     []string               `json:"decisions,omitempty"`
-	Constraints   []string               `json:"constraints,omitempty"`
-	CurrentPlan   string                 `json:"current_plan,omitempty"`
-	LatestStatus  string                 `json:"latest_status,omitempty"`
-	Artifacts     []string               `json:"artifacts,omitempty"`
-	HandoffNotes  string                 `json:"handoff_notes,omitempty"`
-	UpdatedAt     time.Time              `json:"updated_at"`
+	TaskID             modulecore.TaskID      `json:"task_id"`
+	PrivateText        *PrivateTextCheckpoint `json:"private_text,omitempty"`
+	AutonomousDecision *AutonomousDecision    `json:"autonomous_decision,omitempty"`
+	UserIntent         string                 `json:"user_intent,omitempty"`
+	ModuleID           string                 `json:"module_id,omitempty"`
+	ModuleRoot         string                 `json:"module_root,omitempty"`
+	RelevantFiles      []string               `json:"relevant_files,omitempty"`
+	Decisions          []string               `json:"decisions,omitempty"`
+	Constraints        []string               `json:"constraints,omitempty"`
+	CurrentPlan        string                 `json:"current_plan,omitempty"`
+	LatestStatus       string                 `json:"latest_status,omitempty"`
+	Artifacts          []string               `json:"artifacts,omitempty"`
+	HandoffNotes       string                 `json:"handoff_notes,omitempty"`
+	UpdatedAt          time.Time              `json:"updated_at"`
 }
 
 type Notification struct {
@@ -495,6 +540,11 @@ func (t Task) Validate() error {
 	if t.Production != nil {
 		if err := t.Production.Validate(); err != nil {
 			return fmt.Errorf("production is invalid: %w", err)
+		}
+	}
+	if t.Autonomous != nil {
+		if err := t.Autonomous.Validate(t); err != nil {
+			return fmt.Errorf("autonomous metadata is invalid: %w", err)
 		}
 	}
 	if t.ExpectedCriteriaRevision != "" && !ValidCriteriaRevision(t.ExpectedCriteriaRevision) {

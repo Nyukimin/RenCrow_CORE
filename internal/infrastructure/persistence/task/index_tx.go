@@ -72,7 +72,7 @@ func (o *txOverlay) record(filename string, encoded []byte) error {
 		if err != nil {
 			return fmt.Errorf("task_id: %w", err)
 		}
-		o.ctxs[key] = value
+		o.ctxs[key] = cloneTransactionContext(value)
 	case notificationsFilename:
 		var value domaintask.Notification
 		if err := decodeStrictLine(line, &value); err != nil {
@@ -161,7 +161,7 @@ func (s *transactionStore) overlayContext(key key16) (domaintask.SharedRoleConte
 		return domaintask.SharedRoleContext{}, false
 	}
 	value, ok := s.state.ov.ctxs[key]
-	return value, ok
+	return cloneTransactionContext(value), ok
 }
 
 // idxCheckSaveTask is the check appendTask makes for an indexed store, answered
@@ -438,7 +438,7 @@ func (s *transactionStore) idxGetContext(taskID modulecore.TaskID) (domaintask.S
 		return domaintask.SharedRoleContext{}, domaintask.ErrNotFound
 	}
 	if value, ok := s.overlayContext(key); ok {
-		return value, nil
+		return cloneTransactionContext(value), nil
 	}
 	ix := s.parent.idx
 	unlock := s.indexLock()

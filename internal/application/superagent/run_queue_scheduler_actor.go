@@ -38,6 +38,13 @@ type actorRunQueueCandidate struct {
 // PlanForActor selects a due queue item for one canonical Task assignee. It
 // reads the Task owner and queue only; it does not reserve work or issue a Run.
 func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*domainsuperagent.RunQueueItem, domaintask.Task, error) {
+	return s.PlanForActorMatching(ctx, actor, nil)
+}
+
+// PlanForActorMatching applies the caller's current scheduling policy before
+// selecting work. Rejected candidates stay durable and do not block later
+// eligible Tasks. The predicate must be read-only and must not perform I/O.
+func (s *RunQueueScheduler) PlanForActorMatching(ctx context.Context, actor string, accept func(domaintask.Task) bool) (*domainsuperagent.RunQueueItem, domaintask.Task, error) {
 	if s == nil || s.store == nil || s.taskOwner == nil {
 		return nil, domaintask.Task{}, fmt.Errorf("run queue scheduler is not configured")
 	}
@@ -63,6 +70,9 @@ func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*do
 		}
 		if err := task.Validate(); err != nil {
 			return nil, domaintask.Task{}, fmt.Errorf("validate queued task %s for actor %s: %w", task.TaskID, actor, err)
+		}
+		if accept != nil && !accept(task) {
+			continue
 		}
 		if _, exists := tasksByID[task.TaskID]; exists {
 			return nil, domaintask.Task{}, fmt.Errorf("canonical task owner returned duplicate task %s", task.TaskID)

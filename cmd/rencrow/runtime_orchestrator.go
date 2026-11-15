@@ -17,6 +17,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	logginginfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/logging"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
 )
@@ -134,7 +135,7 @@ func buildOrchestratorRuntime(
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
 		privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
 		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
-		configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools)
+		configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools, privateTaskRunner)
 		return
 	}
 
@@ -267,10 +268,10 @@ func buildOrchestratorRuntime(
 	deps.voiceDirectHandler = orch
 	privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
 	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
-	configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools)
+	configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools, privateTaskRunner)
 }
 
-func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, routineWorkers map[string]privateTaskWorker, routineTools domainagent.ToolRunner) {
+func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, routineWorkers map[string]privateTaskWorker, routineTools domainagent.ToolRunner, privateRunner ...*privateTaskRunQueueRunner) {
 	if cfg == nil || deps == nil || !cfg.Heartbeat.AgentSchedulerEnabled {
 		return
 	}
@@ -282,6 +283,11 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 			deps.agentRoutine = runtime
 		}
 		log.Printf("agent routine configured enabled=%t runtime_ready=%t", true, deps.agentRoutine != nil)
+	}
+	var autonomous *autonomousTaskRuntime
+	if len(privateRunner) > 0 && privateRunner[0] != nil {
+		autonomous = newAutonomousTaskRuntime(cfg, deps, deps.agentRoutine)
+		privateRunner[0].autonomous = autonomous
 	}
 	var reportMu sync.Mutex
 	lastReported := make(map[string]string)
@@ -322,7 +328,13 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 			}
 			return agentheartbeat.Work{}, false, nil
 		}
-		item, task, err := scheduler.PlanForActor(ctx, actor)
+		allowAutonomous := autonomous != nil && autonomous.autonomousWindow(ctx, actor, autonomous.now())
+		item, task, err := scheduler.PlanForActorMatching(ctx, actor, func(task domaintask.Task) bool {
+			if task.Autonomous == nil {
+				return true
+			}
+			return allowAutonomous && autonomous != nil && task.OwnerID == autonomous.ownerID
+		})
 		if err != nil || item == nil {
 			return agentheartbeat.Work{}, false, err
 		}
@@ -330,6 +342,9 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 			ID: string(item.QueueItemID), Priority: task.Priority, CreatedAt: task.CreatedAt.UTC(), VisibilityTaskID: task.TaskID,
 			Run: func(runCtx context.Context, stop <-chan struct{}) error {
 				if boardWorkStopRequested(stop) {
+					return nil
+				}
+				if task.Autonomous != nil && (autonomous == nil || !autonomous.autonomousWindow(runCtx, actor, autonomous.now())) {
 					return nil
 				}
 				log.Printf("agent heartbeat work started actor=%s source=private work_id=%s", actor, item.QueueItemID)
@@ -360,6 +375,9 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 		}
 	}(boardSource)
 	daytimeIdle := gameAutoplayIdleSource(deps.gameAutoplay)
+	if autonomous != nil {
+		daytimeIdle = autonomous.idleSource(daytimeIdle)
+	}
 	idleSource := daytimeIdle
 	if cfg.Heartbeat.Routine.Enabled {
 		idleSource = nil
@@ -371,6 +389,9 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 		Board: boardSource, Private: privateSource, Idle: idleSource,
 		IdleRequiresBoard: cfg.Heartbeat.Routine.Enabled && cfg.BoardCommunication.Enabled,
 	}, report)
+	if autonomous != nil {
+		autonomous.setWaker(deps.agentHeartbeat)
+	}
 	if deps.agentRoutine != nil {
 		deps.agentRoutine.canStartIdle = deps.agentHeartbeat.CanStartIdle
 	}

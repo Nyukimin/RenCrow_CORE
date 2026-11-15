@@ -236,6 +236,9 @@ func (m *Manager) readTransaction(ctx context.Context, fn func(*Manager) error) 
 }
 
 func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if draft.Autonomous != nil || shared.AutonomousDecision != nil {
+		return domaintask.Task{}, errors.New("autonomous Task metadata requires the autonomous Task owner API")
+	}
 	if draft.TaskID == "" {
 		draft.TaskID = modulecore.NewTaskID()
 	}
@@ -263,6 +266,9 @@ func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared doma
 // refusal. A caller that has the Task but must decide later whether to run it
 // (for example after routing) keeps using Create followed by Start.
 func (m *Manager) CreateAndStartRun(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	if draft.Autonomous != nil || shared.AutonomousDecision != nil {
+		return domaintask.Task{}, domaintask.Run{}, errors.New("autonomous Task metadata requires the autonomous Task owner API")
+	}
 	if draft.TaskID == "" {
 		draft.TaskID = modulecore.NewTaskID()
 	}
@@ -291,6 +297,20 @@ func (m *Manager) createAndStartRunInTransaction(ctx context.Context, draft doma
 }
 
 func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if draft.Autonomous != nil || shared.AutonomousDecision != nil {
+		return domaintask.Task{}, errors.New("autonomous Task metadata requires the autonomous Task owner API")
+	}
+	return m.createValidatedInTransaction(ctx, draft, shared)
+}
+
+func (m *Manager) createAutonomousInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if draft.Autonomous == nil || shared.AutonomousDecision != nil || shared.PrivateText != nil {
+		return domaintask.Task{}, errors.New("autonomous Task owner input is invalid")
+	}
+	return m.createValidatedInTransaction(ctx, draft, shared)
+}
+
+func (m *Manager) createValidatedInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return domaintask.Task{}, err
 	}
@@ -766,7 +786,8 @@ func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRol
 		if err := shared.TaskID.Validate(); err != nil {
 			return fmt.Errorf("task_id is invalid: %w", err)
 		}
-		if _, err := txManager.store.GetTask(ctx, shared.TaskID); err != nil {
+		task, err := txManager.store.GetTask(ctx, shared.TaskID)
+		if err != nil {
 			return err
 		}
 		persisted, err := loadPrivateTextSharedContext(ctx, txManager.store, shared.TaskID)
@@ -777,6 +798,12 @@ func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRol
 		// Generic context updates preserve the canonical cursor and ignore any
 		// cursor a caller tries to supply.
 		shared.PrivateText = persisted.PrivateText
+		// AutonomousDecision is writable only through the autonomous Task owner
+		// API. Generic context updates preserve the immutable canonical decision.
+		shared.AutonomousDecision = cloneAutonomousDecision(persisted.AutonomousDecision)
+		if task.Autonomous != nil {
+			preserveAutonomousContextContent(&shared, persisted)
+		}
 		shared.UpdatedAt = txManager.now()
 		return txManager.store.SaveContext(ctx, shared)
 	})

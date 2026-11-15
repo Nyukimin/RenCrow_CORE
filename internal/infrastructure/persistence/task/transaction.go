@@ -863,7 +863,7 @@ func (s *transactionStore) GetContext(ctx context.Context, taskID modulecore.Tas
 	}
 	for index := len(items) - 1; index >= 0; index-- {
 		if items[index].TaskID == taskID {
-			return items[index], nil
+			return cloneTransactionContext(items[index]), nil
 		}
 	}
 	return domaintask.SharedRoleContext{}, domaintask.ErrNotFound

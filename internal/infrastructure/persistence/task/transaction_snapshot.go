@@ -196,11 +196,31 @@ func cloneTransactionTask(value domaintask.Task) domaintask.Task {
 		}
 		value.Production = &production
 	}
+	if value.Autonomous != nil {
+		autonomous := *value.Autonomous
+		value.Autonomous = &autonomous
+	}
 	value.NextActions = append([]string(nil), value.NextActions...)
 	value.Evidence = append([]string(nil), value.Evidence...)
 	value.Artifacts = append([]string(nil), value.Artifacts...)
 	value.StartedAt = cloneTransactionTime(value.StartedAt)
 	value.FinishedAt = cloneTransactionTime(value.FinishedAt)
+	return value
+}
+
+func cloneTransactionContext(value domaintask.SharedRoleContext) domaintask.SharedRoleContext {
+	value.RelevantFiles = append([]string(nil), value.RelevantFiles...)
+	value.Decisions = append([]string(nil), value.Decisions...)
+	value.Constraints = append([]string(nil), value.Constraints...)
+	value.Artifacts = append([]string(nil), value.Artifacts...)
+	if value.PrivateText != nil {
+		privateText := *value.PrivateText
+		value.PrivateText = &privateText
+	}
+	if value.AutonomousDecision != nil {
+		decision := *value.AutonomousDecision
+		value.AutonomousDecision = &decision
+	}
 	return value
 }
 

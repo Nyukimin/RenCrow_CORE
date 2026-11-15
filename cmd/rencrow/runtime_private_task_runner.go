@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -32,9 +33,10 @@ type privateTaskWorker interface {
 }
 
 type privateTaskRunQueueRunner struct {
-	tasks   *taskmanager.Manager
-	ownerID string
-	actors  map[string]privateTaskWorker
+	tasks      *taskmanager.Manager
+	ownerID    string
+	actors     map[string]privateTaskWorker
+	autonomous *autonomousTaskRuntime
 }
 
 func newPrivateTaskRunQueueRunner(tasks *taskmanager.Manager, ownerID string, mio, shiroChat *agent.MioAgent, midori *agent.WildAgent, privateTextWorkers map[string]privateTaskWorker) *privateTaskRunQueueRunner {
@@ -119,8 +121,12 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 	if err != nil {
 		return "", fmt.Errorf("create private task channel address: %w", err)
 	}
+	inputText, err := r.privateTaskInputText(ctx, task)
+	if err != nil {
+		return "", fmt.Errorf("build private task instruction: %w", err)
+	}
 	input, err := conversation.ReconstructTurnInput(
-		task.TaskID, modulecore.NewTurnID(), traceID, modulecore.NewMessageID(), modulecore.NewMessageID(), task.Title, address,
+		task.TaskID, modulecore.NewTurnID(), traceID, modulecore.NewMessageID(), modulecore.NewMessageID(), inputText, address,
 	)
 	if err != nil {
 		return "", fmt.Errorf("build private task input: %w", err)
@@ -153,6 +159,9 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 		checkpoint.ActorID != actorID || checkpoint.InputSHA256 != privateTaskInputSHA256(task.Title) {
 		return "", errors.New("private task cursor does not match its canonical Task, Run, queue item, actor, and input")
 	}
+	if task.Autonomous != nil && (r.autonomous == nil || !r.autonomous.autonomousWindow(actorCtx, actorID, r.autonomous.now())) {
+		return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+	}
 	if privateResume && run.StartCheckpointSHA256 != item.CheckpointDigest {
 		return "", errors.New("private checkpoint-resume Run does not retain its exact predecessor digest")
 	}
@@ -161,7 +170,32 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 		if !validPrivateTaskOutput(output) {
 			return "", r.closePrivateTaskFailure(ctx, task, run, actorID, errPrivateTaskExecutionFailed)
 		}
-		if err := r.completePrivateTaskRun(ctx, task, run, actorID, false); err != nil {
+		var decision domaintask.AutonomousDecision
+		if task.Autonomous != nil && task.Autonomous.Kind == domaintask.AutonomousTaskKindPlan {
+			if r.autonomous == nil {
+				return "", errors.New("autonomous plan owner is unavailable")
+			}
+			if appsuperagent.RunQueueStopRequested(actorCtx) || ctx.Err() != nil || !r.autonomous.autonomousWindow(actorCtx, actorID, r.autonomous.now()) {
+				return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+			}
+			decision, err = r.autonomous.preparePlanDecision(actorCtx, task, output)
+			if err != nil {
+				if _, invalid := err.(autonomousInvalidDecisionError); invalid {
+					return "", r.closePrivateTaskFailure(ctx, task, run, actorID, err)
+				}
+				return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+			}
+			if err := r.saveAutonomousPlanDecision(actorCtx, task, run, actorID, decision); err != nil {
+				return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+			}
+		}
+		if err := r.completePrivateTaskRun(actorCtx, task, run, actorID, false); err != nil {
+			if task.Autonomous != nil {
+				return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+			}
+			return "", err
+		}
+		if err := r.afterPrivateTaskSuccess(actorCtx, task); err != nil {
 			return "", err
 		}
 		return privateTaskQueueProjectionSummary, nil
@@ -169,7 +203,16 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 	if appsuperagent.RunQueueStopRequested(actorCtx) {
 		return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
 	}
-	providerCtx, cancelProvider := context.WithCancel(actorCtx)
+	providerParent := actorCtx
+	var cancelDeadline context.CancelFunc
+	if task.Autonomous != nil {
+		if r.autonomous == nil {
+			return "", errors.New("autonomous task owner is unavailable")
+		}
+		providerParent, cancelDeadline = context.WithTimeout(actorCtx, autonomousProviderTimeout(r.autonomous.now(), r.autonomous.location()))
+		defer cancelDeadline()
+	}
+	providerCtx, cancelProvider := context.WithCancel(providerParent)
 	stopSignal := appsuperagent.RunQueueStopSignal(actorCtx)
 	watcherDone := make(chan struct{})
 	go func() {
@@ -184,7 +227,8 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 	output, workErr := worker.ExecutePrivateWork(providerCtx, input, []string{})
 	close(watcherDone)
 	cancelProvider()
-	pauseRequested := appsuperagent.RunQueueStopRequested(actorCtx) || actorCtx.Err() != nil
+	pauseRequested := appsuperagent.RunQueueStopRequested(actorCtx) || actorCtx.Err() != nil ||
+		(task.Autonomous != nil && !r.autonomous.autonomousWindow(actorCtx, actorID, r.autonomous.now()))
 	if workErr != nil {
 		if pauseRequested {
 			return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
@@ -201,21 +245,116 @@ func (r *privateTaskRunQueueRunner) process(ctx context.Context, item domainsupe
 		return "", err
 	}
 	if pauseRequested {
-		if err := r.tasks.CompletePrivateTextRun(persistCtx, task.TaskID, run.RunID, actorID, true); err != nil {
-			return "", err
+		return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+	}
+	if task.Autonomous != nil && task.Autonomous.Kind == domaintask.AutonomousTaskKindPlan {
+		if r.autonomous == nil {
+			return "", errors.New("autonomous plan owner is unavailable")
 		}
-		return "", appsuperagent.RunQueuePauseOutcome{}
+		decision, err := r.autonomous.preparePlanDecision(actorCtx, task, output)
+		if err != nil {
+			if _, invalid := err.(autonomousInvalidDecisionError); invalid {
+				return "", r.closePrivateTaskFailure(ctx, task, run, actorID, err)
+			}
+			return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+		}
+		if err := r.saveAutonomousPlanDecision(actorCtx, task, run, actorID, decision); err != nil {
+			return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+		}
 	}
 	if err := r.tasks.CompletePrivateTextRun(persistCtx, task.TaskID, run.RunID, actorID, false); err != nil {
+		if task.Autonomous != nil {
+			return "", r.pausePrivateTaskRun(actorCtx, task, run, actorID)
+		}
+		return "", err
+	}
+	if err := r.afterPrivateTaskSuccess(persistCtx, task); err != nil {
 		return "", err
 	}
 	return privateTaskQueueProjectionSummary, nil
+}
+
+func (r *privateTaskRunQueueRunner) privateTaskInputText(ctx context.Context, task domaintask.Task) (string, error) {
+	if task.Autonomous == nil {
+		return task.Title, nil
+	}
+	if r.autonomous == nil {
+		return "", errors.New("autonomous instruction owner is unavailable")
+	}
+	if task.Autonomous.Kind == domaintask.AutonomousTaskKindPlan {
+		shared, err := r.tasks.Context(ctx, task.TaskID)
+		if err != nil {
+			return "", err
+		}
+		if shared.UserIntent == "" || len(shared.UserIntent) > autonomousEvaluationPromptMax || shared.CurrentPlan == "" {
+			return "", errors.New("autonomous plan prompt is missing or exceeds its bounded context")
+		}
+		return shared.UserIntent, nil
+	}
+	if task.Autonomous.Kind != domaintask.AutonomousTaskKindWork {
+		return "", errors.New("autonomous Task kind is unsupported")
+	}
+	plan, err := r.tasks.Get(ctx, task.Autonomous.SourceTaskID)
+	if err != nil {
+		return "", err
+	}
+	sharedPlan, err := r.tasks.Context(ctx, plan.TaskID)
+	if err != nil {
+		return "", err
+	}
+	if plan.Autonomous == nil || plan.Autonomous.Kind != domaintask.AutonomousTaskKindPlan || plan.Status != domaintask.StatusSucceeded ||
+		sharedPlan.AutonomousDecision == nil || sharedPlan.AutonomousDecision.Decision != domaintask.AutonomousDecisionContinue ||
+		sharedPlan.AutonomousDecision.Title != task.Title {
+		return "", errors.New("autonomous work does not match its saved source plan decision")
+	}
+	shared, err := r.tasks.Context(ctx, task.TaskID)
+	if err != nil {
+		return "", err
+	}
+	decision := sharedPlan.AutonomousDecision
+	if shared.UserIntent != decision.Objective || shared.CurrentPlan != decision.Completion {
+		return "", errors.New("autonomous work instruction differs from its saved objective and completion condition")
+	}
+	return fmt.Sprintf("Task: %s\nObjective: %s\nCompletion condition: %s\n\nProduce only the private CHAT text result. Do not use or request tools, external actions, network access, file writes, shell commands, purchases, messages, or state changes.", task.Title, shared.UserIntent, shared.CurrentPlan), nil
+}
+
+func (r *privateTaskRunQueueRunner) afterPrivateTaskSuccess(ctx context.Context, task domaintask.Task) error {
+	if r == nil || r.autonomous == nil || task.Autonomous == nil {
+		return nil
+	}
+	callbackCtx, cancel := privateTaskPersistenceContext(ctx)
+	defer cancel()
+	if err := r.autonomous.afterPrivateTaskSuccess(callbackCtx, task); err != nil {
+		log.Printf("autonomous successor registration pending actor=%s task_id=%s kind=%s error=%v", task.Assignee, task.TaskID, task.Autonomous.Kind, err)
+	}
+	return nil
+}
+
+func (r *privateTaskRunQueueRunner) saveAutonomousPlanDecision(ctx context.Context, task domaintask.Task, run domaintask.Run, actorID string, decision domaintask.AutonomousDecision) error {
+	if r == nil || r.autonomous == nil {
+		return errors.New("autonomous plan owner is unavailable")
+	}
+	if err := ctx.Err(); err != nil || appsuperagent.RunQueueStopRequested(ctx) || !r.autonomous.autonomousWindow(ctx, actorID, r.autonomous.now()) {
+		if err != nil {
+			return err
+		}
+		return context.Canceled
+	}
+	persistCtx, cancel := privateTaskPersistenceContext(ctx)
+	defer cancel()
+	return r.autonomous.savePlanDecision(persistCtx, task, run, actorID, decision)
 }
 
 func (r *privateTaskRunQueueRunner) pausePrivateTaskRun(ctx context.Context, task domaintask.Task, run domaintask.Run, actorID string) error {
 	persistCtx, cancel := privateTaskPersistenceContext(ctx)
 	defer cancel()
 	if err := r.tasks.CompletePrivateTextRun(persistCtx, task.TaskID, run.RunID, actorID, true); err != nil {
+		if task.Autonomous != nil {
+			// Keep the queue scheduler out of its generic failure path. Its pause
+			// owner check decides whether the Task is waiting or still needs exact
+			// startup recovery; the Task itself remains canonical either way.
+			return errors.Join(appsuperagent.RunQueuePauseOutcome{}, err)
+		}
 		return err
 	}
 	return appsuperagent.RunQueuePauseOutcome{}
