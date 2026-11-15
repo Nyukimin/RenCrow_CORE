@@ -85,7 +85,7 @@ func TestSnapshotExposesBoundedHomeProvenanceAndConfirmedActorState(t *testing.T
 			"room_id": "upper-room-2-1", "activity_id": "home:mio:3", "activity_kind": "move",
 			"activity_started_at": "2026-11-14T01:02:03Z", "activity_due_at": "2026-11-14T01:02:08Z",
 			"position": []float64{1.25, 2.5, 0}, "slot_id": "bed-mio", "target_room_id": "upper-room-2-1",
-			"target_slot_id": "bed-mio", "move_phase": "moving", "move_route_id": "route-3",
+			"target_slot_id": "bed-mio", "move_phase": "in_transit", "move_route_id": "route-3",
 			"mirror_pose_completions": 2, "home_scene_sha256": testHash,
 		}
 		body["home_scene_sha256"] = testHash
@@ -114,7 +114,7 @@ func TestSnapshotExposesBoundedHomeProvenanceAndConfirmedActorState(t *testing.T
 	actor := reflect.ValueOf(snapshot.Actors[0])
 	for field, want := range map[string]string{
 		"ActivityKind": "move", "SlotID": "bed-mio", "TargetRoomID": "upper-room-2-1",
-		"TargetSlotID": "bed-mio", "MovePhase": "moving", "MoveRouteID": "route-3",
+		"TargetSlotID": "bed-mio", "MovePhase": "in_transit", "MoveRouteID": "route-3",
 	} {
 		got := actor.FieldByName(field)
 		if !got.IsValid() || got.String() != want {

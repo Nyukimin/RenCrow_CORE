@@ -715,6 +715,45 @@ func (r *agentRoutineRuntime) routineWorldFreshActor(ctx context.Context, actorI
 	return routineSnapshotRead{}, worldread.Actor{}, errors.New("WORLD snapshot does not confirm the configured actor is present")
 }
 
+// routinePendingPrivateHomeMoves returns only receipt-verified private-home moves
+// whose exact WORLD lifecycle has not been confirmed terminal.
+func routinePendingPrivateHomeMoves(state agentroutine.State, actorID, roomID string) []routineWorldOperation {
+	if state.Pending == nil || state.Pending.ActorID != actorID || actorID == "" || roomID == "" {
+		return nil
+	}
+	progress, err := decodeRoutineProgress(state.Pending.Output)
+	if err != nil || progress.World == nil {
+		return nil
+	}
+	operations := make([]routineWorldOperation, 0, 1)
+	for index := len(progress.World.Operations) - 1; index >= 0; index-- {
+		operation := progress.World.Operations[index]
+		if operation.Action != worldread.HomeActionMove || operation.EventKind != "life.home.move.started" ||
+			operation.ActorID != actorID || operation.Payload.ActorID != actorID || operation.Payload.RoomID != roomID ||
+			operation.TargetRoomID != roomID || operation.ReceiptID == "" || operation.ReceiptStatus != "committed" ||
+			!operation.EventVerified || operation.ActivityID == "" || operation.ActivityKind != "move" ||
+			operation.RouteID == "" || operation.SceneSHA256 == "" || operation.Purpose == "" ||
+			operation.Key != routineWorldOperationKey(state.Pending.ID, actorID, operation.Purpose) {
+			continue
+		}
+		if _, finished := routineWorldActivityWasConfirmedFinished(progress, actorID, operation.ActivityID); finished ||
+			routineWorldActivityWasConfirmedStopped(progress, actorID, operation.ActivityID) {
+			continue
+		}
+		operations = append(operations, operation)
+	}
+	return operations
+}
+
+// routineWorldMoveMatchesPrivateHome ties an active private-room move to
+// its committed CORE-owned WORLD receipt and exact scene binding.
+func routineWorldMoveMatchesPrivateHome(snapshot worldread.Snapshot, actor worldread.Actor, operation routineWorldOperation) bool {
+	return actor.Present && actor.ActivityKind == "move" && actor.MovePhase == "in_transit" &&
+		actor.ActivityID == operation.ActivityID && actor.TargetRoomID == operation.TargetRoomID &&
+		actor.MoveRouteID == operation.RouteID && actor.HomeSceneSHA256 == operation.SceneSHA256 &&
+		snapshot.HomeSceneSHA256 == operation.SceneSHA256
+}
+
 func (r *agentRoutineRuntime) verifyRoutineWorldSnapshot(read routineSnapshotRead, actor worldread.Actor, operation routineWorldOperation) error {
 	if read.snapshot.StateSeq < operation.StateSeq || !actor.Present {
 		return errors.New("fresh WORLD snapshot predates the committed life receipt")
