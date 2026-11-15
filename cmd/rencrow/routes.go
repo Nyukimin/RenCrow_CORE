@@ -67,6 +67,7 @@ func registerChannelRoutes(mux *http.ServeMux, cfg *config.Config, dependencies 
 
 func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies, debugSystemOpts viewer.DebugSystemOptions) {
 	databasePaths := viewerDatabasePaths(cfg)
+	_, boardAgentWorkOwnerToken := viewerEventsCMDOwnerCredentials(cfg)
 	viewerfeature.RegisterBaseRoutes(mux, viewerfeature.Dependencies{Base: viewerfeature.BaseRoutes{
 		Page:                         viewer.HandlePage,
 		XBookmarksPage:               viewer.HandleXBookmarksPage,
@@ -123,6 +124,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 			dependencies.taskStore,
 			runtimePublicTaskVisibility(dependencies.sessionVisibility),
 		),
+		BoardAgentWork: viewer.NewBoardAgentWorkHandler(newRuntimeBoardAgentWorkReader(dependencies), boardAgentWorkOwnerToken),
 	}})
 	avatarfeature.RegisterRoutes(mux, avatarfeature.Dependencies{Routes: avatarfeature.Routes{
 		CharacterRuntime: dependencies.characterRuntime,

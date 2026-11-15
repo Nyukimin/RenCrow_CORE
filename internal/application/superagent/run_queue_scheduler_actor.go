@@ -113,19 +113,7 @@ func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*do
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		left, right := candidates[i], candidates[j]
-		if left.task.Priority != right.task.Priority {
-			return taskPriorityRank(left.task.Priority) > taskPriorityRank(right.task.Priority)
-		}
-		if !left.task.CreatedAt.Equal(right.task.CreatedAt) {
-			return left.task.CreatedAt.Before(right.task.CreatedAt)
-		}
-		if left.task.TaskID != right.task.TaskID {
-			return string(left.task.TaskID) < string(right.task.TaskID)
-		}
-		if !left.item.CreatedAt.Equal(right.item.CreatedAt) {
-			return left.item.CreatedAt.Before(right.item.CreatedAt)
-		}
-		return string(left.item.QueueItemID) < string(right.item.QueueItemID)
+		return ActorQueueTaskLess(left.task, left.item, right.task, right.item)
 	})
 	admission, hasAdmission := s.taskOwner.(RunQueueTaskAdmissionChecker)
 	visitedTasks := make(map[modulecore.TaskID]struct{}, len(candidates))
@@ -147,6 +135,25 @@ func (s *RunQueueScheduler) PlanForActor(ctx context.Context, actor string) (*do
 		return &item, candidate.task, nil
 	}
 	return nil, domaintask.Task{}, nil
+}
+
+// ActorQueueTaskLess is the canonical read-only ordering for one actor's
+// task queue. Viewer projections use the same ordering so scheduled and
+// task-only work remain in the scheduler's priority/date/ID order.
+func ActorQueueTaskLess(leftTask domaintask.Task, leftItem domainsuperagent.RunQueueItem, rightTask domaintask.Task, rightItem domainsuperagent.RunQueueItem) bool {
+	if leftTask.Priority != rightTask.Priority {
+		return taskPriorityRank(leftTask.Priority) > taskPriorityRank(rightTask.Priority)
+	}
+	if !leftTask.CreatedAt.Equal(rightTask.CreatedAt) {
+		return leftTask.CreatedAt.Before(rightTask.CreatedAt)
+	}
+	if leftTask.TaskID != rightTask.TaskID {
+		return string(leftTask.TaskID) < string(rightTask.TaskID)
+	}
+	if !leftItem.CreatedAt.Equal(rightItem.CreatedAt) {
+		return leftItem.CreatedAt.Before(rightItem.CreatedAt)
+	}
+	return string(leftItem.QueueItemID) < string(rightItem.QueueItemID)
 }
 
 // RunPlanned reserves and executes exactly the selected queue item. A false,

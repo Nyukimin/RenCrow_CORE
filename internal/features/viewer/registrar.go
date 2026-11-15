@@ -66,6 +66,7 @@ type BaseRoutes struct {
 	HobbyMusicImport             http.HandlerFunc
 	HobbyTopicCandidatesGenerate http.HandlerFunc
 	LivingHeartbeat              http.HandlerFunc
+	BoardAgentWork               http.HandlerFunc
 }
 
 // RegisterRoutes reserves the feature route boundary.
@@ -128,6 +129,7 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/hobby-graph/music/import", base.HobbyMusicImport)
 	registerRoute(mux, "/viewer/hobby-graph/topic-candidates/generate", base.HobbyTopicCandidatesGenerate)
 	registerRoute(mux, "/viewer/living/heartbeat", base.LivingHeartbeat)
+	registerRoute(mux, "/viewer/board/agent-work", base.BoardAgentWork)
 }
 
 func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {

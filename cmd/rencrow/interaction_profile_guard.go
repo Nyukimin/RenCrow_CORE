@@ -66,6 +66,12 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_CMD",
 		allow:  cmdDiagnosticsInteractionAllowed,
 	},
+	"board-studio-readonly": {
+		client: "RenCrow_BOARD",
+		allow: func(method, path string) bool {
+			return method == http.MethodGet && path == "/viewer/board/agent-work"
+		},
+	},
 	"cmd-control": {
 		client: "RenCrow_CMD",
 		allow:  cmdControlInteractionAllowed,

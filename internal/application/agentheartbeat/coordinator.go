@@ -182,6 +182,18 @@ type LivingActivity struct {
 // false until the owner has started and after it shuts down, so callers cannot
 // turn a lost scheduler into an idle-looking response.
 func (s *Scheduler) LivingSnapshot(ctx context.Context, titleLookup func(context.Context, modulecore.TaskID) (string, error)) ([]LivingActivity, bool) {
+	return s.livingSnapshot(ctx, titleLookup, false)
+}
+
+// OwnerLivingSnapshot returns the same scheduler facts as LivingSnapshot but
+// permits the authenticated CORE owner projection to resolve the current
+// Task title for every source. Public callers must keep using LivingSnapshot
+// with their publication visibility policy.
+func (s *Scheduler) OwnerLivingSnapshot(ctx context.Context, titleLookup func(context.Context, modulecore.TaskID) (string, error)) ([]LivingActivity, bool) {
+	return s.livingSnapshot(ctx, titleLookup, true)
+}
+
+func (s *Scheduler) livingSnapshot(ctx context.Context, titleLookup func(context.Context, modulecore.TaskID) (string, error), ownerView bool) ([]LivingActivity, bool) {
 	if s == nil {
 		return nil, false
 	}
@@ -217,7 +229,7 @@ func (s *Scheduler) LivingSnapshot(ctx context.Context, titleLookup func(context
 			if state.active.stopClosed {
 				activity.State = "stopping"
 			}
-			if state.active.source == workSourcePrivate && state.active.visibilityTaskID.Validate() == nil {
+			if (ownerView || state.active.source == workSourcePrivate) && state.active.visibilityTaskID.Validate() == nil {
 				titleCandidates = append(titleCandidates, struct {
 					activityIndex int
 					taskID        modulecore.TaskID

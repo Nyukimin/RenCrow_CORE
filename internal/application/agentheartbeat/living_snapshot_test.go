@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestLivingSnapshotTracksLiveLeaseStopAndRelease(t *testing.T) {
@@ -109,6 +110,31 @@ func TestLivingSnapshotIsUnavailableUntilSchedulerStarts(t *testing.T) {
 	scheduler := New([]string{"mio"}, Sources{}, nil)
 	if activities, ready := scheduler.LivingSnapshot(context.Background(), nil); ready || activities != nil {
 		t.Fatalf("unstarted scheduler snapshot = (%+v, %t), want unavailable", activities, ready)
+	}
+}
+
+func TestOwnerLivingSnapshotCanResolveNonPrivateActivityTitleWithoutChangingPublicView(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	scheduler := New([]string{"mio"}, Sources{}, nil)
+	scheduler.started = true
+	scheduler.agents["mio"].active = &reservation{
+		actor: "mio", source: workSourceBoard, activityKind: ActivityKindBoard, visibilityTaskID: taskID,
+	}
+	lookup := func(_ context.Context, got modulecore.TaskID) (string, error) {
+		if got != taskID {
+			t.Fatalf("title lookup task ID = %s, want %s", got, taskID)
+		}
+		return "owner-only board title", nil
+	}
+
+	ownerView, ready := scheduler.OwnerLivingSnapshot(context.Background(), lookup)
+	if !ready || len(ownerView) != 1 || ownerView[0].State != "running" || ownerView[0].ActivityKind != string(ActivityKindBoard) || ownerView[0].Title != "owner-only board title" {
+		t.Fatalf("owner snapshot = (%+v, %t), want board activity title", ownerView, ready)
+	}
+
+	publicView, ready := scheduler.LivingSnapshot(context.Background(), lookup)
+	if !ready || len(publicView) != 1 || publicView[0].Title != "" {
+		t.Fatalf("public snapshot = (%+v, %t), want no non-private activity title", publicView, ready)
 	}
 }
 

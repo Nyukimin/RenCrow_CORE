@@ -23,6 +23,7 @@ func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 		RuntimeCapabilities:         statusHandler(http.StatusEarlyHints),
 		PersonRelatedCatalog:        statusHandler(http.StatusAlreadyReported),
 		LivingHeartbeat:             statusHandler(http.StatusOK),
+		BoardAgentWork:              statusHandler(http.StatusOK),
 	}})
 
 	tests := []struct {
@@ -43,6 +44,7 @@ func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 		{path: "/viewer/capabilities", want: http.StatusEarlyHints},
 		{path: "/viewer/movie-catalog/person-related", want: http.StatusAlreadyReported},
 		{path: "/viewer/living/heartbeat", want: http.StatusOK},
+		{path: "/viewer/board/agent-work", want: http.StatusOK},
 	}
 
 	for _, tt := range tests {
