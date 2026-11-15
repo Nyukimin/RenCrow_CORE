@@ -6,7 +6,12 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 
 ## ハートビートと着手
 
-- `rencrow run`の常駐処理で、10秒ごとに実行状態とタスクを確認する。CLIの判断は決定的に実行し、LLMを呼ばない。実行処理や遅い依存先を待って全エージェントの確認を止めない。
+- 通常のWork継続は「Work完了→結果評価→必要な次intentの登録」である。Work ownerは結果を正本へ保存して再読・評価し、必要な後続intentをその所有機能の既存正本へ永続化した後に実行枠を解放する。結果Taskとqueue intentが別owner storeにある場合、それぞれの保存確認を行うが、同一DBへの原子的な一括保存を意味しない。schedulerは登録済みintentを通常の優先順位で再選択する。LLMに任意の新しいTaskを発明させない。
+- 専用TaskはTask ownerが保存済み結果を再読し、Task／Runの成功を検証して対応するqueue itemをterminalにする。`Work.Run`がnil errorを返しただけでは成功としない。BOARD workはcommit済み応答と配送状態を照合する。pauseするworkはcheckpointとinsert-only successor intentをdurably保存してから停止を完了する。どれかの保存に失敗したら成功を報告せず、ownerの既存再開・回収経路に残す。
+- `rencrow run`の常駐処理は、周期heartbeatによる永続sourceの再確認・取りこぼし回収を行う。既定の10秒周期は未通知intent、期限切れclaim、停止後の未照合結果を確認する周期であり、通常の次作業を待たせる間隔ではない。各periodic sweepは新しい重複抑制epochであり、durable ownerの状態を再検証する。決定的な確認はLLMを呼ばず、遅い依存先やWork実行を待って他actorの確認を止めない。
+- 実行中に保留されたperiodic要求は、Work解放後もtimer契機とそれに伴うIdle許可を保持する。これはWork完了だけを契機とする即時再scanでは新規Idleを開始しない規則とは別である。
+- CORE所有のTask enqueueは、正規handlerがqueue intentをdurable insertした後に`Scheduler.Wake(actor)`で該当actorの再確認を促す。Wakeは低遅延hintであり、Task／Run、queue、BOARD、日課記録が唯一の正本である。外部BOARD/browser側のarrival通知はこの配線契約に含めず、既存pollingとperiodic sweepで回収する。Wake欠落や失敗はintentを取消さず、次のperiodic heartbeat、startup scan、recovery sweepが回収する。Wakeはprocess lifetime contextで動作し、HTTP request contextを保持しない。busy／scanning／foreground pending中の通知はcoalesceし、同一即時継続系列内の同一sourceとWork IDは重複実行しない。Wake spamで重複抑制を解除しない。periodic sweepでは正本状態に基づく再試行を許す。
+- 仕事の実行がerrorまたはpanicで終わった場合、結果を成功へ丸めず診断を記録し、owner sourceを再照会する。別のeligible intentがすでにdurableなら通常優先順位で選択できる。同一series内に同じsource／Work IDが再提示され、進展をowner正本で確認できない場合はそのscanを止め、低優先度Private／Idleへフォールスルーしない。Wakeでは抑制epochをresetせず、periodic sweepで新epochを作ってownerを再検証する。
 - `heartbeat.agent_scheduler_enabled`で有効化する。Workstream、収集、Backlogなどの既存周期処理にはそれぞれの間隔を使う。
 - 実行中かどうかはエージェント単位で判定する。同一エージェントで同時に実行するタスクは原則1件とする。既存の全体、module、routeの実行制限も適用する。
 - PORTAL向けのread-only投影は`GET /viewer/living/heartbeat`だけで提供する。queryなしの直接loopback接続を要求し、schedulerが未開始または停止済みの場合は503を返す。`observed_at`と各actorの`waiting`／`checking`／`running`／`stopping`、実行中だけの`board`／`private`／`game`／`routine`／`foreground`分類を返す。group routineは共有leaseに参加する各actorへ同じ`routine`分類を返す。Task ID、prompt、エラー、BOARD本文は投影しない。titleは実行中のcanonical Taskを再読し、現在のpublic publication bindingを既存visibility policyが許可した場合だけ返す。
@@ -15,7 +20,7 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 - BOARDの許可済みチャンネルで担当エージェントを指定し、「仕事を頼む」でテキスト作業を依頼する。エージェントは本文を処理して同じスレッドに結果を返す。「会話する」では宛先を指定し、エージェントのメッセージの返信ボタンからも会話を続けられる。BOARDの依頼の進捗はBOARDのclaimと返信記録に残る。
 - 登録済みの専用Taskは `rencrow tasks enqueue <task_id>` でキューに入れる。起動中のCOREが既存のローカル認証で受け付け、Task IDに対応する初回実行を一度だけ登録する。同じTask IDを再送した場合は既存の受付結果を返す。Runは、ハートビートが着手するときにTaskの所有者が発行する。
 - BOARDの読み取りが無応答などで失敗した場合は、BOARDを利用できない状態として記録する。復旧を並行して進めながら、空いたエージェントは自分専用のキューから作業する。BOARD復旧後は次のタスク選択から通常の順序に戻る。
-- 両方に仕事がなければ、許可済みの能力でエージェント間の会話、Web閲覧、制作、ゲームなどの活動を選べる。空き時間の活動中もCLIの確認を続け、仕事が来たら活動を終了できる地点で切り替える。定型の活動はCLIで完結し、意味判断や生成が必要な工程でLLMを起動する。
+- timer／startup／recoveryの許可されたIdle起動契機で両方の仕事がないと確認した場合だけ、許可済みの能力でエージェント間の会話、Web閲覧、制作、ゲームなどを開始できる。活動中もCLIの確認を続け、仕事が来たら活動を終了できる地点で切り替える。通常Work完了やarrival Wakeでは新規Idle活動を開始しない。定型の活動はCLIで完結し、意味判断や生成が必要な工程でLLMを起動する。
 
 ## 空き時間の日課と日記
 
@@ -23,10 +28,10 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 
 ### ハートビートからの日課の着手
 
-1. COREは10秒ごとに、各キャラクターの実行枠、優先会話、自分宛てのBOARD、専用キューをCLIで確認する。仕事は優先会話、自分宛てのBOARD、専用キューの順で扱う。各キューでは優先度の高いもの、同じ優先度なら古いものを先に扱う。再開可能な仕事もこの選択に含める。
-2. BOARDが復旧中なら担当の有無は不明として扱い、専用キューを進める。新しい雑談・趣味は、BOARDが読めて着手・再開できる仕事がないと確認できたときに候補にする。
-3. 空き時間には、現在の時刻、睡眠状態、在室、日課の進行記録から次の行動を選ぶ。就寝・起床の時刻に達していれば先に状態を更新する。起きている間は、前日までの未作成の日記を古い日付からまとめ、それから時刻に応じた活動へ進む。実行を伴う日課は同じキャラクターの実行枠で低優先度のTaskとして1件ずつ積む。進行中・再開待ちの同じ日課には既存のTaskを使う。くつろぎや睡眠が続く間は状態を保持する。
-4. 仕事が来たら、日課を安全な区切りで一時停止または終了し、仕事に切り替える。空いたら、その時点の時間帯と参加者を照合する。条件が合う日課は同じTaskのチェックポイントから再開し、条件が変わっていれば実行した分を記録して閉じる。実行中に就寝予定や朝9時などの境界に達したときも、安全な区切りで閉じる。
+1. Timer、process start、またはrecovery sweepの許可された契機で、COREは各キャラクターの実行枠、優先会話、自分宛てのBOARD、専用キューを確認する。arrival WakeやWork完了後の即時継続では、仕事の再選択だけを行い、新しい日課・雑談・ゲームは開始しない。仕事は優先会話、自分宛てのBOARD、専用キューの順で扱う。各キューでは優先度の高いもの、同じ優先度なら古いものを先に扱う。再開可能な仕事もこの選択に含める。
+2. BOARDが復旧中なら担当の有無は不明として扱い、専用キューを進める。新しい雑談・趣味は、許可されたIdle起動契機にBOARDが読めて着手・再開できる仕事がないと確認できたときだけ候補にする。
+3. 許可されたIdle起動契機で仕事がない場合、現在の時刻、睡眠状態、在室、日課の進行記録から次の行動を選ぶ。就寝・起床の時刻に達していれば先に状態を更新する。起きている間は、前日までの未作成の日記を古い日付からまとめ、それから時刻に応じた活動へ進む。実行を伴う日課は同じキャラクターの実行枠で低優先度のTaskとして1件ずつ積む。進行中・再開待ちの同じ日課には既存のTaskを使う。くつろぎや睡眠が続く間は状態を保持する。
+4. 仕事が来たら、日課を安全な区切りで一時停止または終了し、仕事に切り替える。Work完了またはforeground解放だけでは日課を開始しない。次の許可されたtimer／startup／recovery契機で時間帯と参加者を照合し、条件が合う日課は同じTaskのcheckpointから再開し、条件が変わっていれば実行した分を記録して閉じる。実行中に就寝予定や朝9時などの境界に達したときも、安全な区切りで閉じる。
 
 選択、時刻・在室の照合、登録、復旧確認、日記の投稿と照合はCLIで行う。LLMは発話、資料の意味理解、創作、本人の感想など、生成や意味判断が必要な工程で呼ぶ。COREはTaskと認知活動を、WORLDは位置・在室・移動・姿勢などの確定状態を管理する。会話や趣味ツールの実行にはCOREの認証済みの本人と既存の権限を使う。 [COREとWORLDの接続境界](04_アーキテクチャ概要.md)
 
@@ -154,13 +159,13 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/com.rencrow.resilience-st
 
 | ID | 検証すること |
 | --- | --- |
-| HB-01 | 実行中や依存先の無応答時も10秒周期の確認を継続する。確認のみの周期はLLM呼出数が0。 |
+| HB-01 | 実行中や依存先の無応答時も10秒周期の永続source確認を継続する。確認のみの周期はLLM呼出数が0。周期sweepは新しい再検証epochを始める。 |
 | HB-02 | 同一エージェントの会話、BOARD、専用タスクが同時に到着しても実行は1件。別エージェントは許容される範囲で並行する。 |
 | HB-03 | 自分宛てのBOARD、専用キュー、空き時間の順。各キュー内で優先度と古さを守る。他の担当のみのBOARDやBOARD復旧中でも専用タスクが進む。 |
 | HB-04 | 高優先の到着で保存と停止完了のあとに優先タスクを開始する。中断Taskは同じTask IDの後続Runで保存地点から進む。 |
 | HB-05 | タスクの固着と依存先の無応答を検出し、原因解消後に進行を確認する。BOARD復旧後はBOARD優先に戻る。 |
 | HB-06 | CORE停止を外部監視が検知し、RenCrowシステムを依存順に再起動する。旧実行と完了済み操作を照合し、再開可能なタスクだけが続きから進む。 |
-| HB-07 | BOARDと専用キューに着手可能な仕事がない場合だけ日課Taskが作られる。連続したハートビートで増えず、仕事の到着で日課から切り替わる。BOARD復旧中は専用タスクが進む。 |
+| HB-07 | timer／startup／recoveryの許可契機にBOARDと専用キューの着手可能仕事がない場合だけ新規日課Taskを作る。通常完了、arrival Wake、foreground解放ではIdleを新規開始しない。既存routine Work内の複数工程は継続できる。仕事の到着で日課から切り替わり、BOARD復旧中は専用タスクが進む。 |
 | HB-08 | 22時・0時・2時・5時・6時・8時・9時の境界、仕事で就寝できなかった日、5時台に起床した日、睡眠中の再起動で、表に沿った行動になる。 |
 | HB-09 | 朝は両方を選べる4回の着手が雑談3回・趣味1回になる。単独、参加競合、再開、再起動を挟んでも回数が正しく、仕事中や睡眠中の相手を待たせない。 |
 | HB-10 | 4人の設定済みの趣味を実際の許可済みツールで行い、結果を保存する。Kuroの確認済みポーズが増え、再送で重複しない。趣味未指定のキャラクターにも共通の日課が適用される。 |
@@ -181,6 +186,15 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/com.rencrow.resilience-st
 | HB-16 | JSTの日付に対応するTask/Run、会話、日課、WORLDの動作、実際に手を打ったゲーム、再生実績と本人の感想をBOARDで読む。日付の境界、途中経過、重複、停止後の再送を含めて確認する。 |
 
 CLIは日課の着手、移動の要求と到着の照合、時刻と再生位置の判定、実績収集、日記の配送を行う。COREはTaskの停止と再開を管理し、WORLDは本人とTimelineを照合したCommandのReceiptを出す。ブラウザーは実際に進んだメディア位置を返し、GAMESは実行済みのターンを返す。LLMは雑談、創作、確認済みの活動を振り返る感想に使う。
+
+### 継続・Wakeの受入対応表
+
+| ID | 受入条件（統合testはTask／Run／queueのdurable結果も照合する） |
+| --- | --- |
+| HB-17 | Private Taskは保存済み結果をowner経由で再読・検証してからTask／Run成功とqueue terminalを確定する。`Run`のnil errorだけでは成功せず、保存失敗とshutdownは未完了状態を保つ。 |
+| HB-18 | Scheduler unitではA.Runがowner相当のsource stateへBをcommitし、B.RunがCをcommitして、追加TickなしにA→B→Cを評価・実行する。runtime integrationでは正規enqueue HTTP handlerのWakeで実Task Aを開始し、実行中にWakeなしでdurable済みB/C intentを見せ、A完了rescanだけでA/B/CのTask・Run・queueを全件terminal保存する。これは既存private ownerが後続Taskを生成する契約を主張しない。既存receiptの再送もWakeし、受付済みintentはWake失敗で取消・HTTP失敗にしない。 |
+| HB-19 | busy／scan中／foreground pending中のWakeをcoalesceし、同一seriesのsource＋Work ID再提示を実行・低優先sourceへのfallthroughに使わない。Wake spamは抑制を解除せず、次periodic epochはownerを再照会する。 |
+| HB-20 | 正常完了、arrival Wake、foreground解放ではIdle／game／routineを新規開始せず、timer／startup／recoveryだけが仕事不在を確認してIdleを開始する。既存routine Workの工程継続は保つ。 |
 
 ## 現行実装の境界
 

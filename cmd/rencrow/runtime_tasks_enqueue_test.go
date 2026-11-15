@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,6 +27,91 @@ import (
 )
 
 const taskEnqueueTestToken = "0123456789abcdef0123456789abcdef"
+
+type taskEnqueueTestWaker struct {
+	actors          []string
+	queue           taskEnqueueRunQueueStore
+	taskID          modulecore.TaskID
+	observedDurable bool
+	err             error
+}
+
+type taskEnqueueFailingInsertStore struct {
+	taskEnqueueRunQueueStore
+}
+
+func (s taskEnqueueFailingInsertStore) InsertRunQueueItemIfAbsent(context.Context, domainsuperagent.RunQueueItem) (domainsuperagent.RunQueueItem, bool, error) {
+	return domainsuperagent.RunQueueItem{}, false, errors.New("injected queue persistence failure")
+}
+
+func (w *taskEnqueueTestWaker) Wake(actor string) error {
+	w.actors = append(w.actors, actor)
+	if w.queue != nil {
+		item, found, err := w.queue.FindRunQueueItemByTaskIntent(context.Background(), w.taskID, domainsuperagent.RunQueueIntentPrivateFirstChat)
+		if err != nil {
+			return fmt.Errorf("read queue receipt in Wake: %w", err)
+		}
+		if !found || item.Status != "queued" {
+			return fmt.Errorf("Wake ran before durable queue receipt: found=%t status=%s", found, item.Status)
+		}
+		w.observedDurable = true
+	}
+	return w.err
+}
+
+func TestTaskEnqueueWakesAfterDurableReceiptIncludingRetryAndWakeFailure(t *testing.T) {
+	owner, queue, task := newTaskEnqueueFixture(t, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "midori", Title: "wake only after durable enqueue",
+	}, domaintask.SharedRoleContext{})
+	waker := &taskEnqueueTestWaker{queue: queue, taskID: task.TaskID}
+	handler := &taskEnqueueHandler{
+		ownerID: "ren", token: []byte(taskEnqueueTestToken), tasks: owner, queue: queue,
+		waker: waker, agentSchedulerEnabled: true,
+	}
+	unauthorized := serveTaskEnqueueRequest(handler, http.MethodPost, "127.0.0.1:1234", "", `{"task_id":"`+string(task.TaskID)+`"}`)
+	if unauthorized.Code != http.StatusUnauthorized || len(waker.actors) != 0 {
+		t.Fatalf("unauthorized enqueue status=%d wake actors=%v; want denial before Wake", unauthorized.Code, waker.actors)
+	}
+	first := serveTaskEnqueueRequest(handler, http.MethodPost, "127.0.0.1:1234", taskEnqueueTestToken, `{"task_id":"`+string(task.TaskID)+`"}`)
+	if first.Code != http.StatusOK || !reflect.DeepEqual(waker.actors, []string{"midori"}) || !waker.observedDurable {
+		t.Fatalf("first enqueue status=%d wake actors=%v body=%s; want durable success then one actor wake", first.Code, waker.actors, first.Body.String())
+	}
+	items, err := queue.ListRunQueueItems(context.Background(), 10)
+	if err != nil || len(items) != 1 || items[0].Status != "queued" {
+		t.Fatalf("queue immediately after Wake=%+v err=%v; want one already durable queued receipt", items, err)
+	}
+	waker.err = errors.New("scheduler is stopping")
+	duplicate := serveTaskEnqueueRequest(handler, http.MethodPost, "127.0.0.1:1234", taskEnqueueTestToken, `{"task_id":"`+string(task.TaskID)+`"}`)
+	if duplicate.Code != http.StatusOK || !reflect.DeepEqual(waker.actors, []string{"midori", "midori"}) {
+		t.Fatalf("duplicate enqueue status=%d wake actors=%v body=%s; want original receipt and catch-up Wake", duplicate.Code, waker.actors, duplicate.Body.String())
+	}
+	var receipt taskEnqueueReceipt
+	if err := json.Unmarshal(duplicate.Body.Bytes(), &receipt); err != nil || receipt.Status != "existing" || receipt.QueueItemID != items[0].QueueItemID {
+		t.Fatalf("duplicate receipt=%+v err=%v; want original accepted receipt despite Wake error", receipt, err)
+	}
+}
+
+func TestTaskEnqueueDoesNotWakeWhenAuthenticationOrDurableInsertFails(t *testing.T) {
+	owner, queue, task := newTaskEnqueueFixture(t, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "midori", Title: "no Wake before durable commit",
+	}, domaintask.SharedRoleContext{})
+	waker := &taskEnqueueTestWaker{}
+	handler := &taskEnqueueHandler{
+		ownerID: "ren", token: []byte(taskEnqueueTestToken), tasks: owner,
+		queue: taskEnqueueFailingInsertStore{taskEnqueueRunQueueStore: queue}, waker: waker, agentSchedulerEnabled: true,
+	}
+	response := serveTaskEnqueueRequest(handler, http.MethodPost, "127.0.0.1:1234", taskEnqueueTestToken, `{"task_id":"`+string(task.TaskID)+`"}`)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "run_queue_write_failed") {
+		t.Fatalf("insert failure status=%d body=%s; want durable write failure", response.Code, response.Body.String())
+	}
+	if len(waker.actors) != 0 {
+		t.Fatalf("Wake actors=%v; queue insert failure must not notify scheduler", waker.actors)
+	}
+	items, err := queue.ListRunQueueItems(context.Background(), 10)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("underlying durable queue=%+v err=%v; want no accepted intent", items, err)
+	}
+}
 
 func TestTaskEnqueueHandlerPersistsFixedPrivateGoalAndReturnsOriginalReceipt(t *testing.T) {
 	owner, queue, task := newTaskEnqueueFixture(t, domaintask.Task{
@@ -208,7 +294,7 @@ func TestTaskEnqueueRouteIsRegisteredAndLoopbackOnly(t *testing.T) {
 		}
 	})
 	runtimeStore := composeRuntimeSuperAgentStore(queue, events)
-	handler, err := newConfiguredTaskEnqueueHandler(cfg, owner, runtimeStore)
+	handler, err := newConfiguredTaskEnqueueHandler(cfg, owner, runtimeStore, nil)
 	if err != nil || handler == nil {
 		t.Fatalf("newConfiguredTaskEnqueueHandler()=(%v,%v)", handler, err)
 	}
@@ -359,7 +445,19 @@ func TestRunTasksEnqueueRequestDoesNotFollowRedirectOrForwardBearer(t *testing.T
 
 func newTaskEnqueueFixture(t *testing.T, draft domaintask.Task, shared domaintask.SharedRoleContext) (*taskmanager.Manager, *superagentpersistence.JSONLStore, domaintask.Task) {
 	t.Helper()
-	root := t.TempDir()
+	root, err := os.MkdirTemp(".", ".runtime-task-enqueue-fixture-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove Task enqueue fixture: %v", err)
+		}
+	})
 	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(root, "tasks"))
 	if err != nil {
 		t.Fatal(err)

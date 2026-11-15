@@ -2,14 +2,23 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net"
+	"net/url"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
 	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
@@ -27,6 +36,292 @@ func TestPrivateTaskRunQueueRunnerPersistsMidoriTextOnlyToCanonicalTaskAndRun(t 
 			testPrivateTaskRunQueueRunnerPersistsMidoriTextOnlyToCanonicalTaskAndRun(t, backend)
 		})
 	}
+}
+
+func TestTaskEnqueueWakeRunsDurablePrivateTasksInOneSchedulerSeries(t *testing.T) {
+	provider := &privateTaskQueueLLMProvider{response: "saved generated result"}
+	worker := newPrivateTextWorkers(map[string]llm.LLMProvider{"aka": provider}, map[string]string{
+		"aka": "Aka: complete the requested text task only.",
+	})["aka"]
+	runTaskEnqueueWakeContinuation(t, "aka", worker, 5*time.Second)
+	if provider.calls != 3 || !reflect.DeepEqual(provider.userMessages, []string{
+		"Write one concise sentence for continuation stage A.",
+		"Write one concise sentence for continuation stage B.",
+		"Write one concise sentence for continuation stage C.",
+	}) {
+		t.Fatalf("provider calls=%d messages=%q; want sequential A/B/C execution", provider.calls, provider.userMessages)
+	}
+}
+
+func TestTaskEnqueueWakeRunsConfiguredGatewayTasksInOneSchedulerSeries(t *testing.T) {
+	gatewayURL := strings.TrimSpace(os.Getenv("TEST_RENCROW_GATEWAY_URL"))
+	if gatewayURL == "" {
+		t.Skip("set TEST_RENCROW_GATEWAY_URL to explicitly enable the local production Gateway integration")
+	}
+	parsedURL, err := url.Parse(gatewayURL)
+	if err != nil || parsedURL.Scheme != "http" || net.ParseIP(parsedURL.Hostname()) == nil || !net.ParseIP(parsedURL.Hostname()).IsLoopback() {
+		t.Fatalf("TEST_RENCROW_GATEWAY_URL must be an explicit loopback HTTP URL, got %q", gatewayURL)
+	}
+	cfg := &config.Config{
+		LLMGateway: config.LLMGatewayConfig{Enabled: true, BaseURL: gatewayURL, TimeoutSec: 45},
+	}
+	primary := buildPrimaryLLMProviders(cfg, nil)
+	workers := newPrivateTextWorkers(primary.PrivateTextProviders, map[string]string{
+		"aka": "You are Aka completing a concise private text task. Reply with one short, useful sentence.",
+	})
+	worker := workers["aka"]
+	if worker == nil {
+		t.Fatal("production Gateway provider did not create the exact Aka private text worker")
+	}
+	runTaskEnqueueWakeContinuation(t, "aka", worker, 3*time.Minute)
+}
+
+type privateTaskFirstRunGate struct {
+	inner   privateTaskWorker
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *privateTaskFirstRunGate) ExecutePrivateWork(ctx context.Context, input conversation.TurnInput, allowedCapabilities []string) (string, error) {
+	var waitErr error
+	w.once.Do(func() {
+		close(w.started)
+		select {
+		case <-w.release:
+		case <-ctx.Done():
+			waitErr = ctx.Err()
+		}
+	})
+	if waitErr != nil {
+		return "", waitErr
+	}
+	return w.inner.ExecutePrivateWork(ctx, input, allowedCapabilities)
+}
+
+func runTaskEnqueueWakeContinuation(t *testing.T, actorID string, worker privateTaskWorker, waitTimeout time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	owner, _, _ := newTaskEnqueueFixture(t, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "continuation-fixture", Priority: domaintask.PriorityCritical, Title: "scheduler setup fixture outside configured actors",
+	}, domaintask.SharedRoleContext{})
+	events, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := events.Close(); err != nil {
+			t.Errorf("close event store: %v", err)
+		}
+	})
+	queue, err := superagentpersistence.NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.sqlite"), 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := queue.Close(); err != nil {
+			t.Errorf("close SuperAgent SQLite store: %v", err)
+		}
+	})
+	runtimeStore := composeRuntimeSuperAgentStore(queue, events)
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseFirstOnce sync.Once
+	gateWorker := &privateTaskFirstRunGate{inner: worker, started: firstStarted, release: releaseFirst}
+	runner := newPrivateTaskRunQueueRunner(owner, "ren", nil, nil, nil, map[string]privateTaskWorker{actorID: gateWorker})
+	legacyProcessor := &captureSuperAgentRunQueueProcessor{}
+	firstEmptyTaskList := make(chan struct{})
+	var firstEmptyTaskListOnce sync.Once
+	runQueue := appsuperagent.NewRunQueueScheduler(runtimeStore,
+		newSuperAgentRunQueueProcessor(legacyProcessor, backgroundJobFailureReporter{}, true, runner), owner,
+		appsuperagent.RunQueueSchedulerOptions{
+			LeaseDuration: time.Minute,
+			Now:           func() time.Time { return time.Now().UTC() },
+			LeaseToken:    func() (string, error) { return "private-continuation-series-lease", nil },
+			ActorTaskLister: func(ctx context.Context, listedActorID string, limit int) ([]domaintask.Task, error) {
+				tasks, listErr := owner.List(ctx, domaintask.Filter{Assignee: listedActorID, Status: domaintask.StatusQueued, Limit: limit})
+				if listedActorID == actorID && listErr == nil && len(tasks) == 0 {
+					firstEmptyTaskListOnce.Do(func() { close(firstEmptyTaskList) })
+				}
+				return tasks, listErr
+			},
+		},
+	)
+	deps := &Dependencies{taskManager: owner, agentRunQueue: runQueue, superAgentStore: runtimeStore}
+	tokenFile := filepath.Join(t.TempDir(), "agent-ops-token")
+	if err := os.WriteFile(tokenFile, []byte(taskEnqueueTestToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Heartbeat:     config.HeartbeatConfig{AgentSchedulerEnabled: true},
+		LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, UserID: "ren", AuthTokenFile: tokenFile},
+	}
+	configureAgentHeartbeatScheduler(cfg, deps, nil, nil)
+	heartbeat := deps.agentHeartbeat
+	if heartbeat == nil {
+		t.Fatal("production configureAgentHeartbeatScheduler did not configure scheduler")
+	}
+	handler, err := newConfiguredTaskEnqueueHandler(cfg, owner, runtimeStore, heartbeat)
+	if err != nil || handler == nil {
+		t.Fatalf("production newConfiguredTaskEnqueueHandler()=%v err=%v", handler, err)
+	}
+	lifetime, cancel := context.WithCancel(context.Background())
+	startDone := make(chan error, 1)
+	go func() { startDone <- heartbeat.Start(lifetime) }()
+	t.Cleanup(func() {
+		releaseFirstOnce.Do(func() { close(releaseFirst) })
+		cancel()
+		select {
+		case err := <-startDone:
+			if err != nil {
+				t.Errorf("heartbeat Start()=%v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("heartbeat scheduler did not stop after lifetime cancellation")
+		}
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer waitCancel()
+		if err := heartbeat.Wait(waitCtx); err != nil {
+			t.Errorf("heartbeat Wait()=%v", err)
+		}
+	})
+	select {
+	case <-firstEmptyTaskList:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduler did not complete the initial empty private Task read for the target actor")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	initialSweepFinished := false
+	for time.Now().Before(deadline) {
+		state, found := heartbeatActorState(ctx, heartbeat, actorID)
+		if found && state != "checking" {
+			initialSweepFinished = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !initialSweepFinished {
+		t.Fatal("scheduler did not finish checking the target actor after its initial empty Task read")
+	}
+	firstTask, err := owner.Create(ctx, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: actorID, Priority: domaintask.PriorityCritical, Title: "Write one concise sentence for continuation stage A.",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondTask, err := owner.Create(ctx, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: actorID, Priority: domaintask.PriorityHigh, Title: "Write one concise sentence for continuation stage B.",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdTask, err := owner.Create(ctx, domaintask.Task{
+		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: actorID, Priority: domaintask.PriorityNormal, Title: "Write one concise sentence for continuation stage C.",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := serveTaskEnqueueRequest(handler, "POST", "127.0.0.1:1234", taskEnqueueTestToken, `{"task_id":"`+string(firstTask.TaskID)+`"}`)
+	if response.Code != 200 {
+		t.Fatalf("enqueue Task %s status=%d body=%s", firstTask.TaskID, response.Code, response.Body.String())
+	}
+	var firstReceipt taskEnqueueReceipt
+	if err := json.Unmarshal(response.Body.Bytes(), &firstReceipt); err != nil || firstReceipt.Status != "enqueued" || firstReceipt.QueueStatus != "queued" {
+		t.Fatalf("enqueue Task %s receipt=%+v err=%v", firstTask.TaskID, firstReceipt, err)
+	}
+	select {
+	case <-firstStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("durable enqueue Wake did not start Task A")
+	}
+	for _, task := range []domaintask.Task{secondTask, thirdTask} {
+		item := domainsuperagent.RunQueueItem{
+			QueueItemID: modulecore.NewQueueItemID(), TaskID: task.TaskID, RunStartReason: domaintask.RunStartReasonFirst,
+			WorkstreamID: string(task.WorkstreamID), Goal: domainsuperagent.RunQueueGoalPrivateFirstChat, Action: "chat", Status: "queued",
+			Priority: taskEnqueuePriority(task.Priority), IdempotencyKey: domainsuperagent.RunQueueIntentPrivateFirstChat, CreatedAt: task.CreatedAt.UTC(),
+		}
+		if _, inserted, insertErr := queue.InsertRunQueueItemIfAbsent(ctx, item); insertErr != nil || !inserted {
+			t.Fatalf("persist successor intent for %s: inserted=%t err=%v", task.TaskID, inserted, insertErr)
+		}
+	}
+	releaseFirstOnce.Do(func() { close(releaseFirst) })
+	deadline = time.Now().Add(waitTimeout)
+	for time.Now().Before(deadline) {
+		allFinished := true
+		for _, task := range []domaintask.Task{firstTask, secondTask, thirdTask} {
+			current, getErr := owner.Get(ctx, task.TaskID)
+			if getErr != nil || current.Status != domaintask.StatusSucceeded {
+				allFinished = false
+				break
+			}
+		}
+		items, listErr := runtimeStore.ListRunQueueItems(ctx, 10)
+		if listErr != nil || len(items) != 3 {
+			allFinished = false
+		} else {
+			for _, item := range items {
+				if item.Status != "completed" || item.RunID == "" || item.CompletedAt.IsZero() {
+					allFinished = false
+					break
+				}
+			}
+		}
+		state, found := heartbeatActorState(ctx, heartbeat, actorID)
+		if !found || state == "running" || state == "stopping" {
+			allFinished = false
+		}
+		if allFinished {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	for _, task := range []domaintask.Task{firstTask, secondTask, thirdTask} {
+		current, getErr := owner.Get(ctx, task.TaskID)
+		if getErr != nil || current.Status != domaintask.StatusSucceeded || strings.TrimSpace(current.Summary) == "" {
+			t.Fatalf("canonical Task=%+v err=%v; want succeeded with nonempty saved output", current, getErr)
+		}
+		runs, listErr := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+		if listErr != nil || len(runs) != 1 || runs[0].TaskID != task.TaskID || runs[0].Status != domaintask.RunStatusSucceeded || runs[0].Summary != current.Summary {
+			t.Fatalf("canonical Runs for %s=%+v err=%v; want one succeeded Run bound to Task with exact output", task.TaskID, runs, listErr)
+		}
+		checkpoint, found, checkpointErr := owner.GetPrivateTextCheckpoint(ctx, task.TaskID)
+		if checkpointErr != nil || !found || checkpoint.TaskID != task.TaskID || checkpoint.RunID != runs[0].RunID || checkpoint.QueueItemID == "" || checkpoint.ActorID != actorID || checkpoint.Output != current.Summary {
+			t.Fatalf("canonical checkpoint for %s=%+v found=%t err=%v; want exact output bound to Task/Run/queue/actor", task.TaskID, checkpoint, found, checkpointErr)
+		}
+	}
+	if legacyProcessor.called {
+		t.Fatal("private continuation chain used generic ProcessMessage")
+	}
+	items, err := runtimeStore.ListRunQueueItems(ctx, 10)
+	if err != nil || len(items) != 3 {
+		t.Fatalf("durable queue receipts=%+v err=%v; want three receipts", items, err)
+	}
+	for _, item := range items {
+		if item.Status != "completed" || item.RunID == "" || item.CompletedAt.IsZero() {
+			t.Fatalf("terminal queue receipt=%+v; want completed durable run receipt", item)
+		}
+		run, err := owner.GetRun(ctx, item.RunID)
+		if err != nil || run.TaskID != item.TaskID || run.Status != domaintask.RunStatusSucceeded {
+			t.Fatalf("queue RunID %s canonical Run=%+v err=%v does not match Task receipt", item.RunID, run, err)
+		}
+	}
+	state, found := heartbeatActorState(ctx, heartbeat, actorID)
+	if !found || state == "running" || state == "stopping" {
+		t.Fatalf("scheduler actor %s state=%q found=%t; want actor slot released after A/B/C", actorID, state, found)
+	}
+}
+
+func heartbeatActorState(ctx context.Context, heartbeat *agentheartbeat.Scheduler, actorID string) (string, bool) {
+	activities, available := heartbeat.LivingSnapshot(ctx, nil)
+	if !available {
+		return "", false
+	}
+	for _, activity := range activities {
+		if activity.ActorID == actorID {
+			return activity.State, true
+		}
+	}
+	return "", false
 }
 
 func TestPrivateTaskRunQueueRunnerPausesAndResumesSameTaskFromSavedOutput(t *testing.T) {
@@ -483,13 +778,14 @@ func TestPrivateTextStartupRecoveryRepairsIssuanceBeforeQueueAttachment(t *testi
 }
 
 type privateTaskQueueLLMProvider struct {
-	response    string
-	ctx         context.Context
-	observation llm.ExecutionObservation
-	userMessage string
-	calls       int
-	failure     error
-	onGenerate  func()
+	response     string
+	ctx          context.Context
+	observation  llm.ExecutionObservation
+	userMessage  string
+	userMessages []string
+	calls        int
+	failure      error
+	onGenerate   func()
 }
 
 func (p *privateTaskQueueLLMProvider) Name() string { return "private-task-queue-test-provider" }
@@ -501,6 +797,7 @@ func (p *privateTaskQueueLLMProvider) Generate(ctx context.Context, request llm.
 	for _, message := range request.Messages {
 		if message.Role == "user" {
 			p.userMessage = message.Content
+			p.userMessages = append(p.userMessages, message.Content)
 		}
 	}
 	if p.onGenerate != nil {

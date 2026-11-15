@@ -15,6 +15,7 @@ import (
 const (
 	Interval                = 10 * time.Second
 	defaultDiscoveryTimeout = 2 * time.Second
+	maxSeriesWorkIDs        = 4096
 )
 
 var (
@@ -90,6 +91,7 @@ type Scheduler struct {
 	tickGeneration   uint64
 	started          bool
 	closed           bool
+	startCtx         context.Context
 	done             chan struct{}
 }
 
@@ -99,16 +101,23 @@ type agentState struct {
 
 	waiters []*waiter
 
-	scanning       bool
-	scanCancel     context.CancelFunc
-	scanDirty      bool
-	nextScan       context.Context
-	nextScanTick   uint64
-	scanGeneration uint64
-	scanTick       uint64
+	scanning          bool
+	scanCancel        context.CancelFunc
+	scanDirty         bool
+	nextScan          context.Context
+	nextScanTick      uint64
+	nextScanAllowIdle bool
+	scanGeneration    uint64
+	scanTick          uint64
 
-	rescanAfterRun bool
-	rescanContext  context.Context
+	rescanAfterRun  bool
+	rescanContext   context.Context
+	rescanTick      uint64
+	rescanAllowIdle bool
+	pendingWake     bool
+	seriesTick      uint64
+	seriesSeen      map[string]struct{}
+	seriesSaturated bool
 }
 
 type reservation struct {
@@ -121,6 +130,7 @@ type reservation struct {
 	source           workSource
 	activityKind     ActivityKind
 	visibilityTaskID modulecore.TaskID
+	workID           string
 	stop             chan struct{}
 	stopClosed       bool
 	cancel           context.CancelFunc
@@ -329,6 +339,39 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	}
 }
 
+// Wake requests a fresh Board-to-Private discovery pass after the caller has
+// committed the state that can make work eligible. It is a coalesced hint; it
+// does not persist queue state or permit idle work. Before Start, the initial
+// Start sweep serves the hint.
+func (s *Scheduler) Wake(actor string) error {
+	if s == nil {
+		return ErrSchedulerClosed
+	}
+	s.mu.Lock()
+	state := s.agents[actor]
+	if state == nil {
+		s.mu.Unlock()
+		return ErrUnknownActor
+	}
+	if s.closed {
+		s.mu.Unlock()
+		return ErrSchedulerClosed
+	}
+	if !s.started {
+		state.pendingWake = true
+		s.mu.Unlock()
+		return nil
+	}
+	ctx := s.startCtx
+	tick := state.seriesTick
+	if tick == 0 {
+		tick = s.tickGeneration
+	}
+	s.mu.Unlock()
+	s.kickScanMode(ctx, actor, tick, false)
+	return nil
+}
+
 // Start performs an immediate heartbeat, then starts one nonblocking tick per
 // Interval. Cancelling ctx closes the scheduler and cooperatively stops active
 // background work; a reservation remains held until its owner returns.
@@ -345,6 +388,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.started = true
+	s.startCtx = ctx
 	s.mu.Unlock()
 	s.Tick(ctx)
 	ticker := time.NewTicker(Interval)
@@ -436,7 +480,7 @@ func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domainta
 		ctxErr := ctx.Err()
 		lease := w.lease
 		granted := lease != nil && state.active == lease
-		var rescan context.Context
+		var rescan *rescanRequest
 		if granted && (closed || ctxErr != nil) {
 			rescan = s.releaseLocked(state, lease)
 			s.signalChangedLocked()
@@ -444,13 +488,13 @@ func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domainta
 		s.mu.Unlock()
 		if closed {
 			if rescan != nil {
-				s.kickScan(rescan, actor)
+				s.kickRescanRequest(rescan)
 			}
 			return nil, ErrSchedulerClosed
 		}
 		if ctxErr != nil {
 			if rescan != nil {
-				s.kickScan(rescan, actor)
+				s.kickRescanRequest(rescan)
 			}
 			return nil, ctxErr
 		}
@@ -512,8 +556,6 @@ func (s *Scheduler) TryAcquire(ctx context.Context, actor string, priority domai
 		stop:      make(chan struct{}),
 	}
 	state.active = lease
-	state.rescanAfterRun = true
-	state.rescanContext = ctx
 	s.signalChangedLocked()
 	s.mu.Unlock()
 
@@ -553,34 +595,55 @@ func Select(works []Work) (Work, bool) {
 	return best, true
 }
 
-func (s *Scheduler) kickScan(parent context.Context, actor string) {
-	s.mu.Lock()
-	tickGeneration := s.nextTickGenerationLocked()
-	s.mu.Unlock()
-	s.kickScanAt(parent, actor, tickGeneration)
+func (s *Scheduler) kickScanAt(parent context.Context, actor string, tickGeneration uint64) {
+	s.kickScanMode(parent, actor, tickGeneration, true)
 }
 
-func (s *Scheduler) kickScanAt(parent context.Context, actor string, tickGeneration uint64) {
+func (s *Scheduler) kickScanMode(parent context.Context, actor string, tickGeneration uint64, allowIdle bool) {
 	if parent == nil {
 		parent = context.Background()
 	}
 	s.mu.Lock()
 	state := s.agents[actor]
 	activePrivate := state != nil && state.active != nil && state.active.background && state.active.source == workSourcePrivate && !state.active.idle
-	if state == nil || s.closed || parent.Err() != nil || len(state.waiters) != 0 ||
-		(state.active != nil && !state.active.idle && !activePrivate) {
+	if state == nil || s.closed || parent.Err() != nil {
+		s.mu.Unlock()
+		return
+	}
+	if tickGeneration > state.seriesTick {
+		state.seriesTick = tickGeneration
+		state.seriesSeen = make(map[string]struct{})
+		state.seriesSaturated = false
+		if state.active != nil && state.active.workID != "" {
+			state.seriesSeen[workKey(state.active.source, state.active.workID)] = struct{}{}
+		}
+	}
+	if len(state.waiters) != 0 || (state.active != nil && !state.active.idle && !activePrivate) {
+		s.mergeRescanLocked(state, parent, tickGeneration, allowIdle)
 		s.mu.Unlock()
 		return
 	}
 	if state.scanning {
+		if !state.scanDirty || tickGeneration > state.nextScanTick {
+			state.nextScanTick = tickGeneration
+			state.nextScanAllowIdle = allowIdle
+		} else if tickGeneration == state.nextScanTick {
+			state.nextScanAllowIdle = state.nextScanAllowIdle || allowIdle
+		}
 		state.scanDirty = true
 		state.nextScan = parent
-		state.nextScanTick = tickGeneration
+		if state.active != nil && allowIdle {
+			s.mergeRescanLocked(state, parent, tickGeneration, true)
+		}
 		s.mu.Unlock()
 		return
 	}
 	scanCtx, cancel := context.WithCancel(parent)
-	allowIdle := state.active == nil
+	requestedIdle := allowIdle
+	allowIdle = allowIdle && state.active == nil
+	if state.active != nil && requestedIdle {
+		s.mergeRescanLocked(state, parent, tickGeneration, true)
+	}
 	var expectedActive *reservation
 	if activePrivate {
 		expectedActive = state.active
@@ -590,6 +653,7 @@ func (s *Scheduler) kickScanAt(parent context.Context, actor string, tickGenerat
 	state.scanTick = tickGeneration
 	state.scanning = true
 	state.scanCancel = cancel
+	state.pendingWake = false
 	s.signalChangedLocked()
 	s.mu.Unlock()
 	go s.scanActor(parent, scanCtx, actor, allowIdle, expectedActive, generation, tickGeneration)
@@ -599,6 +663,7 @@ func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, all
 	defer func() {
 		var next context.Context
 		var nextTick uint64
+		var nextAllowIdle bool
 		s.mu.Lock()
 		if state := s.agents[actor]; state != nil {
 			state.scanning = false
@@ -606,21 +671,31 @@ func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, all
 			if state.scanDirty {
 				next = state.nextScan
 				nextTick = state.nextScanTick
+				nextAllowIdle = state.nextScanAllowIdle
 				state.scanDirty = false
 				state.nextScan = nil
 				state.nextScanTick = 0
+				state.nextScanAllowIdle = false
 			}
 		}
 		s.signalChangedLocked()
 		s.mu.Unlock()
 		if next != nil && next.Err() == nil {
-			s.kickScanAt(next, actor, nextTick)
+			s.kickScanMode(next, actor, nextTick, nextAllowIdle)
 		}
 	}()
 
 	boardOnly := expectedActive != nil
 	work, source := s.discover(scanCtx, actor, allowIdle, boardOnly)
 	if source == workSourceNone || parent.Err() != nil || scanCtx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	state := s.agents[actor]
+	_, repeated := state.seriesSeen[workKey(source, work.ID)]
+	saturated := state.seriesSaturated
+	s.mu.Unlock()
+	if repeated || saturated {
 		return
 	}
 	s.startWork(parent, actor, work, source, expectedActive, generation, tickGeneration)
@@ -716,11 +791,10 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, s
 		return
 	}
 	if expectedActive != nil {
+		s.mergeRescanLocked(state, parent, tickGeneration, false)
 		if source == workSourceBoard && len(state.waiters) == 0 && expectedActive.background && expectedActive.source == workSourcePrivate &&
 			!expectedActive.idle && priorityRank(work.Priority) > priorityRank(expectedActive.priority) {
 			s.closeStopLocked(state.active)
-			state.rescanAfterRun = true
-			state.rescanContext = parent
 		}
 		s.mu.Unlock()
 		return
@@ -730,8 +804,7 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, s
 			((state.active.idle && source != workSourceIdle) || (source != workSourceIdle && priorityRank(work.Priority) > priorityRank(state.active.priority))) {
 			s.closeStopLocked(state.active)
 		}
-		state.rescanAfterRun = true
-		state.rescanContext = parent
+		s.mergeRescanLocked(state, parent, tickGeneration, false)
 		s.mu.Unlock()
 		return
 	}
@@ -747,11 +820,18 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, s
 		activityKind: activityKindFor(source, work.ActivityKind),
 		stop:         make(chan struct{}),
 		cancel:       cancel,
+		workID:       work.ID,
 	}
 	if source == workSourcePrivate {
 		lease.visibilityTaskID = work.VisibilityTaskID
 	}
 	state.active = lease
+	if state.seriesSeen == nil {
+		state.seriesSeen = make(map[string]struct{})
+	}
+	markSeriesWork(state, source, work.ID)
+	s.mergeRescanLocked(state, parent, tickGeneration, false)
+	state.pendingWake = false
 	s.signalChangedLocked()
 	runCtx = context.WithValue(runCtx, reservationContextKey{}, lease)
 	s.mu.Unlock()
@@ -803,7 +883,7 @@ func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Wo
 			// The probe itself never claims work. Ask the participant's normal
 			// scan to pick it up promptly if its current scan did not already do so.
 			if probeCtx.Err() == nil {
-				s.kickScan(parent, participant)
+				s.kickScanMode(parent, participant, tickGeneration, false)
 			}
 			return
 		}
@@ -841,11 +921,12 @@ func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Wo
 		activityKind: activityKindFor(workSourceIdle, work.ActivityKind),
 		stop:         make(chan struct{}),
 		cancel:       cancel,
+		workID:       work.ID,
 	}
 	for _, participant := range actors {
 		state := s.agents[participant]
 		if participant != actor && state.scanning {
-			nextScan, nextTick := state.nextScan, state.nextScanTick
+			nextScan, nextTick, nextAllowIdle := state.nextScan, state.nextScanTick, state.nextScanAllowIdle
 			keepNextScan := state.scanDirty && nextScan != nil
 			s.cancelScanLocked(state)
 			state.scanDirty = true
@@ -854,12 +935,19 @@ func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Wo
 				// generation instead of replacing them with this older routine scan.
 				state.nextScan = nextScan
 				state.nextScanTick = nextTick
+				state.nextScanAllowIdle = nextAllowIdle
 			} else {
 				state.nextScan = parent
 				state.nextScanTick = tickGeneration
+				state.nextScanAllowIdle = true
 			}
 		}
 		state.active = lease
+		s.mergeRescanLocked(state, parent, tickGeneration, false)
+		if state.seriesSeen == nil {
+			state.seriesSeen = make(map[string]struct{})
+		}
+		markSeriesWork(state, workSourceIdle, work.ID)
 	}
 	s.signalChangedLocked()
 	runCtx = context.WithValue(runCtx, reservationContextKey{}, lease)
@@ -870,21 +958,34 @@ func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Wo
 func (s *Scheduler) runWork(ctx context.Context, lease *reservation, work Work) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			s.reportError(lease.actor, "run", fmt.Errorf("work %q panicked: %v", work.ID, recovered), ctx)
+			s.reportError(lease.actor, "run", fmt.Errorf("work %q panicked: %v", work.ID, recovered), nil)
 		}
 		if lease.cancel != nil {
 			lease.cancel()
 		}
 		s.finishReservation(lease)
 	}()
-	if err := work.Run(ctx, lease.stop); err != nil && ctx.Err() == nil {
-		s.reportError(lease.actor, "run", err, ctx)
+	if err := work.Run(ctx, lease.stop); err != nil {
+		if runErr := ctx.Err(); runErr == nil || !errors.Is(err, runErr) {
+			s.reportError(lease.actor, "run", err, nil)
+		}
 	}
 }
 
 func (s *Scheduler) releaseFunc(lease *reservation) func() {
 	var once sync.Once
-	return func() { once.Do(func() { s.finishReservation(lease) }) }
+	return func() {
+		once.Do(func() {
+			if lease != nil && !lease.background {
+				s.mu.Lock()
+				if state := s.agents[lease.actor]; state != nil && state.active == lease {
+					s.mergeRescanLocked(state, s.rescanContextLocked(context.Background()), state.seriesTick, false)
+				}
+				s.mu.Unlock()
+			}
+			s.finishReservation(lease)
+		})
+	}
 }
 
 func (s *Scheduler) finishReservation(lease *reservation) {
@@ -893,15 +994,15 @@ func (s *Scheduler) finishReservation(lease *reservation) {
 	s.signalChangedLocked()
 	s.mu.Unlock()
 	for _, scan := range next {
-		if scan.ctx != nil && scan.ctx.Err() == nil {
-			s.kickScan(scan.ctx, scan.actor)
-		}
+		s.kickRescanRequest(&scan)
 	}
 }
 
 type rescanRequest struct {
-	actor string
-	ctx   context.Context
+	actor     string
+	ctx       context.Context
+	tick      uint64
+	allowIdle bool
 }
 
 func (s *Scheduler) releaseGroupLocked(lease *reservation) []rescanRequest {
@@ -926,32 +1027,89 @@ func (s *Scheduler) releaseGroupLocked(lease *reservation) []rescanRequest {
 	}
 	var next []rescanRequest
 	for _, state := range released {
-		if state.active == nil && len(state.waiters) == 0 && state.rescanAfterRun {
-			if state.rescanContext != nil {
-				next = append(next, rescanRequest{actor: state.actor, ctx: state.rescanContext})
+		if state.active == nil && len(state.waiters) == 0 {
+			if request := s.takeRescanLocked(state, nil); request != nil {
+				next = append(next, *request)
 			}
-			state.rescanAfterRun = false
-			state.rescanContext = nil
 		}
 	}
 	return next
 }
 
-func (s *Scheduler) releaseLocked(state *agentState, lease *reservation) context.Context {
+func (s *Scheduler) mergeRescanLocked(state *agentState, ctx context.Context, tick uint64, allowIdle bool) {
+	if state == nil {
+		return
+	}
+	if s.started && s.startCtx != nil {
+		ctx = s.startCtx
+	}
+	if !state.rescanAfterRun || tick > state.rescanTick {
+		state.rescanAllowIdle = allowIdle
+		state.rescanTick = tick
+	} else if tick == state.rescanTick {
+		state.rescanAllowIdle = state.rescanAllowIdle || allowIdle
+	}
+	if ctx != nil {
+		state.rescanContext = ctx
+	}
+	state.rescanAfterRun = true
+}
+
+func (s *Scheduler) rescanContextLocked(fallback context.Context) context.Context {
+	if s.started && s.startCtx != nil {
+		return s.startCtx
+	}
+	return fallback
+}
+
+func (s *Scheduler) takeRescanLocked(state *agentState, fallback context.Context) *rescanRequest {
+	if state == nil || state.active != nil || len(state.waiters) != 0 {
+		return nil
+	}
+	if !state.rescanAfterRun && !state.pendingWake {
+		return nil
+	}
+	if !s.started && state.pendingWake && !state.rescanAfterRun {
+		return nil
+	}
+	ctx := state.rescanContext
+	if s.started && s.startCtx != nil {
+		ctx = s.startCtx
+	}
+	if ctx == nil {
+		ctx = fallback
+	}
+	if ctx == nil {
+		return nil
+	}
+	request := &rescanRequest{actor: state.actor, ctx: ctx, tick: state.seriesTick, allowIdle: state.rescanAllowIdle}
+	state.rescanAfterRun = false
+	state.rescanContext = nil
+	state.rescanTick = 0
+	state.rescanAllowIdle = false
+	state.pendingWake = false
+	return request
+}
+
+func (s *Scheduler) kickRescanRequest(request *rescanRequest) {
+	if request == nil || request.ctx == nil || request.ctx.Err() != nil {
+		return
+	}
+	s.kickScanMode(request.ctx, request.actor, request.tick, request.allowIdle)
+}
+
+func (s *Scheduler) releaseLocked(state *agentState, lease *reservation) *rescanRequest {
 	if state.active != lease {
 		return nil
+	}
+	if !lease.background {
+		s.mergeRescanLocked(state, s.rescanContextLocked(context.Background()), state.seriesTick, false)
 	}
 	state.active = nil
 	if state.waiters != nil {
 		s.grantNextLocked(state)
 	}
-	if state.active == nil && len(state.waiters) == 0 && state.rescanAfterRun {
-		next := state.rescanContext
-		state.rescanAfterRun = false
-		state.rescanContext = nil
-		return next
-	}
-	return nil
+	return s.takeRescanLocked(state, nil)
 }
 
 func (lease *reservation) owns(actor string) bool {
@@ -1011,7 +1169,7 @@ func (s *Scheduler) cancelWaiter(state *agentState, w *waiter) {
 			break
 		}
 	}
-	var next context.Context
+	var next *rescanRequest
 	if w.lease != nil && state.active == w.lease {
 		next = s.releaseLocked(state, w.lease)
 	} else {
@@ -1019,9 +1177,7 @@ func (s *Scheduler) cancelWaiter(state *agentState, w *waiter) {
 	}
 	s.signalChangedLocked()
 	s.mu.Unlock()
-	if next != nil && next.Err() == nil {
-		s.kickScan(next, w.lease.actor)
-	}
+	s.kickRescanRequest(next)
 }
 
 func (s *Scheduler) shutdown() {
@@ -1057,6 +1213,7 @@ func (s *Scheduler) cancelScanLocked(state *agentState) {
 	state.scanDirty = false
 	state.nextScan = nil
 	state.nextScanTick = 0
+	state.nextScanAllowIdle = false
 }
 
 func (s *Scheduler) drainedLocked() bool {
@@ -1080,6 +1237,22 @@ func (s *Scheduler) signalChangedLocked() {
 func (s *Scheduler) nextTickGenerationLocked() uint64 {
 	s.tickGeneration++
 	return s.tickGeneration
+}
+
+func workKey(source workSource, id string) string {
+	return fmt.Sprintf("%d:%s", source, id)
+}
+
+func markSeriesWork(state *agentState, source workSource, id string) {
+	key := workKey(source, id)
+	if _, exists := state.seriesSeen[key]; exists {
+		return
+	}
+	if len(state.seriesSeen) >= maxSeriesWorkIDs {
+		state.seriesSaturated = true
+		return
+	}
+	state.seriesSeen[key] = struct{}{}
 }
 
 func (s *Scheduler) reportError(actor, stage string, err error, ctx context.Context) {

@@ -2118,7 +2118,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		log.Fatalf("Failed to initialize local Agent OPS ingress: %v", err)
 	}
 	deps.agentOps = agentOpsHandler
-	taskEnqueueHandler, err := newConfiguredTaskEnqueueHandler(cfg, deps.taskManager, deps.superAgentStore)
+	taskEnqueueHandler, err := newConfiguredTaskEnqueueHandler(cfg, deps.taskManager, deps.superAgentStore, deps.agentHeartbeat)
 	if err != nil {
 		log.Fatalf("Failed to initialize local Task enqueue ingress: %v", err)
 	}

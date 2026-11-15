@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strings"
@@ -29,11 +30,16 @@ type taskEnqueueRunQueueStore interface {
 	InsertRunQueueItemIfAbsent(context.Context, domainsuperagent.RunQueueItem) (domainsuperagent.RunQueueItem, bool, error)
 }
 
+type taskEnqueueSchedulerWaker interface {
+	Wake(actor string) error
+}
+
 type taskEnqueueHandler struct {
 	ownerID               string
 	token                 []byte
 	tasks                 *taskmanager.Manager
 	queue                 taskEnqueueRunQueueStore
+	waker                 taskEnqueueSchedulerWaker
 	agentSchedulerEnabled bool
 }
 
@@ -50,7 +56,7 @@ type taskEnqueueReceipt struct {
 	CreatedAt   time.Time              `json:"created_at"`
 }
 
-func newConfiguredTaskEnqueueHandler(cfg *config.Config, tasks *taskmanager.Manager, store any) (http.HandlerFunc, error) {
+func newConfiguredTaskEnqueueHandler(cfg *config.Config, tasks *taskmanager.Manager, store any, waker taskEnqueueSchedulerWaker) (http.HandlerFunc, error) {
 	if cfg == nil || !cfg.LocalAgentOps.Enabled {
 		return nil, nil
 	}
@@ -65,7 +71,7 @@ func newConfiguredTaskEnqueueHandler(cfg *config.Config, tasks *taskmanager.Mana
 	queue, _ := store.(taskEnqueueRunQueueStore)
 	handler := &taskEnqueueHandler{
 		ownerID: ownerID, token: append([]byte(nil), token...), tasks: tasks,
-		queue: queue, agentSchedulerEnabled: cfg.Heartbeat.AgentSchedulerEnabled,
+		queue: queue, waker: waker, agentSchedulerEnabled: cfg.Heartbeat.AgentSchedulerEnabled,
 	}
 	return localOnlyHandler(handler.ServeHTTP), nil
 }
@@ -137,6 +143,7 @@ func (h *taskEnqueueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if found {
+		h.wakeActor(task.Assignee)
 		writeTaskEnqueueReceipt(w, existing, false)
 		return
 	}
@@ -149,6 +156,7 @@ func (h *taskEnqueueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// request read the Task. Resolve that receipt before returning a state
 		// refusal, preserving idempotency across a fast claim/completion.
 		if existing, found, lookupErr := h.queue.FindRunQueueItemByTaskIntent(r.Context(), request.TaskID, domainsuperagent.RunQueueIntentPrivateFirstChat); lookupErr == nil && found {
+			h.wakeActor(task.Assignee)
 			writeTaskEnqueueReceipt(w, existing, false)
 			return
 		}
@@ -162,6 +170,7 @@ func (h *taskEnqueueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(runs) != 0 || task.Status != domaintask.StatusQueued {
 		if existing, found, lookupErr := h.queue.FindRunQueueItemByTaskIntent(r.Context(), request.TaskID, domainsuperagent.RunQueueIntentPrivateFirstChat); lookupErr == nil && found {
+			h.wakeActor(task.Assignee)
 			writeTaskEnqueueReceipt(w, existing, false)
 			return
 		}
@@ -180,7 +189,17 @@ func (h *taskEnqueueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAgentOpsError(w, http.StatusServiceUnavailable, "run_queue_write_failed")
 		return
 	}
+	h.wakeActor(task.Assignee)
 	writeTaskEnqueueReceipt(w, stored, inserted)
+}
+
+func (h *taskEnqueueHandler) wakeActor(actor string) {
+	if h == nil || h.waker == nil {
+		return
+	}
+	if err := h.waker.Wake(actor); err != nil {
+		log.Printf("agent task enqueue wake failed actor=%s error=%v", actor, err)
+	}
 }
 
 func validateTaskEnqueueEligibility(task domaintask.Task, ownerID string) error {

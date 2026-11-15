@@ -416,8 +416,8 @@ func TestTickDoesNotPreemptPrivateRunForEqualPriorityBoardWork(t *testing.T) {
 	scheduler.mu.Lock()
 	rescanAfterRun := scheduler.agents["mio"].rescanAfterRun
 	scheduler.mu.Unlock()
-	if rescanAfterRun {
-		t.Fatal("equal-priority BOARD work scheduled an unnecessary rescan after the private run")
+	if !rescanAfterRun {
+		t.Fatal("private completion did not schedule a fresh BOARD-to-Private discovery pass")
 	}
 	select {
 	case <-boardStarted:
@@ -427,12 +427,7 @@ func TestTickDoesNotPreemptPrivateRunForEqualPriorityBoardWork(t *testing.T) {
 
 	releasePrivateOnce.Do(func() { close(finishPrivate) })
 	waitSignal(t, privateReturned, time.Second, "private run did not finish")
-	waitForReservationReleased(t, scheduler, "mio")
-	if got := boardCalls.Load(); got != 2 {
-		t.Fatalf("BOARD scans after equal-priority work finished = %d, want no immediate rescan", got)
-	}
-	scheduler.Tick(context.Background())
-	waitSignal(t, boardStarted, time.Second, "BOARD work did not start after the private run finished")
+	waitSignal(t, boardStarted, time.Second, "equal-priority BOARD work was not started after the private run finished")
 	releaseBoardOnce.Do(func() { close(releaseBoard) })
 	waitSignal(t, boardReturned, time.Second, "BOARD work did not finish")
 }
