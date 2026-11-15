@@ -561,14 +561,14 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 		case "/viewer/board/agent-work":
 			agentWorkHeaders <- r.Header.Clone()
 			_, _ = w.Write([]byte(`{"observed_at":"2026-11-15T00:00:00Z","actors":[
-				{"actor_id":"mio","heartbeat_state":"working","availability":{"heartbeat":"available","tasks":"available","run_queue":"available"},"activity_kind":"scheduled_task","activity_title":"Mio schedule slot","current_tasks":[{"task_id":"mio-current","title":"Mio current","status":"running","queue_class":"task_only"}],"waiting_queue":[{"task_id":"mio-scheduled","title":"Scheduled","status":"queued","queue_class":"scheduled","run_queue_status":"queued"},{"task_id":"mio-board","title":"BOARD task","status":"waiting","queue_class":"task_only"}]},
-				{"actor_id":"shiro","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available"},"current_tasks":[],"waiting_queue":[]},
-				{"actor_id":"kuro","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available"},"current_tasks":[],"waiting_queue":[]},
-				{"actor_id":"midori","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available"},"current_tasks":[],"waiting_queue":[]},
-				{"actor_id":"aka","heartbeat_state":"working","availability":{"heartbeat":"available","tasks":"available","run_queue":"available"},"current_tasks":[{"task_id":"aka-current","title":"Aka current","status":"running","queue_class":"task_only"}],"waiting_queue":[{"task_id":"aka-wait","title":"Aka queued","status":"queued","queue_class":"scheduled"}]},
-				{"actor_id":"ao","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"unavailable","run_queue":"available"},"current_tasks":null,"waiting_queue":null},
-				{"actor_id":"kin","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"unavailable"},"current_tasks":[],"waiting_queue":[{"task_id":"kin-queue-unknown","title":"Kin queue record","status":"queued","queue_class":"unknown"}]},
-				{"actor_id":"gin","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available"},"current_tasks":[],"waiting_queue":[]}
+				{"actor_id":"mio","heartbeat_state":"working","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","activity_kind":"scheduled_task","activity_title":"Mio schedule slot","current_tasks":[{"task_id":"mio-current","title":"Mio current","status":"running","queue_class":"task_only"}],"waiting_queue":[{"task_id":"mio-scheduled","title":"Scheduled","status":"queued","queue_class":"scheduled","run_queue_status":"queued"},{"task_id":"mio-board","title":"BOARD task","status":"waiting","queue_class":"task_only"}],"board_inbox_queue":[{"work_id":"inbox-1","title":"BOARD inbox instruction","priority":"high","created_at":"2026-11-15T00:00:01Z","not_before":"2026-11-15T00:05:00Z","body":"private inbox body must not enter Studio DTO"}],"foreground_waiters":{"count":2,"items":[{"position":1,"priority":"high"},{"position":2,"priority":"normal"}]}},
+				{"actor_id":"shiro","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[],"waiting_queue":[],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
+				{"actor_id":"kuro","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[],"waiting_queue":[],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
+				{"actor_id":"midori","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[],"waiting_queue":[],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
+				{"actor_id":"aka","heartbeat_state":"working","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[{"task_id":"aka-current","title":"Aka current","status":"running","queue_class":"task_only"}],"waiting_queue":[{"task_id":"aka-wait","title":"Aka queued","status":"queued","queue_class":"scheduled"}],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
+				{"actor_id":"ao","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"unavailable","run_queue":"available","board_inbox":"not_configured","foreground_waiters":"unavailable"},"queue_completeness":"incomplete","current_tasks":null,"waiting_queue":null,"board_inbox_queue":null,"foreground_waiters":null},
+				{"actor_id":"kin","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"unavailable","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"incomplete","current_tasks":[],"waiting_queue":[{"task_id":"kin-queue-unknown","title":"Kin queue record","status":"queued","queue_class":"unknown"}],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
+				{"actor_id":"gin","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[],"waiting_queue":[],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}}
 			]}`))
 		default:
 			t.Errorf("unexpected CORE request path %q", r.URL.Path)
@@ -644,7 +644,8 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 	}
 	if len(aka["current_tasks"]) == 0 || len(aka["task_queue"]) == 0 || string(aka["actor_id"]) != `"aka"` ||
 		string(aka["heartbeat_state"]) != `"working"` ||
-		akaAvailability != (agentWorkAvailability{Heartbeat: "available", Tasks: "available", RunQueue: "available"}) {
+		akaAvailability != (agentWorkAvailability{Heartbeat: "available", Tasks: "available", RunQueue: "available", BoardInbox: "available", ForegroundWaiters: "available"}) ||
+		string(aka["queue_completeness"]) != `"complete"` {
 		t.Errorf("aka actor work fields missing or truncated: %+v", aka)
 	}
 	var currentTasks []struct {
@@ -654,8 +655,30 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 		t.Errorf("aka current task record lost: %s (err=%v)", aka["current_tasks"], err)
 	}
 	shiro := byID["shiro"]
-	if string(shiro["current_tasks"]) != `[]` || string(shiro["task_queue"]) != `[]` {
-		t.Errorf("available empty task arrays must remain empty arrays in the Studio DTO: current=%s queue=%s", shiro["current_tasks"], shiro["task_queue"])
+	if string(shiro["current_tasks"]) != `[]` || string(shiro["task_queue"]) != `[]` || string(shiro["board_inbox_queue"]) != `[]` {
+		t.Errorf("available empty queue arrays must remain empty arrays in the Studio DTO: current=%s task=%s inbox=%s", shiro["current_tasks"], shiro["task_queue"], shiro["board_inbox_queue"])
+	}
+	var shiroWaiters agentForegroundWaiters
+	if err := json.Unmarshal(shiro["foreground_waiters"], &shiroWaiters); err != nil || shiroWaiters.Count != 0 || shiroWaiters.Items == nil {
+		t.Errorf("available empty foreground waiters must remain count=0/items=[]: %s (err=%v)", shiro["foreground_waiters"], err)
+	}
+	var inboxRows []struct {
+		WorkID    string     `json:"work_id"`
+		Title     string     `json:"title"`
+		Priority  string     `json:"priority"`
+		CreatedAt time.Time  `json:"created_at"`
+		NotBefore *time.Time `json:"not_before"`
+	}
+	mio := byID["mio"]
+	if err := json.Unmarshal(mio["board_inbox_queue"], &inboxRows); err != nil || len(inboxRows) != 1 ||
+		inboxRows[0].WorkID != "inbox-1" || inboxRows[0].Title != "BOARD inbox instruction" ||
+		inboxRows[0].Priority != "high" || inboxRows[0].CreatedAt.IsZero() || inboxRows[0].NotBefore == nil {
+		t.Errorf("available board inbox queue record not preserved: %s (err=%v)", mio["board_inbox_queue"], err)
+	}
+	var mioWaiters agentForegroundWaiters
+	if err := json.Unmarshal(mio["foreground_waiters"], &mioWaiters); err != nil || mioWaiters.Count != 2 || len(mioWaiters.Items) != 2 ||
+		mioWaiters.Items[0].Position != 1 || mioWaiters.Items[0].Priority != "high" || mioWaiters.Items[1].Position != 2 || mioWaiters.Items[1].Priority != "normal" {
+		t.Errorf("foreground waiter priority order not preserved: %s (err=%v)", mio["foreground_waiters"], err)
 	}
 	if strings.Contains(string(aka["current_tasks"]), "stale-coder1") {
 		t.Errorf("legacy coder task was attributed to aka: %s", aka["current_tasks"])
@@ -665,7 +688,9 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 	if err := json.Unmarshal(ao["availability"], &aoAvailability); err != nil {
 		t.Fatal(err)
 	}
-	if aoAvailability.Tasks != "unavailable" || len(ao["current_tasks"]) != 0 || len(ao["task_queue"]) != 0 ||
+	if aoAvailability.Tasks != "unavailable" || aoAvailability.BoardInbox != "not_configured" ||
+		aoAvailability.ForegroundWaiters != "unavailable" || string(ao["queue_completeness"]) != `"incomplete"` ||
+		len(ao["current_tasks"]) != 0 || len(ao["task_queue"]) != 0 || len(ao["board_inbox_queue"]) != 0 || len(ao["foreground_waiters"]) != 0 ||
 		string(ao["task_refs"]) != `[]` || len(ao["task_stack_head"]) != 0 {
 		t.Errorf("unavailable actor should omit unknown queues and stale monitor tasks: %+v", ao)
 	}
@@ -691,7 +716,6 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 		string(byID["coder2"]["actor_kind"]) != `"legacy"` || coder2Head.ID != "stale-ao" {
 		t.Errorf("legacy coder rows should remain separate with their own task refs: coder1=%+v coder2=%+v", byID["coder1"], byID["coder2"])
 	}
-	mio := byID["mio"]
 	var queue []json.RawMessage
 	if err := json.Unmarshal(mio["task_queue"], &queue); err != nil || len(queue) != 2 {
 		t.Errorf("mio task_queue must retain both scheduled and task-only rows: %s (err=%v)", mio["task_queue"], err)
@@ -700,7 +724,8 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 	}
 	kin := byID["kin"]
 	if !strings.Contains(string(kin["availability"]), `"run_queue":"unavailable"`) ||
-		!strings.Contains(string(kin["task_queue"]), `"queue_class":"unknown"`) {
+		!strings.Contains(string(kin["task_queue"]), `"queue_class":"unknown"`) ||
+		string(kin["queue_completeness"]) != `"incomplete"` {
 		t.Errorf("task rows should remain visible with explicit run queue unavailability: %+v", kin)
 	}
 	if string(mio["activity_kind"]) != `"scheduled_task"` || string(mio["activity_title"]) != `"Mio schedule slot"` {
@@ -708,6 +733,9 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 	}
 	if strings.Contains(string(data), ownerToken) {
 		t.Error("CORE owner token leaked into the Studio snapshot")
+	}
+	if strings.Contains(string(data), "private inbox body must not enter Studio DTO") {
+		t.Error("BOARD inbox body leaked into the Studio queue DTO")
 	}
 }
 
@@ -738,10 +766,14 @@ func TestSnapshotKeepsStudioProjectionWhenOwnerAgentWorkIsUnavailable(t *testing
 	}
 	for _, id := range canonicalActorIDs {
 		agent, ok := byID[id]
-		wantAvailability := &agentWorkAvailability{Heartbeat: "unavailable", Tasks: "unavailable", RunQueue: "unavailable"}
+		wantAvailability := &agentWorkAvailability{
+			Heartbeat: "unavailable", Tasks: "unavailable", RunQueue: "unavailable",
+			BoardInbox: "unavailable", ForegroundWaiters: "unavailable",
+		}
 		if !ok || agent.ActorID != id || agent.State != "unavailable" || agent.HeartbeatState != "unavailable" ||
 			agent.Availability == nil || *agent.Availability != *wantAvailability ||
-			agent.TaskStackHead != nil || len(agent.TaskRefs) != 0 || agent.CurrentTasks != nil || agent.TaskQueue != nil {
+			agent.QueueCompleteness != "incomplete" || agent.TaskStackHead != nil || len(agent.TaskRefs) != 0 ||
+			agent.CurrentTasks != nil || agent.TaskQueue != nil || agent.BoardInboxQueue != nil || agent.ForegroundWaiters != nil {
 			t.Errorf("owner-unavailable placeholder for %s has inferred data: %+v", id, agent)
 		}
 	}

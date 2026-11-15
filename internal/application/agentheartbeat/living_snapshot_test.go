@@ -244,6 +244,37 @@ func TestLivingSnapshotProjectsEveryActorInSharedRoutineLease(t *testing.T) {
 	}
 }
 
+func TestOwnerForegroundWaiterSnapshotPreservesSchedulerPriorityOrder(t *testing.T) {
+	scheduler := New([]string{"shiro", "mio"}, Sources{}, nil)
+	if got, ready := scheduler.OwnerForegroundWaiterSnapshot(); ready || got != nil {
+		t.Fatalf("snapshot before scheduler start = (%+v, %t), want unavailable", got, ready)
+	}
+
+	scheduler.mu.Lock()
+	scheduler.started = true
+	scheduler.agents["mio"].waiters = []*waiter{
+		{priority: domaintask.PriorityLow, order: 1},
+		{priority: domaintask.PriorityHigh, order: 2},
+		{priority: domaintask.PriorityHigh, order: 3},
+	}
+	scheduler.mu.Unlock()
+
+	got, ready := scheduler.OwnerForegroundWaiterSnapshot()
+	if !ready || len(got) != 2 || got[0].ActorID != "mio" || got[1].ActorID != "shiro" {
+		t.Fatalf("owner waiter snapshot = (%+v, %t), want every actor in stable order", got, ready)
+	}
+	waiters := got[0]
+	if waiters.Count != 3 || len(waiters.Items) != 3 {
+		t.Fatalf("mio waiter count = %+v, want 3", waiters)
+	}
+	wantPriorities := []string{"high", "high", "low"}
+	for index, want := range wantPriorities {
+		if waiters.Items[index].Position != index+1 || waiters.Items[index].Priority != want {
+			t.Fatalf("mio waiter[%d] = %+v, want position %d priority %q", index, waiters.Items[index], index+1, want)
+		}
+	}
+}
+
 func assertRoutineGroupSnapshot(t *testing.T, scheduler *Scheduler, wantState string) {
 	t.Helper()
 	activities, ready := scheduler.LivingSnapshot(context.Background(), nil)

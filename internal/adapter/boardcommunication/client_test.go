@@ -158,6 +158,52 @@ func TestReadThreadAndInboxCanonicalDTOs(t *testing.T) {
 	})
 }
 
+func TestInboxPreviewUsesSideEffectFreeRouteAndMetadataOnlyDTO(t *testing.T) {
+	client, _ := newFakeClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/inbox/preview" ||
+			r.URL.Query().Get("limit") != "4" || r.URL.Query().Get("cursor") != "item-before" {
+			t.Errorf("InboxPreview did not use the side-effect-free scoped page route")
+		}
+		if r.Header.Get("Authorization") != "Bearer "+syntheticBearer {
+			t.Errorf("InboxPreview omitted synthetic bearer auth")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Correlation-ID", "preview-correlation")
+		_, _ = io.WriteString(w, `{"items":[{"item_id":"item-alpha","message_id":"message-alpha","channel_id":"channel-alpha","thread_id":"thread-alpha","sender_id":"peer-alpha","created_at":"2026-11-05T03:06:00Z","kind":"request","reply_to":"","causation_id":"cause-alpha","hop_count":1,"mentions":["ren"],"recipients":["ren"],"title":"A bounded task title"}],"next_cursor":"item-alpha","correlation_id":"preview-correlation"}`)
+	}))
+	defer client.Close()
+	page, err := client.InboxPreview(context.Background(), PageRequest{Limit: 4, Cursor: "item-before"})
+	requireAvailable(t, "InboxPreview", err)
+	if len(page.Items) != 1 || page.NextCursor != "item-alpha" {
+		t.Fatalf("InboxPreview page = %+v, want one bounded metadata row", page)
+	}
+	item := page.Items[0]
+	if item.ItemID != "item-alpha" || item.MessageID != "message-alpha" || item.ChannelID != "channel-alpha" ||
+		item.ThreadID != "thread-alpha" || item.SenderID != "peer-alpha" || item.Kind != "request" ||
+		item.CausationID != "cause-alpha" || item.HopCount != 1 || item.Title != "A bounded task title" {
+		t.Fatalf("InboxPreview item = %+v, want routing metadata and bounded title", item)
+	}
+	encoded, err := json.Marshal(page)
+	if err != nil {
+		t.Fatalf("marshal InboxPreview page: %v", err)
+	}
+	for _, forbidden := range []string{"\"body\"", "ack_receipt", "private receipt"} {
+		if bytes.Contains(encoded, []byte(forbidden)) {
+			t.Fatalf("InboxPreview DTO exposed forbidden field %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestInboxPreviewRejectsOversizedTitle(t *testing.T) {
+	client, _ := newFakeClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[{"item_id":"item-alpha","message_id":"message-alpha","channel_id":"channel-alpha","thread_id":"thread-alpha","sender_id":"peer-alpha","created_at":"2026-11-05T03:06:00Z","mentions":[],"recipients":["ren"],"title":"`+strings.Repeat("x", maxInboxPreviewTitleRunes+1)+`"}],"next_cursor":"","correlation_id":"preview-correlation"}`)
+	}))
+	defer client.Close()
+	_, err := client.InboxPreview(context.Background(), PageRequest{Limit: 4})
+	requireCategory(t, err, ErrProtocol)
+}
+
 func TestOpenEventsReturnsCanonicalSequenceHint(t *testing.T) {
 	client, _ := newFakeClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/events" || r.Header.Get("Last-Event-ID") != "40" {

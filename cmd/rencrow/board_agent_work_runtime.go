@@ -26,12 +26,18 @@ type boardAgentWorkQueueCandidateStore interface {
 
 type boardAgentWorkHeartbeatOwner interface {
 	OwnerLivingSnapshot(context.Context, func(context.Context, modulecore.TaskID) (string, error)) ([]agentheartbeat.LivingActivity, bool)
+	OwnerForegroundWaiterSnapshot() ([]agentheartbeat.ForegroundWaiterQueue, bool)
+}
+
+type boardAgentWorkBoardInboxOwner interface {
+	ReadScheduledBoardInboxQueue(context.Context, string) ([]scheduledBoardInboxQueueItem, error)
 }
 
 type boardAgentWorkRuntimeReader struct {
 	tasks     boardAgentWorkTaskOwner
 	queue     boardAgentWorkQueueCandidateStore
 	heartbeat boardAgentWorkHeartbeatOwner
+	board     map[string]boardAgentWorkBoardInboxOwner
 }
 
 func newRuntimeBoardAgentWorkReader(deps *Dependencies) viewer.BoardAgentWorkReader {
@@ -42,7 +48,24 @@ func newRuntimeBoardAgentWorkReader(deps *Dependencies) viewer.BoardAgentWorkRea
 	if deps.superAgentStore != nil {
 		queue, _ = deps.superAgentStore.(boardAgentWorkQueueCandidateStore)
 	}
-	return &boardAgentWorkRuntimeReader{tasks: deps.taskManager, queue: queue, heartbeat: deps.agentHeartbeat}
+	board := make(map[string]boardAgentWorkBoardInboxOwner, len(deps.boardCommunicationActorBoots))
+	for actorID, boot := range deps.boardCommunicationActorBoots {
+		if boot != nil {
+			board[actorID] = boot
+		}
+	}
+	return &boardAgentWorkRuntimeReader{tasks: deps.taskManager, queue: queue, heartbeat: deps.agentHeartbeat, board: board}
+}
+
+func (b *boardCommunicationBoot) ReadScheduledBoardInboxQueue(ctx context.Context, actorID string) ([]scheduledBoardInboxQueueItem, error) {
+	if b == nil {
+		return nil, ErrBoardCommunicationCompositionUnavailable
+	}
+	composition := b.currentComposition()
+	if composition == nil {
+		return nil, ErrBoardCommunicationCompositionUnavailable
+	}
+	return composition.ReadScheduledBoardInboxQueue(ctx, actorID)
 }
 
 func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (viewer.BoardAgentWorkSnapshot, error) {
@@ -56,6 +79,8 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 	result := viewer.BoardAgentWorkSnapshot{Actors: make([]viewer.BoardAgentWorkActor, 0, len(actors))}
 	heartbeats := make(map[string]agentheartbeat.LivingActivity, len(actors))
 	heartbeatReady := false
+	waiterQueues := make(map[string]agentheartbeat.ForegroundWaiterQueue, len(actors))
+	waitersReady := false
 	if r != nil && r.heartbeat != nil {
 		var titleLookup func(context.Context, modulecore.TaskID) (string, error)
 		if r.tasks != nil {
@@ -72,13 +97,19 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 		for _, activity := range activities {
 			heartbeats[activity.ActorID] = activity
 		}
+		queues, ready := r.heartbeat.OwnerForegroundWaiterSnapshot()
+		waitersReady = ready
+		for _, queue := range queues {
+			waiterQueues[queue.ActorID] = queue
+		}
 	}
 
 	for _, actorID := range actors {
 		actor := viewer.BoardAgentWorkActor{
-			ActorID:        actorID,
-			Availability:   viewer.BoardAgentWorkAvailability{Heartbeat: "unavailable", Tasks: "unavailable", RunQueue: "unavailable"},
-			HeartbeatState: "unavailable",
+			ActorID:           actorID,
+			Availability:      viewer.BoardAgentWorkAvailability{Heartbeat: "unavailable", Tasks: "unavailable", RunQueue: "unavailable", BoardInbox: "not_configured", ForegroundWaiters: "not_configured"},
+			HeartbeatState:    "unavailable",
+			QueueCompleteness: "incomplete",
 		}
 		if activity, ok := heartbeats[actorID]; heartbeatReady && ok {
 			actor.Availability.Heartbeat = "available"
@@ -86,7 +117,46 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 			actor.ActivityKind = activity.ActivityKind
 			actor.ActivityTitle = activity.Title
 		}
+		if r != nil && r.heartbeat != nil {
+			if !waitersReady {
+				actor.Availability.ForegroundWaiters = "unavailable"
+			} else if queue, ok := waiterQueues[actorID]; ok {
+				actor.Availability.ForegroundWaiters = "available"
+				waiters := &viewer.BoardAgentWorkForegroundWaiters{Count: queue.Count, Items: make([]viewer.BoardAgentWorkForegroundWaiter, 0, len(queue.Items))}
+				for _, item := range queue.Items {
+					waiters.Items = append(waiters.Items, viewer.BoardAgentWorkForegroundWaiter{Position: item.Position, Priority: item.Priority})
+				}
+				actor.ForegroundWaiters = waiters
+			} else {
+				actor.Availability.ForegroundWaiters = "unavailable"
+			}
+		}
+		if r != nil {
+			if source, configured := r.board[actorID]; configured {
+				items, boardErr := source.ReadScheduledBoardInboxQueue(ctx, actorID)
+				if boardErr == nil {
+					actor.Availability.BoardInbox = "available"
+					actor.BoardInboxQueue = make([]viewer.BoardAgentWorkBoardItem, 0, len(items))
+					for _, item := range items {
+						row := viewer.BoardAgentWorkBoardItem{
+							WorkID: item.WorkID, Title: item.Title, Priority: string(item.Priority), CreatedAt: item.CreatedAt,
+						}
+						if item.NotBefore != nil {
+							notBefore := item.NotBefore.UTC()
+							row.NotBefore = &notBefore
+						}
+						actor.BoardInboxQueue = append(actor.BoardInboxQueue, row)
+					}
+				} else {
+					if ctx.Err() != nil {
+						return viewer.BoardAgentWorkSnapshot{}, ctx.Err()
+					}
+					actor.Availability.BoardInbox = "unavailable"
+				}
+			}
+		}
 		if r == nil || r.tasks == nil {
+			actor.QueueCompleteness = boardAgentWorkQueueCompleteness(actor.Availability)
 			result.Actors = append(result.Actors, actor)
 			continue
 		}
@@ -96,6 +166,7 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 			if ctx.Err() != nil {
 				return viewer.BoardAgentWorkSnapshot{}, ctx.Err()
 			}
+			actor.QueueCompleteness = boardAgentWorkQueueCompleteness(actor.Availability)
 			result.Actors = append(result.Actors, actor)
 			continue
 		}
@@ -151,9 +222,18 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 		for _, task := range waiting {
 			actor.WaitingQueue = append(actor.WaitingQueue, task.row)
 		}
+		actor.QueueCompleteness = boardAgentWorkQueueCompleteness(actor.Availability)
 		result.Actors = append(result.Actors, actor)
 	}
 	return result, nil
+}
+
+func boardAgentWorkQueueCompleteness(availability viewer.BoardAgentWorkAvailability) string {
+	if availability.Tasks == "available" && availability.RunQueue == "available" &&
+		availability.BoardInbox == "available" && availability.ForegroundWaiters == "available" {
+		return "complete"
+	}
+	return "incomplete"
 }
 
 type boardAgentWorkTaskWithQueue struct {

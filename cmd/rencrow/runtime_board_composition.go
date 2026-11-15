@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +25,16 @@ import (
 )
 
 var ErrBoardCommunicationCompositionUnavailable = errors.New("BOARD communication composition unavailable")
+
+const boardInboxQueueSnapshotLimit = 5000
+
+type scheduledBoardInboxQueueItem struct {
+	WorkID    string
+	Title     string
+	Priority  domaintask.Priority
+	CreatedAt time.Time
+	NotBefore *time.Time
+}
 
 // boardCommunicationCompositionStore is one existing EventStore handle for
 // the pin, owner admission and Mio outcome journal, peer acceptance, and B2
@@ -797,6 +809,118 @@ func (c *boardCommunicationComposition) PlanScheduledBoardWork(ctx context.Conte
 			return err
 		},
 	}, true, nil
+}
+
+// ReadScheduledBoardInboxQueue returns eligible pending Inbox preview metadata in the
+// same priority order used by PlanScheduledBoardWork. It never reads a thread,
+// claims an item, acknowledges it, or invokes the body_read-producing Inbox
+// API. BOARD supplies only a bounded title excerpt and routing metadata.
+func (c *boardCommunicationComposition) ReadScheduledBoardInboxQueue(ctx context.Context, actorID string) ([]scheduledBoardInboxQueueItem, error) {
+	if c == nil || ctx == nil || c.deps.Store == nil || c.boardClient == nil || c.deps.Now == nil ||
+		actorID == "" || actorID != boardInboxScopeActorID(c.deps.InboxScope) || !validBoardInboxScope(c.deps.InboxScope) {
+		return nil, ErrBoardCommunicationCompositionUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	pin, found, err := readBoardConnectionPinForPrincipal(ctx, c.deps.Store, c.deps.Pin.PrincipalID, c.deps.UsePrincipalScopedPins)
+	if err != nil || !found || !sameBoardCommunicationPin(pin, c.deps.Pin) {
+		return nil, errors.Join(ErrBoardCommunicationCompositionUnavailable, err)
+	}
+	identity, err := c.boardClient.ReadConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if identity.PrincipalID != pin.PrincipalID || identity.JournalInstanceID != pin.JournalInstanceID {
+		return nil, boardcommunication.ErrConnectionIdentityMismatch
+	}
+	if err := verifyBoardConnectionContexts(ctx, c.boardClient, c.deps.AllowedChannelIDs); err != nil {
+		return nil, err
+	}
+
+	deferred := c.deferredInboxSnapshot()
+	now := c.deps.Now().UTC()
+	cursor := ""
+	visited := make(map[string]struct{})
+	seenItems := make(map[string]struct{})
+	queue := make([]scheduledBoardInboxQueueItem, 0)
+	for pageCount := 0; pageCount < 256; pageCount++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		page, err := c.boardClient.InboxPreview(ctx, boardcommunication.PageRequest{Limit: boardInboxPageSize, Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range page.Items {
+			routingItem := boardInboxPreviewRoutingItem(item)
+			if !scheduledBoardInboxCandidate(c.deps.InboxScope, routingItem) {
+				continue
+			}
+			priority, eligible, err := c.scheduledBoardInboxPriority(ctx, routingItem)
+			if err != nil {
+				return nil, err
+			}
+			if !eligible {
+				continue
+			}
+			if item.ItemID == "" || item.CreatedAt.IsZero() {
+				return nil, fmt.Errorf("scheduled BOARD inbox item has invalid metadata")
+			}
+			if _, duplicate := seenItems[item.ItemID]; duplicate {
+				continue
+			}
+			seenItems[item.ItemID] = struct{}{}
+			row := scheduledBoardInboxQueueItem{
+				WorkID: "board-inbox:" + item.ItemID, Title: strings.TrimSpace(item.Title), Priority: priority, CreatedAt: item.CreatedAt.UTC(),
+			}
+			if row.Title == "" {
+				row.Title = "BOARD inbox instruction"
+			}
+			if resumeAt := deferred[item.ItemID]; resumeAt.After(now) {
+				resumeAt = resumeAt.UTC()
+				row.NotBefore = &resumeAt
+			}
+			queue = append(queue, row)
+			if len(queue) > boardInboxQueueSnapshotLimit {
+				return nil, fmt.Errorf("scheduled BOARD inbox queue exceeds snapshot limit %d", boardInboxQueueSnapshotLimit)
+			}
+		}
+		if page.NextCursor == "" {
+			sort.Slice(queue, func(i, j int) bool {
+				left, right := queue[i], queue[j]
+				if left.Priority != right.Priority && boardInboxPriorityHigher(left.Priority, right.Priority) {
+					return true
+				}
+				if left.Priority != right.Priority && boardInboxPriorityHigher(right.Priority, left.Priority) {
+					return false
+				}
+				if !left.CreatedAt.Equal(right.CreatedAt) {
+					return left.CreatedAt.Before(right.CreatedAt)
+				}
+				return left.WorkID < right.WorkID
+			})
+			return queue, nil
+		}
+		if page.NextCursor == cursor {
+			return nil, ErrBoardInboxCursorStalled
+		}
+		if _, duplicate := visited[page.NextCursor]; duplicate {
+			return nil, ErrBoardInboxCursorStalled
+		}
+		visited[cursor] = struct{}{}
+		cursor = page.NextCursor
+	}
+	return nil, ErrBoardInboxCursorStalled
+}
+
+func boardInboxPreviewRoutingItem(item boardcommunication.InboxPreviewItem) boardcommunication.InboxItem {
+	return boardcommunication.InboxItem{
+		ItemID: item.ItemID, MessageID: item.MessageID, ChannelID: item.ChannelID, ThreadID: item.ThreadID,
+		SenderID: item.SenderID, CreatedAt: item.CreatedAt, Kind: item.Kind, ReplyTo: item.ReplyTo,
+		CausationID: item.CausationID, HopCount: item.HopCount,
+		Mentions: append([]string(nil), item.Mentions...), Recipients: append([]string(nil), item.Recipients...),
+	}
 }
 
 func nextScheduledBoardInboxItem(ctx context.Context, client *boardcommunication.Client, scope boardInboxScope) (boardcommunication.InboxItem, bool, error) {

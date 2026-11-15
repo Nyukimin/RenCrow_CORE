@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+	"unicode/utf8"
 )
 
 type threadPageResponse struct {
@@ -25,6 +26,12 @@ type inboxPageResponse struct {
 	Items         []InboxItem `json:"items"`
 	NextCursor    string      `json:"next_cursor"`
 	CorrelationID string      `json:"correlation_id"`
+}
+
+type inboxPreviewPageResponse struct {
+	Items         []InboxPreviewItem `json:"items"`
+	NextCursor    string             `json:"next_cursor"`
+	CorrelationID string             `json:"correlation_id"`
 }
 
 type inboxReceiptResponse struct {
@@ -136,6 +143,34 @@ func (c *Client) Inbox(ctx context.Context, page PageRequest) (InboxPage, error)
 		return InboxPage{}, ErrProtocol
 	}
 	return InboxPage{Items: wire.Items, NextCursor: wire.NextCursor}, nil
+}
+
+// InboxPreview reads one explicitly bounded, side-effect-free Inbox metadata
+// page. Unlike Inbox, the response has no body or ACK receipt and does not
+// record body_read in BOARD.
+func (c *Client) InboxPreview(ctx context.Context, page PageRequest) (InboxPreviewPage, error) {
+	if !validPageRequest(page) {
+		return InboxPreviewPage{}, ErrInvalidRequest
+	}
+	endpoint := "/api/v1/inbox/preview?" + pageValues(page).Encode()
+	var wire inboxPreviewPageResponse
+	header, err := c.getJSON(ctx, endpoint, &wire)
+	if err != nil {
+		return InboxPreviewPage{}, err
+	}
+	if !validResponseCorrelation(wire.CorrelationID) || !correlationHeaderMatches(header, wire.CorrelationID) ||
+		wire.Items == nil || !validPageCursor(wire.NextCursor) {
+		return InboxPreviewPage{}, ErrProtocol
+	}
+	for _, item := range wire.Items {
+		if !validInboxPreviewItem(item) {
+			return InboxPreviewPage{}, ErrProtocol
+		}
+	}
+	if wire.NextCursor != "" && (len(wire.Items) == 0 || wire.Items[len(wire.Items)-1].ItemID != wire.NextCursor) {
+		return InboxPreviewPage{}, ErrProtocol
+	}
+	return InboxPreviewPage{Items: wire.Items, NextCursor: wire.NextCursor}, nil
 }
 
 // InboxReceipt requests the current private ACK receipt for one inbox item.
@@ -368,6 +403,13 @@ func validInboxItem(item InboxItem) bool {
 	return validBoardID(item.ItemID) && validBoardID(item.MessageID) && validBoardID(item.ChannelID) &&
 		validBoardID(item.ThreadID) && validBoardID(item.SenderID) && !item.CreatedAt.IsZero() &&
 		validReceipt(item.AckReceipt) && validBoardIDs(item.Mentions) && validBoardIDs(item.Recipients)
+}
+
+func validInboxPreviewItem(item InboxPreviewItem) bool {
+	return validBoardID(item.ItemID) && validBoardID(item.MessageID) && validBoardID(item.ChannelID) &&
+		validBoardID(item.ThreadID) && validBoardID(item.SenderID) && !item.CreatedAt.IsZero() &&
+		validOptionalBoardID(item.ReplyTo) && validOptionalBoardID(item.CausationID) && item.HopCount >= 0 &&
+		validBoardIDs(item.Mentions) && validBoardIDs(item.Recipients) && utf8.ValidString(item.Title) && utf8.RuneCountInString(item.Title) <= maxInboxPreviewTitleRunes
 }
 
 func validClaimResult(result ClaimResult, requestedClaimID string) bool {

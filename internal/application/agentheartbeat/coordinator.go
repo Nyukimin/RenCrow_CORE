@@ -176,6 +176,21 @@ type LivingActivity struct {
 	Title        string
 }
 
+// ForegroundWaiterPriority is the privacy-safe scheduler projection for one
+// queued slot waiter. Waiters do not carry task identity or title.
+type ForegroundWaiterPriority struct {
+	Position int
+	Priority string
+}
+
+// ForegroundWaiterQueue is the ordered set of foreground requests waiting for
+// one actor's active scheduler slot.
+type ForegroundWaiterQueue struct {
+	ActorID string
+	Count   int
+	Items   []ForegroundWaiterPriority
+}
+
 // LivingSnapshot returns mutex-owned scheduler facts for the LIVING read
 // projection. Any optional title lookup runs after releasing the scheduler
 // mutex and must enforce the caller's publication-visibility policy. ok is
@@ -191,6 +206,43 @@ func (s *Scheduler) LivingSnapshot(ctx context.Context, titleLookup func(context
 // with their publication visibility policy.
 func (s *Scheduler) OwnerLivingSnapshot(ctx context.Context, titleLookup func(context.Context, modulecore.TaskID) (string, error)) ([]LivingActivity, bool) {
 	return s.livingSnapshot(ctx, titleLookup, true)
+}
+
+// OwnerForegroundWaiterSnapshot returns only queued waiter priorities and
+// positions. It exposes no work identity, input, or title.
+func (s *Scheduler) OwnerForegroundWaiterSnapshot() ([]ForegroundWaiterQueue, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.started || s.closed {
+		return nil, false
+	}
+	actors := make([]string, 0, len(s.agents))
+	for actor := range s.agents {
+		actors = append(actors, actor)
+	}
+	sort.Strings(actors)
+	queues := make([]ForegroundWaiterQueue, 0, len(actors))
+	for _, actor := range actors {
+		state := s.agents[actor]
+		waiters := append([]*waiter(nil), state.waiters...)
+		sortWaiters(waiters)
+		queue := ForegroundWaiterQueue{
+			ActorID: actor,
+			Count:   len(waiters),
+			Items:   make([]ForegroundWaiterPriority, 0, len(waiters)),
+		}
+		for index, item := range waiters {
+			queue.Items = append(queue.Items, ForegroundWaiterPriority{
+				Position: index + 1,
+				Priority: string(item.priority),
+			})
+		}
+		queues = append(queues, queue)
+	}
+	return queues, true
 }
 
 func (s *Scheduler) livingSnapshot(ctx context.Context, titleLookup func(context.Context, modulecore.TaskID) (string, error), ownerView bool) ([]LivingActivity, bool) {

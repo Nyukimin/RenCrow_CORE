@@ -68,6 +68,33 @@ type InboxPage struct {
 	NextCursor string      `json:"next_cursor"`
 }
 
+const maxInboxPreviewTitleRunes = 160
+
+// InboxPreviewPage is the side-effect-free owner queue view of one scoped
+// BOARD Inbox page. It intentionally omits message bodies and ACK receipts.
+type InboxPreviewPage struct {
+	Items      []InboxPreviewItem `json:"items"`
+	NextCursor string             `json:"next_cursor"`
+}
+
+// InboxPreviewItem contains routing metadata plus BOARD's bounded title
+// excerpt. Reading this preview does not record body_read or expose a receipt.
+type InboxPreviewItem struct {
+	ItemID      string    `json:"item_id"`
+	MessageID   string    `json:"message_id"`
+	ChannelID   string    `json:"channel_id"`
+	ThreadID    string    `json:"thread_id"`
+	SenderID    string    `json:"sender_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	Kind        string    `json:"kind,omitempty"`
+	ReplyTo     string    `json:"reply_to,omitempty"`
+	CausationID string    `json:"causation_id,omitempty"`
+	HopCount    int       `json:"hop_count,omitempty"`
+	Mentions    []string  `json:"mentions"`
+	Recipients  []string  `json:"recipients"`
+	Title       string    `json:"title"`
+}
+
 // InboxItem is the exact flat BOARD inbox projection. AckReceipt is private
 // protocol material for explicit caller-owned ACK or claim operations.
 type InboxItem struct {

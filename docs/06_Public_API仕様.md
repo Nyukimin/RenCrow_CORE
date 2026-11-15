@@ -60,7 +60,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `/viewer/logs?task_id=...`, `/viewer/logs?event_id=...` | Canonical Task／EventIDで逆参照できるOrchestrator log。旧`/viewer/jobs`系は存在しない |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
 | `GET /viewer/superagent` | SuperAgentの現在projectionを返す読み取り専用status |
-| `GET /viewer/board/agent-work` | RenCrow_BOARD Studio専用のowner-only読み取りprojection。direct loopback、`LocalAgentOps.AuthTokenFile`のBearer、`RenCrow_BOARD` / `board-studio-readonly` profileを要求する。8 scheduler actorのheartbeat/activity、running Task、明示assignee一致のqueued/waiting/blocked Taskをcanonical順で返し、task titleとscheduler queue状態だけを含む。Task本文、context、summary、waiting reasonは含めない。`availability`でheartbeat／Task／run queueの未取得を空queueと区別する。公開`/viewer/living/heartbeat`のtitle可視性は変更しない |
+| `GET /viewer/board/agent-work` | RenCrow_BOARD Studio専用のowner-only読み取りprojection。direct loopback、`LocalAgentOps.AuthTokenFile`のBearer、`RenCrow_BOARD` / `board-studio-readonly` profileを要求する。8 actorのheartbeat/activity、Task current/waiting queue、side-effect-free BOARD inbox preview、foreground waiterのpriority順を別componentで返す。BOARD titleはpreviewのbounded excerptだけで、全本文／ACK receiptは返さない。`availability`と`queue_completeness`で未取得・未設定を空queueから区別する。公開`/viewer/living/heartbeat`のtitle可視性は変更しない |
 | `POST /viewer/superagent/runs/pause` | Task ownerがcanonical Taskとそのcanonical Runを`waiting`へ遷移し、AgentRun projectionだけを`paused`として現在の`task_id`／`run_id`を返す |
 | `POST /viewer/superagent/runs/resume` | `paused` projectionの旧`run_id`をsource selectorとしてcheckpointを検証し、`run_id`なしのqueue intentを登録。`task_id`、`source_run_id`、`status=queued`、`queue_id`、`queue_status=queued`を返し、claim時にTask ownerが新しいRunIDを作成 |
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |

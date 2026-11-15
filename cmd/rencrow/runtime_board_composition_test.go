@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,72 @@ func TestScheduledBoardSourceChoosesOldestOwnItemAndIgnoresBodyPriority(t *testi
 	}
 	if h.inboxReads == 0 || h.threadReads != 0 {
 		t.Fatalf("planning reads inbox/thread=%d/%d; want metadata inbox only", h.inboxReads, h.threadReads)
+	}
+}
+
+func TestReadScheduledBoardInboxQueueOrdersPriorityAndOmitsBodyAndReceipt(t *testing.T) {
+	pin := boardInboxTestPin()
+	pin.PrincipalID = domainconversation.BoardCommunicationMeetingMioPrincipalID
+	h := newBoardInboxWireHarness(t, pin)
+	base := pin.CutoverAt.Add(time.Second)
+	normal := boardcommunication.InboxPreviewItem{
+		ItemID: "item-normal", MessageID: "message-normal", ChannelID: "channel-alpha", ThreadID: "thread-alpha",
+		SenderID: "peer-alpha", CreatedAt: base, Kind: "request", Mentions: []string{}, Recipients: []string{pin.PrincipalID},
+		Title: "private normal body excerpt",
+	}
+	browser := boardcommunication.InboxPreviewItem{
+		ItemID: "item-browser", MessageID: "message-browser", ChannelID: "channel-alpha", ThreadID: "thread-alpha",
+		SenderID: "ren-browser", CreatedAt: base.Add(time.Second), Mentions: []string{}, Recipients: []string{pin.PrincipalID},
+		Title: "private browser body excerpt",
+	}
+	unrelated := boardcommunication.InboxPreviewItem{
+		ItemID: "item-unrelated", MessageID: "message-unrelated", ChannelID: "channel-alpha", ThreadID: "thread-alpha",
+		SenderID: "peer-alpha", CreatedAt: base.Add(2 * time.Second), Kind: "notification", Mentions: []string{},
+		Recipients: []string{pin.PrincipalID}, Title: "unsupported metadata",
+	}
+	h.inboxPreview = func(_ int, cursor string) boardcommunication.InboxPreviewPage {
+		if cursor != "" {
+			return boardcommunication.InboxPreviewPage{Items: []boardcommunication.InboxPreviewItem{}}
+		}
+		return boardcommunication.InboxPreviewPage{Items: []boardcommunication.InboxPreviewItem{normal, browser, unrelated}}
+	}
+	store := &boardCompositionStoreFake{pin: pin}
+	scope := boardInboxTestScope(pin)
+	scope.AllowedPeerIDs = []string{"peer-alpha", "ren-browser"}
+	composition := &boardCommunicationComposition{
+		deps: boardCommunicationCompositionDeps{
+			Store: store, Client: h.client, Pin: pin, InboxScope: scope, ActorID: "mio",
+			Now:               func() time.Time { return base.Add(time.Hour) },
+			AllowedChannelIDs: []string{"channel-alpha"}, AllowedPeerIDs: []string{"peer-alpha", "ren-browser"},
+		},
+		boardClient: h.client,
+	}
+	deferredUntil := time.Now().UTC().Add(30 * time.Minute)
+	composition.deferBoardInboxItem(normal.ItemID, deferredUntil)
+
+	queue, err := composition.ReadScheduledBoardInboxQueue(context.Background(), "mio")
+	if err != nil {
+		t.Fatalf("ReadScheduledBoardInboxQueue(): %v", err)
+	}
+	if len(queue) != 2 || queue[0].WorkID != "board-inbox:"+browser.ItemID || queue[1].WorkID != "board-inbox:"+normal.ItemID {
+		t.Fatalf("queue = %+v, want high-priority browser item followed by deferred normal item", queue)
+	}
+	if queue[0].Title != browser.Title || queue[1].Title != normal.Title ||
+		queue[0].Priority != domaintask.PriorityHigh || queue[1].Priority != domaintask.PriorityNormal ||
+		queue[1].NotBefore == nil || !queue[1].NotBefore.Equal(deferredUntil) {
+		t.Fatalf("queue title/priority/defer metadata = %+v, want bounded preview titles, scheduler priority, and resume time", queue)
+	}
+	encoded, err := json.Marshal(queue)
+	if err != nil {
+		t.Fatalf("marshal queue: %v", err)
+	}
+	for _, secret := range []string{"ack_receipt", "synthetic-ack-receipt"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("queue leaked %q: %s", secret, encoded)
+		}
+	}
+	if h.inboxPreviewReads == 0 || h.inboxReads != 0 || h.threadReads != 0 || h.claimCalls != 0 || h.ackCalls != 0 {
+		t.Fatalf("read counts preview/inbox/thread/claim/ACK=%d/%d/%d/%d/%d; want side-effect-free preview only", h.inboxPreviewReads, h.inboxReads, h.threadReads, h.claimCalls, h.ackCalls)
 	}
 }
 

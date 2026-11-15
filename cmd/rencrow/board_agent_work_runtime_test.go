@@ -91,8 +91,10 @@ func TestBoardAgentWorkRuntimeReaderDistinguishesNoWorkFromUnavailableStores(t *
 	if err != nil {
 		t.Fatalf("no-work ReadBoardAgentWork() error = %v", err)
 	}
-	if len(noWork.Actors) != len(actors) || noWork.Actors[0].Availability.Tasks != "available" || noWork.Actors[0].Availability.RunQueue != "available" || noWork.Actors[0].CurrentTasks == nil || noWork.Actors[0].WaitingQueue == nil || len(noWork.Actors[0].WaitingQueue) != 0 {
-		t.Fatalf("no-work snapshot = %+v, want available empty slices", noWork.Actors[0])
+	if len(noWork.Actors) != len(actors) || noWork.Actors[0].Availability.Tasks != "available" || noWork.Actors[0].Availability.RunQueue != "available" ||
+		noWork.Actors[0].CurrentTasks == nil || noWork.Actors[0].WaitingQueue == nil || len(noWork.Actors[0].WaitingQueue) != 0 ||
+		noWork.Actors[0].Availability.BoardInbox != "not_configured" || noWork.Actors[0].BoardInboxQueue != nil || noWork.Actors[0].QueueCompleteness != "incomplete" {
+		t.Fatalf("no-work snapshot = %+v, want task-store empty arrays and explicit unconfigured BOARD source", noWork.Actors[0])
 	}
 
 	unavailableReader := &boardAgentWorkRuntimeReader{
@@ -118,6 +120,57 @@ func TestBoardAgentWorkRuntimeReaderKeepsTaskRowsWhenRunQueueIsUnavailable(t *te
 	actor := snapshot.Actors[0]
 	if actor.Availability.Tasks != "available" || actor.Availability.RunQueue != "unavailable" || len(actor.WaitingQueue) != 1 || actor.WaitingQueue[0].QueueClass != "unknown" {
 		t.Fatalf("partial snapshot = %+v, want visible Task and unknown scheduler queue", actor)
+	}
+}
+
+func TestBoardAgentWorkRuntimeReaderProjectsBOARDAndForegroundQueuesSeparately(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	resume := now.Add(time.Hour)
+	reader := &boardAgentWorkRuntimeReader{
+		tasks: boardAgentWorkTaskOwnerStub{}, queue: boardAgentWorkQueueStoreStub{},
+		heartbeat: boardAgentWorkHeartbeatStub{
+			ready: true,
+			waiters: []agentheartbeat.ForegroundWaiterQueue{{ActorID: "mio", Count: 2, Items: []agentheartbeat.ForegroundWaiterPriority{
+				{Position: 1, Priority: "high"}, {Position: 2, Priority: "normal"},
+			}}},
+		},
+		board: map[string]boardAgentWorkBoardInboxOwner{
+			"mio": boardAgentWorkBoardInboxStub{items: []scheduledBoardInboxQueueItem{{
+				WorkID: "board-inbox:item-browser", Title: "bounded instruction title", Priority: domaintask.PriorityHigh, CreatedAt: now, NotBefore: &resume,
+			}}},
+		},
+	}
+
+	snapshot, err := reader.ReadBoardAgentWork(context.Background())
+	if err != nil {
+		t.Fatalf("ReadBoardAgentWork() error = %v", err)
+	}
+	mio := snapshot.Actors[0]
+	if mio.Availability.BoardInbox != "available" || mio.Availability.ForegroundWaiters != "available" || mio.QueueCompleteness != "complete" {
+		t.Fatalf("mio queue source status = %+v completeness=%q, want complete read", mio.Availability, mio.QueueCompleteness)
+	}
+	if len(mio.BoardInboxQueue) != 1 || mio.BoardInboxQueue[0].WorkID != "board-inbox:item-browser" ||
+		mio.BoardInboxQueue[0].Title != "bounded instruction title" || mio.BoardInboxQueue[0].Priority != "high" || mio.BoardInboxQueue[0].NotBefore == nil {
+		t.Fatalf("BOARD queue = %+v, want generic metadata-only row", mio.BoardInboxQueue)
+	}
+	if mio.ForegroundWaiters == nil || mio.ForegroundWaiters.Count != 2 || len(mio.ForegroundWaiters.Items) != 2 || mio.ForegroundWaiters.Items[0].Priority != "high" {
+		t.Fatalf("foreground waiters = %+v, want ordered count and priorities", mio.ForegroundWaiters)
+	}
+}
+
+func TestBoardAgentWorkRuntimeReaderMarksUnavailableBOARDQueueIncomplete(t *testing.T) {
+	reader := &boardAgentWorkRuntimeReader{
+		tasks: boardAgentWorkTaskOwnerStub{}, queue: boardAgentWorkQueueStoreStub{},
+		heartbeat: boardAgentWorkHeartbeatStub{ready: true},
+		board:     map[string]boardAgentWorkBoardInboxOwner{"mio": boardAgentWorkBoardInboxStub{err: errors.New("inbox unavailable")}},
+	}
+	snapshot, err := reader.ReadBoardAgentWork(context.Background())
+	if err != nil {
+		t.Fatalf("ReadBoardAgentWork() error = %v", err)
+	}
+	mio := snapshot.Actors[0]
+	if mio.Availability.BoardInbox != "unavailable" || mio.BoardInboxQueue != nil || mio.QueueCompleteness != "incomplete" {
+		t.Fatalf("unavailable BOARD source = %+v, want null queue and incomplete status", mio)
 	}
 }
 
@@ -180,6 +233,7 @@ func (s boardAgentWorkQueueStoreStub) ListRunQueueCandidatesForTasks(_ context.C
 
 type boardAgentWorkHeartbeatStub struct {
 	activities []agentheartbeat.LivingActivity
+	waiters    []agentheartbeat.ForegroundWaiterQueue
 	ready      bool
 }
 
@@ -193,6 +247,23 @@ func (s boardAgentWorkHeartbeatStub) OwnerLivingSnapshot(_ context.Context, look
 		}
 	}
 	return activities, s.ready || len(activities) > 0
+}
+
+func (s boardAgentWorkHeartbeatStub) OwnerForegroundWaiterSnapshot() ([]agentheartbeat.ForegroundWaiterQueue, bool) {
+	queues := append([]agentheartbeat.ForegroundWaiterQueue(nil), s.waiters...)
+	return queues, s.ready || len(s.activities) > 0
+}
+
+type boardAgentWorkBoardInboxStub struct {
+	items []scheduledBoardInboxQueueItem
+	err   error
+}
+
+func (s boardAgentWorkBoardInboxStub) ReadScheduledBoardInboxQueue(context.Context, string) ([]scheduledBoardInboxQueueItem, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return append([]scheduledBoardInboxQueueItem(nil), s.items...), nil
 }
 
 func boardAgentWorkTestTask(title, assignee string, status domaintask.Status, priority domaintask.Priority, createdAt time.Time) domaintask.Task {

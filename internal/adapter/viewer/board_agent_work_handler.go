@@ -18,19 +18,24 @@ type BoardAgentWorkSnapshot struct {
 }
 
 type BoardAgentWorkAvailability struct {
-	Heartbeat string `json:"heartbeat"`
-	Tasks     string `json:"tasks"`
-	RunQueue  string `json:"run_queue"`
+	Heartbeat         string `json:"heartbeat"`
+	Tasks             string `json:"tasks"`
+	RunQueue          string `json:"run_queue"`
+	BoardInbox        string `json:"board_inbox"`
+	ForegroundWaiters string `json:"foreground_waiters"`
 }
 
 type BoardAgentWorkActor struct {
-	ActorID        string                     `json:"actor_id"`
-	Availability   BoardAgentWorkAvailability `json:"availability"`
-	HeartbeatState string                     `json:"heartbeat_state"`
-	ActivityKind   string                     `json:"activity_kind,omitempty"`
-	ActivityTitle  string                     `json:"activity_title,omitempty"`
-	CurrentTasks   []BoardAgentWorkTask       `json:"current_tasks"`
-	WaitingQueue   []BoardAgentWorkTask       `json:"waiting_queue"`
+	ActorID           string                           `json:"actor_id"`
+	Availability      BoardAgentWorkAvailability       `json:"availability"`
+	HeartbeatState    string                           `json:"heartbeat_state"`
+	ActivityKind      string                           `json:"activity_kind,omitempty"`
+	ActivityTitle     string                           `json:"activity_title,omitempty"`
+	QueueCompleteness string                           `json:"queue_completeness"`
+	CurrentTasks      []BoardAgentWorkTask             `json:"current_tasks"`
+	WaitingQueue      []BoardAgentWorkTask             `json:"waiting_queue"`
+	BoardInboxQueue   []BoardAgentWorkBoardItem        `json:"board_inbox_queue"`
+	ForegroundWaiters *BoardAgentWorkForegroundWaiters `json:"foreground_waiters"`
 }
 
 // BoardAgentWorkTask deliberately projects only task identity, title, state,
@@ -47,6 +52,27 @@ type BoardAgentWorkTask struct {
 	QueueClass     string     `json:"queue_class"`
 	RunQueueStatus string     `json:"run_queue_status,omitempty"`
 	NotBefore      *time.Time `json:"not_before,omitempty"`
+}
+
+// BoardAgentWorkBoardItem contains only authenticated Inbox preview metadata
+// and BOARD's bounded title excerpt. Full bodies and ACK receipts never enter
+// this DTO.
+type BoardAgentWorkBoardItem struct {
+	WorkID    string     `json:"work_id"`
+	Title     string     `json:"title"`
+	Priority  string     `json:"priority"`
+	CreatedAt time.Time  `json:"created_at"`
+	NotBefore *time.Time `json:"not_before,omitempty"`
+}
+
+type BoardAgentWorkForegroundWaiter struct {
+	Position int    `json:"position"`
+	Priority string `json:"priority"`
+}
+
+type BoardAgentWorkForegroundWaiters struct {
+	Count int                              `json:"count"`
+	Items []BoardAgentWorkForegroundWaiter `json:"items"`
 }
 
 type boardAgentWorkResponse struct {

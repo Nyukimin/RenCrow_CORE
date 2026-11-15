@@ -20,23 +20,26 @@ type coreRef struct {
 func ref(kind, id string) coreRef { return coreRef{Owner: "CORE", Type: kind, ID: id} }
 
 type studioAgent struct {
-	ID             string                 `json:"agent_id"`
-	ActorID        string                 `json:"actor_id,omitempty"`
-	Name           string                 `json:"display_name"`
-	Kind           string                 `json:"actor_kind"`
-	Role           string                 `json:"role,omitempty"`
-	State          string                 `json:"state"`
-	HeartbeatState string                 `json:"heartbeat_state,omitempty"`
-	Availability   *agentWorkAvailability `json:"availability,omitempty"`
-	ActivityKind   string                 `json:"activity_kind,omitempty"`
-	ActivityTitle  string                 `json:"activity_title,omitempty"`
-	CurrentTasks   *[]json.RawMessage     `json:"current_tasks,omitempty"`
-	TaskQueue      *[]json.RawMessage     `json:"task_queue,omitempty"`
-	TaskRefs       []coreRef              `json:"task_refs"`
-	TaskStackHead  *coreRef               `json:"task_stack_head,omitempty"`
-	Source         coreRef                `json:"source"`
-	Observed       *time.Time             `json:"observed_at"`
-	Freshness      string                 `json:"freshness"`
+	ID                string                  `json:"agent_id"`
+	ActorID           string                  `json:"actor_id,omitempty"`
+	Name              string                  `json:"display_name"`
+	Kind              string                  `json:"actor_kind"`
+	Role              string                  `json:"role,omitempty"`
+	State             string                  `json:"state"`
+	HeartbeatState    string                  `json:"heartbeat_state,omitempty"`
+	Availability      *agentWorkAvailability  `json:"availability,omitempty"`
+	QueueCompleteness string                  `json:"queue_completeness,omitempty"`
+	ActivityKind      string                  `json:"activity_kind,omitempty"`
+	ActivityTitle     string                  `json:"activity_title,omitempty"`
+	CurrentTasks      *[]json.RawMessage      `json:"current_tasks,omitempty"`
+	TaskQueue         *[]json.RawMessage      `json:"task_queue,omitempty"`
+	BoardInboxQueue   *[]agentBoardInboxItem  `json:"board_inbox_queue,omitempty"`
+	ForegroundWaiters *agentForegroundWaiters `json:"foreground_waiters,omitempty"`
+	TaskRefs          []coreRef               `json:"task_refs"`
+	TaskStackHead     *coreRef                `json:"task_stack_head,omitempty"`
+	Source            coreRef                 `json:"source"`
+	Observed          *time.Time              `json:"observed_at"`
+	Freshness         string                  `json:"freshness"`
 }
 type studioProject struct {
 	ID         string          `json:"project_id"`
@@ -145,19 +148,42 @@ type viewerAgentWork struct {
 }
 
 type agentWorkAvailability struct {
-	Heartbeat string `json:"heartbeat"`
-	Tasks     string `json:"tasks"`
-	RunQueue  string `json:"run_queue"`
+	Heartbeat         string `json:"heartbeat"`
+	Tasks             string `json:"tasks"`
+	RunQueue          string `json:"run_queue"`
+	BoardInbox        string `json:"board_inbox"`
+	ForegroundWaiters string `json:"foreground_waiters"`
+}
+
+type agentForegroundWaiters struct {
+	Count int                     `json:"count"`
+	Items []agentForegroundWaiter `json:"items"`
+}
+
+type agentForegroundWaiter struct {
+	Position int    `json:"position"`
+	Priority string `json:"priority"`
+}
+
+type agentBoardInboxItem struct {
+	WorkID    string     `json:"work_id"`
+	Title     string     `json:"title"`
+	Priority  string     `json:"priority"`
+	CreatedAt time.Time  `json:"created_at"`
+	NotBefore *time.Time `json:"not_before,omitempty"`
 }
 
 type viewerAgentWorkActor struct {
-	ActorID        string                `json:"actor_id"`
-	HeartbeatState string                `json:"heartbeat_state"`
-	Availability   agentWorkAvailability `json:"availability"`
-	ActivityKind   string                `json:"activity_kind,omitempty"`
-	ActivityTitle  string                `json:"activity_title,omitempty"`
-	CurrentTasks   []json.RawMessage     `json:"current_tasks"`
-	WaitingQueue   []json.RawMessage     `json:"waiting_queue"`
+	ActorID           string                  `json:"actor_id"`
+	HeartbeatState    string                  `json:"heartbeat_state"`
+	Availability      agentWorkAvailability   `json:"availability"`
+	QueueCompleteness string                  `json:"queue_completeness"`
+	ActivityKind      string                  `json:"activity_kind,omitempty"`
+	ActivityTitle     string                  `json:"activity_title,omitempty"`
+	CurrentTasks      []json.RawMessage       `json:"current_tasks"`
+	WaitingQueue      []json.RawMessage       `json:"waiting_queue"`
+	BoardInboxQueue   []agentBoardInboxItem   `json:"board_inbox_queue"`
+	ForegroundWaiters *agentForegroundWaiters `json:"foreground_waiters"`
 }
 type viewerTask struct {
 	ID           string     `json:"task_id"`
@@ -276,6 +302,9 @@ var coreRoles = map[string]string{"mio": "Chat", "shiro": "Worker", "kuro": "Cha
 	"coder1": "Coder", "coder2": "Coder", "coder3": "Coder", "coder4": "Coder"}
 var canonicalActorIDs = []string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"}
 var legacyAgentIDs = map[string]bool{"coder1": true, "coder2": true, "coder3": true, "coder4": true}
+
+const boardInboxGenericTitle = "BOARD inbox instruction"
+
 var taskStates = map[string]string{"queued": "queued", "running": "working", "waiting": "waiting", "blocked": "blocked",
 	"failed": "failed", "succeeded": "done", "cancelled": "canceled", "superseded": "canceled"}
 var projectStates = map[string]string{"draft": "planned", "active": "active", "paused": "waiting", "waiting": "waiting",
@@ -327,13 +356,34 @@ func validAgentWork(work viewerAgentWork) bool {
 	for _, actor := range work.Actors {
 		if !want[actor.ActorID] || seen[actor.ActorID] ||
 			!validAvailability(actor.Availability.Heartbeat) || !validAvailability(actor.Availability.Tasks) ||
-			!validAvailability(actor.Availability.RunQueue) {
+			!validAvailability(actor.Availability.RunQueue) ||
+			!validConfiguredAvailability(actor.Availability.BoardInbox) ||
+			!validConfiguredAvailability(actor.Availability.ForegroundWaiters) ||
+			(actor.QueueCompleteness != "complete" && actor.QueueCompleteness != "incomplete") {
+			return false
+		}
+		if actor.QueueCompleteness == "complete" &&
+			(actor.Availability.Tasks != "available" || actor.Availability.RunQueue != "available" ||
+				actor.Availability.BoardInbox != "available" || actor.Availability.ForegroundWaiters != "available") {
 			return false
 		}
 		if actor.Availability.Tasks == "available" && (actor.CurrentTasks == nil || actor.WaitingQueue == nil) {
 			return false
 		}
 		if actor.Availability.Tasks == "unavailable" && (actor.CurrentTasks != nil || actor.WaitingQueue != nil) {
+			return false
+		}
+		if actor.Availability.BoardInbox == "available" && actor.BoardInboxQueue == nil {
+			return false
+		}
+		if actor.Availability.BoardInbox != "available" && actor.BoardInboxQueue != nil {
+			return false
+		}
+		if actor.Availability.ForegroundWaiters == "available" &&
+			(actor.ForegroundWaiters == nil || actor.ForegroundWaiters.Items == nil || actor.ForegroundWaiters.Count != len(actor.ForegroundWaiters.Items)) {
+			return false
+		}
+		if actor.Availability.ForegroundWaiters != "available" && actor.ForegroundWaiters != nil {
 			return false
 		}
 		for _, row := range append(append([]json.RawMessage(nil), actor.CurrentTasks...), actor.WaitingQueue...) {
@@ -347,12 +397,22 @@ func validAgentWork(work viewerAgentWork) bool {
 				return false
 			}
 		}
+		for _, item := range actor.BoardInboxQueue {
+			if item.WorkID == "" || item.Title != boardInboxGenericTitle ||
+				item.Priority == "" || item.CreatedAt.IsZero() {
+				return false
+			}
+		}
 		seen[actor.ActorID] = true
 	}
 	return len(seen) == len(want)
 }
 
 func validAvailability(value string) bool { return value == "available" || value == "unavailable" }
+
+func validConfiguredAvailability(value string) bool {
+	return validAvailability(value) || value == "not_configured"
+}
 
 func projectAgentWork(snapshot *studioSnapshot, work viewerAgentWork) {
 	legacy := make([]studioAgent, 0, len(legacyAgentIDs))
@@ -361,8 +421,11 @@ func projectAgentWork(snapshot *studioSnapshot, work viewerAgentWork) {
 			agent.Kind = "legacy"
 			agent.ActorID = ""
 			agent.Availability = nil
+			agent.QueueCompleteness = ""
 			agent.CurrentTasks = nil
 			agent.TaskQueue = nil
+			agent.BoardInboxQueue = nil
+			agent.ForegroundWaiters = nil
 			legacy = append(legacy, agent)
 		}
 	}
@@ -375,7 +438,8 @@ func projectAgentWork(snapshot *studioSnapshot, work viewerAgentWork) {
 		agent := studioAgent{
 			ID: actor.ActorID, ActorID: actor.ActorID, Name: coreActors[actor.ActorID], Kind: "core", Role: coreRoles[actor.ActorID],
 			State: state, HeartbeatState: actor.HeartbeatState, Availability: &actor.Availability,
-			ActivityKind: actor.ActivityKind, ActivityTitle: actor.ActivityTitle,
+			QueueCompleteness: actor.QueueCompleteness,
+			ActivityKind:      actor.ActivityKind, ActivityTitle: actor.ActivityTitle,
 			TaskRefs: []coreRef{}, Source: ref("agent_work", actor.ActorID), Observed: &work.ObservedAt, Freshness: "unknown",
 		}
 		if actor.Availability.Tasks == "unavailable" {
@@ -402,6 +466,17 @@ func projectAgentWork(snapshot *studioSnapshot, work viewerAgentWork) {
 				}
 			}
 		}
+		if actor.Availability.BoardInbox == "available" {
+			inbox := append([]agentBoardInboxItem{}, actor.BoardInboxQueue...)
+			agent.BoardInboxQueue = &inbox
+		}
+		if actor.Availability.ForegroundWaiters == "available" {
+			waiters := agentForegroundWaiters{
+				Count: actor.ForegroundWaiters.Count,
+				Items: append([]agentForegroundWaiter{}, actor.ForegroundWaiters.Items...),
+			}
+			agent.ForegroundWaiters = &waiters
+		}
 		snapshot.Agents = append(snapshot.Agents, agent)
 	}
 	snapshot.Agents = append(snapshot.Agents, legacy...)
@@ -414,8 +489,11 @@ func markAgentWorkUnavailable(snapshot *studioSnapshot) {
 			agent.Kind = "legacy"
 			agent.ActorID = ""
 			agent.Availability = nil
+			agent.QueueCompleteness = ""
 			agent.CurrentTasks = nil
 			agent.TaskQueue = nil
+			agent.BoardInboxQueue = nil
+			agent.ForegroundWaiters = nil
 			legacy = append(legacy, agent)
 		}
 	}
@@ -423,8 +501,12 @@ func markAgentWorkUnavailable(snapshot *studioSnapshot) {
 	for _, actorID := range canonicalActorIDs {
 		snapshot.Agents = append(snapshot.Agents, studioAgent{
 			ID: actorID, ActorID: actorID, Name: coreActors[actorID], Kind: "core", Role: coreRoles[actorID], State: "unavailable",
-			HeartbeatState: "unavailable", Availability: &agentWorkAvailability{Heartbeat: "unavailable", Tasks: "unavailable", RunQueue: "unavailable"},
-			TaskRefs: []coreRef{}, Source: ref("agent_work", actorID), Freshness: "unknown",
+			HeartbeatState: "unavailable", Availability: &agentWorkAvailability{
+				Heartbeat: "unavailable", Tasks: "unavailable", RunQueue: "unavailable",
+				BoardInbox: "unavailable", ForegroundWaiters: "unavailable",
+			},
+			QueueCompleteness: "incomplete",
+			TaskRefs:          []coreRef{}, Source: ref("agent_work", actorID), Freshness: "unknown",
 		})
 	}
 	snapshot.Agents = append(snapshot.Agents, legacy...)

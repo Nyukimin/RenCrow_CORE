@@ -121,6 +121,7 @@ type boardInboxWireHarness struct {
 	wireIdentity      boardcommunication.ConnectionIdentity
 	identityStatus    int
 	inbox             func(read int, cursor string) boardcommunication.InboxPage
+	inboxPreview      func(read int, cursor string) boardcommunication.InboxPreviewPage
 	thread            boardcommunication.ThreadPage
 	threadByID        map[string]boardcommunication.ThreadPage
 	threadStatus      int
@@ -135,6 +136,7 @@ type boardInboxWireHarness struct {
 	eventStreamOpened chan struct{}
 	mu                sync.Mutex
 	inboxReads        int
+	inboxPreviewReads int
 	claimCalls        int
 	claimIDs          []string
 	claimItemIDs      []string
@@ -250,6 +252,22 @@ func (h *boardInboxWireHarness) serveHTTP(w http.ResponseWriter, r *http.Request
 		page := boardcommunication.InboxPage{Items: []boardcommunication.InboxItem{}}
 		if h.inbox != nil {
 			page = h.inbox(read, r.URL.Query().Get("cursor"))
+		}
+		writeBoardInboxJSON(w, http.StatusOK, map[string]any{
+			"items": page.Items, "next_cursor": page.NextCursor, "correlation_id": "correlation-synthetic",
+		})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/inbox/preview":
+		if r.URL.Query().Get("limit") != fmt.Sprint(boardInboxPageSize) {
+			h.t.Errorf("InboxPreview limit = %q, want bounded page limit %d", r.URL.Query().Get("limit"), boardInboxPageSize)
+		}
+		h.mu.Lock()
+		h.inboxPreviewReads++
+		read := h.inboxPreviewReads
+		h.mu.Unlock()
+		h.trace.add("inbox_preview")
+		page := boardcommunication.InboxPreviewPage{Items: []boardcommunication.InboxPreviewItem{}}
+		if h.inboxPreview != nil {
+			page = h.inboxPreview(read, r.URL.Query().Get("cursor"))
 		}
 		writeBoardInboxJSON(w, http.StatusOK, map[string]any{
 			"items": page.Items, "next_cursor": page.NextCursor, "correlation_id": "correlation-synthetic",
