@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type coreRef struct {
@@ -303,7 +304,10 @@ var coreRoles = map[string]string{"mio": "Chat", "shiro": "Worker", "kuro": "Cha
 var canonicalActorIDs = []string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"}
 var legacyAgentIDs = map[string]bool{"coder1": true, "coder2": true, "coder3": true, "coder4": true}
 
-const boardInboxGenericTitle = "BOARD inbox instruction"
+// The BOARD Inbox preview exposes only its first nonblank line, bounded to
+// 160 Unicode code points. CORE replaces an empty excerpt with its generic
+// instruction label before it reaches this projection.
+const maxBoardInboxTitleRunes = 160
 
 var taskStates = map[string]string{"queued": "queued", "running": "working", "waiting": "waiting", "blocked": "blocked",
 	"failed": "failed", "succeeded": "done", "cancelled": "canceled", "superseded": "canceled"}
@@ -313,7 +317,8 @@ var goalStates = map[string]string{"draft": "planned", "active": "active", "wait
 	"archived": "archived", "blocked": "blocked", "failed": "failed", "canceled": "canceled", "cancelled": "canceled"}
 var stepStates = map[string]string{"pending": "queued", "active": "active", "passed": "done", "blocked": "blocked", "failed": "failed"}
 var monitorStates = map[string]string{"running": "working", "working": "working", "active": "working", "busy": "working",
-	"thinking": "thinking", "idle": "idle", "online": "idle", "offline": "unavailable", "unavailable": "unavailable", "error": "failed"}
+	"stopping": "working", "checking": "thinking", "thinking": "thinking", "waiting": "idle", "idle": "idle", "online": "idle",
+	"offline": "unavailable", "unavailable": "unavailable", "error": "failed"}
 
 func mapped(lookup map[string]string, key string) string {
 	if value := lookup[key]; value != "" {
@@ -398,7 +403,7 @@ func validAgentWork(work viewerAgentWork) bool {
 			}
 		}
 		for _, item := range actor.BoardInboxQueue {
-			if item.WorkID == "" || item.Title != boardInboxGenericTitle ||
+			if item.WorkID == "" || !validBoardInboxTitle(item.Title) ||
 				item.Priority == "" || item.CreatedAt.IsZero() {
 				return false
 			}
@@ -410,8 +415,24 @@ func validAgentWork(work viewerAgentWork) bool {
 
 func validAvailability(value string) bool { return value == "available" || value == "unavailable" }
 
+func validBoardInboxTitle(value string) bool {
+	return utf8.ValidString(value) && strings.TrimSpace(value) != "" &&
+		!strings.ContainsAny(value, "\r\n") && utf8.RuneCountInString(value) <= maxBoardInboxTitleRunes
+}
+
 func validConfiguredAvailability(value string) bool {
 	return validAvailability(value) || value == "not_configured"
+}
+
+func studioObservationFreshness(observed, source time.Time) string {
+	if observed.IsZero() || source.IsZero() {
+		return "unknown"
+	}
+	age := observed.Sub(source)
+	if age >= -5*time.Second && age <= 90*time.Second {
+		return "fresh"
+	}
+	return "stale"
 }
 
 func projectAgentWork(snapshot *studioSnapshot, work viewerAgentWork) {
@@ -432,15 +453,18 @@ func projectAgentWork(snapshot *studioSnapshot, work viewerAgentWork) {
 	snapshot.Agents = make([]studioAgent, 0, len(work.Actors)+len(legacy))
 	for _, actor := range work.Actors {
 		state := mapped(monitorStates, actor.HeartbeatState)
+		freshness := "unknown"
 		if actor.Availability.Heartbeat == "unavailable" {
 			state = "unavailable"
+		} else if actor.Availability.Heartbeat == "available" {
+			freshness = studioObservationFreshness(snapshot.Observed, work.ObservedAt)
 		}
 		agent := studioAgent{
 			ID: actor.ActorID, ActorID: actor.ActorID, Name: coreActors[actor.ActorID], Kind: "core", Role: coreRoles[actor.ActorID],
 			State: state, HeartbeatState: actor.HeartbeatState, Availability: &actor.Availability,
 			QueueCompleteness: actor.QueueCompleteness,
 			ActivityKind:      actor.ActivityKind, ActivityTitle: actor.ActivityTitle,
-			TaskRefs: []coreRef{}, Source: ref("agent_work", actor.ActorID), Observed: &work.ObservedAt, Freshness: "unknown",
+			TaskRefs: []coreRef{}, Source: ref("agent_work", actor.ActorID), Observed: &work.ObservedAt, Freshness: freshness,
 		}
 		if actor.Availability.Tasks == "unavailable" {
 			// The CORE response uses null when Task data is unavailable. Omit the
@@ -614,11 +638,7 @@ func projectStudio(observed time.Time, agents viewerAgents, tasks viewerTasks, w
 		at := date(row.Updated)
 		freshness := "unknown"
 		if at != nil {
-			if age := observed.Sub(*at); age >= -5*time.Second && age <= 90*time.Second {
-				freshness = "fresh"
-			} else {
-				freshness = "stale"
-			}
+			freshness = studioObservationFreshness(observed, *at)
 		}
 		if row.State == "offline" && at != nil {
 			freshness = "stale"
