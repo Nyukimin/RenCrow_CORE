@@ -783,6 +783,75 @@ func TestSnapshotKeepsStudioProjectionWhenOwnerAgentWorkIsUnavailable(t *testing
 	}
 }
 
+func TestProjectAgentWorkUsesOwnerObservationAndHeartbeatAvailability(t *testing.T) {
+	observed := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	makeActor := func(actorID, state, heartbeatAvailability string) viewerAgentWorkActor {
+		return viewerAgentWorkActor{
+			ActorID: actorID, HeartbeatState: state,
+			Availability: agentWorkAvailability{
+				Heartbeat: heartbeatAvailability, Tasks: "unavailable", RunQueue: "unavailable",
+				BoardInbox: "not_configured", ForegroundWaiters: "not_configured",
+			},
+			QueueCompleteness: "incomplete",
+		}
+	}
+	work := viewerAgentWork{
+		ObservedAt: observed,
+		Actors: []viewerAgentWorkActor{
+			makeActor("mio", "waiting", "available"),
+			makeActor("shiro", "running", "available"),
+			makeActor("kuro", "checking", "available"),
+			makeActor("midori", "stopping", "available"),
+			makeActor("aka", "unavailable", "unavailable"),
+			makeActor("ao", "idle", "available"),
+			makeActor("kin", "idle", "available"),
+			makeActor("gin", "idle", "available"),
+		},
+	}
+	snapshot := studioSnapshot{Observed: observed.Add(10 * time.Second), Agents: []studioAgent{}}
+	projectAgentWork(&snapshot, work)
+	byID := make(map[string]studioAgent, len(snapshot.Agents))
+	for _, agent := range snapshot.Agents {
+		byID[agent.ID] = agent
+	}
+	wantStates := map[string]string{
+		"mio": "idle", "shiro": "working", "kuro": "thinking", "midori": "working", "aka": "unavailable",
+	}
+	for actorID, wantState := range wantStates {
+		agent, ok := byID[actorID]
+		if !ok {
+			t.Fatalf("projected actor %q is missing", actorID)
+		}
+		if agent.State != wantState {
+			t.Errorf("actor %s state = %q, want %q", actorID, agent.State, wantState)
+		}
+		wantFreshness := "fresh"
+		if actorID == "aka" {
+			wantFreshness = "unknown"
+		}
+		if agent.Freshness != wantFreshness {
+			t.Errorf("actor %s freshness = %q, want %q", actorID, agent.Freshness, wantFreshness)
+		}
+		if agent.Observed == nil || !agent.Observed.Equal(observed) {
+			t.Errorf("actor %s observed_at = %v, want owner observation %s", actorID, agent.Observed, observed)
+		}
+	}
+
+	staleWork := work
+	staleWork.ObservedAt = snapshot.Observed.Add(-91 * time.Second)
+	staleSnapshot := studioSnapshot{Observed: snapshot.Observed, Agents: []studioAgent{}}
+	projectAgentWork(&staleSnapshot, staleWork)
+	for _, agent := range staleSnapshot.Agents {
+		wantFreshness := "stale"
+		if agent.Availability.Heartbeat == "unavailable" {
+			wantFreshness = "unknown"
+		}
+		if agent.Freshness != wantFreshness {
+			t.Errorf("stale observation actor %s freshness = %q, want %q", agent.ID, agent.Freshness, wantFreshness)
+		}
+	}
+}
+
 func TestValidAgentWorkAcceptsOnlyBoundedNonblankInboxTitles(t *testing.T) {
 	newWork := func(title string) viewerAgentWork {
 		observed := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
