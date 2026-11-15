@@ -272,7 +272,7 @@ var coreActors = map[string]string{"mio": "Mio", "shiro": "Shiro", "kuro": "Kuro
 	"aka": "Aka", "ao": "Ao", "kin": "Kin", "gin": "Gin",
 	"coder1": "Coder 1", "coder2": "Coder 2", "coder3": "Coder 3", "coder4": "Coder 4"}
 var coreRoles = map[string]string{"mio": "Chat", "shiro": "Worker", "kuro": "Chat", "midori": "Chat",
-	"aka": "Coder", "ao": "Coder", "kin": "Coder", "gin": "Coder",
+	"aka": "エージェント", "ao": "エージェント", "kin": "エージェント", "gin": "エージェント",
 	"coder1": "Coder", "coder2": "Coder", "coder3": "Coder", "coder4": "Coder"}
 var canonicalActorIDs = []string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"}
 var legacyAgentIDs = map[string]bool{"coder1": true, "coder2": true, "coder3": true, "coder4": true}

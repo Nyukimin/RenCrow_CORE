@@ -629,6 +629,14 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 			t.Errorf("canonical actor %q missing", id)
 		}
 	}
+	for _, id := range []string{"aka", "ao", "kin", "gin"} {
+		if string(byID[id]["role"]) != `"エージェント"` {
+			t.Errorf("canonical actor %s role = %s, want エージェント", id, byID[id]["role"])
+		}
+	}
+	if string(byID["coder1"]["role"]) != `"Coder"` {
+		t.Errorf("legacy coder role = %s, want Coder", byID["coder1"]["role"])
+	}
 	aka := byID["aka"]
 	var akaAvailability agentWorkAvailability
 	if err := json.Unmarshal(aka["availability"], &akaAvailability); err != nil {
