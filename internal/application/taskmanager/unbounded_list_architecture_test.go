@@ -87,6 +87,7 @@ var unboundedTaskListAllowlist = map[string]string{
 	"internal/application/idlechat/generation_run_lifecycle.go:interface:generationRunOwner:ListRuns":    "lists by TaskID",
 	"internal/application/orchestrator/task_lifecycle.go:interface:TaskLifecycleManager:ListRuns":        "lists by TaskID",
 	"internal/application/superagent/run_recovery.go:interface:InterruptedRunRecoveryTaskOwner:ListRuns": "re-reads one Task by TaskID after blocking it",
+	"cmd/rencrow/board_agent_work_runtime.go:interface:boardAgentWorkTaskOwner:List":                     "per-actor active Tasks are keyset-paged with a non-zero Limit and a 5,000-row cap",
 }
 
 // Directories that implement or declare the store itself.
