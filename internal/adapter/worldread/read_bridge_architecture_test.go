@@ -68,6 +68,7 @@ var pocRoutePromotionAllowlist = map[string]string{}
 // authenticated CORE read bridge.
 var readBridgeConsumerAllowlist = map[string]string{
 	"cmd/rencrow/runtime_agent_routine.go": "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only discovers authenticated WORLD state for CORE's private agent routine scheduler.",
+	"cmd/rencrow/runtime_living_seats.go":   "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only reconciles authenticated WORLD seating for CORE's private LIVING routine scheduler, without adding a route or Viewer DTO.",
 	"cmd/rencrow/runtime_routine_world.go": "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only performs authenticated CORE-owned home lifecycle actions and reads their receipts/events.",
 }
 
