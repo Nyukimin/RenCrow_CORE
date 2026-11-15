@@ -53,19 +53,29 @@ const (
 // State is the actor's bounded, durable routine checkpoint. LogicalSleepUntil is a
 // CORE eligibility window; it is not evidence that WORLD moved or put the actor to sleep.
 type State struct {
-	ActorID              string    `json:"actor_id"`
-	Revision             int64     `json:"revision"`
-	ActivatedOn          string    `json:"activated_on,omitempty"`
-	ScheduleDate         string    `json:"schedule_date,omitempty"`
-	PlannedSleep         time.Time `json:"planned_sleep,omitempty"`
-	PlannedWake          time.Time `json:"planned_wake,omitempty"`
-	LogicalSleepUntil    time.Time `json:"logical_sleep_until,omitempty"`
-	ChoiceIndex          uint64    `json:"choice_index"`
-	NextDiaryDate        string    `json:"next_diary_date,omitempty"`
-	CooldownUntil        time.Time `json:"cooldown_until,omitempty"`
-	Pending              *Intent   `json:"pending,omitempty"`
-	PausedDiary          *Intent   `json:"paused_diary,omitempty"`
-	LastFinishedIntentID string    `json:"last_finished_intent_id,omitempty"`
+	ActorID              string      `json:"actor_id"`
+	Revision             int64       `json:"revision"`
+	ActivatedOn          string      `json:"activated_on,omitempty"`
+	ScheduleDate         string      `json:"schedule_date,omitempty"`
+	PlannedSleep         time.Time   `json:"planned_sleep,omitempty"`
+	PlannedWake          time.Time   `json:"planned_wake,omitempty"`
+	LogicalSleepUntil    time.Time   `json:"logical_sleep_until,omitempty"`
+	ChoiceIndex          uint64      `json:"choice_index"`
+	NextDiaryDate        string      `json:"next_diary_date,omitempty"`
+	CooldownUntil        time.Time   `json:"cooldown_until,omitempty"`
+	Pending              *Intent     `json:"pending,omitempty"`
+	PausedDiary          *Intent     `json:"paused_diary,omitempty"`
+	LastFinishedIntentID string      `json:"last_finished_intent_id,omitempty"`
+	RestWindow           *RestWindow `json:"rest_window,omitempty"`
+}
+
+// RestWindow is a bounded, WORLD-confirmed relaxation interval linked to the
+// most recently finished routine intent. RoomID is kept private to CORE and is
+// never exposed by the public activity projection.
+type RestWindow struct {
+	ObservedAt time.Time `json:"observed_at"`
+	Until      time.Time `json:"until"`
+	RoomID     string    `json:"room_id"`
 }
 
 type Plan struct {

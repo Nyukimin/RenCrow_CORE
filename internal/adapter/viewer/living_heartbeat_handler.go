@@ -20,23 +20,38 @@ type LivingHeartbeatTaskReader interface {
 	GetTask(context.Context, modulecore.TaskID) (domaintask.Task, error)
 }
 
+type RoutineActivityReader interface {
+	CurrentRoutineActivity(context.Context, string) (RoutineActivity, error)
+}
+
+type RoutineActivityBatchReader interface {
+	CurrentRoutineActivities(context.Context, []string) (map[string]RoutineActivity, error)
+}
+
+type RoutineActivity struct {
+	Availability    string
+	OngoingActivity string
+}
+
 type livingHeartbeatResponse struct {
 	ObservedAt string                 `json:"observed_at"`
 	Agents     []livingHeartbeatAgent `json:"agents"`
 }
 
 type livingHeartbeatAgent struct {
-	ActorID      string `json:"actor_id"`
-	State        string `json:"state"`
-	ActivityKind string `json:"activity_kind,omitempty"`
-	Title        string `json:"title,omitempty"`
+	ActorID             string `json:"actor_id"`
+	State               string `json:"state"`
+	ActivityKind        string `json:"activity_kind,omitempty"`
+	Title               string `json:"title,omitempty"`
+	RoutineAvailability string `json:"routine_availability,omitempty"`
+	OngoingActivity     string `json:"ongoing_activity,omitempty"`
 }
 
 // HandleLivingHeartbeat returns a small read-only view of the actual CORE
 // actor scheduler leases. It omits task identity, errors, prompts, and source
 // content. A canonical Task title is included only after the existing public
 // Task visibility policy authorizes its current publication binding.
-func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility) http.HandlerFunc {
+func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility, routineReaders ...RoutineActivityReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !security.IsDirectLoopbackRequest(r) {
 			http.NotFound(w, r)
@@ -75,11 +90,72 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 			http.Error(w, "agent heartbeat scheduler unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		routineReaderProvided := len(routineReaders) > 0
+		var routineReader RoutineActivityReader
+		if routineReaderProvided {
+			routineReader = routineReaders[0]
+		}
+		waitingActors := make([]string, 0, len(activities))
+		for _, activity := range activities {
+			if activity.State == "waiting" {
+				waitingActors = append(waitingActors, activity.ActorID)
+			}
+		}
+		routineByActor := make(map[string]RoutineActivity, len(waitingActors))
+		if routineReaderProvided {
+			if batchReader, ok := routineReader.(RoutineActivityBatchReader); ok {
+				values, err := batchReader.CurrentRoutineActivities(readCtx, waitingActors)
+				if err != nil {
+					for _, actorID := range waitingActors {
+						routineByActor[actorID] = RoutineActivity{Availability: "unavailable"}
+					}
+				} else {
+					for _, actorID := range waitingActors {
+						routineByActor[actorID] = validRoutineActivity(values[actorID])
+					}
+				}
+			} else {
+				for _, actorID := range waitingActors {
+					projection := RoutineActivity{Availability: "disabled"}
+					if routineReader != nil {
+						value, err := routineReader.CurrentRoutineActivity(readCtx, actorID)
+						if err != nil {
+							projection = RoutineActivity{Availability: "unavailable"}
+						} else {
+							projection = validRoutineActivity(value)
+						}
+					}
+					routineByActor[actorID] = projection
+				}
+			}
+		}
+		// Routine reads may block on WORLD. Re-snapshot afterward so a newly
+		// acquired or actively running lease always wins over idle activity.
+		activities, ready = scheduler.LivingSnapshot(readCtx, titleLookup)
+		if !ready {
+			http.Error(w, "agent heartbeat scheduler unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		agents := make([]livingHeartbeatAgent, 0, len(activities))
 		for _, activity := range activities {
-			agents = append(agents, livingHeartbeatAgent{
+			agent := livingHeartbeatAgent{
 				ActorID: activity.ActorID, State: activity.State, ActivityKind: activity.ActivityKind, Title: activity.Title,
-			})
+			}
+			if activity.State == "waiting" {
+				projection, ok := routineByActor[activity.ActorID]
+				if !ok {
+					projection = RoutineActivity{Availability: "unavailable"}
+				}
+				if routineReaderProvided {
+					agent.RoutineAvailability = projection.Availability
+				}
+				if projection.Availability == "available" && (projection.OngoingActivity == "sleep_window" || projection.OngoingActivity == "rest") {
+					agent.OngoingActivity = projection.OngoingActivity
+				} else if projection.Availability == "available" {
+					agent.OngoingActivity = "waiting"
+				}
+			}
+			agents = append(agents, agent)
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -88,4 +164,13 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 			Agents:     agents,
 		})
 	}
+}
+
+func validRoutineActivity(value RoutineActivity) RoutineActivity {
+	if (value.Availability == "available" || value.Availability == "disabled" || value.Availability == "unavailable") &&
+		(value.OngoingActivity == "" || value.OngoingActivity == "sleep_window" || value.OngoingActivity == "rest" || value.OngoingActivity == "waiting") &&
+		(value.Availability == "available" || value.OngoingActivity == "") {
+		return value
+	}
+	return RoutineActivity{Availability: "unavailable"}
 }

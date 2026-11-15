@@ -123,6 +123,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 			dependencies.agentHeartbeat,
 			dependencies.taskStore,
 			runtimePublicTaskVisibility(dependencies.sessionVisibility),
+			dependencies.agentRoutine,
 		),
 		BoardAgentWork: viewer.NewBoardAgentWorkHandler(newRuntimeBoardAgentWorkReader(dependencies), boardAgentWorkOwnerToken),
 	}})

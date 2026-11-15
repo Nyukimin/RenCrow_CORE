@@ -334,10 +334,16 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			return agentheartbeat.Work{}, false, nil
 		}
 		if plan.Kind == agentroutine.ActivityDaytime {
-			if daytimeFallback == nil {
+			if daytimeFallback != nil {
+				fallbackWork, found, fallbackErr := daytimeFallback(ctx, actorID)
+				if fallbackErr != nil || found {
+					return fallbackWork, found, fallbackErr
+				}
+			}
+			plan = daytimeRelaxPlan(plan, presence)
+			if plan.Kind == agentroutine.ActivityDaytime {
 				return agentheartbeat.Work{}, false, nil
 			}
-			return daytimeFallback(ctx, actorID)
 		}
 		if retryingDiary && plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
 			return agentheartbeat.Work{}, false, nil
@@ -918,7 +924,9 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 	}
 	if !progress.EffectCompleted {
 		switch intent.Kind {
-		case agentroutine.ActivitySleep, agentroutine.ActivityWake, agentroutine.ActivityRelax:
+		case agentroutine.ActivityRelax:
+			state, progress, err = r.executeRelaxation(activityCtx, stop, state, progress)
+		case agentroutine.ActivitySleep, agentroutine.ActivityWake:
 			if r.worldLife != nil {
 				state, progress, err = r.executeRoutineWorldActivity(activityCtx, stop, state, progress)
 			} else {
@@ -1003,7 +1011,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		}
 	}
 	_, err = routinePersist(activityCtx, func(persistCtx context.Context) (agentroutine.State, error) {
-		return r.store.FinishIntent(persistCtx, actorID, intent.ID, state.Revision, r.now().Add(routineCooldown(intent.Kind)))
+		return r.finishRoutineIntent(persistCtx, state, progress)
 	})
 	return err
 }
@@ -1099,6 +1107,7 @@ func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, cle
 	presence := r.presence(read.snapshot, actorID, read.readAt, !clearPending, reservedParticipants)
 	canHobby := r.canHobby(actorID)
 	plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, state, presence, canHobby)
+	plan = daytimeRelaxPlan(plan, presence)
 	if plan.Kind == agentroutine.ActivityMorningChat {
 		if len(reservedParticipants) == 1 && containsRoutineActor(presence.ChatParticipants, reservedParticipants[0]) {
 			plan.Participants = append([]string(nil), reservedParticipants...)
@@ -1109,6 +1118,26 @@ func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, cle
 		plan.Participants = nil
 	}
 	return plan, now, nil
+}
+
+// daytimeRelaxPlan converts an otherwise empty daytime slot into a bounded
+// quiet-time activity only when the latest WORLD observation confirms a room.
+func daytimeRelaxPlan(plan agentroutine.Plan, presence agentroutine.Presence) agentroutine.Plan {
+	if plan.Kind != agentroutine.ActivityDaytime {
+		return plan
+	}
+	if presence.SharedRoom == agentroutine.AvailabilityAvailable {
+		plan.Kind = agentroutine.ActivityRelax
+		plan.RelaxRoom = agentroutine.RelaxRoomShared
+		plan.Reason = "no daytime fallback work; relax in confirmed shared room"
+		return plan
+	}
+	if presence.OwnRoom == agentroutine.AvailabilityAvailable {
+		plan.Kind = agentroutine.ActivityRelax
+		plan.RelaxRoom = agentroutine.RelaxRoomPrivate
+		plan.Reason = "no daytime fallback work; relax in confirmed own room"
+	}
+	return plan
 }
 
 func containsRoutineActor(values []string, actorID string) bool {
@@ -1587,6 +1616,8 @@ func routineTaskTitle(kind agentroutine.ActivityKind) string {
 		return "CORE agent routine: public research and private note"
 	case agentroutine.ActivityDiary:
 		return "CORE agent routine: daily diary"
+	case agentroutine.ActivityRelax:
+		return "CORE agent routine: quiet time"
 	case agentroutine.ActivitySleep, agentroutine.ActivityWake:
 		return "CORE agent routine: logical sleep eligibility"
 	default:

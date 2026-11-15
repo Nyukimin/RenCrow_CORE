@@ -2,6 +2,7 @@ package agentroutine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -169,6 +170,64 @@ func TestStoreIntentTaskLinkChoiceCommitCheckpointAndFinishAreRetrySafe(t *testi
 	finishedAgain, err := store.FinishIntent(ctx, "Mio", intent.ID, 0, retryAt)
 	if err != nil || finishedAgain.ChoiceIndex != 1 || finishedAgain.Pending != nil {
 		t.Fatalf("idempotent FinishIntent retry = %+v, %v", finishedAgain, err)
+	}
+}
+
+func TestStoreRelaxFinishAtomicallyPersistsBoundedRestWindowAndRetryDoesNotExtendIt(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "routine.db")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := jst(2026, time.November, 14, 18, 10)
+	until := observed.Add(90 * time.Minute)
+	window := RestWindow{ObservedAt: observed, Until: until, RoomID: "private-room-secret"}
+	state, err := store.DraftIntent(ctx, Intent{ID: "relax-1", ActorID: "Mio", Date: "2026-11-14", Kind: ActivityRelax})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := store.FinishIntentWithRestWindow(ctx, "Mio", "relax-1", state.Revision, until, window)
+	if err != nil || finished.Pending != nil || finished.LastFinishedIntentID != "relax-1" || finished.RestWindow == nil || !finished.RestWindow.Until.Equal(until) {
+		t.Fatalf("FinishIntentWithRestWindow = %+v, %v", finished, err)
+	}
+	retried, err := store.FinishIntentWithRestWindow(ctx, "Mio", "relax-1", 0, until.Add(time.Hour), RestWindow{ObservedAt: observed, Until: until.Add(time.Hour), RoomID: "different"})
+	if err != nil || retried.Revision != finished.Revision || retried.RestWindow == nil || !retried.RestWindow.Until.Equal(until) || retried.RestWindow.RoomID != window.RoomID {
+		t.Fatalf("idempotent relaxation finish extended or replaced window: %+v, %v", retried, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	reopened, err := store.Load(ctx, "Mio")
+	if err != nil || reopened.RestWindow == nil || !reopened.RestWindow.ObservedAt.Equal(observed) || !reopened.RestWindow.Until.Equal(until) || reopened.RestWindow.RoomID != window.RoomID {
+		t.Fatalf("reopened rest window = %+v, %v", reopened.RestWindow, err)
+	}
+	if _, err := store.FinishIntentWithRestWindow(ctx, "Mio", "missing", reopened.Revision, until, window); !errors.Is(err, ErrIntentNotFound) {
+		t.Fatalf("stale/non-owner finish error = %v, want ErrIntentNotFound", err)
+	}
+	// A later ordinary completion clears the previous rest projection.
+	next, err := store.DraftIntent(ctx, Intent{ID: "chat-1", ActorID: "Mio", Date: "2026-11-14", Kind: ActivityMorningChat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := store.FinishIntent(ctx, "Mio", "chat-1", next.Revision, time.Time{})
+	if err != nil || cleared.RestWindow != nil {
+		t.Fatalf("ordinary finish retained stale rest window: %+v, %v", cleared.RestWindow, err)
+	}
+}
+
+func TestStoreLoadsLegacyStatePayloadWithoutRestWindow(t *testing.T) {
+	var state State
+	if err := json.Unmarshal([]byte(`{"actor_id":"Mio","revision":3,"last_finished_intent_id":"old-intent"}`), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.RestWindow != nil || state.ActorID != "Mio" || state.LastFinishedIntentID != "old-intent" {
+		t.Fatalf("legacy payload decoded as %+v", state)
 	}
 }
 

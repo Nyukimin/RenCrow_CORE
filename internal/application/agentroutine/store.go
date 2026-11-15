@@ -174,6 +174,7 @@ func (s *Store) Load(ctx context.Context, actorID string) (State, error) {
 	state.Revision = revision
 	state.Pending = cloneIntent(state.Pending)
 	state.PausedDiary = cloneIntent(state.PausedDiary)
+	state.RestWindow = cloneRestWindow(state.RestWindow)
 	return state, nil
 }
 
@@ -453,11 +454,26 @@ func (s *Store) Checkpoint(ctx context.Context, actorID, intentID, step, output 
 
 // FinishIntent clears the matching pending activity and stores its bounded retry time.
 func (s *Store) FinishIntent(ctx context.Context, actorID, intentID string, expectedRevision int64, retryAfter time.Time) (State, error) {
+	return s.finishIntent(ctx, actorID, intentID, expectedRevision, retryAfter, nil)
+}
+
+// FinishIntentWithRestWindow atomically finishes a verified relaxation and
+// stores its bounded rest interval with the same owner revision CAS.
+func (s *Store) FinishIntentWithRestWindow(ctx context.Context, actorID, intentID string, expectedRevision int64, retryAfter time.Time, rest RestWindow) (State, error) {
+	return s.finishIntent(ctx, actorID, intentID, expectedRevision, retryAfter, &rest)
+}
+
+func (s *Store) finishIntent(ctx context.Context, actorID, intentID string, expectedRevision int64, retryAfter time.Time, rest *RestWindow) (State, error) {
 	if err := validateActorID(actorID); err != nil {
 		return State{}, err
 	}
 	if strings.TrimSpace(intentID) == "" {
 		return State{}, fmt.Errorf("intent ID: %w", ErrInvalid)
+	}
+	if rest != nil {
+		if err := validateRestWindow(*rest); err != nil {
+			return State{}, err
+		}
 	}
 	tx, err := s.begin(ctx)
 	if err != nil {
@@ -481,6 +497,9 @@ func (s *Store) FinishIntent(ctx context.Context, actorID, intentID string, expe
 		return State{}, ErrConflict
 	}
 	finishedKind := state.Pending.Kind
+	if rest != nil && finishedKind != ActivityRelax {
+		return State{}, fmt.Errorf("rest window requires a relaxation intent: %w", ErrInvalid)
+	}
 	state.Pending = nil
 	if finishedKind == ActivityWake && state.PausedDiary != nil {
 		state.Pending = cloneIntent(state.PausedDiary)
@@ -488,6 +507,11 @@ func (s *Store) FinishIntent(ctx context.Context, actorID, intentID string, expe
 	}
 	state.LastFinishedIntentID = intentID
 	state.CooldownUntil = retryAfter
+	state.RestWindow = nil
+	if rest != nil {
+		copy := *rest
+		state.RestWindow = &copy
+	}
 	saved, err := saveStateTx(ctx, tx, state, expectedRevision)
 	if err != nil {
 		return State{}, err
@@ -496,6 +520,13 @@ func (s *Store) FinishIntent(ctx context.Context, actorID, intentID string, expe
 		return State{}, fmt.Errorf("commit routine finish: %w", err)
 	}
 	return saved, nil
+}
+
+func validateRestWindow(rest RestWindow) error {
+	if rest.ObservedAt.IsZero() || rest.Until.IsZero() || !rest.Until.After(rest.ObservedAt) || strings.TrimSpace(rest.RoomID) == "" {
+		return fmt.Errorf("rest window observation, end, or room: %w", ErrInvalid)
+	}
+	return nil
 }
 
 // SaveFact writes one actor/date fact with caller-supplied evidence. Repeated writes
@@ -754,6 +785,7 @@ func loadStateTx(ctx context.Context, tx *sql.Tx, actorID string) (State, error)
 	state.Revision = revision
 	state.Pending = cloneIntent(state.Pending)
 	state.PausedDiary = cloneIntent(state.PausedDiary)
+	state.RestWindow = cloneRestWindow(state.RestWindow)
 	return state, nil
 }
 
@@ -797,6 +829,14 @@ func validateState(state State) error {
 	}
 	if state.Revision < 0 {
 		return fmt.Errorf("state revision: %w", ErrInvalid)
+	}
+	if state.RestWindow != nil {
+		if err := validateRestWindow(*state.RestWindow); err != nil {
+			return fmt.Errorf("rest window: %w", err)
+		}
+		if state.LastFinishedIntentID == "" {
+			return fmt.Errorf("rest window lacks finished intent link: %w", ErrInvalid)
+		}
 	}
 	for label, date := range map[string]string{"activated on": state.ActivatedOn, "schedule date": state.ScheduleDate, "next diary date": state.NextDiaryDate} {
 		if date != "" && !validDate(date) {
@@ -905,5 +945,13 @@ func cloneIntent(intent *Intent) *Intent {
 	}
 	copy := *intent
 	copy.Participants = cloneStrings(intent.Participants)
+	return &copy
+}
+
+func cloneRestWindow(rest *RestWindow) *RestWindow {
+	if rest == nil {
+		return nil
+	}
+	copy := *rest
 	return &copy
 }
