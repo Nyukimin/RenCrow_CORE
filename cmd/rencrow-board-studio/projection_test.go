@@ -561,7 +561,7 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 		case "/viewer/board/agent-work":
 			agentWorkHeaders <- r.Header.Clone()
 			_, _ = w.Write([]byte(`{"observed_at":"2026-11-15T00:00:00Z","actors":[
-				{"actor_id":"mio","heartbeat_state":"working","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","activity_kind":"scheduled_task","activity_title":"Mio schedule slot","current_tasks":[{"task_id":"mio-current","title":"Mio current","status":"running","queue_class":"task_only"}],"waiting_queue":[{"task_id":"mio-scheduled","title":"Scheduled","status":"queued","queue_class":"scheduled","run_queue_status":"queued"},{"task_id":"mio-board","title":"BOARD task","status":"waiting","queue_class":"task_only"}],"board_inbox_queue":[{"work_id":"inbox-1","title":"BOARD inbox instruction","priority":"high","created_at":"2026-11-15T00:00:01Z","not_before":"2026-11-15T00:05:00Z","body":"private inbox body must not enter Studio DTO"}],"foreground_waiters":{"count":2,"items":[{"position":1,"priority":"high"},{"position":2,"priority":"normal"}]}},
+				{"actor_id":"mio","heartbeat_state":"working","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","activity_kind":"scheduled_task","activity_title":"Mio schedule slot","current_tasks":[{"task_id":"mio-current","title":"Mio current","status":"running","queue_class":"task_only"}],"waiting_queue":[{"task_id":"mio-scheduled","title":"Scheduled","status":"queued","queue_class":"scheduled","run_queue_status":"queued"},{"task_id":"mio-board","title":"BOARD task","status":"waiting","queue_class":"task_only"}],"board_inbox_queue":[{"work_id":"inbox-1","title":"A bounded pending instruction excerpt","priority":"high","created_at":"2026-11-15T00:00:01Z","not_before":"2026-11-15T00:05:00Z","body":"private inbox body must not enter Studio DTO"}],"foreground_waiters":{"count":2,"items":[{"position":1,"priority":"high"},{"position":2,"priority":"normal"}]}},
 				{"actor_id":"shiro","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[],"waiting_queue":[],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
 				{"actor_id":"kuro","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[],"waiting_queue":[],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
 				{"actor_id":"midori","heartbeat_state":"idle","availability":{"heartbeat":"available","tasks":"available","run_queue":"available","board_inbox":"available","foreground_waiters":"available"},"queue_completeness":"complete","current_tasks":[],"waiting_queue":[],"board_inbox_queue":[],"foreground_waiters":{"count":0,"items":[]}},
@@ -671,7 +671,7 @@ func TestSnapshotProjectsCanonicalAgentWorkWithCompleteQueues(t *testing.T) {
 	}
 	mio := byID["mio"]
 	if err := json.Unmarshal(mio["board_inbox_queue"], &inboxRows); err != nil || len(inboxRows) != 1 ||
-		inboxRows[0].WorkID != "inbox-1" || inboxRows[0].Title != "BOARD inbox instruction" ||
+		inboxRows[0].WorkID != "inbox-1" || inboxRows[0].Title != "A bounded pending instruction excerpt" ||
 		inboxRows[0].Priority != "high" || inboxRows[0].CreatedAt.IsZero() || inboxRows[0].NotBefore == nil {
 		t.Errorf("available board inbox queue record not preserved: %s (err=%v)", mio["board_inbox_queue"], err)
 	}
@@ -780,6 +780,55 @@ func TestSnapshotKeepsStudioProjectionWhenOwnerAgentWorkIsUnavailable(t *testing
 	legacy, ok := byID["coder1"]
 	if !ok || legacy.Kind != "legacy" || legacy.ActorID != "" || legacy.HeartbeatState == "unavailable" {
 		t.Errorf("legacy coder row should remain distinct from canonical placeholders: %+v", legacy)
+	}
+}
+
+func TestValidAgentWorkAcceptsOnlyBoundedNonblankInboxTitles(t *testing.T) {
+	newWork := func(title string) viewerAgentWork {
+		observed := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
+		work := viewerAgentWork{ObservedAt: observed, Actors: make([]viewerAgentWorkActor, 0, len(canonicalActorIDs))}
+		for _, actorID := range canonicalActorIDs {
+			actor := viewerAgentWorkActor{
+				ActorID: actorID,
+				Availability: agentWorkAvailability{
+					Heartbeat: "available", Tasks: "available", RunQueue: "available",
+					BoardInbox: "available", ForegroundWaiters: "available",
+				},
+				QueueCompleteness: "complete",
+				CurrentTasks:      []json.RawMessage{},
+				WaitingQueue:      []json.RawMessage{},
+				BoardInboxQueue:   []agentBoardInboxItem{},
+				ForegroundWaiters: &agentForegroundWaiters{Count: 0, Items: []agentForegroundWaiter{}},
+			}
+			if actorID == canonicalActorIDs[0] {
+				actor.BoardInboxQueue = []agentBoardInboxItem{{
+					WorkID: "board-inbox:item-1", Title: title, Priority: "normal", CreatedAt: observed,
+				}}
+			}
+			work.Actors = append(work.Actors, actor)
+		}
+		return work
+	}
+
+	tests := []struct {
+		name  string
+		title string
+		want  bool
+	}{
+		{name: "bounded instruction excerpt", title: "A pending instruction excerpt", want: true},
+		{name: "markup-like title remains data", title: "<script>alert(1)</script>", want: true},
+		{name: "160 Unicode code points", title: strings.Repeat("指", maxBoardInboxTitleRunes), want: true},
+		{name: "empty title", title: "", want: false},
+		{name: "whitespace only", title: " \t ", want: false},
+		{name: "line break", title: "First line\nsecond line", want: false},
+		{name: "over 160 Unicode code points", title: strings.Repeat("指", maxBoardInboxTitleRunes+1), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := validAgentWork(newWork(test.title)); got != test.want {
+				t.Errorf("validAgentWork(title length %d) = %t, want %t", len([]rune(test.title)), got, test.want)
+			}
+		})
 	}
 }
 

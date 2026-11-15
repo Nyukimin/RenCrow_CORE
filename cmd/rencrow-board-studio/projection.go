@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type coreRef struct {
@@ -303,7 +304,10 @@ var coreRoles = map[string]string{"mio": "Chat", "shiro": "Worker", "kuro": "Cha
 var canonicalActorIDs = []string{"mio", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"}
 var legacyAgentIDs = map[string]bool{"coder1": true, "coder2": true, "coder3": true, "coder4": true}
 
-const boardInboxGenericTitle = "BOARD inbox instruction"
+// The BOARD Inbox preview exposes only its first nonblank line, bounded to
+// 160 Unicode code points. CORE replaces an empty excerpt with its generic
+// instruction label before it reaches this projection.
+const maxBoardInboxTitleRunes = 160
 
 var taskStates = map[string]string{"queued": "queued", "running": "working", "waiting": "waiting", "blocked": "blocked",
 	"failed": "failed", "succeeded": "done", "cancelled": "canceled", "superseded": "canceled"}
@@ -398,7 +402,7 @@ func validAgentWork(work viewerAgentWork) bool {
 			}
 		}
 		for _, item := range actor.BoardInboxQueue {
-			if item.WorkID == "" || item.Title != boardInboxGenericTitle ||
+			if item.WorkID == "" || !validBoardInboxTitle(item.Title) ||
 				item.Priority == "" || item.CreatedAt.IsZero() {
 				return false
 			}
@@ -409,6 +413,11 @@ func validAgentWork(work viewerAgentWork) bool {
 }
 
 func validAvailability(value string) bool { return value == "available" || value == "unavailable" }
+
+func validBoardInboxTitle(value string) bool {
+	return utf8.ValidString(value) && strings.TrimSpace(value) != "" &&
+		!strings.ContainsAny(value, "\r\n") && utf8.RuneCountInString(value) <= maxBoardInboxTitleRunes
+}
 
 func validConfiguredAvailability(value string) bool {
 	return validAvailability(value) || value == "not_configured"

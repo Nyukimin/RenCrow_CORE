@@ -25,6 +25,8 @@ type runtimeRoutineHouseViewResponse struct {
 type runtimeRoutineHouseViewActorDTO struct {
 	ID                    string       `json:"id"`
 	RoomID                string       `json:"room_id"`
+	SeatID                string       `json:"seat_id,omitempty"`
+	SeatAction            string       `json:"seat_action,omitempty"`
 	Position              [3]float64   `json:"position"`
 	ActiveKind            string       `json:"active_kind,omitempty"`
 	ActivePose            string       `json:"active_pose,omitempty"`
@@ -122,6 +124,7 @@ func runtimeRoutineHouseViewProject(runtime *agentRoutineRuntime, read routineSn
 		return runtimeRoutineHouseViewResponse{}, errRoutineHouseViewSnapshotUnavailable
 	}
 	actorByCoreID := make(map[string]runtimeRoutineHouseViewActorDTO, len(read.snapshot.Actors))
+	desired, _ := runtime.livingSeats()
 	for _, actor := range read.snapshot.Actors {
 		coreActorID, allowed := runtime.worldActorIDs[actor.ActorID]
 		if !allowed {
@@ -134,6 +137,12 @@ func runtimeRoutineHouseViewProject(runtime *agentRoutineRuntime, read routineSn
 			return runtimeRoutineHouseViewResponse{}, errRoutineHouseViewSnapshotUnavailable
 		}
 		dto := runtimeRoutineHouseViewActorDTO{ID: coreActorID, RoomID: actor.RoomID, Position: actor.Position}
+		if actor.ActivityID == "" && livingSeatRoom(actor.SlotID) == actor.RoomID {
+			dto.SeatID = actor.SlotID
+			if target := desired[coreActorID]; target.slot == actor.SlotID {
+				dto.SeatAction = target.pose
+			}
+		}
 		if coreActorID == "kuro" {
 			completions := actor.MirrorPoseCompletions
 			dto.MirrorPoseCompletions = &completions

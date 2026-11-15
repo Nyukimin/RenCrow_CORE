@@ -64,12 +64,14 @@ type agentRoutineRuntime struct {
 	now           func() time.Time
 	worldNow      func() time.Time // authoritative UTC owner clock for WORLD due times; scheduler/test time is separate.
 
-	snapshotMu         sync.Mutex
-	snapshot           worldread.Snapshot
-	snapshotReadAt     time.Time
-	snapshotPending    chan struct{}
-	amendmentMu        sync.Mutex
-	lastAmendmentCheck map[string]time.Time
+	snapshotMu           sync.Mutex
+	snapshot             worldread.Snapshot
+	snapshotReadAt       time.Time
+	snapshotPending      chan struct{}
+	livingConversationMu sync.Mutex
+	livingConversation   map[string]livingSeatActivity
+	amendmentMu          sync.Mutex
+	lastAmendmentCheck   map[string]time.Time
 }
 
 type routineSnapshotRead struct {
@@ -1667,6 +1669,17 @@ func (r *agentRoutineRuntime) executeMorningChat(ctx context.Context, stop <-cha
 	if err := r.revalidateChat(ctx, state.Pending); err != nil {
 		return state, progress, err
 	}
+	if progress.World != nil {
+		endPresentation := r.showLivingConversation(state.Pending.ActorID, state.Pending.Participants[0], progress.World.MorningRoom)
+		defer endPresentation()
+		if err := r.readyLivingConversation(ctx, state.Pending.ActorID, state.Pending.Participants[0]); err != nil {
+			endPresentation()
+			if ctx.Err() != nil {
+				return state, progress, errAgentRoutineStopped
+			}
+			log.Printf("LIVING morning conversation seats unavailable actor=%s: %v", state.Pending.ActorID, err)
+		}
+	}
 	for index := range prepared {
 		if routineStopRequested(ctx, stop) {
 			return state, progress, errAgentRoutineStopped
@@ -1679,7 +1692,9 @@ func (r *agentRoutineRuntime) executeMorningChat(ctx context.Context, stop <-cha
 		if index > 0 {
 			prompt = "相手からの朝の返事を受けて、会話を短く自然に続けてください。会話内容を外部へ持ち出さないでください。相手の発言:\n" + progress.Actors[0].Output
 		}
+		r.livingConversationSpeaking(actor.ActorID, true)
 		output, err := r.executePrivateWorker(ctx, prepared[index], actor.ActorID, prompt)
+		r.livingConversationSpeaking(actor.ActorID, false)
 		if err != nil {
 			if ctx.Err() != nil {
 				return state, progress, errAgentRoutineStopped

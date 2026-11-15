@@ -2225,6 +2225,9 @@ func startAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
 	deps.agentHeartbeatCancel = cancel
 	deps.agentHeartbeatDone = done
 	deps.agentHeartbeatStarted = true
+	if deps.agentRoutine != nil {
+		go deps.agentRoutine.runLivingSeats(ctx)
+	}
 	go func() {
 		defer close(done)
 		if err := deps.agentHeartbeat.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
