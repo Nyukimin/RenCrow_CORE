@@ -42,6 +42,7 @@ type livingHeartbeatAgent struct {
 	ActorID             string `json:"actor_id"`
 	State               string `json:"state"`
 	ActivityKind        string `json:"activity_kind,omitempty"`
+	GameID              string `json:"game_id,omitempty"`
 	Title               string `json:"title,omitempty"`
 	RoutineAvailability string `json:"routine_availability,omitempty"`
 	OngoingActivity     string `json:"ongoing_activity,omitempty"`
@@ -139,7 +140,7 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 		agents := make([]livingHeartbeatAgent, 0, len(activities))
 		for _, activity := range activities {
 			agent := livingHeartbeatAgent{
-				ActorID: activity.ActorID, State: activity.State, ActivityKind: activity.ActivityKind, Title: activity.Title,
+				ActorID: activity.ActorID, State: activity.State, ActivityKind: activity.ActivityKind, GameID: activity.GameID, Title: activity.Title,
 			}
 			projection, hasProjection := routineByActor[activity.ActorID]
 			if activity.State == "waiting" {

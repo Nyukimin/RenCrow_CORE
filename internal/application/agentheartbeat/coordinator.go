@@ -129,6 +129,7 @@ type reservation struct {
 	idle             bool
 	source           workSource
 	activityKind     ActivityKind
+	gameID           string
 	visibilityTaskID modulecore.TaskID
 	workID           string
 	stop             chan struct{}
@@ -146,10 +147,12 @@ const (
 )
 
 type waiter struct {
-	priority domaintask.Priority
-	order    uint64
-	ready    chan struct{}
-	lease    *reservation
+	priority     domaintask.Priority
+	order        uint64
+	activityKind ActivityKind
+	gameID       string
+	ready        chan struct{}
+	lease        *reservation
 }
 
 type reservationContextKey struct{}
@@ -183,6 +186,7 @@ type LivingActivity struct {
 	ActorID      string
 	State        string
 	ActivityKind string
+	GameID       string
 	Title        string
 }
 
@@ -285,6 +289,9 @@ func (s *Scheduler) livingSnapshot(ctx context.Context, titleLookup func(context
 		case state.active != nil:
 			activity.State = "running"
 			activity.ActivityKind = string(state.active.activityKind)
+			if state.active.activityKind == ActivityKindGame {
+				activity.GameID = publicLivingGameID(state.active.gameID)
+			}
 			if activity.ActivityKind == "" && state.active.source == workSourceNone {
 				activity.ActivityKind = string(ActivityKindForeground)
 			}
@@ -316,6 +323,15 @@ func (s *Scheduler) livingSnapshot(ctx context.Context, titleLookup func(context
 		}
 	}
 	return activities, true
+}
+
+func publicLivingGameID(gameID string) string {
+	switch gameID {
+	case "nethack", "herzog_zwei", "territory_commander", "survival_garden":
+		return gameID
+	default:
+		return ""
+	}
 }
 
 // Tick starts a nonblocking discovery pass for every registered actor.
@@ -435,6 +451,17 @@ func (s *Scheduler) Wait(ctx context.Context) error {
 // a cooperative stop of lower-priority background work, but owns the slot only
 // after that work has returned and finalized.
 func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domaintask.Priority) (func(), error) {
+	return s.acquire(ctx, actor, priority, "", "")
+}
+
+// AcquireGameTurn acquires the actor's existing scheduler slot for one game
+// decision. Reentrant calls temporarily overlay the current reservation and
+// restore its previous activity when released.
+func (s *Scheduler) AcquireGameTurn(ctx context.Context, actor string, priority domaintask.Priority, gameID string) (func(), error) {
+	return s.acquire(ctx, actor, priority, ActivityKindGame, gameID)
+}
+
+func (s *Scheduler) acquire(ctx context.Context, actor string, priority domaintask.Priority, activityKind ActivityKind, gameID string) (func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -448,8 +475,28 @@ func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domainta
 		s.mu.Lock()
 		state := s.agents[actor]
 		if state != nil && state.active == current {
+			previousKind, previousGameID := current.activityKind, current.gameID
+			if activityKind != "" {
+				current.activityKind = activityKind
+				current.gameID = gameID
+				s.signalChangedLocked()
+			}
 			s.mu.Unlock()
-			return func() {}, nil
+			if activityKind == "" {
+				return func() {}, nil
+			}
+			var once sync.Once
+			return func() {
+				once.Do(func() {
+					s.mu.Lock()
+					if state := s.agents[actor]; state != nil && state.active == current {
+						current.activityKind = previousKind
+						current.gameID = previousGameID
+						s.signalChangedLocked()
+					}
+					s.mu.Unlock()
+				})
+			}, nil
 		}
 		s.mu.Unlock()
 	}
@@ -466,7 +513,7 @@ func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domainta
 	}
 	s.cancelScanLocked(state)
 	s.nextOrder++
-	w := &waiter{priority: priority, order: s.nextOrder, ready: make(chan struct{})}
+	w := &waiter{priority: priority, order: s.nextOrder, activityKind: activityKind, gameID: gameID, ready: make(chan struct{})}
 	state.waiters = append(state.waiters, w)
 	sortWaiters(state.waiters)
 	s.requestStopLocked(state, priority)
@@ -1135,10 +1182,12 @@ func (s *Scheduler) grantNextLocked(state *agentState) {
 	w := state.waiters[0]
 	state.waiters = state.waiters[1:]
 	lease := &reservation{
-		scheduler: s,
-		actor:     state.actor,
-		priority:  w.priority,
-		stop:      make(chan struct{}),
+		scheduler:    s,
+		actor:        state.actor,
+		priority:     w.priority,
+		activityKind: w.activityKind,
+		gameID:       w.gameID,
+		stop:         make(chan struct{}),
 	}
 	state.active = lease
 	w.lease = lease
