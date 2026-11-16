@@ -294,10 +294,88 @@ func (s *SQLiteStore) verifyPersonalArchiveReceiptOverlays(ctx context.Context) 
 	return true, nil
 }
 
+// rebuildPersonalArchiveReceiptSearchProjections repairs only derived search
+// rows for receipt-verified archive sources. Archive payloads and receipts are
+// read-only inputs; all affected documents and terms commit as one transaction.
+func (s *SQLiteStore) rebuildPersonalArchiveReceiptSearchProjections(ctx context.Context) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("knowledge memory sqlite store is closed")
+	}
+	ready, err := s.personalArchiveReceiptSchemaPresent(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !ready {
+		return 0, fmt.Errorf("knowledge memory personal archive receipt schema is unavailable")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `SELECT source_key, entry_id, user_id, actor_id, original_payload_hash, current_payload_hash
+		FROM knowledge_memory_personal_archive_receipts ORDER BY source_key`)
+	if err != nil {
+		return 0, err
+	}
+	receipts := []personalArchiveReceipt{}
+	for rows.Next() {
+		var receipt personalArchiveReceipt
+		if err := rows.Scan(&receipt.SourceKey, &receipt.EntryID, &receipt.UserID, &receipt.ActorID, &receipt.OriginalPayloadHash, &receipt.CurrentPayloadHash); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		receipts = append(receipts, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	rebuilt := 0
+	for _, receipt := range receipts {
+		item, _, err := loadAndVerifyPersonalArchiveReceipt(ctx, tx, receipt)
+		if err != nil {
+			return 0, err
+		}
+		projection := personalArchiveSearchProjection(item)
+		if projection == nil {
+			return 0, fmt.Errorf("%w: receipt-bound archive is not searchable", ErrPersonalArchiveReceiptIntegrity)
+		}
+		if err := verifyPersonalArchiveReceiptProjectionWithQueryer(ctx, tx, item); err == nil {
+			continue
+		} else if !errors.Is(err, ErrPersonalArchiveReceiptIntegrity) {
+			return 0, err
+		}
+		if err := deleteSearchProjectionTx(ctx, tx, personalArchiveRecordType, item.EntryID); err != nil {
+			return 0, err
+		}
+		if err := insertSearchProjectionTx(ctx, tx, *projection); err != nil {
+			return 0, err
+		}
+		rebuilt++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return rebuilt, nil
+}
+
 func (s *SQLiteStore) verifyPersonalArchiveReceiptProjection(ctx context.Context, item domainkm.PersonalArchiveEntry) error {
+	return verifyPersonalArchiveReceiptProjectionWithQueryer(ctx, s.db, item)
+}
+
+type personalArchiveProjectionQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func verifyPersonalArchiveReceiptProjectionWithQueryer(ctx context.Context, queryer personalArchiveProjectionQueryer, item domainkm.PersonalArchiveEntry) error {
 	want := personalArchiveSearchProjection(item)
 	var got safeSearchProjection
-	err := s.db.QueryRowContext(ctx, `SELECT scope, user_id, title, summary, visibility, source_updated_at, content_sha256
+	err := queryer.QueryRowContext(ctx, `SELECT scope, user_id, title, summary, visibility, source_updated_at, content_sha256
 		FROM knowledge_memory_search_documents WHERE record_type = ? AND record_id = ?`, personalArchiveRecordType, item.EntryID).Scan(
 		&got.scope, &got.userID, &got.title, &got.summary, &got.visibility, &got.sourceUpdatedAt, &got.contentSHA256)
 	if want == nil {
@@ -318,7 +396,7 @@ func (s *SQLiteStore) verifyPersonalArchiveReceiptProjection(ctx context.Context
 	if got.scope != want.scope || got.userID != want.userID || got.title != want.title || got.summary != want.summary || got.visibility != want.visibility || got.sourceUpdatedAt != want.sourceUpdatedAt || got.contentSHA256 != want.contentSHA256 {
 		return fmt.Errorf("%w: archive search document does not match source", ErrPersonalArchiveReceiptIntegrity)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT token FROM knowledge_memory_search_terms WHERE record_type = ? AND record_id = ? ORDER BY token`, personalArchiveRecordType, item.EntryID)
+	rows, err := queryer.QueryContext(ctx, `SELECT token FROM knowledge_memory_search_terms WHERE record_type = ? AND record_id = ? ORDER BY token`, personalArchiveRecordType, item.EntryID)
 	if err != nil {
 		return err
 	}

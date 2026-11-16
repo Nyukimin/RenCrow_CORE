@@ -672,7 +672,8 @@ func readLatestJSONL[T any](path string, idOf func(T) string, validate func(T) e
 
 // ImportJSONLToSQLite performs an additive, non-destructive import. The
 // source JSONL remains untouched, while the target is promoted only after the
-// domain rows, bounded projection backfill, and manifest all agree.
+// domain rows, bounded projection backfill, verified private archive projection
+// repair, and manifest all agree.
 func ImportJSONLToSQLite(ctx context.Context, sourceRoot, sqlitePath string) (ImportReport, error) {
 	snapshot, err := readSourceSnapshot(sourceRoot)
 	if err != nil {
@@ -722,6 +723,9 @@ func ImportJSONLToSQLite(ctx context.Context, sourceRoot, sqlitePath string) (Im
 		if coverage.State == KnowledgeMemoryCoverageReady {
 			break
 		}
+	}
+	if _, err := store.rebuildPersonalArchiveReceiptSearchProjections(ctx); err != nil {
+		return ImportReport{}, fmt.Errorf("rebuild verified personal archive search projections: %w", err)
 	}
 	importedCount, importedHash, err := store.domainManifest(ctx)
 	if err != nil {

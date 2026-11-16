@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -103,10 +105,15 @@ func TestOneHundredEightyReceiptBoundDiariesRemainReadyAndPrivateSearchable(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	}()
 
 	const entryCount = 180
 	start := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	items := make([]domainkm.PersonalArchiveEntry, 0, entryCount)
 	for i := 0; i < entryCount; i++ {
 		day := start.AddDate(0, 0, i)
 		date := day.Format("2006-01-02")
@@ -119,6 +126,7 @@ func TestOneHundredEightyReceiptBoundDiariesRemainReadyAndPrivateSearchable(t *t
 		if _, err := store.SavePersonalArchiveEntryWithReceipt(ctx, item, locator, "lumina"); err != nil {
 			t.Fatalf("save receipt-bound diary %d: %v", i, err)
 		}
+		items = append(items, item)
 	}
 	readiness, err := store.Readiness(ctx)
 	if err != nil {
@@ -126,6 +134,70 @@ func TestOneHundredEightyReceiptBoundDiariesRemainReadyAndPrivateSearchable(t *t
 	}
 	if !readiness.DatabaseAvailable || !readiness.SchemaReady || !readiness.IndexReady || readiness.Coverage.State != KnowledgeMemoryCoverageReady || readiness.IntegrityState != KnowledgeMemoryIntegrityReady {
 		t.Fatalf("180 receipt-bound diaries should remain compatible with the imported readiness manifest: readiness=%+v", readiness)
+	}
+	archiveBefore := snapshotPersonalArchiveReceiptRows(t, ctx, store)
+	manifestBefore := snapshotKnowledgeMemoryManifest(t, ctx, store)
+	legacyTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		tokens := legacyPersonalArchiveTokens(t, item)
+		if _, err := legacyTx.ExecContext(ctx, `DELETE FROM knowledge_memory_search_terms WHERE record_type = ? AND record_id = ?`, personalArchiveRecordType, item.EntryID); err != nil {
+			_ = legacyTx.Rollback()
+			t.Fatal(err)
+		}
+		for _, token := range tokens {
+			if _, err := legacyTx.ExecContext(ctx, `INSERT INTO knowledge_memory_search_terms (scope, user_id, token, record_type, record_id) VALUES (?, ?, ?, ?, ?)`, appkm.SearchScopeUser, item.UserID, token, personalArchiveRecordType, item.EntryID); err != nil {
+				_ = legacyTx.Rollback()
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := legacyTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	legacyReadiness, err := store.Readiness(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyReadiness.Coverage.State != KnowledgeMemoryCoverageReady || legacyReadiness.IntegrityState != KnowledgeMemoryIntegrityFailed {
+		t.Fatalf("V1-shaped projection must expose the stale V2 term contract before repair: %+v", legacyReadiness)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = nil
+	report, err := ImportJSONLToSQLite(ctx, t.TempDir(), path)
+	if err != nil {
+		t.Fatalf("promote should rebuild receipt-bound derived indexes without importing a changed source: %v", err)
+	}
+	if report.SourceCount != 0 || report.ImportedCount != 0 || report.Coverage.State != KnowledgeMemoryCoverageReady {
+		t.Fatalf("receipt projection repair should preserve the empty imported-source manifest: %+v", report)
+	}
+	store, err = OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readiness, err = store.Readiness(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readiness.DatabaseAvailable || !readiness.SchemaReady || !readiness.IndexReady || readiness.Coverage.State != KnowledgeMemoryCoverageReady || readiness.IntegrityState != KnowledgeMemoryIntegrityReady {
+		t.Fatalf("receipt-bound V2 projections should be ready after promote: readiness=%+v", readiness)
+	}
+	if after := snapshotPersonalArchiveReceiptRows(t, ctx, store); !reflect.DeepEqual(after, archiveBefore) {
+		t.Fatal("promotion changed protected archive payloads or receipt owner/source/hash bindings")
+	}
+	if after := snapshotKnowledgeMemoryManifest(t, ctx, store); after != manifestBefore {
+		t.Fatal("promotion changed the imported manifest while rebuilding receipt projections")
+	}
+	var emailTermRows int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM knowledge_memory_search_terms WHERE record_type = ? AND token = 'email'`, personalArchiveRecordType).Scan(&emailTermRows); err != nil {
+		t.Fatal(err)
+	}
+	if emailTermRows != entryCount {
+		t.Fatalf("V2 summary token was not restored for all receipt-bound diary entries: %d", emailTermRows)
 	}
 	results, err := store.Search(ctx, appkm.SearchRequest{
 		Scope: appkm.SearchScope{Scope: appkm.SearchScopeUser, UserID: "ren"},
@@ -141,6 +213,81 @@ func TestOneHundredEightyReceiptBoundDiariesRemainReadyAndPrivateSearchable(t *t
 	if err != nil || len(otherOwner) != 0 {
 		t.Fatalf("other-owner search should not reveal diary content: results=%#v err=%v", otherOwner, err)
 	}
+}
+
+type personalArchiveReceiptSnapshot struct {
+	PayloadHash        string
+	SourceKey          string
+	UserID             string
+	ActorID            string
+	OriginalHash       string
+	CurrentPayloadHash string
+}
+
+func snapshotPersonalArchiveReceiptRows(t *testing.T, ctx context.Context, store *SQLiteStore) map[string]personalArchiveReceiptSnapshot {
+	t.Helper()
+	rows, err := store.db.QueryContext(ctx, `SELECT archive.entry_id, archive.payload, receipt.source_key, receipt.user_id, receipt.actor_id, receipt.original_payload_hash, receipt.current_payload_hash
+		FROM personal_archive AS archive JOIN knowledge_memory_personal_archive_receipts AS receipt ON receipt.entry_id = archive.entry_id ORDER BY archive.entry_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	result := map[string]personalArchiveReceiptSnapshot{}
+	for rows.Next() {
+		var entryID, payload string
+		var snapshot personalArchiveReceiptSnapshot
+		if err := rows.Scan(&entryID, &payload, &snapshot.SourceKey, &snapshot.UserID, &snapshot.ActorID, &snapshot.OriginalHash, &snapshot.CurrentPayloadHash); err != nil {
+			t.Fatal(err)
+		}
+		snapshot.PayloadHash = personalArchivePayloadHash([]byte(payload))
+		result[entryID] = snapshot
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+type knowledgeMemoryManifestSnapshot struct {
+	SourceCount   int
+	ImportedCount int
+	SourceHash    string
+	ImportedHash  string
+	CoverageState string
+	EligibleCount int
+	IndexedCount  int
+}
+
+func snapshotKnowledgeMemoryManifest(t *testing.T, ctx context.Context, store *SQLiteStore) knowledgeMemoryManifestSnapshot {
+	t.Helper()
+	var snapshot knowledgeMemoryManifestSnapshot
+	if err := store.db.QueryRowContext(ctx, `SELECT source_count, imported_count, source_hash, imported_hash, coverage_state, eligible_count, indexed_count
+		FROM knowledge_memory_import_manifest WHERE manifest_id = 'active'`).Scan(&snapshot.SourceCount, &snapshot.ImportedCount, &snapshot.SourceHash, &snapshot.ImportedHash, &snapshot.CoverageState, &snapshot.EligibleCount, &snapshot.IndexedCount); err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func legacyPersonalArchiveTokens(t *testing.T, item domainkm.PersonalArchiveEntry) []string {
+	t.Helper()
+	bodyTokens, err := appkm.IndexSourceTokens(item.OriginalText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	titleTokens, err := appkm.IndexTokens(item.Title)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]struct{}{}
+	for _, token := range append(bodyTokens, titleTokens...) {
+		seen[token] = struct{}{}
+	}
+	tokens := make([]string, 0, len(seen))
+	for token := range seen {
+		tokens = append(tokens, token)
+	}
+	sort.Strings(tokens)
+	return tokens
 }
 
 func TestPersonalArchiveReceiptRejectsChangedSourceItemAndOwnerBindings(t *testing.T) {
