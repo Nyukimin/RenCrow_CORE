@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func TestExecuteDiaryKeepsMixedLongDayAndBoundsReflectionInput(t *testing.T) {
+func TestExecuteDiaryBuildsConciseMixedDayAndBoundsReflectionInput(t *testing.T) {
 	const date = "2026-11-13"
 	ctx := context.Background()
 	runtime := newRoutineDiaryTestRuntime(t, nil)
@@ -132,15 +133,10 @@ func TestExecuteDiaryKeepsMixedLongDayAndBoundsReflectionInput(t *testing.T) {
 	if !progress.EffectCompleted || progress.DiaryReceipt != correlationID || state.Pending == nil {
 		t.Fatalf("diary completion state=%+v progress=%+v", state, progress)
 	}
-	if len(boardWrite.Body) <= 24<<10 {
-		t.Fatalf("BOARD diary body = %d bytes; want a complete body beyond the former 24 KiB cut", len(boardWrite.Body))
+	if len(boardWrite.Body) >= 24<<10 || strings.Contains(boardWrite.Body, strings.Repeat("確認済み活動の記録。", 40)) || strings.Count(boardWrite.Body, "ACTIVITY-") >= activityCount {
+		t.Fatalf("BOARD diary remained a raw event dump: %d bytes", len(boardWrite.Body))
 	}
-	for index := 0; index < activityCount; index++ {
-		if marker := fmt.Sprintf("ACTIVITY-%02d", index); !strings.Contains(boardWrite.Body, marker) {
-			t.Errorf("BOARD diary omitted confirmed activity %s", marker)
-		}
-	}
-	gameSummary := "GAMESでNetHackを2ターン遊んだ"
+	gameSummary := "NetHackを2ターン（22:00〜23:00）遊びました"
 	if !strings.Contains(boardWrite.Body, gameSummary) {
 		t.Fatalf("BOARD diary omitted final canonical game activity %q", gameSummary)
 	}
@@ -150,8 +146,8 @@ func TestExecuteDiaryKeepsMixedLongDayAndBoundsReflectionInput(t *testing.T) {
 	if len(worker.prompt) > 24<<10 {
 		t.Fatalf("reflection provider input = %d bytes, want at most 24 KiB", len(worker.prompt))
 	}
-	if !strings.Contains(worker.prompt, "中略") || !strings.Contains(worker.prompt, gameSummary) {
-		t.Fatalf("bounded reflection input should mark omitted middle facts and retain the final activity: %s", worker.prompt[len(worker.prompt)-min(500, len(worker.prompt)):])
+	if strings.Contains(worker.prompt, "中略") || !strings.Contains(worker.prompt, gameSummary) {
+		t.Fatalf("concise reflection input should contain the activity without a truncation marker: %s", worker.prompt[len(worker.prompt)-min(500, len(worker.prompt)):])
 	}
 	if boardWrite.Body != progress.DiaryBody || boardWrite.Reflection != progress.DiaryReflection ||
 		progress.DiaryReflectionVersion != agentRoutineDiaryReflectionVersion || boardWrite.Revision != 1 {
@@ -376,10 +372,11 @@ func TestExecuteDiaryReplaysUnacknowledgedOldReflectionExactly(t *testing.T) {
 func TestBuildDiaryBodyErrorsInsteadOfPublishingAboveBOARDTextBudget(t *testing.T) {
 	const date = "2026-11-13"
 	runtime := newRoutineDiaryTestRuntime(t, nil)
-	for index := 0; index < 64; index++ {
+	for index := 0; index < 256; index++ {
 		fact := agentroutine.Activity{
-			ActorID: "mio", Date: date, Key: fmt.Sprintf("oversized-%02d", index), Kind: agentroutine.ActivityWork,
-			Source: "diary-test", Confirmed: true, Summary: strings.Repeat("事", 1200),
+			ActorID: "mio", Date: date, Key: fmt.Sprintf("oversized-%03d", index), Kind: agentroutine.ActivityHobby,
+			At: time.Date(2026, time.November, 13, 0, index, 0, 0, time.UTC), Source: "diary-test", Confirmed: true,
+			Summary: fmt.Sprintf("活動%03d %s", index, strings.Repeat("事", 1200)),
 		}
 		if _, err := runtime.store.SaveFact(context.Background(), fact); err != nil {
 			t.Fatalf("SaveFact(%s): %v", fact.Key, err)
@@ -517,18 +514,14 @@ func TestAgentRoutineRetryingDiaryPausesIntoSleepInSameWorkItem(t *testing.T) {
 
 func writeRoutineDiaryGameFixture(t *testing.T, path string, events []viewer.GameBridgeEvent) {
 	t.Helper()
-	file, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create GAMES fixture: %v", err)
-	}
-	encoder := json.NewEncoder(file)
+	var fixture bytes.Buffer
+	encoder := json.NewEncoder(&fixture)
 	for _, event := range events {
 		if err := encoder.Encode(event); err != nil {
-			_ = file.Close()
 			t.Fatalf("encode GAMES fixture event: %v", err)
 		}
 	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("close GAMES fixture: %v", err)
+	if err := os.WriteFile(path, fixture.Bytes(), 0o600); err != nil {
+		t.Fatalf("write GAMES fixture: %v", err)
 	}
 }

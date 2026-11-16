@@ -103,7 +103,7 @@ func TestRecordRoutineRelaxOnlyAfterConfirmedRoomObservationAndDiaryIncludesIt(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(body, facts[0].Summary) {
+	if !strings.Contains(body, "リビングで静かに過ごすひとときがありました") {
 		t.Fatalf("diary body omitted confirmed relaxation: %s", body)
 	}
 }

@@ -2230,37 +2230,11 @@ func (r *agentRoutineRuntime) buildDiaryBody(ctx context.Context, actorID, date 
 			confirmed = append(confirmed, fact)
 		}
 	}
-	sort.SliceStable(confirmed, func(i, j int) bool {
-		if confirmed[i].At.IsZero() != confirmed[j].At.IsZero() {
-			return !confirmed[i].At.IsZero()
-		}
-		if !confirmed[i].At.Equal(confirmed[j].At) {
-			return confirmed[i].At.Before(confirmed[j].At)
-		}
-		return confirmed[i].Key < confirmed[j].Key
-	})
-	var builder strings.Builder
-	fmt.Fprintf(&builder, "%s の記録\n\n", date)
-	builder.WriteString("記録の範囲: COREの確定記録と、認証済みWORLDイベント・canonical GAMES sessionで確認できた事実のみです。\n")
-	if len(confirmed) == 0 {
-		builder.WriteString("この日に確認できたCORE、WORLD、GAMESの記録はありません。\n")
-		return builder.String(), nil
+	body := renderRoutineDiary(date, confirmed, r.location())
+	if len(body) > agentRoutineDiaryBodyMax {
+		return "", fmt.Errorf("confirmed daily life summary exceeds the %d-byte BOARD diary body limit; refusing incomplete diary", agentRoutineDiaryBodyMax)
 	}
-	builder.WriteString("\n")
-	for _, fact := range confirmed {
-		summary := routineDiaryActivitySummary(fact)
-		line := ""
-		if !fact.At.IsZero() {
-			line = fmt.Sprintf("- %s %s\n", fact.At.In(r.location()).Format("15:04"), summary)
-		} else {
-			line = fmt.Sprintf("- %s\n", summary)
-		}
-		if builder.Len()+len(line) > agentRoutineDiaryBodyMax {
-			return "", fmt.Errorf("confirmed activity facts exceed the %d-byte BOARD diary body limit; refusing incomplete diary", agentRoutineDiaryBodyMax)
-		}
-		builder.WriteString(line)
-	}
-	return builder.String(), nil
+	return body, nil
 }
 
 func routineDiaryActivitySummary(fact agentroutine.Activity) string {
