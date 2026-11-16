@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
 	"github.com/PuerkitoBio/goquery"
+	htmlnode "golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
 )
 
@@ -59,9 +62,15 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 	published := firstNonEmpty(attrContent(doc, `meta[property="article:published_time"]`), attrContent(doc, `meta[name="date"]`))
 	siteName := attrContent(doc, `meta[property="og:site_name"]`)
 	isNHKArticle := strings.HasPrefix(artifact.FinalURL, "https://news.web.nhk/newsweb/na/")
+	isAozoraWorkHTML := isAozoraWorkHTMLURL(artifact.FinalURL)
 	text := ""
 	if isNHKArticle {
 		text = extractNHKArticleText(doc)
+	} else if isAozoraWorkHTML {
+		text, err = extractAozoraMainText(doc)
+		if err != nil {
+			return modulewebgather.ExtractedDocument{}, err
+		}
 	} else {
 		text = extractBestHTMLContent(doc)
 		text = normalizeSpace(text)
@@ -72,8 +81,10 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 	extractor := "html_basic"
 	if isNHKArticle {
 		extractor = "nhk_news_article"
+	} else if isAozoraWorkHTML {
+		extractor = "aozora_main_text"
 	}
-	if requestedExtractor == "go_readability" {
+	if requestedExtractor == "go_readability" && !isNHKArticle && !isAozoraWorkHTML {
 		extractor = "html_basic"
 	}
 	return modulewebgather.ExtractedDocument{
@@ -108,6 +119,88 @@ func extractBestHTMLContent(doc *goquery.Document) string {
 		return mainText
 	}
 	return selectionText(doc.Find("body").First())
+}
+
+func isAozoraWorkHTMLURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.User != nil || parsed.Port() != "" ||
+		!strings.EqualFold(parsed.Scheme, "https") ||
+		!strings.EqualFold(parsed.Hostname(), "www.aozora.gr.jp") {
+		return false
+	}
+	segments := strings.Split(parsed.Path, "/")
+	if len(segments) != 5 || segments[0] != "" || segments[1] != "cards" ||
+		segments[3] != "files" || segments[2] == "" || segments[4] == "" {
+		return false
+	}
+	for _, digit := range segments[2] {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return strings.EqualFold(filepath.Ext(segments[4]), ".html")
+}
+
+func extractAozoraMainText(doc *goquery.Document) (string, error) {
+	if doc == nil {
+		return "", modulewebgather.NewError(modulewebgather.ErrEmptyContent, "Aozora main_text is missing")
+	}
+	mainText := doc.Find(".main_text")
+	if mainText.Length() != 1 {
+		return "", modulewebgather.NewError(modulewebgather.ErrEmptyContent, "Aozora main_text must appear exactly once")
+	}
+	var extracted strings.Builder
+	appendAozoraMainText(mainText.Nodes[0], &extracted)
+	text := normalizeSpace(extracted.String())
+	if text == "" {
+		return "", modulewebgather.NewError(modulewebgather.ErrEmptyContent, "Aozora main_text is empty")
+	}
+	return text, nil
+}
+
+func appendAozoraMainText(node *htmlnode.Node, extracted *strings.Builder) {
+	if node == nil {
+		return
+	}
+	if node.Type == htmlnode.TextNode {
+		extracted.WriteString(node.Data)
+		return
+	}
+	if node.Type == htmlnode.ElementNode {
+		switch strings.ToLower(node.Data) {
+		case "rt", "rp":
+			return
+		case "br":
+			extracted.WriteByte(' ')
+			return
+		case "img":
+			for _, attr := range node.Attr {
+				if strings.EqualFold(attr.Key, "alt") && strings.TrimSpace(attr.Val) != "" {
+					extracted.WriteString(attr.Val)
+					extracted.WriteByte(' ')
+				}
+			}
+			return
+		}
+		if isAozoraBlockElement(node.Data) {
+			extracted.WriteByte(' ')
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		appendAozoraMainText(child, extracted)
+	}
+	if node.Type == htmlnode.ElementNode && isAozoraBlockElement(node.Data) {
+		extracted.WriteByte(' ')
+	}
+}
+
+func isAozoraBlockElement(tag string) bool {
+	switch strings.ToLower(tag) {
+	case "blockquote", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ol", "p", "pre", "ul":
+		return true
+	default:
+		return false
+	}
 }
 
 func longestSelectionText(doc *goquery.Document, selector string) string {

@@ -80,15 +80,42 @@ func TestRecordRoutineRelaxOnlyAfterConfirmedRoomObservationAndDiaryIncludesIt(t
 	}
 	intent := agentroutine.Intent{ID: "relax-1", ActorID: "mio", Date: "2026-11-14", Kind: agentroutine.ActivityRelax}
 	now := time.Date(2026, time.November, 14, 7, 0, 0, 0, time.FixedZone("JST", 9*60*60))
-	if err := runtime.recordRoutineFacts(context.Background(), intent, routineProgress{}, now); err != nil {
-		t.Fatal(err)
+	if err := runtime.recordRoutineFacts(context.Background(), intent, routineProgress{}, now); err == nil {
+		t.Fatal("an incomplete room-only relaxation must not create a success fact")
 	}
 	facts, err := store.ListFacts(context.Background(), "mio", intent.Date)
 	if err != nil || len(facts) != 0 {
 		t.Fatalf("unconfirmed relaxation facts = %v, err=%v; want none", facts, err)
 	}
 
-	progress := routineProgress{World: &routineWorldProgress{RelaxRoomID: "living", RelaxObservedAt: now.UTC()}}
+	roomOnly := routineProgress{World: &routineWorldProgress{RelaxRoomID: "living", RelaxObservedAt: now.UTC()}}
+	if err := runtime.recordRoutineFacts(context.Background(), intent, roomOnly, now); err == nil {
+		t.Fatal("room observation alone must not create a relaxation success fact")
+	}
+	facts, err = store.ListFacts(context.Background(), "mio", intent.Date)
+	if err != nil || len(facts) != 0 {
+		t.Fatalf("room-only relaxation facts = %+v, err=%v; want none", facts, err)
+	}
+
+	readStarted := now.Add(-2 * time.Minute)
+	progress := routineProgress{
+		CompletedAt: now.UTC(), EffectCompleted: true,
+		World: &routineWorldProgress{RelaxRoomID: "living", RelaxObservedAt: now.Add(-3 * time.Minute).UTC()},
+		Rest: &routineRestProgress{
+			Scope: agentroutine.RelaxRoomShared, Mode: routineRestModeReading,
+			StartedAt: readStarted.UTC(), CompletedAt: now.UTC(),
+			Seats: map[string]routineRestSeatCheckpoint{"mio": {
+				RoomID: "living", SlotID: "sofa", RequestedAt: readStarted.UTC(),
+				ConfirmedAt: readStarted.UTC(), Confirmed: true, ObservedStateSeq: 10,
+			}},
+			Read: &routineRestReadProgress{
+				Title: "テスト本", Author: "著者", SourceURL: "https://example.test/book",
+				RightsURL: "https://example.test/rights", BodyHash: strings.Repeat("a", 64),
+				BodyRunes: 1400, StartRune: 0, EndRune: 1200, NextRune: 1200,
+				Reflection: "実際に読んだ範囲の感想", StartedAt: readStarted.UTC(), CompletedAt: now.UTC(),
+			},
+		},
+	}
 	if err := runtime.recordRoutineFacts(context.Background(), intent, progress, now); err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +123,9 @@ func TestRecordRoutineRelaxOnlyAfterConfirmedRoomObservationAndDiaryIncludesIt(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(facts) != 1 || facts[0].Kind != agentroutine.ActivityRelax || !facts[0].Confirmed || !strings.Contains(facts[0].Summary, "リビング") {
-		t.Fatalf("confirmed relaxation facts = %+v, want one confirmed living-room record", facts)
+	if len(facts) != 1 || facts[0].Kind != agentroutine.ActivityRelax || !facts[0].Confirmed ||
+		!strings.Contains(facts[0].Summary, "ソファ(sofa)") || !strings.Contains(facts[0].Summary, "テスト本") {
+		t.Fatalf("confirmed activity facts = %+v, want actual reading and living-room record", facts)
 	}
 	body, err := runtime.buildDiaryBody(context.Background(), "mio", intent.Date)
 	if err != nil {

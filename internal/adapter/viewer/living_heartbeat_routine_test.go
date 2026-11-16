@@ -136,3 +136,89 @@ func serveRoutineProjection(scheduler *agentheartbeat.Scheduler, reader RoutineA
 	HandleLivingHeartbeat(scheduler, nil, nil, reader).ServeHTTP(rec, request)
 	return rec
 }
+
+func TestLivingHeartbeatMergesStepStartedRestOnlyIntoRunningRoutine(t *testing.T) {
+	for _, activityValue := range []string{"sofa_reading", "sofa_chat", "dining_tea_chat", "dining_tea"} {
+		t.Run(activityValue, func(t *testing.T) {
+			scheduler, cancel, waitRun := startRunningRoutineProjectionScheduler(t)
+			defer cancel()
+			waitRun()
+			reader := routineActivityReaderFunc(func(context.Context, string) (RoutineActivity, error) {
+				return RoutineActivity{Availability: "available", OngoingActivity: activityValue}, nil
+			})
+			rec := serveRoutineProjection(scheduler, reader)
+			var payload struct {
+				Agents []struct {
+					State               string `json:"state"`
+					ActivityKind        string `json:"activity_kind"`
+					RoutineAvailability string `json:"routine_availability"`
+					OngoingActivity     string `json:"ongoing_activity"`
+				} `json:"agents"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != http.StatusOK || len(payload.Agents) != 1 ||
+				payload.Agents[0].State != "running" || payload.Agents[0].ActivityKind != "routine" ||
+				payload.Agents[0].RoutineAvailability != "available" || payload.Agents[0].OngoingActivity != activityValue {
+				t.Fatalf("status=%d agents=%+v body=%s", rec.Code, payload.Agents, rec.Body.String())
+			}
+		})
+	}
+}
+
+func startRunningRoutineProjectionScheduler(t *testing.T) (*agentheartbeat.Scheduler, context.CancelFunc, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	scheduler := agentheartbeat.New([]string{"mio"}, agentheartbeat.Sources{
+		Idle: func(context.Context, string) (agentheartbeat.Work, bool, error) {
+			return agentheartbeat.Work{
+				ID: "routine-test", ActivityKind: agentheartbeat.ActivityKindRoutine,
+				Run: func(runCtx context.Context, stop <-chan struct{}) error {
+					close(started)
+					select {
+					case <-runCtx.Done():
+					case <-stop:
+					}
+					return nil
+				},
+			}, true, nil
+		},
+	}, nil)
+	startedScheduler := make(chan error, 1)
+	go func() { startedScheduler <- scheduler.Start(ctx) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("routine Work did not start")
+	}
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-startedScheduler:
+			if err != nil {
+				t.Errorf("scheduler Start: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("routine scheduler did not stop")
+		}
+	})
+	return scheduler, cancel, func() {}
+}
+
+func TestValidRoutineActivityAllowsOnlyTheFourRestProjections(t *testing.T) {
+	for _, value := range []string{"sofa_reading", "sofa_chat", "dining_tea_chat", "dining_tea"} {
+		got := validRoutineActivity(RoutineActivity{Availability: "available", OngoingActivity: value})
+		if got.Availability != "available" || got.OngoingActivity != value {
+			t.Errorf("validRoutineActivity(%q) = %+v", value, got)
+		}
+	}
+	for _, value := range []string{"reading", "tea", "chat", "private_task"} {
+		got := validRoutineActivity(RoutineActivity{Availability: "available", OngoingActivity: value})
+		if got.Availability != "unavailable" || got.OngoingActivity != "" {
+			t.Errorf("invalid routine activity %q was accepted: %+v", value, got)
+		}
+	}
+}

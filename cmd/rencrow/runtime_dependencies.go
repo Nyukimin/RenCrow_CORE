@@ -101,6 +101,7 @@ type runtimeCanonicalEventStore interface {
 
 type Dependencies struct {
 	privateTextWorkers                  map[string]privateTaskWorker
+	webGatherFetcher                    routineBookFetcher
 	persistenceQueue                    *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 	transportPersistenceQueue           *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 	combinedChatProcessorEligible       bool
@@ -1028,6 +1029,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	mcpClient := mcp.NewMCPClient()
 	log.Printf("MCPClient initialized with %d servers", len(mcpClient.ListServers()))
 	conversationRuntime := buildConversationRuntime(cfg, llmRuntime.Primary, toolRuntime.ChatRunnerV2, toolRuntime.WorkerRunnerV2, storageOwners)
+	deps.webGatherFetcher = conversationRuntime.WebGatherFetcher
 	deps.combinedChatProcessorEligible = runtimeCombinedChatAdmissionEnabled(
 		cfg, classifier, conversationRuntime.Engine, llmRuntime.Chat != nil, cfg.Distributed.Enabled,
 	)

@@ -157,9 +157,9 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 				}
 			} else if activity.State == "running" && activity.ActivityKind == "routine" &&
 				routineReaderProvided && hasProjection && projection.Availability == "available" &&
-				projection.OngoingActivity == "moving_home" {
+				(projection.OngoingActivity == "moving_home" || validRunningRoutineRestActivity(projection.OngoingActivity)) {
 				agent.RoutineAvailability = "available"
-				agent.OngoingActivity = "moving_home"
+				agent.OngoingActivity = projection.OngoingActivity
 			}
 			agents = append(agents, agent)
 		}
@@ -174,9 +174,18 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 
 func validRoutineActivity(value RoutineActivity) RoutineActivity {
 	if (value.Availability == "available" || value.Availability == "disabled" || value.Availability == "unavailable") &&
-		(value.OngoingActivity == "" || value.OngoingActivity == "sleep_window" || value.OngoingActivity == "rest" || value.OngoingActivity == "waiting" || value.OngoingActivity == "moving_home") &&
+		(value.OngoingActivity == "" || value.OngoingActivity == "sleep_window" || value.OngoingActivity == "rest" || value.OngoingActivity == "waiting" || value.OngoingActivity == "moving_home" || validRunningRoutineRestActivity(value.OngoingActivity)) &&
 		(value.Availability == "available" || value.OngoingActivity == "") {
 		return value
 	}
 	return RoutineActivity{Availability: "unavailable"}
+}
+
+func validRunningRoutineRestActivity(activity string) bool {
+	switch activity {
+	case "sofa_reading", "sofa_chat", "dining_tea_chat", "dining_tea":
+		return true
+	default:
+		return false
+	}
 }

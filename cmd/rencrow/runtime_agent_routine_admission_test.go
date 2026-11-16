@@ -190,6 +190,8 @@ func TestAgentRoutineNightActivityBackoffExpiresAtProjectedBedtime(t *testing.T)
 				}
 			})
 			runtime, tasks := newRoutineAdmissionRuntime(t, taskStore, &clock)
+			runtime.cfg = &config.Config{Heartbeat: config.HeartbeatConfig{Routine: config.RoutineHeartbeatConfig{PrivateRooms: map[string]string{"midori": "midori-room"}}}}
+			installRoutineRestSnapshot(t, runtime, map[string]routineRestTestActor{"midori": {room: "midori-room"}})
 			if _, err := runtime.store.EnsureSchedule(ctx, "midori", "2026-11-14"); err != nil {
 				t.Fatalf("seed prior-day schedule: %v", err)
 			}

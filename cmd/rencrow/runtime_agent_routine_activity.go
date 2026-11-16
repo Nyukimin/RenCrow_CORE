@@ -26,7 +26,12 @@ func (r *agentRoutineRuntime) CurrentRoutineActivity(ctx context.Context, actorI
 // CurrentRoutineActivities batches durable-state reads and shares one fresh
 // WORLD snapshot across actors whose live rest windows or private-room moves
 // need verification.
+
 func (r *agentRoutineRuntime) CurrentRoutineActivities(ctx context.Context, actorIDs []string) (map[string]viewer.RoutineActivity, error) {
+	type restCandidate struct {
+		state    agentroutine.State
+		progress routineProgress
+	}
 	result := make(map[string]viewer.RoutineActivity, len(actorIDs))
 	if r == nil || r.store == nil {
 		for _, actorID := range actorIDs {
@@ -35,9 +40,9 @@ func (r *agentRoutineRuntime) CurrentRoutineActivities(ctx context.Context, acto
 		return result, nil
 	}
 	now := r.now()
-	restCandidates := make(map[string]agentroutine.RestWindow)
 	moveCandidates := make(map[string][]routineWorldOperation)
 	worldActorToCore := make(map[string]string)
+	restCandidates := make(map[string]restCandidate)
 	for _, actorID := range actorIDs {
 		state, err := r.store.Load(ctx, actorID)
 		if err != nil {
@@ -60,76 +65,60 @@ func (r *agentRoutineRuntime) CurrentRoutineActivities(ctx context.Context, acto
 			}
 			if routineSleepWindowLive(state, now) {
 				projection.OngoingActivity = "sleep_window"
+			} else if state.Pending.Kind == agentroutine.ActivityRelax {
+				progress, progressErr := decodeRoutineProgress(state.Pending.Output)
+				if progressErr == nil && progress.Rest != nil && !progress.EffectCompleted &&
+					progress.Rest.CompletedAt.IsZero() {
+					restCandidates[actorID] = restCandidate{state: state, progress: progress}
+				}
 			}
 			result[actorID] = projection
 			continue
 		}
 		if routineSleepWindowLive(state, now) {
 			projection.OngoingActivity = "sleep_window"
-			result[actorID] = projection
-			continue
 		}
-		if state.RestWindow == nil || !state.RestWindow.Until.After(now) || state.RestWindow.ObservedAt.After(now) || state.LastFinishedIntentID == "" {
-			result[actorID] = projection
-			continue
-		}
-		worldActorID, found := r.routineWorldActorID(actorID)
-		if !r.routineRelaxRoomAllowed(actorID, state.RestWindow.RoomID) || !found || r.world == nil {
-			result[actorID] = viewer.RoutineActivity{Availability: "unavailable"}
-			continue
-		}
-		restCandidates[actorID] = *state.RestWindow
-		worldActorToCore[worldActorID] = actorID
+		// A completed task's cooldown is not an ongoing rest activity. The exact
+		// seat remains held by WORLD occupancy until the next ordinary move.
+		result[actorID] = projection
 	}
-	if len(restCandidates) == 0 && len(moveCandidates) == 0 {
+	if len(moveCandidates) == 0 && len(restCandidates) == 0 {
 		return result, nil
 	}
 	if r.world == nil {
-		for actorID := range restCandidates {
-			result[actorID] = viewer.RoutineActivity{Availability: "unavailable"}
-		}
 		for actorID := range moveCandidates {
 			result[actorID] = viewer.RoutineActivity{Availability: "unavailable"}
 		}
 		return result, nil
 	}
-	snapshot, err := r.world.Snapshot(ctx)
+	snapshotCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	read, err := r.readSnapshotFresh(snapshotCtx)
 	if err != nil {
-		for actorID := range restCandidates {
-			result[actorID] = viewer.RoutineActivity{Availability: "unavailable"}
-		}
 		for actorID := range moveCandidates {
 			result[actorID] = viewer.RoutineActivity{Availability: "unavailable"}
 		}
 		return result, nil
 	}
-	foundActors := make(map[string]bool, len(restCandidates)+len(moveCandidates))
-	for _, actor := range snapshot.Actors {
+	for actorID, candidate := range restCandidates {
+		if activity := r.routineRestActivityProjectionFromSnapshot(snapshotCtx, candidate.state, candidate.progress, read.snapshot); activity != "" {
+			result[actorID] = viewer.RoutineActivity{Availability: "available", OngoingActivity: activity}
+		} else if r.routineRestMoveProjectionFromSnapshot(candidate.state, candidate.progress, read.snapshot) {
+			result[actorID] = viewer.RoutineActivity{Availability: "available", OngoingActivity: "moving_home"}
+		}
+	}
+	foundActors := make(map[string]bool, len(moveCandidates))
+	for _, actor := range read.snapshot.Actors {
 		actorID, relevant := worldActorToCore[actor.ActorID]
 		if !relevant {
 			continue
 		}
 		foundActors[actorID] = true
-		if operations := moveCandidates[actorID]; len(operations) > 0 {
-			for _, operation := range operations {
-				if routineWorldMoveMatchesPrivateHome(snapshot, actor, operation) {
-					result[actorID] = viewer.RoutineActivity{Availability: "available", OngoingActivity: "moving_home"}
-					break
-				}
+		for _, operation := range moveCandidates[actorID] {
+			if routineWorldMoveMatchesPrivateHome(read.snapshot, actor, operation) {
+				result[actorID] = viewer.RoutineActivity{Availability: "available", OngoingActivity: "moving_home"}
+				break
 			}
-		}
-		if _, isMoveCandidate := moveCandidates[actorID]; !isMoveCandidate {
-			window := restCandidates[actorID]
-			if actor.Present && actor.RoomID == window.RoomID && actor.ActivityID == "" && actor.ActivityKind == "" {
-				result[actorID] = viewer.RoutineActivity{Availability: "available", OngoingActivity: "rest"}
-			} else {
-				result[actorID] = viewer.RoutineActivity{Availability: "available", OngoingActivity: "waiting"}
-			}
-		}
-	}
-	for actorID := range restCandidates {
-		if !foundActors[actorID] {
-			result[actorID] = viewer.RoutineActivity{Availability: "unavailable"}
 		}
 	}
 	for actorID := range moveCandidates {

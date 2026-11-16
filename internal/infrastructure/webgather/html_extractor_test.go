@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
+
 	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
 )
 
@@ -104,5 +107,77 @@ func TestBasicExtractorBlocksSecretLikeJSON(t *testing.T) {
 	wgErr, ok := err.(*modulewebgather.Error)
 	if !ok || wgErr.Code != modulewebgather.ErrBlockedByPolicy {
 		t.Fatalf("unexpected error: %T %v", err, err)
+	}
+}
+
+func TestBasicExtractorSelectsAozoraMainTextAndRemovesRubyAnnotations(t *testing.T) {
+	html := "<html><head><meta charset='Shift_JIS'><title>注文の多い料理店</title></head><body>" +
+		"<div class='navigation'>サイトの案内</div>" +
+		"<div class='book-metadata'><p>著者 宮沢賢治</p><p>作品紹介だけの文章</p></div>" +
+		"<div class='main_text'><h1>注文の多い料理店</h1>" +
+		"<p>二人の<ruby><rb>若い</rb><rp>（</rp><rt>わかい</rt><rp>）</rp></ruby>紳士が、すっかりイギリスの兵隊のかたちをしていた。</p>" +
+		"<p>本文の第二段落です。</p></div>" +
+		"<div class='colophon'><p>奥付と底本情報</p></div></body></html>"
+	shiftJIS, _, err := transform.Bytes(japanese.ShiftJIS.NewEncoder(), []byte(html))
+	if err != nil {
+		t.Fatalf("encode Shift_JIS fixture: %v", err)
+	}
+
+	doc, err := NewBasicExtractor().Extract(context.Background(), modulewebgather.FetchArtifact{
+		FinalURL:    "https://www.aozora.gr.jp/cards/000081/files/43754_17659.html",
+		ContentType: "text/html",
+		Body:        shiftJIS,
+	}, "html_basic")
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+	want := "注文の多い料理店 二人の若い紳士が、すっかりイギリスの兵隊のかたちをしていた。 本文の第二段落です。"
+	if doc.Text != want {
+		t.Fatalf("Aozora main_text mismatch: got %q, want %q", doc.Text, want)
+	}
+	if strings.Contains(doc.Text, "わかい") || strings.Contains(doc.Text, "（") ||
+		strings.Contains(doc.Text, "著者 宮沢賢治") || strings.Contains(doc.Text, "作品紹介") ||
+		strings.Contains(doc.Text, "奥付") || strings.Contains(doc.Text, "サイトの案内") {
+		t.Fatalf("Aozora extraction included ruby annotations or outside-main-text metadata: %q", doc.Text)
+	}
+}
+
+func TestBasicExtractorRejectsMissingOrAmbiguousAozoraMainText(t *testing.T) {
+	for name, body := range map[string]string{
+		"missing":   "<html><body><p>not the work text</p></body></html>",
+		"multiple":  "<html><body><div class='main_text'>first</div><div class='main_text'>second</div></body></html>",
+		"ruby only": "<html><body><div class='main_text'><ruby><rt>reading only</rt><rp>(</rp></ruby></div></body></html>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewBasicExtractor().Extract(context.Background(), modulewebgather.FetchArtifact{
+				FinalURL:    "https://www.aozora.gr.jp/cards/000081/files/43754_17659.html",
+				ContentType: "text/html",
+				Body:        []byte(body),
+			}, "html_basic")
+			if err == nil {
+				t.Fatal("invalid Aozora main_text must fail closed")
+			}
+			webGatherErr, ok := err.(*modulewebgather.Error)
+			if !ok || webGatherErr.Code != modulewebgather.ErrEmptyContent {
+				t.Fatalf("unexpected error: %T %v", err, err)
+			}
+		})
+	}
+}
+
+func TestBasicExtractorDoesNotUseAozoraMainTextOutsideAozoraBookHTML(t *testing.T) {
+	ordinary := "<html><body><main><article><h1>Ordinary article</h1><p>" +
+		strings.Repeat("Ordinary article content. ", 20) +
+		"</p></article><div class='main_text'><p>Do not select this special section on other hosts.</p></div></main></body></html>"
+	doc, err := NewBasicExtractor().Extract(context.Background(), modulewebgather.FetchArtifact{
+		FinalURL:    "https://www.aozora.gr.jp.evil.example/cards/000081/files/43754_17659.html",
+		ContentType: "text/html",
+		Body:        []byte(ordinary),
+	}, "html_basic")
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+	if !strings.Contains(doc.Text, "Ordinary article content") || strings.Contains(doc.Text, "Do not select this special section") {
+		t.Fatalf("non-Aozora extraction changed: %q", doc.Text)
 	}
 }

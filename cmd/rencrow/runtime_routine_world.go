@@ -224,7 +224,8 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 	preparedInThisCall := false
 	index, found := r.routineWorldOperation(progress, purpose)
 	if found && progress.World.Operations[index].ReceiptStatus == "rejected" {
-		if progress.World.Operations[index].ReceiptReason != "resource_conflict" {
+		if strings.HasPrefix(purpose, routineRestSeatPurposePrefix) ||
+			progress.World.Operations[index].ReceiptReason != "resource_conflict" {
 			return state, progress, progress.World.Operations[index], worldread.ErrCommandRejected
 		}
 		purpose = routineWorldRetryPurpose(progress, purpose)
@@ -1208,34 +1209,10 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 			}
 		}
 	case agentroutine.ActivityRelax:
-		fresh, _, freshErr := r.planFresh(ctx, intent.ActorID, true, nil)
-		if freshErr != nil {
-			return state, progress, freshErr
+		if progress.Rest == nil || progress.Rest.Scope != agentroutine.RelaxRoomPrivate {
+			return state, progress, errRoutineRestUnavailable
 		}
-		if fresh.Kind != agentroutine.ActivityRelax {
-			return state, progress, errors.New("WORLD relaxation is no longer eligible under fresh routine policy")
-		}
-		roomID := r.routineWorldRelaxRoom(intent.ActorID, fresh.RelaxRoom)
-		if roomID == "" {
-			return state, progress, errors.New("WORLD relaxation requires a configured policy-selected room")
-		}
-		state, progress, _, err = r.ensureRoutineWorldArrival(ctx, stop, state, progress, intent.ActorID, roomID, "", "relax-room", routineWorldMoveWait)
-		if err != nil {
-			return state, progress, err
-		}
-		read, actor, err := r.routineWorldFreshActor(ctx, intent.ActorID)
-		if err != nil {
-			return state, progress, err
-		}
-		if err := r.verifyRoutineWorldArrivalState(actor, roomID, ""); err != nil {
-			return state, progress, err
-		}
-		if progress.World == nil {
-			progress.World = &routineWorldProgress{}
-		}
-		progress.World.RelaxRoomID = actor.RoomID
-		progress.World.RelaxObservedAt = read.readAt.UTC()
-		progress.CompletedAt = read.readAt.UTC()
+		return r.ensureRoutinePrivateRelaxationRoom(ctx, stop, state, progress)
 	case agentroutine.ActivityHobby:
 		if intent.ActorID == "shiro" && intent.Label == "fitness_research" {
 			state, progress, err = r.executeRoutineWorldExercise(ctx, stop, state, progress)

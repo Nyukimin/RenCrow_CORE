@@ -93,8 +93,9 @@ func TestRoutineTaskSummaryMatchesConfirmedRoutinePath(t *testing.T) {
 		{name: "WORLD exercise", kind: agentroutine.ActivityHobby, progress: routineProgress{World: verifiedWorld(worldread.HomeActionFinish, "life.home.exercise.completed")}, want: "WORLD exercise", avoid: "WebGather"},
 		{name: "WORLD mirror pose", kind: agentroutine.ActivityHobby, progress: routineProgress{World: verifiedWorld(worldread.HomeActionFinish, "life.home.mirror_pose.completed")}, want: "mirror pose", avoid: "WebGather"},
 		{name: "media playback", kind: agentroutine.ActivityHobby, progress: routineProgress{Media: &routineMediaProgress{Verified: true, Title: "PRIVATE_MEDIA_TITLE_SENTINEL"}}, want: "verified bounded playback", avoid: "PRIVATE_MEDIA_TITLE_SENTINEL"},
-		{name: "observed relaxation", kind: agentroutine.ActivityRelax, progress: routineProgress{World: &routineWorldProgress{RelaxRoomID: "living", RelaxObservedAt: time.Now().UTC()}}, want: "Confirmed quiet time", avoid: "no room activity"},
-		{name: "unobserved relaxation", kind: agentroutine.ActivityRelax, want: "no room activity was confirmed", avoid: "Confirmed quiet time"},
+		{name: "room observation alone", kind: agentroutine.ActivityRelax, progress: routineProgress{World: &routineWorldProgress{RelaxRoomID: "living", RelaxObservedAt: time.Now().UTC()}}, want: "no room activity was confirmed", avoid: "quiet time"},
+		{name: "unobserved relaxation", kind: agentroutine.ActivityRelax, want: "no room activity was confirmed", avoid: "quiet time"},
+		{name: "verified private reflection", kind: agentroutine.ActivityRelax, progress: routineProgress{Rest: &routineRestProgress{Scope: agentroutine.RelaxRoomPrivate, CompletedAt: time.Now(), PrivateReflection: "a short reflection"}}, want: "short private reflection", avoid: "no room activity"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

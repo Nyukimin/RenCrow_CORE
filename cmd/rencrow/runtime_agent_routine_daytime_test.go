@@ -20,43 +20,6 @@ import (
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
 
-func TestAgentRoutineDaytimeRelaxCreatesCanonicalTaskAndRun(t *testing.T) {
-	for _, room := range []string{"living", "mio-room"} {
-		t.Run(room, func(t *testing.T) {
-			ctx := context.Background()
-			clock := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.FixedZone(agentroutine.JST, 9*60*60))
-			runtime, tasks := newDaytimeRoutineRuntime(t, &clock, room)
-			work, found, err := runtime.idleSource(nil)(ctx, "mio")
-			if err != nil || !found || !strings.HasSuffix(work.ID, ":relax") || work.Run == nil {
-				t.Fatalf("daytime discovery = work=%+v found=%t err=%v; want a relaxation Work", work, found, err)
-			}
-			stop := make(chan struct{})
-			if err := work.Run(ctx, stop); err != nil {
-				t.Fatalf("run discovered daytime relaxation: %v", err)
-			}
-			state, err := runtime.store.Load(ctx, "mio")
-			if err != nil || state.Pending != nil || state.LastFinishedIntentID == "" {
-				t.Fatalf("completed routine state = %+v err=%v; want a finished intent", state, err)
-			}
-			if state.RestWindow == nil || state.RestWindow.RoomID != room || !state.RestWindow.Until.After(clock) {
-				t.Fatalf("rest window = %+v; want an actual confirmed relaxation interval in %s", state.RestWindow, room)
-			}
-			facts, err := runtime.store.ListFacts(ctx, "mio", clock.Format("2006-01-02"))
-			if err != nil || len(facts) != 1 || facts[0].Kind != agentroutine.ActivityRelax || !facts[0].Confirmed {
-				t.Fatalf("relaxation facts = %+v err=%v; want one confirmed room observation", facts, err)
-			}
-			all, err := tasks.List(ctx, domaintask.Filter{Assignee: "mio"})
-			if err != nil || len(all) != 1 || all[0].Status != domaintask.StatusSucceeded || all[0].Title != routineTaskTitle(agentroutine.ActivityRelax) {
-				t.Fatalf("canonical routine Tasks = %+v err=%v; want one succeeded relax Task", all, err)
-			}
-			runs, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: all[0].TaskID})
-			if err != nil || len(runs) != 1 || runs[0].Status != domaintask.RunStatusSucceeded {
-				t.Fatalf("canonical routine Runs = %+v err=%v; want one succeeded Run", runs, err)
-			}
-		})
-	}
-}
-
 func TestAgentRoutineDaytimeFallbackPrecedenceAndSafeWait(t *testing.T) {
 	clock := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.FixedZone(agentroutine.JST, 9*60*60))
 	t.Run("existing fallback work is preserved", func(t *testing.T) {
