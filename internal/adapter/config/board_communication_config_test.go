@@ -528,6 +528,28 @@ func TestReadBoardCommunicationBearerTokenReadsProtectedFixture(t *testing.T) {
 	}
 }
 
+func TestReadBoardDiaryImportCredentialsRequiresDedicatedPrincipalAndPinnedIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "diary-import.json")
+	contents := `{"token":"fixture_import_token","expected_connection":{"principal_id":"lumina-diary-import","journal_instance_id":"journal_0123456789abcdef0123456789abcdef"}}`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadBoardDiaryImportCredentials(path)
+	if err != nil || got.ExpectedConnection.PrincipalID != "lumina-diary-import" || got.ExpectedConnection.JournalInstanceID != "journal_0123456789abcdef0123456789abcdef" || got.Token != "fixture_import_token" {
+		t.Fatalf("ReadBoardDiaryImportCredentials = %#v err=%v", got, err)
+	}
+	invalid := strings.Replace(contents, "lumina-diary-import", "general-purpose", 1)
+	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadBoardDiaryImportCredentials(path); err == nil || strings.Contains(err.Error(), "fixture_import_token") {
+		t.Fatalf("invalid pin was accepted or leaked credential data: %v", err)
+	}
+}
+
 func TestReadBoardCommunicationBearerTokenRejectsAndRedactsUnsafeFixtures(t *testing.T) {
 	type fixture struct {
 		name    string

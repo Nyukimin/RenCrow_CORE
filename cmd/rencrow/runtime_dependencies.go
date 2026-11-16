@@ -352,6 +352,7 @@ type Dependencies struct {
 	sshTransports                       map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                        *heartbeat.HeartbeatService                 // heartbeat service
 	gmailIntake                         *gmailapp.GmailIntake                       // scheduled Gmail source intake
+	gmailDiaryWriter                    interface{ Close() error }                  // dedicated Lumina diary BOARD client
 	advisorCloser                       interface{ Close() error }                  // advisor SQLite store, when configured
 	durableStoreWorkflow                orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
 	durableStoreCloser                  interface{ Close() error }                  // workflow decision SQLite store
@@ -439,6 +440,12 @@ func (d *Dependencies) Shutdown() {
 	}
 	if d.heartbeatSvc != nil {
 		d.heartbeatSvc.Stop()
+	}
+	if d.gmailDiaryWriter != nil {
+		if err := d.gmailDiaryWriter.Close(); err != nil {
+			log.Printf("Failed to close Gmail diary BOARD client: %v", err)
+		}
+		d.gmailDiaryWriter = nil
 	}
 	if d.agentHeartbeatCancel != nil && d.agentHeartbeat != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -1979,6 +1986,9 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 				if writer, ok := knowledgeMemoryStore.(gmailapp.GmailKnowledgeWriter); ok {
 					deps.gmailIntake.WithKnowledgeWriter(writer)
 				}
+				if writer, ok := knowledgeMemoryStore.(gmailapp.GmailPersonalArchiveWriter); ok {
+					deps.gmailIntake.WithPersonalArchiveWriter(writer)
+				}
 			}
 			if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
 				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
@@ -2124,6 +2134,10 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	}
 	deps.taskEnqueue = taskEnqueueHandler
 	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore, conversationRuntime.L1Store)
+	if deps.gmailIntake != nil && deps.heartbeatSvc != nil {
+		deps.gmailIntake.WithDiaryBackfillStarter(deps.heartbeatSvc.StartGmailDiaryBackfill)
+		deps.atlasHandler = viewer.NewAtlasHandler(deps.atlasService, cfg.LocalAgentOps.UserID, atlasToken, deps.gmailIntake)
+	}
 	buildPronunciationCheckRuntime(cfg, deps)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)
 	buildLLMOpsHandlers(cfg, deps)

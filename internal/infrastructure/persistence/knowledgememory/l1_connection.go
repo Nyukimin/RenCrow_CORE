@@ -33,6 +33,10 @@ type L1StagingStore interface {
 	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
+type L1StagingReceiptReader interface {
+	FindStagingItemByNamespaceEventID(ctx context.Context, namespace, eventID string) (l1sqlite.L1StagingItem, bool, error)
+}
+
 type L1SourceRegistryStore interface {
 	SaveSourceRegistryEntry(ctx context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error)
 }
@@ -162,8 +166,53 @@ func (s *L1ConnectedStore) SavePersonalArchiveEntry(ctx context.Context, item do
 	})
 }
 
+func (s *L1ConnectedStore) SavePersonalArchiveEntryWithReceipt(ctx context.Context, item domainkm.PersonalArchiveEntry, sourceKey, actorID string) (bool, error) {
+	writer, ok := s.base.(PersonalArchiveReceiptWriter)
+	if !ok {
+		return false, fmt.Errorf("personal archive base store does not guarantee source receipts")
+	}
+	reader, ok := s.staging.(L1StagingReceiptReader)
+	if !ok {
+		return false, fmt.Errorf("L1 staging store does not support source-bound replay")
+	}
+	reused, err := writer.SavePersonalArchiveEntryWithReceipt(ctx, item, sourceKey, actorID)
+	if err != nil {
+		return false, err
+	}
+	namespace := userNamespace(item.UserID)
+	existing, found, err := reader.FindStagingItemByNamespaceEventID(ctx, namespace, item.EntryID)
+	if err != nil {
+		return reused, err
+	}
+	if found {
+		if existing.SourceID != "knowledge_memory:personal_archive:"+item.EntryID || existing.Meta["source_ref"] != item.SourceRef || existing.Meta["archive_source_kind"] != item.SourceKind {
+			return reused, fmt.Errorf("%w: L1 staging archive identity is bound to another source", ErrKnowledgeMemoryRequestConflict)
+		}
+		return reused, nil
+	}
+	return reused, s.stage(ctx, l1sqlite.L1StagingKindMemoryCandidate, namespace, item.EntryID, "personal_archive", item.SourceRef, item.OriginalText, "", []string{"personal_archive", item.SourceKind, item.DiaryDate}, map[string]interface{}{
+		"knowledge_memory_type": "personal_archive",
+		"protected_original":    item.Protected,
+		"source_ref":            item.SourceRef,
+		"title":                 item.Title,
+		"archive_source_kind":   item.SourceKind,
+		"author_id":             item.AuthorID,
+		"diary_date":            item.DiaryDate,
+		"review_required":       true,
+		"auto_promote":          false,
+	})
+}
+
 func (s *L1ConnectedStore) ListPersonalArchiveEntries(ctx context.Context, limit int) ([]domainkm.PersonalArchiveEntry, error) {
 	return s.base.ListPersonalArchiveEntries(ctx, limit)
+}
+
+func (s *L1ConnectedStore) GetPersonalArchiveEntry(ctx context.Context, entryID, userID string) (domainkm.PersonalArchiveEntry, bool, error) {
+	reader, ok := s.base.(PersonalArchiveOwnerReader)
+	if !ok {
+		return domainkm.PersonalArchiveEntry{}, false, fmt.Errorf("personal archive base store does not support owner-scoped detail")
+	}
+	return reader.GetPersonalArchiveEntry(ctx, entryID, userID)
 }
 
 func (s *L1ConnectedStore) SaveCreativeKnowledgeItem(ctx context.Context, item domainkm.CreativeKnowledgeItem) error {

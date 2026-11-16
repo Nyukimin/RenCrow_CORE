@@ -16,6 +16,36 @@ import (
 type gmailIntakeFunc func(context.Context) (gmailapp.GmailRunReport, error)
 
 func (f gmailIntakeFunc) Run(ctx context.Context) (gmailapp.GmailRunReport, error) { return f(ctx) }
+func (f gmailIntakeFunc) RunDiaryBackfill(ctx context.Context) (gmailapp.GmailRunReport, error) {
+	return f(ctx)
+}
+
+func TestGmailStartsRejectAfterHeartbeatStop(t *testing.T) {
+	for _, start := range []struct {
+		name string
+		call func(*HeartbeatService) bool
+	}{
+		{name: "regular intake", call: (*HeartbeatService).startGmailIntake},
+		{name: "diary backfill", call: (*HeartbeatService).StartGmailDiaryBackfill},
+	} {
+		t.Run(start.name, func(t *testing.T) {
+			called := false
+			svc := NewHeartbeatService(nil, nil, t.TempDir(), 30)
+			svc.WithGmailIntake(gmailIntakeFunc(func(context.Context) (gmailapp.GmailRunReport, error) {
+				called = true
+				return gmailapp.GmailRunReport{}, nil
+			}), "ren", time.Hour, time.Minute, false)
+			close(svc.stopCh)
+			if start.call(svc) {
+				t.Fatal("stopped service accepted Gmail work")
+			}
+			svc.waitForGmailIntake()
+			if called {
+				t.Fatal("intake ran after stop")
+			}
+		})
+	}
+}
 
 func TestGmailIntakeRunsWithDurableShiroIdentityAndOwnerScope(t *testing.T) {
 	for _, fail := range []bool{false, true} {

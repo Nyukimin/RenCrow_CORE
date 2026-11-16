@@ -24,6 +24,10 @@ type runtimeKnowledgeMemoryIndexedSearcher interface {
 	Search(context.Context, appkm.SearchRequest) ([]appkm.SearchResult, error)
 }
 
+type runtimeKnowledgeMemoryPersonalArchiveReader interface {
+	GetPersonalArchiveEntry(context.Context, string, string) (domainkm.PersonalArchiveEntry, bool, error)
+}
+
 func registerRuntimeDataRecallKnowledgeMemory(r *runtimeDataRecallRegistry, candidates runtimeKnowledgeMemoryCandidateFinder, searcher runtimeKnowledgeMemoryIndexedSearcher) error {
 	if r == nil || candidates == nil || searcher == nil {
 		return fmt.Errorf("knowledge memory recall unavailable")
@@ -34,7 +38,49 @@ func registerRuntimeDataRecallKnowledgeMemory(r *runtimeDataRecallRegistry, cand
 	if err := registerRuntimeDataRecallKnowledgeMemoryRequests(r, candidates); err != nil {
 		return err
 	}
-	return registerRuntimeDataRecallKnowledgeMemorySearch(r, searcher)
+	if err := registerRuntimeDataRecallKnowledgeMemorySearch(r, searcher); err != nil {
+		return err
+	}
+	if archiveReader, ok := candidates.(runtimeKnowledgeMemoryPersonalArchiveReader); ok {
+		return registerRuntimeDataRecallPersonalArchiveEntry(r, archiveReader)
+	}
+	return nil
+}
+
+func registerRuntimeDataRecallPersonalArchiveEntry(r *runtimeDataRecallRegistry, reader runtimeKnowledgeMemoryPersonalArchiveReader) error {
+	if r == nil || reader == nil {
+		return fmt.Errorf("personal archive detail recall unavailable")
+	}
+	return r.Register("knowledge_memory", "read_user_personal_archive_entry", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		userID, err := runtimeKnowledgeMemoryRecallUserID(ctx)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		entryID := strings.TrimSpace(q.Query)
+		if entryID == "" || entryID != q.Query {
+			return runtimeDataRecallResult{}, fmt.Errorf("personal archive entry identity is invalid")
+		}
+		entry, found, err := reader.GetPersonalArchiveEntry(ctx, entryID, userID)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			if entry.EntryID != entryID || entry.UserID != userID {
+				return runtimeDataRecallResult{}, fmt.Errorf("personal archive entry identity mismatch")
+			}
+			if err := domainkm.ValidatePersonalArchiveEntry(entry); err != nil {
+				return runtimeDataRecallResult{}, fmt.Errorf("stored personal archive entry is invalid")
+			}
+			records = append(records, map[string]any{
+				"entry_id": entry.EntryID, "user_id": entry.UserID, "source_ref": entry.SourceRef,
+				"title": entry.Title, "source_kind": entry.SourceKind, "author_id": entry.AuthorID,
+				"diary_date": entry.DiaryDate, "original_text": entry.OriginalText,
+				"protected": entry.Protected, "created_at": entry.CreatedAt,
+			})
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
 }
 
 func registerRuntimeDataRecallKnowledgeMemoryCandidate(r *runtimeDataRecallRegistry, candidates runtimeKnowledgeMemoryCandidateFinder) error {
@@ -105,6 +151,7 @@ func registerRuntimeDataRecallKnowledgeMemorySearch(r *runtimeDataRecallRegistry
 		{operation: "search_public_news", access: dataRecallAccessPublic, scope: appkm.SearchScopePublic, recordType: "news_knowledge"},
 		{operation: "search_user_creative", access: dataRecallAccessUser, scope: appkm.SearchScopeUser, recordType: "creative_knowledge"},
 		{operation: "search_user_news", access: dataRecallAccessUser, scope: appkm.SearchScopeUser, recordType: "news_knowledge"},
+		{operation: "search_user_personal_archive", access: dataRecallAccessUser, scope: appkm.SearchScopeUser, recordType: "personal_archive"},
 	}
 	for _, registration := range registrations {
 		registration := registration

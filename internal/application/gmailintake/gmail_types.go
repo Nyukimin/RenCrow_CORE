@@ -8,7 +8,8 @@ import (
 )
 
 // GmailQuery is CORE's source-selection policy. The collector only transports it.
-const GmailQuery = `-in:spam -in:trash ((subject:RenCrow AND subject:Backlog) OR subject:"AI・政治デイリーブリーフ")`
+const GmailDiaryQuery = `-in:spam -in:trash from:nyukimi@gmail.com subject:"ルミナとれんの会話記録"`
+const GmailQuery = `-in:spam -in:trash ((subject:RenCrow AND subject:Backlog) OR subject:"AI・政治デイリーブリーフ" OR (from:nyukimi@gmail.com AND subject:"ルミナとれんの会話記録"))`
 
 type GmailMessage struct {
 	ID          string `json:"id"`
@@ -30,6 +31,34 @@ type GmailPage struct {
 
 type GmailCollector interface {
 	Collect(context.Context, string) (GmailPage, error)
+}
+
+// GmailDiaryCollector is the fixed-query source used by explicit historical backfill.
+type GmailDiaryCollector interface {
+	CollectDiaries(context.Context, string) (GmailPage, error)
+}
+
+type GmailDiary struct {
+	ActorID    string `json:"actor_id"`
+	Date       string `json:"date"`
+	Revision   int    `json:"revision"`
+	Body       string `json:"body"`
+	Reflection string `json:"reflection"`
+}
+
+type GmailDiaryWriter interface {
+	GetDiary(context.Context, string) (GmailDiary, bool, error)
+	PutDiary(context.Context, GmailDiary) (GmailDiary, error)
+}
+
+type GmailPersonalArchiveWriter interface {
+	SavePersonalArchiveEntryWithReceipt(context.Context, domainkm.PersonalArchiveEntry, string, string) (bool, error)
+}
+
+type GmailPreparedDiary struct {
+	SourceKey string                        `json:"source_key"`
+	Archive   domainkm.PersonalArchiveEntry `json:"archive"`
+	Diary     GmailDiary                    `json:"diary"`
 }
 
 // GmailBriefEvaluator returns proposals, never writes Atlas state or invokes tools.
@@ -122,6 +151,9 @@ type GmailReceipt struct {
 	Reason            string                     `json:"reason"`
 	Prepared          []appbacklog.IntakeRequest `json:"prepared,omitempty"`
 	PreparedKnowledge []GmailPreparedKnowledge   `json:"prepared_knowledge,omitempty"`
+	PreparedDiary     *GmailPreparedDiary        `json:"prepared_diary,omitempty"`
+	ArchiveSaved      bool                       `json:"archive_saved,omitempty"`
+	DiarySaved        bool                       `json:"diary_saved,omitempty"`
 	TopicOutcomes     []GmailTopicOutcome        `json:"topic_outcomes,omitempty"`
 	BacklogItemIDs    []string                   `json:"backlog_item_ids,omitempty"`
 	KnowledgeItemIDs  []string                   `json:"knowledge_item_ids,omitempty"`

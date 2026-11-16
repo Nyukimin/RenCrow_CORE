@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,31 @@ func TestKnowledgeMemoryNewsOwnerAccessProtectsDetailAndReview(t *testing.T) {
 	otherReview := serveKnowledgeMemoryNewsOwnerRequest(reviewHandler, http.MethodPost, "/viewer/knowledge-memory/review", `{"detail_type":"news_knowledge","id":"other-news","review_status":"adopted"}`, knowledgeMemoryNewsOwnerTestToken, "cmd-control", "127.0.0.1:4171")
 	if otherReview.Code != http.StatusBadRequest {
 		t.Fatalf("other-owner review status = %d, want %d, body=%s", otherReview.Code, http.StatusBadRequest, otherReview.Body.String())
+	}
+}
+
+func TestKnowledgeMemoryPersonalArchiveDetailAndListRequireExactOwner(t *testing.T) {
+	store := &stubKnowledgeMemoryStore{personal: []domainkm.PersonalArchiveEntry{
+		{EntryID: "owner-diary", UserID: "owner-1", Title: "owner diary", OriginalText: "owner-only original body", Protected: true, CreatedAt: time.Now()},
+		{EntryID: "other-diary", UserID: "owner-2", Title: "other diary", OriginalText: "other-owner original body", Protected: true, CreatedAt: time.Now()},
+	}}
+	owner := WithKnowledgeMemoryNewsOwnerAccess(HandleKnowledgeMemoryStatus(store), "owner-1", []byte(knowledgeMemoryNewsOwnerTestToken))
+	publicList := serveKnowledgeMemoryNewsOwnerRequest(owner, http.MethodGet, "/viewer/knowledge-memory", "", "", "")
+	if publicList.Code != http.StatusOK || strings.Contains(publicList.Body.String(), "original body") || strings.Contains(publicList.Body.String(), "owner-diary") {
+		t.Fatalf("public status exposed personal archive: code=%d body=%s", publicList.Code, publicList.Body.String())
+	}
+	publicDetail := serveKnowledgeMemoryNewsOwnerRequest(owner, http.MethodGet, "/viewer/knowledge-memory?detail_type=personal_archive&id=owner-diary", "", "", "")
+	if publicDetail.Code != http.StatusNotFound || strings.Contains(publicDetail.Body.String(), "owner-only original body") {
+		t.Fatalf("public detail exposed personal archive: code=%d body=%s", publicDetail.Code, publicDetail.Body.String())
+	}
+	ownerDetail := serveKnowledgeMemoryNewsOwnerRequest(owner, http.MethodGet, "/viewer/knowledge-memory?detail_type=personal_archive&id=owner-diary", knowledgeMemoryNewsOwnerTestToken, "cmd-diagnostics", "127.0.0.1:4171")
+	if ownerDetail.Code != http.StatusOK || !strings.Contains(ownerDetail.Body.String(), "owner-only original body") {
+		t.Fatalf("owner detail failed to return exact original: code=%d body=%s", ownerDetail.Code, ownerDetail.Body.String())
+	}
+	other := WithKnowledgeMemoryNewsOwnerAccess(HandleKnowledgeMemoryStatus(store), "owner-2", []byte(knowledgeMemoryNewsOwnerTestToken))
+	wrongOwner := serveKnowledgeMemoryNewsOwnerRequest(other, http.MethodGet, "/viewer/knowledge-memory?detail_type=personal_archive&id=owner-diary", knowledgeMemoryNewsOwnerTestToken, "cmd-diagnostics", "127.0.0.1:4171")
+	if wrongOwner.Code != http.StatusNotFound || strings.Contains(wrongOwner.Body.String(), "owner-only original body") {
+		t.Fatalf("different owner detail exposed original: code=%d body=%s", wrongOwner.Code, wrongOwner.Body.String())
 	}
 }
 

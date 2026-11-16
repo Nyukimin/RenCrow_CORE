@@ -16,6 +16,10 @@ type GmailIntake interface {
 	Run(context.Context) (gmailapp.GmailRunReport, error)
 }
 
+type GmailDiaryBackfillIntake interface {
+	RunDiaryBackfill(context.Context) (gmailapp.GmailRunReport, error)
+}
+
 type gmailCollection struct {
 	intake            GmailIntake
 	userID            string
@@ -40,6 +44,9 @@ func (s *HeartbeatService) startGmailIntake() bool {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if s.stopRequested() {
+		return false
+	}
 	if g.cancel != nil {
 		return false
 	}
@@ -66,6 +73,38 @@ func (s *HeartbeatService) startGmailIntake() bool {
 	return true
 }
 
+// StartGmailDiaryBackfill schedules the explicit owner backfill on the same
+// cancellation, worker waitgroup, and collection slot as normal Gmail intake.
+func (s *HeartbeatService) StartGmailDiaryBackfill() bool {
+	g := s.gmail
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if s.stopRequested() {
+		return false
+	}
+	if g.cancel != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), g.timeout)
+	g.cancel = cancel
+	g.wg.Add(1)
+	go func() {
+		defer g.wg.Done()
+		defer func() { cancel(); g.mu.Lock(); g.cancel = nil; g.mu.Unlock() }()
+		s.emitEvent("heartbeat.gmail.diary_backfill.started", "Gmail diary backfill started")
+		report, err := s.runGmailDiaryBackfill(ctx)
+		if err != nil {
+			s.emitEvent("heartbeat.gmail.diary_backfill.error", "Gmail diary backfill failed; check owner intake receipts")
+			return
+		}
+		s.emitEvent("heartbeat.gmail.diary_backfill.completed", fmt.Sprintf("processed=%d created=%d blocked=%d", report.Processed, report.Created, report.Blocked))
+	}()
+	return true
+}
+
 func (s *HeartbeatService) runGmailIntake(ctx context.Context) (gmailapp.GmailRunReport, error) {
 	var report gmailapp.GmailRunReport
 	if s.gmail == nil {
@@ -86,6 +125,33 @@ func (s *HeartbeatService) runGmailIntake(ctx context.Context) (gmailapp.GmailRu
 		return report, err
 	}
 	report, err = s.gmail.intake.Run(workerCtx)
+	return report, errors.Join(err, finish(err))
+}
+
+func (s *HeartbeatService) runGmailDiaryBackfill(ctx context.Context) (gmailapp.GmailRunReport, error) {
+	var report gmailapp.GmailRunReport
+	if s.gmail == nil {
+		return report, errors.New("Gmail intake unavailable")
+	}
+	intake, ok := s.gmail.intake.(GmailDiaryBackfillIntake)
+	if !ok {
+		return report, errors.New("Gmail diary backfill unavailable")
+	}
+	release, err := s.acquireCollectionWorker(ctx)
+	if err != nil {
+		return report, err
+	}
+	defer release()
+	scope, err := domaintool.NewToolExecutionScope(string(modulecore.NewRequestID()), domaintool.ActorKindAgent, s.workerActor, s.gmail.userID, []string{domaintool.DataScopePublic, domaintool.DataScopeUser}, domaintool.AuthenticationSourceAgentOrchestrator)
+	if err != nil {
+		return report, err
+	}
+	ctx = domaintool.WithToolExecutionScope(ctx, scope)
+	workerCtx, _, finish, err := s.beginWorker(ctx, "Gmailのルミナ日記を全期間取り込む", "gmail-diary-backfill", "owner")
+	if err != nil {
+		return report, err
+	}
+	report, err = intake.RunDiaryBackfill(workerCtx)
 	return report, errors.Join(err, finish(err))
 }
 

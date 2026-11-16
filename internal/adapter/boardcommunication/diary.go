@@ -59,6 +59,85 @@ type diaryErrorResponse struct {
 	CorrelationID string `json:"correlation_id"`
 }
 
+// GetLuminaImportDiary is restricted to the administrator-pinned importer
+// principal and the external Lumina actor. It verifies connection identity
+// before requesting the private diary endpoint.
+func (c *Client) GetLuminaImportDiary(ctx context.Context, date string) (DiaryEntry, bool, error) {
+	if c == nil || ctx == nil || !validDiaryDate(date) || !isLuminaDiaryImportClient(c) {
+		return DiaryEntry{}, false, ErrInvalidRequest
+	}
+	if _, err := c.ReadConnection(ctx); err != nil {
+		return DiaryEntry{}, false, err
+	}
+	query := url.Values{"date": {date}, "actor_id": {"lumina"}}
+	var wire struct {
+		Entries       []diaryEntryResponse `json:"entries"`
+		Date          string               `json:"date"`
+		CorrelationID string               `json:"correlation_id"`
+	}
+	header, err := c.getJSON(ctx, "/api/v1/diaries?"+query.Encode(), &wire)
+	if err != nil {
+		return DiaryEntry{}, false, err
+	}
+	if wire.Date != date || !validResponseCorrelation(wire.CorrelationID) || !correlationHeaderMatches(header, wire.CorrelationID) || len(wire.Entries) > 1 {
+		return DiaryEntry{}, false, ErrProtocol
+	}
+	if len(wire.Entries) == 0 {
+		return DiaryEntry{}, false, nil
+	}
+	entry := wire.Entries[0]
+	if entry.ActorID != "lumina" || entry.Date != date || entry.Revision < 1 || entry.UpdatedAt.IsZero() {
+		return DiaryEntry{}, false, ErrProtocol
+	}
+	return DiaryEntry{DiaryWrite: DiaryWrite{ActorID: entry.ActorID, Date: entry.Date, Revision: entry.Revision, Body: entry.Body, Reflection: entry.Reflection}, UpdatedAt: entry.UpdatedAt, CorrelationID: wire.CorrelationID}, true, nil
+}
+
+// PutLuminaImportDiary is separate from the ordinary internal actor writer:
+// only the dedicated importer principal can write the fixed external actor.
+func (c *Client) PutLuminaImportDiary(ctx context.Context, input DiaryWrite) (DiaryEntry, error) {
+	if c == nil || ctx == nil || input.ActorID != "lumina" || !validDiaryDate(input.Date) || input.Revision < 1 ||
+		strings.TrimSpace(input.Body) == "" || strings.TrimSpace(input.Reflection) == "" ||
+		!utf8.ValidString(input.Body) || !utf8.ValidString(input.Reflection) || len(input.Body)+len(input.Reflection) > maxDiaryTextBytes || !isLuminaDiaryImportClient(c) {
+		return DiaryEntry{}, ErrInvalidRequest
+	}
+	if _, err := c.ReadConnection(ctx); err != nil {
+		return DiaryEntry{}, err
+	}
+	requestBody, err := json.Marshal(diaryWriteRequest{Revision: input.Revision, Body: input.Body, Reflection: input.Reflection})
+	if err != nil || len(requestBody) > maxDiaryJSONBytes {
+		return DiaryEntry{}, ErrInvalidRequest
+	}
+	response, release, err := c.do(ctx, http.MethodPut, "/api/v1/diaries/"+url.PathEscape(input.Date), requestBody, "")
+	if err != nil {
+		return DiaryEntry{}, err
+	}
+	defer release()
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, readErr := readBounded(response.Body, maxResponseBodyBytes)
+		if readErr != nil {
+			return DiaryEntry{}, ErrUnknownOutcome
+		}
+		return DiaryEntry{}, diaryWriteResponseError(response.StatusCode, body, response.Header)
+	}
+	body, err := readBounded(response.Body, maxResponseBodyBytes)
+	if err != nil {
+		return DiaryEntry{}, ErrUnknownOutcome
+	}
+	var wire diaryWriteResponse
+	if decodeStrictJSON(body, &wire) != nil || !validResponseCorrelation(wire.CorrelationID) || response.Header.Get("X-Correlation-ID") != wire.CorrelationID ||
+		wire.Entry.ActorID != "lumina" || wire.Entry.Date != input.Date || wire.Entry.Revision != input.Revision || wire.Entry.Body != input.Body || wire.Entry.Reflection != input.Reflection || wire.Entry.UpdatedAt.IsZero() {
+		return DiaryEntry{}, ErrUnknownOutcome
+	}
+	return DiaryEntry{DiaryWrite: input, UpdatedAt: wire.Entry.UpdatedAt, CorrelationID: wire.CorrelationID}, nil
+}
+
+func isLuminaDiaryImportClient(c *Client) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.expectedConnection.PrincipalID == "lumina-diary-import" && validConnectionIdentity(c.expectedConnection)
+}
+
 // PutDiary writes exactly one actor/date revision through the authenticated,
 // connection-pinned BOARD client and returns only the verified stored entry.
 func (c *Client) PutDiary(ctx context.Context, input DiaryWrite) (DiaryEntry, error) {

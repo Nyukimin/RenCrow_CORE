@@ -94,6 +94,37 @@ func TestNewsKnowledgeReceiptOverlaySurvivesRestartAndKeepsImportedReadiness(t *
 	}
 }
 
+func TestLegacyReviewedNewsReceiptWithoutLongProjectionKeepsReadiness(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "knowledge.db")
+	if _, err := ImportJSONLToSQLite(ctx, t.TempDir(), path); err != nil {
+		t.Fatalf("promote empty imported source: %v", err)
+	}
+	store, err := OpenSQLiteStoreWritable(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	item := receiptNewsItem("legacy-long-reviewed-news", "legacy long reviewed news", "reviewed")
+	item.Summary = strings.Repeat("reviewed source detail ", 20)
+	if _, err := store.SaveNewsKnowledgeItemWithReceipt(ctx, item, "gmail:message:legacy-long-reviewed", "shiro"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM knowledge_memory_search_terms WHERE record_type = ? AND record_id = ?`, newsKnowledgeRecordType, item.ItemID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM knowledge_memory_search_documents WHERE record_type = ? AND record_id = ?`, newsKnowledgeRecordType, item.ItemID); err != nil {
+		t.Fatal(err)
+	}
+	readiness, err := store.Readiness(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readiness.DatabaseAvailable || !readiness.SchemaReady || !readiness.IndexReady || readiness.Coverage.State != KnowledgeMemoryCoverageReady || readiness.IntegrityState != KnowledgeMemoryIntegrityReady {
+		t.Fatalf("legacy receipt-bound long News row should not change the prior 160-rune projection contract: readiness=%+v", readiness)
+	}
+}
+
 func TestNewsKnowledgeReceiptReplayPreservesReviewedOwnerState(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "news.db"))

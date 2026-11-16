@@ -14,9 +14,10 @@ const (
 	SearchScopePublic = "public"
 	SearchScopeUser   = "user"
 
-	maxSearchQueryRunes = 160
-	maxSearchTokens     = 16
-	maxSearchResults    = 20
+	maxSearchQueryRunes   = 160
+	maxIndexedSourceRunes = 128 * 1024
+	maxSearchTokens       = 16
+	maxSearchResults      = 20
 )
 
 // SearchScope is the authenticated boundary supplied by the owning service.
@@ -62,6 +63,9 @@ func (r SearchRequest) Validate() error {
 	if r.RecordType != "" && !isSearchRecordType(r.RecordType) {
 		return fmt.Errorf("unsupported search record type")
 	}
+	if r.RecordType == "personal_archive" && r.Scope.Scope != SearchScopeUser {
+		return fmt.Errorf("personal archive search requires a user scope")
+	}
 	if r.Limit < 0 || r.Limit > maxSearchResults {
 		return fmt.Errorf("search limit must be 0 (default) or between 1 and %d", maxSearchResults)
 	}
@@ -70,7 +74,7 @@ func (r SearchRequest) Validate() error {
 
 func isSearchRecordType(recordType string) bool {
 	switch recordType {
-	case "creative_knowledge", "news_knowledge":
+	case "creative_knowledge", "news_knowledge", "personal_archive":
 		return true
 	default:
 		return false
@@ -101,23 +105,29 @@ type IndexedSearcher interface {
 // lower-case token and non-ASCII letter/number runs become overlapping
 // two-rune tokens. Punctuation and whitespace are separators.
 func SearchTokens(query string) ([]string, error) {
-	return normalizeSearchTokens(query, maxSearchTokens)
+	return normalizeSearchTokens(query, maxSearchTokens, maxSearchQueryRunes, "search query")
 }
 
-// IndexTokens applies the same normalizer to a safe projection. Unlike a
-// query, a stored projection may contain more than sixteen terms; the query
-// side remains bounded independently.
+// IndexTokens applies the legacy bounded normalizer to a safe projection.
+// Stored non-source projections retain the same 160-rune input contract as
+// before full-source indexing was added.
 func IndexTokens(text string) ([]string, error) {
-	return normalizeSearchTokens(text, 0)
+	return normalizeSearchTokens(text, 0, maxSearchQueryRunes, "search query")
 }
 
-func normalizeSearchTokens(query string, maxTokens int) ([]string, error) {
-	query = strings.TrimSpace(norm.NFKC.String(query))
-	if query == "" {
+// IndexSourceTokens is reserved for bounded original-source content whose
+// source contract permits more text than the legacy projection contract.
+func IndexSourceTokens(text string) ([]string, error) {
+	return normalizeSearchTokens(text, 0, maxIndexedSourceRunes, "source text")
+}
+
+func normalizeSearchTokens(text string, maxTokens, maxRunes int, fieldName string) ([]string, error) {
+	text = strings.TrimSpace(norm.NFKC.String(text))
+	if text == "" {
 		return nil, fmt.Errorf("search query is required")
 	}
-	if utf8.RuneCountInString(query) > maxSearchQueryRunes {
-		return nil, fmt.Errorf("search query exceeds %d characters", maxSearchQueryRunes)
+	if utf8.RuneCountInString(text) > maxRunes {
+		return nil, fmt.Errorf("%s exceeds %d characters", fieldName, maxRunes)
 	}
 
 	seen := make(map[string]struct{})
@@ -147,7 +157,7 @@ func normalizeSearchTokens(query string, maxTokens int) ([]string, error) {
 	}
 
 	run := make([]rune, 0, 8)
-	for _, r := range []rune(query) {
+	for _, r := range []rune(text) {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			run = append(run, r)
 			continue

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,16 +19,17 @@ import (
 // CutoverAt is kept as its configured UTC RFC3339 literal; CORE's durable
 // communication owner is responsible for pinning the initial cutover.
 type BoardCommunicationConfig struct {
-	Enabled       bool                                                `yaml:"enabled"`
-	URL           string                                              `yaml:"url"`
-	UnixSocket    string                                              `yaml:"unix_socket"`
-	TokenFile     string                                              `yaml:"token_file"`
-	PrincipalID   string                                              `yaml:"principal_id"`
-	ChannelIDs    []string                                            `yaml:"channel_ids"`
-	PeerIDs       []string                                            `yaml:"peer_ids"`
-	CutoverAt     string                                              `yaml:"cutover_at"`
-	Responders    []BoardCommunicationResponderConfig                 `yaml:"responders"`
-	MeetingRoutes []domainconversation.BoardCommunicationMeetingRoute `yaml:"meeting_routes"`
+	Enabled              bool                                                `yaml:"enabled"`
+	URL                  string                                              `yaml:"url"`
+	UnixSocket           string                                              `yaml:"unix_socket"`
+	TokenFile            string                                              `yaml:"token_file"`
+	DiaryImportTokenFile string                                              `yaml:"diary_import_token_file"`
+	PrincipalID          string                                              `yaml:"principal_id"`
+	ChannelIDs           []string                                            `yaml:"channel_ids"`
+	PeerIDs              []string                                            `yaml:"peer_ids"`
+	CutoverAt            string                                              `yaml:"cutover_at"`
+	Responders           []BoardCommunicationResponderConfig                 `yaml:"responders"`
+	MeetingRoutes        []domainconversation.BoardCommunicationMeetingRoute `yaml:"meeting_routes"`
 }
 
 // BoardCommunicationResponderConfig defines one explicitly scoped BOARD CHAT
@@ -56,6 +58,9 @@ func (c *Config) validateBoardCommunicationConfig() error {
 			return errors.New("board_communication.meeting_routes requires enabled=true")
 		}
 		return nil
+	}
+	if strings.TrimSpace(board.DiaryImportTokenFile) != "" && !validBoardCommunicationPath(board.DiaryImportTokenFile) {
+		return errors.New("board_communication.diary_import_token_file must be an absolute clean path")
 	}
 
 	urlConfigured := board.URL != ""
@@ -290,4 +295,53 @@ func ReadBoardCommunicationBearerToken(path string) ([]byte, error) {
 		return nil, errBoardCommunicationTokenInvalid
 	}
 	return contents, nil
+}
+
+type BoardDiaryImportCredentials struct {
+	Token              string `json:"token"`
+	ExpectedConnection struct {
+		PrincipalID       string `json:"principal_id"`
+		JournalInstanceID string `json:"journal_instance_id"`
+	} `json:"expected_connection"`
+}
+
+// ReadBoardDiaryImportCredentials reads the dedicated principal token and its
+// administrator-provisioned BOARD identity from one protected JSON file.
+func ReadBoardDiaryImportCredentials(path string) (BoardDiaryImportCredentials, error) {
+	var credentials BoardDiaryImportCredentials
+	if !validBoardCommunicationPath(path) {
+		return credentials, errors.New("diary import credentials path is invalid")
+	}
+	handle, err := openConfidentialFile("board_communication.diary_import_token_file", path, errBoardCommunicationTokenUnavailable)
+	if err != nil {
+		return credentials, errors.New("diary import credentials are unavailable")
+	}
+	defer handle.Close()
+	const maxCredentialsBytes = maxStorageHostBearerTokenBytes + 1024
+	contents, err := io.ReadAll(io.LimitReader(handle, maxCredentialsBytes+1))
+	if err != nil || len(contents) > maxCredentialsBytes {
+		return credentials, errors.New("diary import credentials are invalid")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&credentials) != nil || decoder.Decode(new(any)) != io.EOF {
+		return BoardDiaryImportCredentials{}, errors.New("diary import credentials are invalid")
+	}
+	if !validStorageHostBearerToken([]byte(credentials.Token)) || credentials.ExpectedConnection.PrincipalID != "lumina-diary-import" || !validDiaryImportJournalID(credentials.ExpectedConnection.JournalInstanceID) {
+		return BoardDiaryImportCredentials{}, errors.New("diary import credentials do not pin the required BOARD principal")
+	}
+	return credentials, nil
+}
+
+func validDiaryImportJournalID(value string) bool {
+	const prefix = "journal_"
+	if len(value) != len(prefix)+32 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for _, r := range value[len(prefix):] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
 }

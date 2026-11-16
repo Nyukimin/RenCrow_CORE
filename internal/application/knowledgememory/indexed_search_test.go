@@ -25,6 +25,33 @@ func TestSearchTokensRejectsBlankAndOversizedQueries(t *testing.T) {
 	}
 }
 
+func TestIndexSourceTokensAcceptLongSourcesWithoutRelaxingLegacyProjectionOrQueryBounds(t *testing.T) {
+	document := strings.Repeat("日本語", 20_000)
+	if _, err := IndexTokens(document); err == nil {
+		t.Fatal("IndexTokens unexpectedly accepted text over the legacy 160-rune contract")
+	}
+	if _, err := IndexSourceTokens(document); err != nil {
+		t.Fatalf("IndexSourceTokens(long source) error = %v", err)
+	}
+	if _, err := SearchTokens(document); err == nil {
+		t.Fatal("SearchTokens(long query) unexpectedly accepted a document-sized query")
+	}
+	if _, err := IndexSourceTokens(strings.Repeat("日", maxIndexedSourceRunes+1)); err == nil {
+		t.Fatal("IndexSourceTokens unexpectedly accepted source text over its bounded source limit")
+	}
+}
+
+func TestPersonalArchiveSearchRequiresPrivateUserScope(t *testing.T) {
+	request := SearchRequest{Scope: SearchScope{Scope: SearchScopePublic}, Query: "diary", RecordType: "personal_archive"}
+	if err := request.Validate(); err == nil {
+		t.Fatal("public personal archive search should fail closed")
+	}
+	request.Scope = SearchScope{Scope: SearchScopeUser, UserID: "ren"}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("private owner personal archive search rejected: %v", err)
+	}
+}
+
 func TestSearchScopeRequiresFixedAuthenticatedBoundary(t *testing.T) {
 	valid := []SearchScope{
 		{Scope: SearchScopePublic},

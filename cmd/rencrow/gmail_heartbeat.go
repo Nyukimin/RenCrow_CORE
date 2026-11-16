@@ -39,9 +39,17 @@ func (b *boundedGmailOutput) Write(p []byte) (int, error) {
 }
 
 func (c gmailCLICollector) Collect(ctx context.Context, pageToken string) (gmailapp.GmailPage, error) {
+	return c.collect(ctx, pageToken, gmailapp.GmailQuery)
+}
+
+func (c gmailCLICollector) CollectDiaries(ctx context.Context, pageToken string) (gmailapp.GmailPage, error) {
+	return c.collect(ctx, pageToken, gmailapp.GmailDiaryQuery)
+}
+
+func (c gmailCLICollector) collect(ctx context.Context, pageToken, query string) (gmailapp.GmailPage, error) {
 	var page gmailapp.GmailPage
 	g := c.config
-	args := []string{"collect", "--account", g.Account, "--credentials-file", g.CredentialsFile, "--token-file", g.TokenFile, "--query", gmailapp.GmailQuery, "--max-results", strconv.Itoa(g.MaxResults)}
+	args := []string{"collect", "--account", g.Account, "--credentials-file", g.CredentialsFile, "--token-file", g.TokenFile, "--query", query, "--max-results", strconv.Itoa(g.MaxResults)}
 	if pageToken != "" {
 		args = append(args, "--page-token", pageToken)
 	}

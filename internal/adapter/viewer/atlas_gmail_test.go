@@ -18,6 +18,13 @@ type gmailReceiptReaderStub struct {
 	t     *testing.T
 }
 
+type gmailDiaryBackfillStub struct{ calls int }
+
+func (s *gmailDiaryBackfillStub) Receipts(context.Context, int) ([]gmailapp.GmailReceipt, error) {
+	return nil, nil
+}
+func (s *gmailDiaryBackfillStub) StartGmailDiaryBackfill() bool { s.calls++; return true }
+
 func (s *gmailReceiptReaderStub) Receipts(ctx context.Context, n int) ([]gmailapp.GmailReceipt, error) {
 	s.calls++
 	scope, ok := domaintool.ToolExecutionScopeFromContext(ctx)
@@ -66,5 +73,35 @@ func TestAtlasGmailReceiptsRequireLocalOwnerAuthentication(t *testing.T) {
 	}
 	if reader.calls != 1 {
 		t.Fatalf("unauthorized store reads: %d", reader.calls)
+	}
+}
+
+func TestAtlasGmailDiaryBackfillRequiresOwnerAuthenticationAndPOST(t *testing.T) {
+	starter := &gmailDiaryBackfillStub{}
+	token := "owner-token-012345678901234567890123456789"
+	handler := NewAtlasHandler(nil, "ren", []byte(token), starter)
+	for _, tc := range []struct {
+		method, auth, profile, remote string
+		want                          int
+	}{
+		{http.MethodPost, "", "cmd-diagnostics", "127.0.0.1:1", http.StatusUnauthorized},
+		{http.MethodPost, token, "cmd-diagnostics", "203.0.113.2:1", http.StatusNotFound},
+		{http.MethodPost, token, "cmd-control", "127.0.0.1:1", http.StatusForbidden},
+		{http.MethodGet, token, "cmd-diagnostics", "127.0.0.1:1", http.StatusMethodNotAllowed},
+		{http.MethodPost, token, "cmd-diagnostics", "127.0.0.1:1", http.StatusAccepted},
+	} {
+		req := httptest.NewRequest(tc.method, "http://127.0.0.1/viewer/atlas/gmail/diary-backfill", nil)
+		req.RemoteAddr = tc.remote
+		req.Header.Set("Authorization", "Bearer "+tc.auth)
+		req.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+		req.Header.Set("X-RenCrow-Interaction-Profile", tc.profile)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != tc.want {
+			t.Fatalf("method=%s status=%d want=%d body=%s", tc.method, response.Code, tc.want, response.Body.String())
+		}
+	}
+	if starter.calls != 1 {
+		t.Fatalf("backfill started %d times", starter.calls)
 	}
 }

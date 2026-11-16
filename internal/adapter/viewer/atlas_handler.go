@@ -73,6 +73,10 @@ type atlasHandler struct {
 }
 
 func (h *atlasHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSuffix(r.URL.Path, "/") == atlasReadRoot+"/gmail/diary-backfill" {
+		h.startGmailDiaryBackfill(w, r)
+		return
+	}
 	if strings.TrimSuffix(r.URL.Path, "/") == atlasReadRoot+"/gmail" {
 		h.readGmail(w, r)
 		return

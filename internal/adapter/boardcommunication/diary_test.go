@@ -159,3 +159,57 @@ func TestPutDiaryChecksExactResponseAndMapsConflict(t *testing.T) {
 		})
 	}
 }
+
+func TestLuminaDiaryImportMethodsRequirePinnedPrincipalAndBindBeforeWrite(t *testing.T) {
+	identity := ConnectionIdentity{PrincipalID: "lumina-diary-import", JournalInstanceID: syntheticConnectionIdentity.JournalInstanceID}
+	connections, writes := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-BOARD-Principal-ID") != identity.PrincipalID || r.Header.Get("X-BOARD-Journal-Instance-ID") != identity.JournalInstanceID {
+			t.Error("missing expected identity headers")
+		}
+		w.Header().Set("X-Correlation-ID", syntheticCorrelation)
+		switch r.URL.Path {
+		case "/api/v1/connection":
+			connections++
+			_ = json.NewEncoder(w).Encode(map[string]string{"principal_id": identity.PrincipalID, "journal_instance_id": identity.JournalInstanceID, "correlation_id": syntheticCorrelation})
+		case "/api/v1/diaries":
+			if r.URL.Query().Get("actor_id") != "lumina" || r.URL.Query().Get("date") != "2026-11-15" {
+				t.Errorf("wrong diary read scope: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"date": "2026-11-15", "entries": []any{}, "correlation_id": syntheticCorrelation})
+		case "/api/v1/diaries/2026-11-15":
+			if connections == 0 {
+				t.Error("diary write happened before connection identity check")
+			}
+			writes++
+			var request diaryWriteRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"entry": map[string]any{"actor_id": "lumina", "date": "2026-11-15", "revision": request.Revision, "body": request.Body, "reflection": request.Reflection, "updated_at": time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC)}, "correlation_id": syntheticCorrelation})
+		default:
+			t.Errorf("unexpected BOARD route %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(Options{URL: server.URL, TokenSource: func(context.Context) ([]byte, error) { return []byte(syntheticBearer), nil }, ExpectedConnection: identity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, found, err := client.GetLuminaImportDiary(context.Background(), "2026-11-15"); err != nil || found {
+		t.Fatalf("get diary found=%t err=%v", found, err)
+	}
+	input := DiaryWrite{ActorID: "lumina", Date: "2026-11-15", Revision: 1, Body: "body", Reflection: "reflection"}
+	if _, err := client.PutLuminaImportDiary(context.Background(), input); err != nil {
+		t.Fatalf("put Lumina import diary: %v", err)
+	}
+	if connections != 2 || writes != 1 {
+		t.Fatalf("connection checks=%d writes=%d", connections, writes)
+	}
+
+	ordinary, _ := newMioDiaryClient(t, http.NotFoundHandler())
+	if _, err := ordinary.PutLuminaImportDiary(context.Background(), input); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("ordinary principal error=%v", err)
+	}
+}

@@ -64,6 +64,14 @@ func buildBoardCommunicationRuntime(
 	if cfg == nil || deps == nil || !cfg.BoardCommunication.Enabled {
 		return
 	}
+	if deps.gmailIntake != nil && strings.TrimSpace(cfg.BoardCommunication.DiaryImportTokenFile) != "" {
+		if writer, err := newGmailBoardDiaryWriter(cfg.BoardCommunication); err == nil {
+			deps.gmailDiaryWriter = writer
+			deps.gmailIntake.WithDiaryWriter(writer)
+		} else {
+			log.Printf("Lumina diary importer unavailable: dedicated credential/client setup")
+		}
+	}
 
 	service := newBoardCommunicationService(boardCommunicationServiceDeps{enabled: true})
 	deps.boardCommunication = service
