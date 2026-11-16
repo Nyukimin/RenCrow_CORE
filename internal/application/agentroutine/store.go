@@ -691,8 +691,9 @@ func (s *Store) SaveDiary(ctx context.Context, diary Diary) (Diary, error) {
 		if err := json.Unmarshal([]byte(previousPayload), &previous); err != nil {
 			return Diary{}, fmt.Errorf("decode prior diary: %w", err)
 		}
-		sameText := diary.Body == previous.Body && diary.Reflection == previous.Reflection
-		if sameText {
+		sameDraft := diary.Body == previous.Body && diary.Reflection == previous.Reflection &&
+			diary.ReflectionVersion == previous.ReflectionVersion
+		if sameDraft {
 			if diary.Revision != 0 && diary.Revision != previous.Revision {
 				return Diary{}, ErrConflict
 			}

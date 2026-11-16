@@ -42,6 +42,7 @@ type livingHeartbeatAgent struct {
 	ActorID             string `json:"actor_id"`
 	State               string `json:"state"`
 	ActivityKind        string `json:"activity_kind,omitempty"`
+	GameID              string `json:"game_id,omitempty"`
 	Title               string `json:"title,omitempty"`
 	RoutineAvailability string `json:"routine_availability,omitempty"`
 	OngoingActivity     string `json:"ongoing_activity,omitempty"`
@@ -95,27 +96,27 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 		if routineReaderProvided {
 			routineReader = routineReaders[0]
 		}
-		waitingActors := make([]string, 0, len(activities))
+		routineActors := make([]string, 0, len(activities))
 		for _, activity := range activities {
-			if activity.State == "waiting" {
-				waitingActors = append(waitingActors, activity.ActorID)
+			if activity.State == "waiting" || (activity.State == "running" && activity.ActivityKind == "routine") {
+				routineActors = append(routineActors, activity.ActorID)
 			}
 		}
-		routineByActor := make(map[string]RoutineActivity, len(waitingActors))
+		routineByActor := make(map[string]RoutineActivity, len(routineActors))
 		if routineReaderProvided {
 			if batchReader, ok := routineReader.(RoutineActivityBatchReader); ok {
-				values, err := batchReader.CurrentRoutineActivities(readCtx, waitingActors)
+				values, err := batchReader.CurrentRoutineActivities(readCtx, routineActors)
 				if err != nil {
-					for _, actorID := range waitingActors {
+					for _, actorID := range routineActors {
 						routineByActor[actorID] = RoutineActivity{Availability: "unavailable"}
 					}
 				} else {
-					for _, actorID := range waitingActors {
+					for _, actorID := range routineActors {
 						routineByActor[actorID] = validRoutineActivity(values[actorID])
 					}
 				}
 			} else {
-				for _, actorID := range waitingActors {
+				for _, actorID := range routineActors {
 					projection := RoutineActivity{Availability: "disabled"}
 					if routineReader != nil {
 						value, err := routineReader.CurrentRoutineActivity(readCtx, actorID)
@@ -139,21 +140,26 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 		agents := make([]livingHeartbeatAgent, 0, len(activities))
 		for _, activity := range activities {
 			agent := livingHeartbeatAgent{
-				ActorID: activity.ActorID, State: activity.State, ActivityKind: activity.ActivityKind, Title: activity.Title,
+				ActorID: activity.ActorID, State: activity.State, ActivityKind: activity.ActivityKind, GameID: activity.GameID, Title: activity.Title,
 			}
+			projection, hasProjection := routineByActor[activity.ActorID]
 			if activity.State == "waiting" {
-				projection, ok := routineByActor[activity.ActorID]
-				if !ok {
+				if !hasProjection {
 					projection = RoutineActivity{Availability: "unavailable"}
 				}
 				if routineReaderProvided {
 					agent.RoutineAvailability = projection.Availability
 				}
-				if projection.Availability == "available" && (projection.OngoingActivity == "sleep_window" || projection.OngoingActivity == "rest") {
+				if projection.Availability == "available" && (projection.OngoingActivity == "sleep_window" || projection.OngoingActivity == "rest" || projection.OngoingActivity == "moving_home") {
 					agent.OngoingActivity = projection.OngoingActivity
 				} else if projection.Availability == "available" {
 					agent.OngoingActivity = "waiting"
 				}
+			} else if activity.State == "running" && activity.ActivityKind == "routine" &&
+				routineReaderProvided && hasProjection && projection.Availability == "available" &&
+				projection.OngoingActivity == "moving_home" {
+				agent.RoutineAvailability = "available"
+				agent.OngoingActivity = "moving_home"
 			}
 			agents = append(agents, agent)
 		}
@@ -168,7 +174,7 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 
 func validRoutineActivity(value RoutineActivity) RoutineActivity {
 	if (value.Availability == "available" || value.Availability == "disabled" || value.Availability == "unavailable") &&
-		(value.OngoingActivity == "" || value.OngoingActivity == "sleep_window" || value.OngoingActivity == "rest" || value.OngoingActivity == "waiting") &&
+		(value.OngoingActivity == "" || value.OngoingActivity == "sleep_window" || value.OngoingActivity == "rest" || value.OngoingActivity == "waiting" || value.OngoingActivity == "moving_home") &&
 		(value.Availability == "available" || value.OngoingActivity == "") {
 		return value
 	}

@@ -2,6 +2,7 @@ package agentheartbeat
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,6 +112,203 @@ func TestLivingSnapshotIsUnavailableUntilSchedulerStarts(t *testing.T) {
 	if activities, ready := scheduler.LivingSnapshot(context.Background(), nil); ready || activities != nil {
 		t.Fatalf("unstarted scheduler snapshot = (%+v, %t), want unavailable", activities, ready)
 	}
+}
+
+func TestAcquireGameTurnProjectsKnownGameIDOnlyForActiveLease(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler := New([]string{"mio"}, Sources{}, nil)
+	started := make(chan error, 1)
+	go func() { started <- scheduler.Start(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-started:
+			if err != nil {
+				t.Errorf("Start() = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("scheduler did not stop after cancellation")
+		}
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+		defer waitCancel()
+		if err := scheduler.Wait(waitCtx); err != nil {
+			t.Errorf("Wait() = %v", err)
+		}
+	})
+	deadline := time.Now().Add(time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		if _, ready = scheduler.LivingSnapshot(context.Background(), nil); ready {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("scheduler did not become ready")
+	}
+
+	release, err := scheduler.AcquireGameTurn(context.Background(), "mio", domaintask.PriorityLow, "nethack")
+	if err != nil {
+		t.Fatalf("AcquireGameTurn() error = %v", err)
+	}
+	defer release()
+	activities, ready := scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || len(activities) != 1 || activities[0].State != "running" || activities[0].ActivityKind != string(ActivityKindGame) || activities[0].GameID != "nethack" {
+		t.Fatalf("active game snapshot = (%+v, %t), want running/game/nethack", activities, ready)
+	}
+	release()
+	activities, ready = scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || len(activities) != 1 || activities[0].State == "running" || activities[0].ActivityKind != "" || activities[0].GameID != "" {
+		t.Fatalf("released game snapshot = (%+v, %t), want no active game descriptor", activities, ready)
+	}
+
+	unknownRelease, err := scheduler.AcquireGameTurn(context.Background(), "mio", domaintask.PriorityLow, "private-game-id")
+	if err != nil {
+		t.Fatalf("AcquireGameTurn(unknown) error = %v", err)
+	}
+	defer unknownRelease()
+	activities, ready = scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || activities[0].ActivityKind != string(ActivityKindGame) || activities[0].GameID != "" {
+		t.Fatalf("unknown game snapshot = (%+v, %t), want game category with no public ID", activities, ready)
+	}
+	unknownRelease()
+}
+
+func TestAcquireGameTurnReentryRestoresIdleGameDescriptor(t *testing.T) {
+	scheduler := New([]string{"mio"}, Sources{}, nil)
+	scheduler.started = true
+	lease := &reservation{scheduler: scheduler, actor: "mio", idle: true, activityKind: ActivityKindGame}
+	scheduler.agents["mio"].active = lease
+	ctx := context.WithValue(context.Background(), reservationContextKey{}, lease)
+
+	release, err := scheduler.AcquireGameTurn(ctx, "mio", domaintask.PriorityLow, "nethack")
+	if err != nil {
+		t.Fatalf("reentrant AcquireGameTurn() error = %v", err)
+	}
+	activities, ready := scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || activities[0].ActivityKind != string(ActivityKindGame) || activities[0].GameID != "nethack" {
+		t.Fatalf("reentrant snapshot = (%+v, %t), want game/nethack", activities, ready)
+	}
+	release()
+	activities, ready = scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || activities[0].ActivityKind != string(ActivityKindGame) || activities[0].GameID != "" {
+		t.Fatalf("restored idle snapshot = (%+v, %t), want game category without game ID", activities, ready)
+	}
+
+	staleRelease, err := scheduler.AcquireGameTurn(ctx, "mio", domaintask.PriorityLow, "nethack")
+	if err != nil {
+		t.Fatalf("second reentrant AcquireGameTurn() error = %v", err)
+	}
+	newOwner := &reservation{scheduler: scheduler, actor: "mio", activityKind: ActivityKindBoard}
+	scheduler.mu.Lock()
+	scheduler.agents["mio"].active = newOwner
+	scheduler.mu.Unlock()
+	staleRelease()
+	activities, ready = scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || activities[0].ActivityKind != string(ActivityKindBoard) || activities[0].GameID != "" {
+		t.Fatalf("snapshot after stale reentrant release = (%+v, %t), want replacement board lease", activities, ready)
+	}
+}
+
+func TestQueuedGameTurnIsNotProjectedBeforeItsLeaseStarts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	workStarted := make(chan struct{})
+	finishWork := make(chan struct{})
+	var finishOnce sync.Once
+	finish := func() { finishOnce.Do(func() { close(finishWork) }) }
+	scheduler := New([]string{"mio"}, Sources{
+		Board: func(context.Context, string) (Work, bool, error) {
+			return Work{ID: "board-work", Priority: domaintask.PriorityLow, Run: func(context.Context, <-chan struct{}) error {
+				close(workStarted)
+				<-finishWork
+				return nil
+			}}, true, nil
+		},
+	}, nil)
+	started := make(chan error, 1)
+	go func() { started <- scheduler.Start(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		finish()
+		select {
+		case err := <-started:
+			if err != nil {
+				t.Errorf("Start() = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("scheduler did not stop after cancellation")
+		}
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+		defer waitCancel()
+		if err := scheduler.Wait(waitCtx); err != nil {
+			t.Errorf("Wait() = %v", err)
+		}
+	})
+	waitSignal(t, workStarted, time.Second, "board work did not start")
+
+	canceledCtx, cancelWaiter := context.WithCancel(context.Background())
+	canceledErr := make(chan error, 1)
+	go func() {
+		_, err := scheduler.AcquireGameTurn(canceledCtx, "mio", domaintask.PriorityLow, "nethack")
+		canceledErr <- err
+	}()
+	waitForGameWaiter(t, scheduler)
+	cancelWaiter()
+	select {
+	case err := <-canceledErr:
+		if err != context.Canceled {
+			t.Fatalf("canceled game waiter error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled game waiter did not return")
+	}
+	activities, ready := scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || activities[0].ActivityKind != string(ActivityKindBoard) || activities[0].GameID != "" {
+		t.Fatalf("snapshot after canceled game waiter = (%+v, %t), want board without game descriptor", activities, ready)
+	}
+
+	acquired := make(chan func(), 1)
+	acquireErr := make(chan error, 1)
+	go func() {
+		release, err := scheduler.AcquireGameTurn(context.Background(), "mio", domaintask.PriorityLow, "nethack")
+		if err != nil {
+			acquireErr <- err
+			return
+		}
+		acquired <- release
+	}()
+	activities, ready = scheduler.LivingSnapshot(context.Background(), nil)
+	if !ready || activities[0].State != "running" || activities[0].ActivityKind != string(ActivityKindBoard) || activities[0].GameID != "" {
+		t.Fatalf("queued game snapshot = (%+v, %t), want active board without game ID", activities, ready)
+	}
+	waitForGameWaiter(t, scheduler)
+	finish()
+	select {
+	case err := <-acquireErr:
+		t.Fatalf("AcquireGameTurn() after board completion: %v", err)
+	case release := <-acquired:
+		activities, ready = scheduler.LivingSnapshot(context.Background(), nil)
+		if !ready || activities[0].ActivityKind != string(ActivityKindGame) || activities[0].GameID != "nethack" {
+			release()
+			t.Fatalf("granted game snapshot = (%+v, %t), want game/nethack", activities, ready)
+		}
+		release()
+	case <-time.After(time.Second):
+		t.Fatal("game turn waiter did not acquire after board work returned")
+	}
+}
+
+func waitForGameWaiter(t *testing.T, scheduler *Scheduler) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		queues, ready := scheduler.OwnerForegroundWaiterSnapshot()
+		if ready && len(queues) == 1 && queues[0].Count == 1 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("game turn waiter did not appear in the scheduler queue")
 }
 
 func TestOwnerLivingSnapshotCanResolveNonPrivateActivityTitleWithoutChangingPublicView(t *testing.T) {

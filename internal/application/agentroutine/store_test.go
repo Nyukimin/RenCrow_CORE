@@ -361,6 +361,38 @@ func TestStoreDiaryDraftRevisionsAndReceiptRetries(t *testing.T) {
 	}
 }
 
+func TestStoreDiaryCanAdvanceVersionWithUnchangedText(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "routine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	first, err := store.SaveDiary(ctx, Diary{
+		ActorID: "Mio", Date: "2026-11-14", Body: "confirmed facts", Reflection: "same reflection",
+		ReflectionVersion: "legacy-v0", Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("save first diary revision: %v", err)
+	}
+	ack, err := store.SaveDiary(ctx, Diary{
+		ActorID: first.ActorID, Date: first.Date, Body: first.Body, Reflection: first.Reflection,
+		ReflectionVersion: first.ReflectionVersion, Revision: first.Revision, PostingKey: first.PostingKey,
+		Receipt: "board-r1", ReceiptRevision: "1",
+	})
+	if err != nil {
+		t.Fatalf("save first diary receipt: %v", err)
+	}
+	updated, err := store.SaveDiary(ctx, Diary{
+		ActorID: ack.ActorID, Date: ack.Date, Body: ack.Body, Reflection: ack.Reflection,
+		ReflectionVersion: "character-v1", Revision: ack.Revision + 1,
+	})
+	if err != nil || updated.Revision != ack.Revision+1 || updated.ReflectionVersion != "character-v1" ||
+		updated.PostingKey == ack.PostingKey || updated.Receipt != "" || updated.ReceiptRevision != "" {
+		t.Fatalf("same-text reflection upgrade = %+v, %v; want new revision and posting key without stale receipt", updated, err)
+	}
+}
+
 func TestStorePausedDiarySurvivesSleepAndResumesAfterWake(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(filepath.Join(t.TempDir(), "routine.db"))

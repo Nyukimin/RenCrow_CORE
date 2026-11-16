@@ -15,6 +15,8 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 - `heartbeat.agent_scheduler_enabled`で有効化する。Workstream、収集、Backlogなどの既存周期処理にはそれぞれの間隔を使う。
 - 実行中かどうかはエージェント単位で判定する。同一エージェントで同時に実行するタスクは原則1件とする。既存の全体、module、routeの実行制限も適用する。
 - PORTAL向けのread-only投影は`GET /viewer/living/heartbeat`だけで提供する。queryなしの直接loopback接続を要求し、schedulerが未開始または停止済みの場合は503を返す。`observed_at`と各actorの`waiting`／`checking`／`running`／`stopping`、実行中だけの`board`／`private`／`game`／`routine`／`foreground`分類を返す。group routineは共有leaseに参加する各actorへ同じ`routine`分類を返す。Task ID、prompt、エラー、BOARD本文は投影しない。titleは実行中のcanonical Taskを再読し、現在のpublic publication bindingを既存visibility policyが許可した場合だけ返す。
+- `activity_kind`が`game`の実行中actorは、現在のgame turnが取得したscheduler leaseの期間に限り、既知の固定game IDをoptionalな`game_id`として返す。現在の固定IDは`nethack`、`herzog_zwei`、`territory_commander`、`survival_garden`。未知ID、Task／Session ID、free-form title、reason、prompt、observationは返さない。通常のforeground admissionは`foreground`のままで、queued waiterはactiveになるまでゲーム分類を公開しない。reentrantなIdle game leaseはturn中だけgame IDを重ね、turnのrelease後は元のIdle分類へ戻す。
+- routine_availability: "available" と ongoing_activity: "moving_home" は、schedulerがwaitingのactor、またはscheduler leaseがrunning/routineのactorに限って付加できる。Pending routineに永続化されたWORLD move開始receiptがcommittedかつevent-verifiedであり、fresh WORLD Snapshot上の対応Actor、activity ID、自室target、route ID、scene hash、moving phaseがすべて一致する場合だけ表示する。due時刻を過ぎても同一moveがactiveでfinish/stopの確定receiptがない間は表示を維持する。fresh WORLD read失敗やreceipt/snapshot不一致では表示しない。非routineの実行中leaseがroutine reader完了後の再snapshotで優先される。
 - 空いたエージェントは、BOARD上で自分に割り当てられたタスクを先に選ぶ。担当が0件の場合、他のエージェントの担当件数にかかわらず、自分専用のタスクへ進む。それぞれの候補内で優先度の降順、登録時刻の昇順で選ぶ。同時刻の場合は永続IDで順を確定する。
 - BOARDが優先度を提供しない担当タスクは同じ優先度として扱い、BOARDが返す登録時刻を使う。専用キューは既存のRunQueueとTaskの担当、優先度、登録時刻を使う。
 - BOARDの許可済みチャンネルで担当エージェントを指定し、「仕事を頼む」でテキスト作業を依頼する。エージェントは本文を処理して同じスレッドに結果を返す。「会話する」では宛先を指定し、エージェントのメッセージの返信ボタンからも会話を続けられる。BOARDの依頼の進捗はBOARDのclaimと返信記録に残る。
@@ -83,7 +85,7 @@ LIVINGの実行枠の`waiting`は「Taskが未設定」を意味しない。読�
 - 就寝予定に達したとき日記が保留中なら、元の日記Intentと進捗を同じ状態のCASで保留し、就寝・起床を先に進める。起床完了後に同じ日記Intentを再開し、BOARDの投稿待ち本文・投稿キー・受領記録を維持する。感想生成とBOARD投稿の実行枠は就寝予定で打ち切り、保存処理は打ち切らない。
 - WORLDとの接続は設定済みの認証付きSnapshotから始める。リビング・ダイニング・各自室にはWORLDの部屋IDを割り当て、本人と相手の在室は同じSnapshotで照合する。就寝枠はCOREの日課選択に使い、実際の就寝・起床・移動・鏡の前のポーズはWORLDの確定記録を使う。WORLDの動作が未接続なら、実施済みの記録を作らない。
 - 趣味の調査には既存の読み取り用WebGatherを使い、保存済みの結果を各キャラクターのテキスト生成へ渡す。確認できる出典と実行結果を残す。趣味はJSTの半時間枠で候補を変え、完了した本人は次の趣味まで30分、次の朝の雑談まで15分を空ける。就寝・起床・日記は予定と未処理日記の状態で次の着手を制御し、追加のcooldownを置かない。映像・音声の視聴や身体動作は、それぞれを実行したツールまたはWORLDから結果が返った場合に記録する。
-- COREは確認済みの活動一覧から本文を組み立て、本人の感想だけを生成する。BOARDは閲覧権限付きの「日記」ページを持つ。投稿は本人のBOARD認証で `PUT /api/v1/diaries/{date}` に本文・感想・版を送る。対象日はJSTの `YYYY-MM-DD` とし、初版から連番で更新する。同じ版と内容の再送には保存済みの本文・感想・更新時刻を返す。各応答の相関IDをCOREが照合し、内容が異なる再送や古い版はBOARDが拒否する。公開済みの本文はBOARDに保存する。
+- COREは確認済みの活動一覧から本文を組み立て、本人の感想を生成する。感想は昨日の記録を読んだ今の胸の内だけを、本人の日記として一人称で書く。本人に設定された性格・口調・価値観を前面に出し、記録を読んだ今の感情、迷い、本音、願いを自然な2〜3段落、200〜400文字程度で綴る。出来事の時系列や要約は本文にあるので感想では再説明・再現しない。日時、過去の具体的な動作、部屋や風景・音、他者や会話、作品の場面を記録外から補わず、「今思う」「気になる」「次はこうしたい」など振り返る今の内省として書く。感情の例を義務にせず本人に合うものを選び、キャラクター設定を作り足したり他者の内心を断定したりしない。出力は感想本文のみで、指示や実装の説明を含めない。本文は確認済みの事実を時系列で保持し、感想に本人らしさと内面を出す。COREは感想指示の版を日記の内部ペイロードに記録し、前日分が公開済みでも本文内容が変わらず指示版が旧版なら、同じ日記の次版として感想を作り直す。公開前の未ACK下書きは既存の本文・感想・投稿キーを完全一致で再送してから扱う。BOARDは閲覧権限付きの「日記」ページを持つ。投稿は本人のBOARD認証で `PUT /api/v1/diaries/{date}` に本文・感想・版を送る。対象日はJSTの `YYYY-MM-DD` とし、初版から連番で更新する。同じ版と内容の再送には保存済みの本文・感想・更新時刻を返す。各応答の相関IDをCOREが照合し、内容が異なる再送や古い版はBOARDが拒否する。公開済みの本文はBOARDに保存する。
 
 ### 設定と認証
 

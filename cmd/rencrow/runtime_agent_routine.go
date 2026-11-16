@@ -34,14 +34,15 @@ import (
 )
 
 const (
-	agentRoutineModuleID        = "agent_routine"
-	agentRoutineDiaryBodyMax    = 120 << 10
-	agentRoutineReflectionMax   = 24 << 10
-	agentRoutineSnapshotMaxAge  = 250 * time.Millisecond
-	agentRoutineProviderTimeout = 2 * time.Minute
-	agentRoutineWebTimeout      = 45 * time.Second
-	agentRoutinePersistTimeout  = 15 * time.Second
-	agentRoutineRetryDelay      = 15 * time.Minute
+	agentRoutineModuleID               = "agent_routine"
+	agentRoutineDiaryBodyMax           = 120 << 10
+	agentRoutineReflectionMax          = 24 << 10
+	agentRoutineSnapshotMaxAge         = 250 * time.Millisecond
+	agentRoutineProviderTimeout        = 2 * time.Minute
+	agentRoutineWebTimeout             = 45 * time.Second
+	agentRoutinePersistTimeout         = 15 * time.Second
+	agentRoutineRetryDelay             = 15 * time.Minute
+	agentRoutineDiaryReflectionVersion = "character-v3"
 )
 
 var errAgentRoutineStopped = errors.New("agent routine stopped")
@@ -80,19 +81,20 @@ type routineSnapshotRead struct {
 }
 
 type routineProgress struct {
-	Actors               []routineActorProgress `json:"actors"`
-	Media                *routineMediaProgress  `json:"media,omitempty"`
-	World                *routineWorldProgress  `json:"world,omitempty"`
-	SearchResult         string                 `json:"search_result,omitempty"`
-	HobbyText            string                 `json:"hobby_text,omitempty"`
-	DiaryBody            string                 `json:"diary_body,omitempty"`
-	DiaryReflection      string                 `json:"diary_reflection,omitempty"`
-	DiaryRevision        int64                  `json:"diary_revision,omitempty"`
-	DiaryPostingKey      string                 `json:"diary_posting_key,omitempty"`
-	DiaryReceipt         string                 `json:"diary_receipt,omitempty"`
-	DiaryReceiptRevision string                 `json:"diary_receipt_revision,omitempty"`
-	CompletedAt          time.Time              `json:"completed_at,omitempty"`
-	EffectCompleted      bool                   `json:"effect_completed,omitempty"`
+	Actors                 []routineActorProgress `json:"actors"`
+	Media                  *routineMediaProgress  `json:"media,omitempty"`
+	World                  *routineWorldProgress  `json:"world,omitempty"`
+	SearchResult           string                 `json:"search_result,omitempty"`
+	HobbyText              string                 `json:"hobby_text,omitempty"`
+	DiaryBody              string                 `json:"diary_body,omitempty"`
+	DiaryReflection        string                 `json:"diary_reflection,omitempty"`
+	DiaryReflectionVersion string                 `json:"diary_reflection_version,omitempty"`
+	DiaryRevision          int64                  `json:"diary_revision,omitempty"`
+	DiaryPostingKey        string                 `json:"diary_posting_key,omitempty"`
+	DiaryReceipt           string                 `json:"diary_receipt,omitempty"`
+	DiaryReceiptRevision   string                 `json:"diary_receipt_revision,omitempty"`
+	CompletedAt            time.Time              `json:"completed_at,omitempty"`
+	EffectCompleted        bool                   `json:"effect_completed,omitempty"`
 }
 
 type routineActorProgress struct {
@@ -318,19 +320,22 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			planState.Pending = nil
 			planState.NextDiaryDate = "" // Retry backoff must not monopolize the daylight fallback.
 		}
+		if state.Pending == nil {
+			localNow := now.In(r.location())
+			hour := localNow.Hour()
+			priorDate := localNow.AddDate(0, 0, -1).Format("2006-01-02")
+			if hour >= 9 && hour < 22 && state.ActivatedOn != "" && priorDate >= state.ActivatedOn {
+				if changed, checkErr := r.checkDiaryAmendment(ctx, actorID, priorDate); checkErr == nil && changed &&
+					(planState.NextDiaryDate == "" || priorDate < planState.NextDiaryDate) {
+					planState.NextDiaryDate = priorDate
+				}
+			}
+		}
 		plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, planState, presence, canHobby)
 		if retryingDiary && plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
 			hour := now.In(r.location()).Hour()
 			if hour < 9 || hour >= 22 {
 				return agentheartbeat.Work{}, false, nil
-			}
-		}
-		if state.Pending == nil && plan.Kind == agentroutine.ActivityDaytime && now.In(r.location()).Hour() >= 9 && now.In(r.location()).Hour() < 22 {
-			priorDate := now.In(r.location()).AddDate(0, 0, -1).Format("2006-01-02")
-			if state.ActivatedOn == "" || priorDate >= state.ActivatedOn {
-				if changed, checkErr := r.checkDiaryAmendment(ctx, actorID, priorDate); checkErr == nil && changed {
-					plan.Kind, plan.Date, plan.Reason = agentroutine.ActivityDiary, priorDate, "previous-day confirmed facts changed after diary publication"
-				}
 			}
 		}
 		if state.Pending == nil && plan.Kind == agentroutine.ActivitySleep && plan.LogicalSleep && state.LogicalSleepUntil.After(now) {
@@ -2052,7 +2057,9 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 		return state, progress, diaryErr
 	}
 	if diaryErr == nil && diary.Receipt != "" {
-		if progress.DiaryRevision == diary.Revision && progress.DiaryBody == diary.Body && progress.DiaryReflection == diary.Reflection {
+		if progress.DiaryRevision == diary.Revision && progress.DiaryBody == diary.Body &&
+			progress.DiaryReflection == diary.Reflection && progress.DiaryReflectionVersion == diary.ReflectionVersion &&
+			diary.ReflectionVersion == agentRoutineDiaryReflectionVersion {
 			progress.DiaryReceipt, progress.DiaryReceiptRevision = diary.Receipt, diary.ReceiptRevision
 			progress.DiaryPostingKey = diary.PostingKey
 			progress.EffectCompleted = true
@@ -2062,17 +2069,20 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 		if bodyErr != nil {
 			return state, progress, bodyErr
 		}
-		if latestBody == diary.Body {
+		if latestBody == diary.Body && diary.ReflectionVersion == agentRoutineDiaryReflectionVersion {
 			progress.DiaryBody, progress.DiaryReflection = diary.Body, diary.Reflection
+			progress.DiaryReflectionVersion = diary.ReflectionVersion
 			progress.DiaryRevision, progress.DiaryPostingKey = diary.Revision, diary.PostingKey
 			progress.DiaryReceipt, progress.DiaryReceiptRevision = diary.Receipt, diary.ReceiptRevision
 			progress.EffectCompleted = true
 			return r.saveProgress(ctx, state, "diary_receipt_recovered", progress)
 		}
 		// This is a bounded catch-up for the latest previously published day.
-		// Only changed confirmed facts create a new revision.
-		if progress.DiaryRevision != diary.Revision+1 || progress.DiaryBody != latestBody {
+		// Changed confirmed facts or a newer reflection instruction create a revision.
+		if progress.DiaryRevision != diary.Revision+1 || progress.DiaryBody != latestBody ||
+			progress.DiaryReflectionVersion != agentRoutineDiaryReflectionVersion {
 			progress.DiaryBody, progress.DiaryReflection = latestBody, ""
+			progress.DiaryReflectionVersion = ""
 			progress.DiaryRevision, progress.DiaryPostingKey = diary.Revision+1, ""
 		}
 		progress.DiaryReceipt, progress.DiaryReceiptRevision = "", ""
@@ -2086,6 +2096,7 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 		// An unacknowledged outbox draft must be replayed exactly before a newer
 		// body or reflection can be generated.
 		progress.DiaryBody, progress.DiaryReflection = diary.Body, diary.Reflection
+		progress.DiaryReflectionVersion = diary.ReflectionVersion
 		progress.DiaryRevision, progress.DiaryPostingKey = diary.Revision, diary.PostingKey
 	}
 	if errors.Is(diaryErr, agentroutine.ErrNotFound) {
@@ -2115,6 +2126,7 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 			if progress.DiaryReflection == "" {
 				return state, progress, errors.New("diary reflection provider returned empty text")
 			}
+			progress.DiaryReflectionVersion = agentRoutineDiaryReflectionVersion
 			state, progress, err = r.saveProgress(ctx, state, "diary_reflection_saved", progress)
 			if err != nil {
 				return state, progress, err
@@ -2123,7 +2135,8 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 		diary, err = routinePersist(ctx, func(persistCtx context.Context) (agentroutine.Diary, error) {
 			return r.store.SaveDiary(persistCtx, agentroutine.Diary{
 				ActorID: actorID, Date: state.Pending.Date, Revision: progress.DiaryRevision,
-				Body: progress.DiaryBody, Reflection: progress.DiaryReflection, PostingKey: progress.DiaryPostingKey,
+				Body: progress.DiaryBody, Reflection: progress.DiaryReflection,
+				ReflectionVersion: progress.DiaryReflectionVersion, PostingKey: progress.DiaryPostingKey,
 			})
 		})
 		if err != nil {
@@ -2167,13 +2180,15 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 	acknowledged, err := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.Diary, error) {
 		return r.store.SaveDiary(persistCtx, agentroutine.Diary{
 			ActorID: write.ActorID, Date: write.Date, Revision: write.Revision, Body: write.Body, Reflection: write.Reflection,
-			PostingKey: diary.PostingKey, Receipt: entry.CorrelationID, ReceiptRevision: fmt.Sprintf("%d", entry.Revision), UpdatedAt: entry.UpdatedAt.UTC(),
+			ReflectionVersion: diary.ReflectionVersion, PostingKey: diary.PostingKey,
+			Receipt: entry.CorrelationID, ReceiptRevision: fmt.Sprintf("%d", entry.Revision), UpdatedAt: entry.UpdatedAt.UTC(),
 		})
 	})
 	if err != nil {
 		return state, progress, fmt.Errorf("persist validated BOARD diary receipt: %w", err)
 	}
 	progress.DiaryReceipt, progress.DiaryReceiptRevision = acknowledged.Receipt, acknowledged.ReceiptRevision
+	progress.DiaryReflectionVersion = acknowledged.ReflectionVersion
 	progress.EffectCompleted = true
 	return r.saveProgress(ctx, state, "diary_receipt_saved", progress)
 }
@@ -2266,7 +2281,7 @@ func routineMediaOffsetLabel(milliseconds int64) string {
 }
 
 func routineDiaryReflectionPrompt(body string) string {
-	const prefix = "日記本文の記録だけを根拠に、短く中立的な感想を日本語で作成してください。記録にない出来事や行動は加えないでください。本文:\n"
+	const prefix = "昨日の記録を読んだ今の胸の内だけを、あなた自身の日記として一人称で書いてください。あなたに設定された性格・口調・価値観を前面に出し、記録を読んだ今の感情、迷い、本音、願いを自然な2〜3段落、200〜400文字程度で綴ってください。出来事の時系列や要約は本文にあるので、感想では再説明・再現しないでください。日時、過去の具体的な動作、部屋や風景・音、他者や会話、作品の場面を記録外から補わないでください。「今思う」「気になる」「次はこうしたい」など、振り返る今の内省として書いてください。感情の例を義務にせず、本人に合うものを選んでください。キャラクター設定を作り足したり、他者の内心を断定したりしないでください。出力は感想本文のみとし、指示や実装の説明は含めないでください。本文:\n"
 	if len(prefix)+len(body) <= agentRoutineReflectionMax {
 		return prefix + body
 	}
@@ -2648,6 +2663,9 @@ func (r *agentRoutineRuntime) diaryAmendmentWindow(now time.Time) bool {
 }
 
 func (r *agentRoutineRuntime) checkDiaryAmendment(ctx context.Context, actorID, date string) (bool, error) {
+	if r.boardClient(actorID) == nil {
+		return false, nil
+	}
 	key := actorID
 	now := r.now()
 	r.amendmentMu.Lock()
@@ -2685,6 +2703,9 @@ func (r *agentRoutineRuntime) readDiaryAmendment(ctx context.Context, actorID, d
 	}
 	if diary.Receipt == "" {
 		return false, nil
+	}
+	if diary.ReflectionVersion != agentRoutineDiaryReflectionVersion {
+		return true, nil
 	}
 	latestBody, err := r.buildDiaryBody(readCtx, actorID, date)
 	if err != nil {

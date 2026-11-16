@@ -128,7 +128,15 @@ func (p heartbeatGameDecisionProvider) DecideGameTurn(ctx context.Context, reque
 	}
 
 	actor := strings.ToLower(strings.TrimSpace(request.Persona))
-	release, err := admission.Acquire(ctx, actor, domaintask.PriorityLow)
+	var release func()
+	var err error
+	if gameAdmission, ok := admission.(interface {
+		AcquireGameTurn(context.Context, string, domaintask.Priority, string) (func(), error)
+	}); ok {
+		release, err = gameAdmission.AcquireGameTurn(ctx, actor, domaintask.PriorityLow, request.GameID)
+	} else {
+		release, err = admission.Acquire(ctx, actor, domaintask.PriorityLow)
+	}
 	if err != nil {
 		return viewer.GameBrainDecision{}, fmt.Errorf("acquire game turn actor %q: %w", actor, err)
 	}

@@ -153,12 +153,223 @@ func TestExecuteDiaryKeepsMixedLongDayAndBoundsReflectionInput(t *testing.T) {
 	if !strings.Contains(worker.prompt, "中略") || !strings.Contains(worker.prompt, gameSummary) {
 		t.Fatalf("bounded reflection input should mark omitted middle facts and retain the final activity: %s", worker.prompt[len(worker.prompt)-min(500, len(worker.prompt)):])
 	}
-	if boardWrite.Body != progress.DiaryBody || boardWrite.Reflection != progress.DiaryReflection || boardWrite.Revision != 1 {
+	if boardWrite.Body != progress.DiaryBody || boardWrite.Reflection != progress.DiaryReflection ||
+		progress.DiaryReflectionVersion != agentRoutineDiaryReflectionVersion || boardWrite.Revision != 1 {
 		t.Fatal("BOARD did not receive the exact complete saved diary revision")
 	}
 	diary, err := runtime.store.GetDiary(ctx, "mio", date)
 	if err != nil || diary.Receipt != correlationID || diary.Revision != 1 || diary.Body != boardWrite.Body {
 		t.Fatalf("saved diary receipt=%+v err=%v, want exact one-row revision receipt", diary, err)
+	}
+}
+
+func TestExecuteDiaryRefreshesPublishedReflectionVersionWithoutChangingBody(t *testing.T) {
+	const actorID, date = "mio", "2026-11-15"
+	ctx := context.Background()
+	runtime := newRoutineDiaryTestRuntime(t, nil)
+	loc := runtime.location()
+	runtime.now = func() time.Time { return time.Date(2026, time.November, 16, 10, 0, 0, 0, loc) }
+	fact := agentroutine.Activity{
+		ActorID: actorID, Date: date, Key: "confirmed-work", Kind: agentroutine.ActivityWork,
+		At: time.Date(2026, time.November, 15, 12, 0, 0, 0, loc), Source: "diary-test", Confirmed: true,
+		Summary: "確認済みの作業を完了しました。",
+	}
+	if _, err := runtime.store.SaveFact(ctx, fact); err != nil {
+		t.Fatalf("SaveFact: %v", err)
+	}
+	body, err := runtime.buildDiaryBody(ctx, actorID, date)
+	if err != nil {
+		t.Fatalf("buildDiaryBody: %v", err)
+	}
+	old, err := runtime.store.SaveDiary(ctx, agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: body, Reflection: "旧版の感想", Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("SaveDiary old publication draft: %v", err)
+	}
+	old, err = runtime.store.SaveDiary(ctx, agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: old.Body, Reflection: old.Reflection,
+		Revision: old.Revision, PostingKey: old.PostingKey, Receipt: "old-board-receipt", ReceiptRevision: "1",
+	})
+	if err != nil {
+		t.Fatalf("SaveDiary old publication receipt: %v", err)
+	}
+	boardCalls := 0
+	var boardWrite struct {
+		Revision   int64  `json:"revision"`
+		Body       string `json:"body"`
+		Reflection string `json:"reflection"`
+	}
+	boardServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		boardCalls++
+		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/diaries/"+date {
+			t.Errorf("BOARD request = %s %s, want PUT dated diary", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&boardWrite); err != nil {
+			t.Errorf("decode BOARD diary request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Correlation-ID", "new-board-receipt")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entry": map[string]any{
+			"actor_id": actorID, "date": date, "revision": boardWrite.Revision,
+			"body": boardWrite.Body, "reflection": boardWrite.Reflection,
+			"updated_at": time.Date(2026, time.November, 16, 1, 0, 0, 0, time.UTC),
+		}, "correlation_id": "new-board-receipt"})
+	}))
+	t.Cleanup(boardServer.Close)
+	client, err := boardcommunication.NewClient(boardcommunication.Options{
+		URL: boardServer.URL, TokenSource: func(context.Context) ([]byte, error) { return []byte("test-token"), nil },
+		ExpectedConnection: boardcommunication.ConnectionIdentity{
+			PrincipalID: "rencrow-comm", JournalInstanceID: "journal_0123456789abcdef0123456789abcdef",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(client.Close)
+	if changed, err := runtime.checkDiaryAmendment(ctx, actorID, date); err != nil || changed {
+		t.Fatalf("checkDiaryAmendment before BOARD readiness = %t, %v; want unavailable without caching a negative result", changed, err)
+	}
+	runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
+		actorID: {composition: &boardCommunicationComposition{boardClient: client}},
+	}
+	taskManager := runtime.tasks
+	runtime.tasks = nil
+	changed, err := runtime.readDiaryAmendment(ctx, actorID, date)
+	runtime.tasks = taskManager
+	if err != nil || !changed {
+		t.Fatalf("readDiaryAmendment for published old reflection without work-fact scope = %t, %v; want old reflection version to be an immediate candidate", changed, err)
+	}
+	worker := &routineDiaryPromptCaptureWorker{}
+	runtime.workers = map[string]privateTaskWorker{actorID: worker}
+	state, err := runtime.store.Load(ctx, actorID)
+	if err != nil {
+		t.Fatalf("Load routine state: %v", err)
+	}
+	state.ActivatedOn, state.NextDiaryDate, state.ScheduleDate = "2026-11-14", "2026-11-16", "2026-11-16"
+	state.PlannedSleep, state.PlannedWake, err = agentroutine.ScheduleFor(actorID, state.ScheduleDate)
+	if err != nil {
+		t.Fatalf("ScheduleFor: %v", err)
+	}
+	state.CooldownUntil = runtime.now().Add(time.Hour)
+	if _, err := runtime.store.Save(ctx, state, state.Revision); err != nil {
+		t.Fatalf("Save routine cooldown state: %v", err)
+	}
+	work, found, err := runtime.idleSource(nil)(ctx, actorID)
+	if err != nil {
+		t.Fatalf("idleSource with stale reflection version: %v", err)
+	}
+	if !found || work.ID != "agent-routine:mio:2026-11-15:diary" {
+		t.Fatalf("idleSource with stale reflection version = %q, found=%t; want previous-day diary despite cooldown", work.ID, found)
+	}
+	if err := work.Run(ctx, make(chan struct{})); err != nil {
+		t.Fatalf("run scheduled reflection refresh: %v", err)
+	}
+	if boardCalls != 1 || worker.prompt == "" {
+		t.Fatalf("BOARD calls=%d reflection prompt empty=%t; want one publication with a regenerated reflection", boardCalls, worker.prompt == "")
+	}
+	if boardWrite.Revision != old.Revision+1 || boardWrite.Body != old.Body || boardWrite.Reflection == old.Reflection {
+		t.Fatalf("BOARD amendment = revision %d body same=%t reflection changed=%t; want next revision, exact body, new reflection", boardWrite.Revision, boardWrite.Body == old.Body, boardWrite.Reflection != old.Reflection)
+	}
+	updated, err := runtime.store.GetDiary(ctx, actorID, date)
+	if err != nil || updated.Revision != old.Revision+1 || updated.ReflectionVersion != agentRoutineDiaryReflectionVersion || updated.Receipt != "new-board-receipt" {
+		t.Fatalf("saved updated diary = %+v, %v; want acknowledged current reflection revision", updated, err)
+	}
+	if candidate, err := runtime.readDiaryAmendment(ctx, actorID, date); err != nil || candidate {
+		t.Fatalf("readDiaryAmendment after acknowledged refresh = %t, %v; want no next candidate", candidate, err)
+	}
+	state, err = runtime.store.Load(ctx, actorID)
+	if err != nil {
+		t.Fatalf("Load current-version routine state: %v", err)
+	}
+	state.CooldownUntil = runtime.now().Add(time.Hour)
+	if _, err := runtime.store.Save(ctx, state, state.Revision); err != nil {
+		t.Fatalf("Save current-version cooldown state: %v", err)
+	}
+	if work, found, err := runtime.idleSource(nil)(ctx, actorID); err != nil || found {
+		t.Fatalf("idleSource after current-version publication = %q, found=%t, err=%v; want cooldown to remain in force", work.ID, found, err)
+	}
+}
+
+func TestExecuteDiaryReplaysUnacknowledgedOldReflectionExactly(t *testing.T) {
+	const actorID, date = "mio", "2026-11-15"
+	ctx := context.Background()
+	runtime := newRoutineDiaryTestRuntime(t, nil)
+	old, err := runtime.store.SaveDiary(ctx, agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: "saved complete body", Reflection: "saved old reflection", Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("SaveDiary old outbox: %v", err)
+	}
+	var boardWrite struct {
+		Revision   int64  `json:"revision"`
+		Body       string `json:"body"`
+		Reflection string `json:"reflection"`
+	}
+	boardServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&boardWrite); err != nil {
+			t.Errorf("decode BOARD diary request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Correlation-ID", "exact-retry-receipt")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entry": map[string]any{
+			"actor_id": actorID, "date": date, "revision": boardWrite.Revision,
+			"body": boardWrite.Body, "reflection": boardWrite.Reflection,
+			"updated_at": time.Date(2026, time.November, 16, 1, 0, 0, 0, time.UTC),
+		}, "correlation_id": "exact-retry-receipt"})
+	}))
+	t.Cleanup(boardServer.Close)
+	client, err := boardcommunication.NewClient(boardcommunication.Options{
+		URL: boardServer.URL, TokenSource: func(context.Context) ([]byte, error) { return []byte("test-token"), nil },
+		ExpectedConnection: boardcommunication.ConnectionIdentity{
+			PrincipalID: "rencrow-comm", JournalInstanceID: "journal_0123456789abcdef0123456789abcdef",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(client.Close)
+	runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
+		actorID: {composition: &boardCommunicationComposition{boardClient: client}},
+	}
+	worker := &routineDiaryPromptCaptureWorker{}
+	runtime.workers = map[string]privateTaskWorker{actorID: worker}
+	taskID := modulecore.NewTaskID()
+	task, run, err := runtime.tasks.CreateAndStartRun(ctx, domaintask.Task{
+		TaskID: taskID, Title: "routine diary retry", ModuleID: agentRoutineModuleID, OwnerID: runtime.ownerID,
+		Assignee: actorID, Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow,
+		InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true,
+	}, domaintask.SharedRoleContext{TaskID: taskID, UserIntent: "CORE routine step", CurrentPlan: "routine diary retry"})
+	if err != nil {
+		t.Fatalf("CreateAndStartRun: %v", err)
+	}
+	state, err := runtime.store.DraftIntent(ctx, agentroutine.Intent{
+		ID: "old-diary-retry", ActorID: actorID, Date: date, TaskID: string(taskID),
+		Kind: agentroutine.ActivityDiary, Label: "daily_diary", Step: "diary_put_pending",
+	})
+	if err != nil {
+		t.Fatalf("DraftIntent: %v", err)
+	}
+	progress := routineProgress{Actors: []routineActorProgress{{ActorID: actorID, TaskID: taskID, RunID: run.RunID}}}
+	state, progress, err = runtime.executeDiary(ctx, nil, state, progress, routinePreparedRun{task: task, run: run})
+	if err != nil {
+		t.Fatalf("executeDiary exact retry: %v", err)
+	}
+	if worker.prompt != "" || boardWrite.Revision != old.Revision || boardWrite.Body != old.Body || boardWrite.Reflection != old.Reflection {
+		t.Fatalf("retry regenerated=%t revision=%d body exact=%t reflection exact=%t; want exact saved draft without generation", worker.prompt != "", boardWrite.Revision, boardWrite.Body == old.Body, boardWrite.Reflection == old.Reflection)
+	}
+	if progress.DiaryReflectionVersion != old.ReflectionVersion {
+		t.Fatalf("retry progress reflection version = %q; want saved legacy version %q", progress.DiaryReflectionVersion, old.ReflectionVersion)
+	}
+	replayed, err := runtime.store.GetDiary(ctx, actorID, date)
+	if err != nil || replayed.Revision != old.Revision || replayed.PostingKey != old.PostingKey || replayed.ReflectionVersion != old.ReflectionVersion || replayed.Receipt != "exact-retry-receipt" {
+		t.Fatalf("saved exact retry = %+v, %v; want old payload and posting identity retained", replayed, err)
 	}
 }
 
