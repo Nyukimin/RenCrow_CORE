@@ -142,6 +142,9 @@ func completeAgentStructuredGameDecision(persona string, step viewer.GameActionS
 }
 
 func generateValidatedStructuredGameAction(generate func() (string, error), availableActions []string, attempts int) (viewer.GameActionStep, error) {
+	if generate == nil {
+		return viewer.GameActionStep{}, fmt.Errorf("Agent structured game action generator is unavailable")
+	}
 	return generateValidatedStructuredGameActionWithContract(func(string) (string, error) {
 		return generate()
 	}, availableActions, nil, attempts)

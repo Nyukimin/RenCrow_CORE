@@ -41,6 +41,12 @@ func TestDecodeAgentGameIntentRejectsJSONFence(t *testing.T) {
 	}
 }
 
+func TestGenerateValidatedStructuredGameActionRejectsNilGenerator(t *testing.T) {
+	if _, err := generateValidatedStructuredGameAction(nil, []string{"wait"}, 3); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("nil generator error = %v, want unavailable error", err)
+	}
+}
+
 func TestDecodeAgentGameIntentRejectsProse(t *testing.T) {
 	if _, err := decodeAgentGameIntent("I choose search", []string{"search"}); err == nil {
 		t.Fatal("expected prose to be rejected")
@@ -383,6 +389,28 @@ func TestParseGameActionContractsRejectsMalformedReferences(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "references missing legal_ids.missing_units") {
 		t.Fatalf("malformed enum reference error=%v", err)
+	}
+}
+
+func TestParseGameActionContractsRejectsNonStringTargetDescriptor(t *testing.T) {
+	for _, typeName := range []string{"coordinate", "integer"} {
+		t.Run(typeName, func(t *testing.T) {
+			legalIDs := map[string]any{}
+			descriptor := map[string]any{"type": typeName, "required": true}
+			if typeName == "coordinate" {
+				descriptor["bounds_ref"] = "coordinates"
+				legalIDs["coordinates"] = map[string]any{"x_min": 0, "x_max": 1, "y_min": 0, "y_max": 1}
+			}
+			_, _, err := parseGameActionContracts(map[string]any{
+				"action_contracts": map[string]any{"attack_move": map[string]any{
+					"target": descriptor,
+				}},
+				"legal_ids": legalIDs,
+			})
+			if err == nil || !strings.Contains(err.Error(), "target must be a string") {
+				t.Fatalf("non-string target descriptor error = %v, want target string contract error", err)
+			}
+		})
 	}
 }
 

@@ -82,6 +82,9 @@ func parseGameActionContract(action string, rawDescriptor any, legalIDs map[stri
 		if err != nil {
 			return gameActionContract{}, err
 		}
+		if field.typeName != "string" {
+			return gameActionContract{}, fmt.Errorf("action_contracts.%s.target must be a string because GameActionStep.Target is a string", action)
+		}
 		contract.target = &field
 	}
 	if rawArgs, exists := descriptor["args"]; exists {
