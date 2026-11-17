@@ -1106,22 +1106,31 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   `observation`、`available_actions`、`request`を持つ。
 - COREは`persona`から実Agentを解決し、Agent固有のPersona／Execution Role／
   推論Target経路でstrict JSONの`BrainDecision`を生成する。
-- Game turnのLLM requestはnon-stream textで実行する。COREは先頭のaction identifier
-  token（`A-Za-z0-9_.-`）だけを決定的に切り出し、`available_actions`の一要素との
-  完全一致だけを受理する。引用符、JSON、Markdown、未知の先頭tokenは拒否する。
-- COREはcomma、空白、改行、引用符をstop sequenceとしてGatewayへ渡し、最初のaction
-  tokenで生成を停止させる。stop適用後もallowlist完全一致を満たさない出力は拒否する。
-- 先頭tokenが不正な場合は同じ実Agent・正規routeで最大3回まで再判断する。各回を同じ
-  allowlist Boundaryで検証し、3回とも不正ならturnをblockedにする。別Brainへfallbackしない。
-- COREは大きなworld観測でもpromptとcompletionをcontext上限内へ収めるため、requestを
-  compact JSONで渡し、全Agentのgame turn completionを共通のbounded token budgetへ固定する。
-- LLM residualは`available_actions`からの`intent`選択だけに限定する。CORE Boundaryは
-  exact tokenをallowlist照合し、Agent identity、選択を表す定型reason、単一stepの
-  action planを決定的に付与してdomain contractを検証する。
+- Game turnのLLM requestはnon-streamで実行する。NetHackは既存のtext契約を保ち、
+  COREは先頭のaction identifier token（`A-Za-z0-9_.-`）だけを決定的に切り出し、
+  `available_actions`の一要素との完全一致を受理する。引用符、JSON、Markdown、未知の
+  先頭tokenは拒否する。completionは16 tokenに制限し、comma、空白、改行、引用符を
+  stop sequenceとしてGatewayへ渡す。
+- `survival_garden`、`territory_commander`、`herzog_zwei`はLLMのresidualとして一つの
+  完全な`ActionStep`をJSON objectで生成する。COREは`ResponseFormatJSONObject`を指定し、
+  256 tokenと16 KiBに制限する。JSON出力にtoken stop sequenceは設定しない。
+- JSON objectは`action`、任意の文字列`target`、任意のobject `args`だけを持つ。
+  COREは未知／重複したトップレベルfield、不正JSON、trailing content、欠落／未知の`action`、
+  不正な`target`／`args`型を拒否し、`action`が`available_actions`に完全一致することを検証する。
+  `args`内のtitle固有fieldや値の検証はGAMESが担当する。
+  `observation.action_contracts`と`observation.legal_ids`は選択候補と必須引数を対象Agentへ
+  示す。COREはtarget／argsを補完・変更せず、GAMESが現在のworld stateに対して再検証する。
+- invalidなtokenまたはstructured outputは同じ実Agent・正規routeで最大3回まで再判断する。
+  Gateway／transport errorは再試行せずturnを失敗させる。再試行上限後もturnを失敗させ、
+  別Brainへfallbackしない。
+- COREはrequestをcompact JSONで渡し、Agent固有のPersona／Execution Role／推論Target経路を
+  維持する。NetHackの16 token text契約と他3 titleの256 token JSON契約を混ぜない。
+- COREはAgent identity、選択された`intent`、定型reason、target／argsを保持した単一stepの
+  `action_plan`を決定的に組み立てる。COREはworld stateを直接変更しない。
 - Responseは`agent_id`を必須とし、`agent_id`と`persona`はrequestの`persona`に
   一致しなければならない。
-- GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証して
-  からExecutorへ渡す。COREはworld stateを直接変更しない。
+- GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証し、
+  title固有のtarget／argsをactual world stateに対して検証してからExecutorへ渡す。
 - Agentが利用不能、応答が不正、またはCOREへ到達不能の場合はturnを失敗させる。
   `RuleBasedBrain`や`DummyBrain`へfallbackしてAgent判断として記録しない。
 
@@ -1131,7 +1140,8 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
 ### Game Bridge status／candidate event契約
 
 `GET /viewer/games/status`の`supported_games`は、Agent decision E2Eへ移行済みの
-titleだけを示します。現在は`nethack`です。GAMESのlocal simulation対応title一覧とは
+titleだけを示します。現在のCORE Agent decision capabilityは`nethack`、
+`survival_garden`、`territory_commander`、`herzog_zwei`です。GAMESのlocal simulation対応title一覧とは
 別のcapabilityです。
 autoplayの既定ロースターは`mio`、`shiro`、`kuro`、`midori`の4人です。
 

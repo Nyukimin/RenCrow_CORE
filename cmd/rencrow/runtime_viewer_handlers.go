@@ -85,7 +85,7 @@ func buildViewerRuntimeHandlers(
 		L1StoreEnabled:            l1Store != nil,
 		ResultMode:                gameBridgeResultMode,
 		DecisionMode:              "agent",
-		SupportedGames:            []string{"nethack"},
+		SupportedGames:            supportedAgentGameIDs(),
 	}
 	deps.viewerGamesStatus = viewer.HandleGameBridgeStatus(gameBridgeStatusOptions)
 	deps.viewerGamesResult = viewer.HandleGameBridgeResult(gameBridgeStore)

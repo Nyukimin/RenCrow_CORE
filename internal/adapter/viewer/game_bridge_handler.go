@@ -62,7 +62,7 @@ func HandleGameBridgeStatus(opts GameBridgeStatusOptions) http.HandlerFunc {
 		opts.DecisionMode = "unavailable"
 	}
 	if len(opts.SupportedGames) == 0 {
-		opts.SupportedGames = []string{"herzog_zwei", "territory_commander", "survival_garden", "nethack"}
+		opts.SupportedGames = []string{}
 	}
 	if strings.TrimSpace(opts.DefaultPersona) == "" {
 		opts.DefaultPersona = "mio"
