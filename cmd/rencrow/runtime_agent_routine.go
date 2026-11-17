@@ -59,6 +59,7 @@ type agentRoutineRuntime struct {
 	mediaRunner   routineMediaRunner
 	world         *worldread.Client
 	worldLife     *worldread.LifeClient
+	gameSessions  gameObserverActiveSessionsReader
 	worldActorIDs map[string]string // WORLD actor ID -> exact CORE actor ID alias configured by the operator.
 	canStartIdle  func(string) bool
 	webReady      bool
@@ -126,6 +127,13 @@ func newAgentRoutineRuntime(cfg *config.Config, deps *Dependencies, workers map[
 		cfg: cfg, deps: deps, store: store, tasks: deps.taskManager, journal: deps.canonicalEventStore,
 		ownerID: strings.TrimSpace(cfg.LocalAgentOps.UserID), workers: cloneRoutineWorkers(workers),
 		tools: tools, now: time.Now, worldActorIDs: make(map[string]string),
+	}
+	if observerURL := strings.TrimSpace(cfg.Games.ObserverURL); observerURL != "" {
+		gameSessions, clientErr := newGameObserverSessionsHTTPClient(observerURL)
+		if clientErr != nil {
+			return nil, fmt.Errorf("configure GAMES session reader: %w", clientErr)
+		}
+		runtime.gameSessions = gameSessions
 	}
 	if routineWorldConfigured(cfg.Heartbeat.Routine) {
 		credential, tokenErr := config.ReadRoutineWorldBearerToken(cfg.Heartbeat.Routine.WorldReadTokenFile)

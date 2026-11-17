@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -86,7 +87,7 @@ func runtimeRoutineHouseViewHandler(cfg *config.Config, deps *Dependencies) http
 			http.Error(w, "WORLD home view unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		response, err := runtimeRoutineHouseViewProject(deps.agentRoutine, read)
+		response, err := runtimeRoutineHouseViewProject(r.Context(), deps.agentRoutine, read)
 		if err != nil {
 			http.Error(w, "WORLD home view unavailable", http.StatusServiceUnavailable)
 			return
@@ -119,12 +120,18 @@ func runtimeRoutineHouseViewHasCompleteActorScope(runtime *agentRoutineRuntime) 
 	return true
 }
 
-func runtimeRoutineHouseViewProject(runtime *agentRoutineRuntime, read routineSnapshotRead) (runtimeRoutineHouseViewResponse, error) {
+func runtimeRoutineHouseViewProject(ctx context.Context, runtime *agentRoutineRuntime, read routineSnapshotRead) (runtimeRoutineHouseViewResponse, error) {
 	if runtime == nil || !runtimeRoutineHouseViewHasCompleteActorScope(runtime) || read.snapshot.WorldID == "" || read.snapshot.HomeSceneSHA256 == "" {
 		return runtimeRoutineHouseViewResponse{}, errRoutineHouseViewSnapshotUnavailable
 	}
 	actorByCoreID := make(map[string]runtimeRoutineHouseViewActorDTO, len(read.snapshot.Actors))
-	desired, _ := runtime.livingSeats()
+	desired, ready, err := runtime.livingSeats(ctx)
+	if err != nil {
+		return runtimeRoutineHouseViewResponse{}, err
+	}
+	if !ready {
+		desired = nil
+	}
 	for _, actor := range read.snapshot.Actors {
 		coreActorID, allowed := runtime.worldActorIDs[actor.ActorID]
 		if !allowed {

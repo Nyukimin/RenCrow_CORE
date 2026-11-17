@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -141,7 +142,7 @@ func TestRoutineHouseViewRetainsMirrorPoseCompletionsWhenKuroIsIdle(t *testing.T
 		}
 		actors = append(actors, actor)
 	}
-	projected, err := runtimeRoutineHouseViewProject(deps.agentRoutine, routineSnapshotRead{
+	projected, err := runtimeRoutineHouseViewProject(context.Background(), deps.agentRoutine, routineSnapshotRead{
 		snapshot: worldread.Snapshot{WorldID: "home-world", StateSeq: 45, Actors: actors, HomeSceneSHA256: routineHouseViewTestSceneSHA256},
 		readAt:   time.Date(2026, time.November, 14, 2, 4, 0, 0, time.UTC),
 	})

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
 )
 
 type livingSeatActivity struct{ room, slot, pose string }
@@ -24,17 +25,34 @@ func livingSeatRoom(slot string) string {
 	return ""
 }
 
-func (r *agentRoutineRuntime) livingSeats() (map[string]livingSeatActivity, bool) {
+func (r *agentRoutineRuntime) livingSeats(ctx context.Context) (map[string]livingSeatActivity, bool, error) {
 	if r.deps == nil || r.deps.agentHeartbeat == nil {
-		return nil, false
+		return nil, false, nil
 	}
-	activities, ready := r.deps.agentHeartbeat.LivingSnapshot(context.Background(), nil)
+	activities, ready := r.deps.agentHeartbeat.LivingSnapshot(ctx, nil)
 	if !ready {
-		return nil, false
+		return nil, false, nil
 	}
-	desired := make(map[string]livingSeatActivity)
+	var sessions []gameObserverActiveAgentSession
+	if r.gameSessions != nil {
+		var err error
+		sessions, err = r.gameSessions.ActiveAgentSessions(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+	}
 	r.livingConversationMu.Lock()
 	defer r.livingConversationMu.Unlock()
+	return buildLivingSeatTargets(sessions, activities, r.livingConversation), true, nil
+}
+
+func buildLivingSeatTargets(sessions []gameObserverActiveAgentSession, activities []agentheartbeat.LivingActivity, conversations map[string]livingSeatActivity) map[string]livingSeatActivity {
+	desired := make(map[string]livingSeatActivity)
+	for _, session := range sessions {
+		for _, persona := range session.Personas {
+			desired[persona] = livingSeatActivity{"living", "desk-" + persona, "type"}
+		}
+	}
 	for _, activity := range activities {
 		if activity.State != "running" {
 			continue
@@ -53,12 +71,12 @@ func (r *agentRoutineRuntime) livingSeats() (map[string]livingSeatActivity, bool
 		case "game":
 			desired[id] = livingSeatActivity{"living", "desk-" + id, "type"}
 		case "routine":
-			if seat, ok := r.livingConversation[id]; ok {
+			if seat, ok := conversations[id]; ok {
 				desired[id] = seat
 			}
 		}
 	}
-	return desired, true
+	return desired
 }
 
 func (r *agentRoutineRuntime) showLivingConversation(first, second, room string) func() {
@@ -144,8 +162,8 @@ func (r *agentRoutineRuntime) runLivingSeats(ctx context.Context) {
 }
 
 func (r *agentRoutineRuntime) reconcileLivingSeats(ctx context.Context) {
-	desired, ready := r.livingSeats()
-	if !ready {
+	desired, ready, err := r.livingSeats(ctx)
+	if err != nil || !ready {
 		return
 	}
 	read, err := r.readSnapshotFresh(ctx)
