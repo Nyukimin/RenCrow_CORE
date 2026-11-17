@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -288,6 +289,111 @@ func TestExecuteDiaryRefreshesPublishedReflectionVersionWithoutChangingBody(t *t
 	}
 	if work, found, err := runtime.idleSource(nil)(ctx, actorID); err != nil || found {
 		t.Fatalf("idleSource after current-version publication = %q, found=%t, err=%v; want cooldown to remain in force", work.ID, found, err)
+	}
+}
+
+func TestExecuteDiaryDoesNotAmendPublishedRevisionDuringActiveOrUnknownGame(t *testing.T) {
+	const actorID, date = "mio", "2026-11-13"
+	for _, test := range []struct {
+		name string
+		game func() *routineAdmissionGameReader
+	}{
+		{name: "active game", game: func() *routineAdmissionGameReader {
+			return &routineAdmissionGameReader{sessions: []gameObserverActiveAgentSession{{
+				GameID: "territory_commander", SessionID: "tc-mio", Personas: []string{actorID}, Status: "running",
+			}}}
+		}},
+		{name: "unknown game state", game: func() *routineAdmissionGameReader {
+			return &routineAdmissionGameReader{err: errors.New("observer unavailable")}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := newRoutineDiaryTestRuntime(t, nil)
+			fact := agentroutine.Activity{
+				ActorID: actorID, Date: date, Key: "confirmed-first-fact", Kind: agentroutine.ActivityWork,
+				At:     time.Date(2026, time.November, 13, 12, 0, 0, 0, runtime.location()),
+				Source: "diary-test", Confirmed: true, Summary: "確認済みの作業を完了しました。",
+			}
+			if _, err := runtime.store.SaveFact(context.Background(), fact); err != nil {
+				t.Fatalf("save original confirmed fact: %v", err)
+			}
+			oldBody, err := runtime.buildDiaryBody(context.Background(), actorID, date)
+			if err != nil {
+				t.Fatalf("build published diary body: %v", err)
+			}
+			oldDiary, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+				ActorID: actorID, Date: date, Body: oldBody, Reflection: "公開済みの感想",
+				ReflectionVersion: agentRoutineDiaryReflectionVersion, Revision: 1,
+			})
+			if err != nil {
+				t.Fatalf("save published diary draft: %v", err)
+			}
+			oldDiary, err = runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+				ActorID: actorID, Date: date, Body: oldDiary.Body, Reflection: oldDiary.Reflection,
+				ReflectionVersion: oldDiary.ReflectionVersion, Revision: oldDiary.Revision,
+				PostingKey: oldDiary.PostingKey, Receipt: "published-receipt", ReceiptRevision: "1",
+			})
+			if err != nil {
+				t.Fatalf("save published diary receipt: %v", err)
+			}
+			fact.Key, fact.Summary = "confirmed-second-fact", "別の確認済み活動を完了しました。"
+			fact.At = fact.At.Add(time.Hour)
+			if _, err := runtime.store.SaveFact(context.Background(), fact); err != nil {
+				t.Fatalf("save changed confirmed fact: %v", err)
+			}
+			boardServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("active-game diary amendment unexpectedly called BOARD")
+				http.Error(w, "unexpected request", http.StatusInternalServerError)
+			}))
+			t.Cleanup(boardServer.Close)
+			client, err := boardcommunication.NewClient(boardcommunication.Options{
+				URL:         boardServer.URL,
+				TokenSource: func(context.Context) ([]byte, error) { return []byte("test-token"), nil },
+				ExpectedConnection: boardcommunication.ConnectionIdentity{
+					PrincipalID: "rencrow-comm", JournalInstanceID: "journal_0123456789abcdef0123456789abcdef",
+				},
+			})
+			if err != nil {
+				t.Fatalf("create test BOARD client: %v", err)
+			}
+			t.Cleanup(client.Close)
+			runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
+				actorID: {composition: &boardCommunicationComposition{boardClient: client}},
+			}
+			runtime.gameSessions = test.game()
+			progress := routineProgress{
+				Actors:    []routineActorProgress{{ActorID: actorID, TaskID: modulecore.NewTaskID()}},
+				DiaryBody: oldDiary.Body, DiaryReflection: oldDiary.Reflection,
+				DiaryReflectionVersion: oldDiary.ReflectionVersion, DiaryRevision: oldDiary.Revision - 1,
+				DiaryPostingKey: oldDiary.PostingKey, DiaryReceipt: oldDiary.Receipt,
+				DiaryReceiptRevision: oldDiary.ReceiptRevision, EffectCompleted: true,
+			}
+			encoded, err := json.Marshal(progress)
+			if err != nil {
+				t.Fatalf("encode published diary checkpoint: %v", err)
+			}
+			state, err := runtime.store.DraftIntent(context.Background(), agentroutine.Intent{
+				ID: "published-diary-amendment", ActorID: actorID, Date: date,
+				TaskID: string(progress.Actors[0].TaskID), Kind: agentroutine.ActivityDiary,
+				Label: "daily_diary", Step: "published", Output: string(encoded),
+				CreatedAt: time.Date(2026, time.November, 14, 0, 0, 0, 0, time.UTC),
+			})
+			if err != nil {
+				t.Fatalf("draft published diary amendment intent: %v", err)
+			}
+			gotState, gotProgress, err := runtime.executeDiary(context.Background(), nil, state, progress, routinePreparedRun{})
+			if !errors.Is(err, errRoutineGameAdmission) {
+				t.Fatalf("amend published diary during %s = state:%+v progress:%+v err:%v; want admission deferral", test.name, gotState, gotProgress, err)
+			}
+			if gotProgress.DiaryRevision != progress.DiaryRevision || gotProgress.DiaryPostingKey != oldDiary.PostingKey ||
+				gotProgress.DiaryReceipt != oldDiary.Receipt || !gotProgress.EffectCompleted {
+				t.Fatalf("blocked amendment changed its publication checkpoint: %+v", gotProgress)
+			}
+			stored, err := runtime.store.GetDiary(context.Background(), actorID, date)
+			if err != nil || stored.Revision != oldDiary.Revision || stored.Body != oldDiary.Body || stored.Receipt != oldDiary.Receipt {
+				t.Fatalf("blocked amendment changed published diary: %+v err=%v", stored, err)
+			}
+		})
 	}
 }
 

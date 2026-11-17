@@ -230,6 +230,19 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 		purpose = routineWorldRetryPurpose(progress, purpose)
 		index, found = routineWorldExactOperation(progress, purpose)
 	}
+	if found {
+		operation := progress.World.Operations[index]
+		if operation.Action != action || operation.EventKind != eventKind || operation.ActorID != payload.ActorID ||
+			operation.Payload != payload || operation.Key != routineWorldOperationKey(state.Pending.ID, operation.ActorID, operation.Purpose) {
+			return state, progress, routineWorldOperation{}, errors.New("persisted WORLD operation scope changed")
+		}
+	}
+	if !routineWorldActionIsRecovery(state.Pending, progress, action, payload, found) {
+		blocked, admissionErr := r.routineGameAdmissionBlocked(ctx, routineGameActors(state.Pending.ActorID, state.Pending, nil, nil)...)
+		if admissionErr != nil || blocked {
+			return state, progress, routineWorldOperation{}, errRoutineGameAdmission
+		}
+	}
 	if !found {
 		preparedInThisCall = true
 		operation := routineWorldOperation{
@@ -244,10 +257,7 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 			return state, progress, routineWorldOperation{}, err
 		}
 	} else {
-		operation := progress.World.Operations[index]
-		if operation.Action != action || operation.EventKind != eventKind || operation.ActorID != payload.ActorID || operation.Payload != payload {
-			return state, progress, routineWorldOperation{}, errors.New("persisted WORLD operation scope changed")
-		}
+		// The exact persisted action is being reconciled with its stable key.
 	}
 	operation := progress.World.Operations[index]
 	if operation.ReceiptStatus == "rejected" {
@@ -342,6 +352,63 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 		}
 	}
 	return state, progress, operation, nil
+}
+
+func routineWorldActionIsRecovery(
+	intent *agentroutine.Intent,
+	progress routineProgress,
+	action string,
+	payload worldread.HomeActionPayload,
+	existingOperation bool,
+) bool {
+	if intent == nil {
+		return false
+	}
+	if existingOperation {
+		return true
+	}
+	if action == worldread.HomeActionWake && intent.Kind == agentroutine.ActivityWake && intent.ActorID == payload.ActorID && progress.World != nil {
+		binding := progress.World.SleepStart
+		if binding != nil && binding.ActorID == payload.ActorID && binding.ActivityID == payload.ActivityID && payload.ActivityID != "" &&
+			binding.WorldActorID != "" && binding.RoomID != "" && binding.SlotID != "" && !binding.StartedAt.IsZero() &&
+			binding.EventID != "" && binding.TransactionID != "" && binding.Seq != 0 &&
+			routineWorldDigest(binding.LayoutSHA256) && routineWorldDigest(binding.SceneSHA256) {
+			return true
+		}
+	}
+	if (action != worldread.HomeActionFinish && action != worldread.HomeActionStop) || payload.ActivityID == "" || progress.World == nil {
+		return false
+	}
+	for _, operation := range progress.World.Operations {
+		if operation.ActorID != payload.ActorID || operation.ActivityID != payload.ActivityID ||
+			operation.ReceiptStatus != "committed" || !operation.EventVerified ||
+			operation.Key != routineWorldOperationKey(intent.ID, payload.ActorID, operation.Purpose) ||
+			operation.Payload.ActorID != payload.ActorID || !routineWorldStartEventMatches(operation) {
+			continue
+		}
+		for _, terminal := range progress.World.Operations {
+			if terminal.ActorID == payload.ActorID && terminal.ActivityID == payload.ActivityID &&
+				(terminal.Action == worldread.HomeActionFinish || terminal.Action == worldread.HomeActionStop) &&
+				terminal.ReceiptStatus == "committed" && terminal.ReceiptID != "" && terminal.EventVerified {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func routineWorldStartEventMatches(operation routineWorldOperation) bool {
+	switch operation.Action {
+	case worldread.HomeActionMove:
+		return operation.ActivityKind == "move" && operation.EventKind == "life.home.move.started"
+	case worldread.HomeActionExercise:
+		return operation.ActivityKind == "exercise" && operation.EventKind == "life.home.exercise.started"
+	case worldread.HomeActionMirror:
+		return operation.ActivityKind == "mirror_pose" && operation.EventKind == "life.home.mirror_pose.started"
+	default:
+		return false
+	}
 }
 
 func (o routineWorldOperation) EventKindHasScene() bool {
@@ -1287,7 +1354,7 @@ func routineWorldWakeOperationCanReplay(state agentroutine.State, progress routi
 	}
 	binding := progress.World.SleepStart
 	purpose := "wake:" + binding.ActivityID
-	return actorID != "" && binding.ActorID == actorID && binding.ActivityID != "" && binding.EventID != "" &&
+	return actorID != "" && state.Pending.ActorID == actorID && binding.ActorID == actorID && binding.ActivityID != "" && binding.EventID != "" &&
 		binding.TransactionID != "" && binding.Seq != 0 && operation.Purpose == purpose &&
 		operation.Key == routineWorldOperationKey(state.Pending.ID, actorID, purpose) && operation.Action == worldread.HomeActionWake &&
 		operation.EventKind == "life.home.sleep.woke" && operation.ActorID == actorID && operation.Payload.ActorID == actorID &&
@@ -1566,6 +1633,58 @@ func (r *agentRoutineRuntime) routineWorldStopActiveOperations(ctx context.Conte
 	progress.World.NextDueAt = time.Time{}
 	state, progress, saveErr := r.saveProgress(ctx, state, "world_interrupt_settled", progress)
 	return state, progress, errors.Join(errors.Join(failures...), saveErr)
+}
+
+func (r *agentRoutineRuntime) recoverRoutineWorldForGame(
+	ctx context.Context,
+	state agentroutine.State,
+	progress routineProgress,
+) (agentroutine.State, routineProgress, error) {
+	if state.Pending == nil || progress.World == nil {
+		return state, progress, nil
+	}
+	if r.world == nil || r.worldLife == nil {
+		return state, progress, errors.Join(errRoutineWorldUnavailable, errors.New("WORLD recovery is required before routine admission can resume"))
+	}
+	var failures []error
+	for index := range progress.World.Operations {
+		operation := progress.World.Operations[index]
+		if operation.ReceiptStatus == "rejected" || (operation.ReceiptID != "" && operation.EventVerified) {
+			continue
+		}
+		if operation.ActorID == "" || operation.Payload.ActorID != operation.ActorID ||
+			operation.Key != routineWorldOperationKey(state.Pending.ID, operation.ActorID, operation.Purpose) {
+			failures = append(failures, errors.New("pending WORLD recovery does not match its exact intent key and Actor binding"))
+			continue
+		}
+		if operation.Action == worldread.HomeActionWake &&
+			!routineWorldWakeOperationCanReplay(state, progress, operation.ActorID, operation) {
+			failures = append(failures, errors.New("pending WORLD wake recovery has no matching authenticated sleep-start binding"))
+			continue
+		}
+		switch operation.Action {
+		case worldread.HomeActionMove, worldread.HomeActionSleep, worldread.HomeActionWake,
+			worldread.HomeActionFinish, worldread.HomeActionStop,
+			worldread.HomeActionExercise, worldread.HomeActionMirror:
+		default:
+			failures = append(failures, errors.New("pending WORLD recovery contains an unsupported action"))
+			continue
+		}
+		var err error
+		state, progress, _, err = r.performRoutineWorldAction(ctx, state, progress, operation.Purpose,
+			operation.Action, operation.EventKind, operation.Payload)
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
+	if routineProgressNeedsWorldSettlement(progress) {
+		var err error
+		state, progress, err = r.routineWorldStopActiveOperations(ctx, state, progress)
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return state, progress, errors.Join(failures...)
 }
 
 func (r *agentRoutineRuntime) collectRoutineWorldFacts(ctx context.Context, actorID, date string) ([]agentroutine.Activity, error) {
