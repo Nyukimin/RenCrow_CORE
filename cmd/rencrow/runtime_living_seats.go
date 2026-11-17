@@ -50,6 +50,8 @@ func (r *agentRoutineRuntime) livingSeats() (map[string]livingSeatActivity, bool
 				pose = "notes"
 			}
 			desired[id] = livingSeatActivity{"living", "desk-" + id, pose}
+		case "game":
+			desired[id] = livingSeatActivity{"living", "desk-" + id, "type"}
 		case "routine":
 			if seat, ok := r.livingConversation[id]; ok {
 				desired[id] = seat
