@@ -1117,9 +1117,13 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
 - JSON objectは`action`、任意の文字列`target`、任意のobject `args`だけを持つ。
   COREは未知／重複したトップレベルfield、不正JSON、trailing content、欠落／未知の`action`、
   不正な`target`／`args`型を拒否し、`action`が`available_actions`に完全一致することを検証する。
-  `args`内のtitle固有fieldや値の検証はGAMESが担当する。
   `observation.action_contracts`と`observation.legal_ids`は選択候補と必須引数を対象Agentへ
-  示す。COREはtarget／argsを補完・変更せず、GAMESが現在のworld stateに対して再検証する。
+  示す。両fieldがあるrequestでは、COREは選択されたactionのdeclared contractに対して
+  required field、型、enum／reference、座標boundsを検証する。違反時は同じAgent／routeで
+  最大3回まで、具体的な検証errorを添えて再判断する。どちらのmetadataもない旧requestは
+  従来のparser契約を保ち、片方だけあるrequestまたは不正なcontract／referenceは拒否する。
+  COREはtarget／argsを補完・変更せず、undeclared args fieldも変更しない。GAMESは引き続き
+  actual world stateとtitle execution semanticsに対して再検証する。
 - invalidなtokenまたはstructured outputは同じ実Agent・正規routeで最大3回まで再判断する。
   Gateway／transport errorは再試行せずturnを失敗させる。再試行上限後もturnを失敗させ、
   別Brainへfallbackしない。

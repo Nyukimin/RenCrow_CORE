@@ -218,6 +218,190 @@ func TestGameAgentDecisionServiceUsesStructuredActionForThreeTitles(t *testing.T
 	}
 }
 
+func TestGameAgentDecisionServiceRetriesMissingContractArgsWithFeedback(t *testing.T) {
+	provider := &gameDecisionLLMProvider{responses: []string{
+		`{"action":"attack_move","target":"mio_commander","args":{"to":{"x":2,"y":1}}}`,
+		`{"action":"attack_move","args":{"unit_id":"mio_commander","to":{"x":2,"y":1}}}`,
+	}}
+	service := newTestGameDecisionService(provider)
+	request := viewer.GameAgentDecisionRequest{
+		GameID:           "herzog_zwei",
+		SessionID:        "hz_contract_retry",
+		Turn:             126,
+		Persona:          "mio",
+		Observation:      herzogZweiAttackMoveContractObservation(),
+		AvailableActions: []string{"attack_move", "wait"},
+		Request:          "issue_orders",
+	}
+	decision, err := service.DecideGameTurn(t.Context(), request)
+	if err != nil {
+		t.Fatalf("DecideGameTurn() error = %v", err)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("Agent calls = %d, want retry after missing required args", len(provider.requests))
+	}
+	step := decision.ActionPlan[0]
+	if decision.Intent != "attack_move" || step.Args["unit_id"] != "mio_commander" || step.Target != "" {
+		t.Fatalf("corrected decision changed or inferred action fields: %+v", decision)
+	}
+	feedbackPrompt := provider.requests[1].Messages[len(provider.requests[1].Messages)-1].Content
+	for _, required := range []string{"action_contracts.attack_move.args.unit_id is required", "action_contracts", "legal_ids", "Do not invent missing values"} {
+		if !strings.Contains(feedbackPrompt, required) {
+			t.Fatalf("retry prompt missing %q: %s", required, feedbackPrompt)
+		}
+	}
+}
+
+func TestGameAgentDecisionServiceStopsAfterThreeContractInvalidAttempts(t *testing.T) {
+	provider := &gameDecisionLLMProvider{responses: []string{
+		`{"action":"attack_move","args":{"to":{"x":2,"y":1}}}`,
+		`{"action":"attack_move","args":{"to":{"x":2,"y":1}}}`,
+		`{"action":"attack_move","args":{"to":{"x":2,"y":1}}}`,
+	}}
+	service := newTestGameDecisionService(provider)
+	_, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+		GameID:           "herzog_zwei",
+		SessionID:        "hz_contract_retry_bound",
+		Turn:             126,
+		Persona:          "mio",
+		Observation:      herzogZweiAttackMoveContractObservation(),
+		AvailableActions: []string{"attack_move", "wait"},
+		Request:          "issue_orders",
+	})
+	if err == nil || !strings.Contains(err.Error(), "remained invalid after 3 attempts") || !strings.Contains(err.Error(), "args.unit_id is required") {
+		t.Fatalf("error = %v, want bounded missing-argument failure", err)
+	}
+	if len(provider.requests) != 3 {
+		t.Fatalf("Agent calls = %d, want exactly three", len(provider.requests))
+	}
+	for i := 1; i < len(provider.requests); i++ {
+		prompt := provider.requests[i].Messages[len(provider.requests[i].Messages)-1].Content
+		if !strings.Contains(prompt, "action_contracts.attack_move.args.unit_id is required") {
+			t.Fatalf("attempt %d omitted corrective contract feedback", i+1)
+		}
+	}
+}
+
+func TestGameAgentDecisionServiceRetriesAnActionMissingItsDescriptor(t *testing.T) {
+	provider := &gameDecisionLLMProvider{responses: []string{
+		`{"action":"attack_move","args":{"unit_id":"mio_commander","to":{"x":2,"y":1}}}`,
+		`{"action":"wait"}`,
+	}}
+	service := newTestGameDecisionService(provider)
+	decision, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+		GameID: "herzog_zwei", SessionID: "hz_missing_selected_descriptor", Persona: "mio",
+		Observation: map[string]any{
+			"action_contracts": map[string]any{"wait": map[string]any{}},
+			"legal_ids":        map[string]any{},
+		},
+		AvailableActions: []string{"attack_move", "wait"}, Request: "issue_orders",
+	})
+	if err != nil || decision.Intent != "wait" || len(provider.requests) != 2 {
+		t.Fatalf("decision=%+v calls=%d err=%v, want bounded contract-aware reselection", decision, len(provider.requests), err)
+	}
+	feedbackPrompt := provider.requests[1].Messages[len(provider.requests[1].Messages)-1].Content
+	if !strings.Contains(feedbackPrompt, "action_contracts.attack_move is missing") {
+		t.Fatalf("retry prompt omitted missing-descriptor feedback: %s", feedbackPrompt)
+	}
+}
+
+func TestGameAgentDecisionServicePreservesContractlessLegacyAndRejectsPartialMetadata(t *testing.T) {
+	provider := &gameDecisionLLMProvider{responses: []string{`{"action":"wait"}`}}
+	service := newTestGameDecisionService(provider)
+	decision, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+		GameID: "herzog_zwei", SessionID: "hz_legacy_no_metadata", Persona: "mio",
+		Observation: map[string]any{}, AvailableActions: []string{"wait"}, Request: "issue_orders",
+	})
+	if err != nil || decision.Intent != "wait" || len(provider.requests) != 1 {
+		t.Fatalf("legacy request without both metadata fields changed: decision=%+v calls=%d err=%v", decision, len(provider.requests), err)
+	}
+
+	provider = &gameDecisionLLMProvider{}
+	service = newTestGameDecisionService(provider)
+	_, err = service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+		GameID: "herzog_zwei", SessionID: "hz_partial_metadata", Persona: "mio",
+		Observation:      map[string]any{"action_contracts": map[string]any{}},
+		AvailableActions: []string{"wait"}, Request: "issue_orders",
+	})
+	if err == nil || !strings.Contains(err.Error(), "must be provided together") || len(provider.requests) != 0 {
+		t.Fatalf("partial contract metadata was not rejected before inference: calls=%d err=%v", len(provider.requests), err)
+	}
+}
+
+func TestGameAgentActionContractsValidateEnumsBoundsAndIntegerConstraints(t *testing.T) {
+	contracts, hasMetadata, err := parseGameActionContracts(map[string]any{
+		"action_contracts": map[string]any{
+			"attack_move": map[string]any{"args": map[string]any{
+				"unit_id": map[string]any{"type": "string", "required": true, "enum_ref": "own_units"},
+				"to":      map[string]any{"type": "coordinate", "required": true, "bounds_ref": "coordinates"},
+				"radius":  map[string]any{"type": "integer", "required": false, "min": 1, "max": 3},
+			}},
+			"assault": map[string]any{"args": map[string]any{
+				"target_faction": map[string]any{"type": "string", "required": true, "enum": []any{"shiro", "kuro"}},
+			}},
+		},
+		"legal_ids": map[string]any{
+			"own_units":   []any{"mio_commander"},
+			"coordinates": map[string]any{"x_min": 0, "x_max": 5, "y_min": 0, "y_max": 5},
+		},
+	})
+	if err != nil || !hasMetadata {
+		t.Fatalf("parse current DSL subset: metadata=%t err=%v", hasMetadata, err)
+	}
+	valid := viewer.GameActionStep{Action: "attack_move", Args: map[string]any{
+		"unit_id": "mio_commander", "to": map[string]any{"x": json.Number("5"), "y": json.Number("0")}, "radius": json.Number("2"),
+		"title_extension": "preserved",
+	}}
+	if err := contracts.validate(valid); err != nil {
+		t.Fatalf("valid enum/bounds/integer action rejected: %v", err)
+	}
+	invalidCases := []struct {
+		name string
+		step viewer.GameActionStep
+		want string
+	}{
+		{name: "unit enum", step: viewer.GameActionStep{Action: "attack_move", Args: map[string]any{"unit_id": "shiro_commander", "to": map[string]any{"x": json.Number("1"), "y": json.Number("1")}}}, want: "declared enum"},
+		{name: "coordinate bounds", step: viewer.GameActionStep{Action: "attack_move", Args: map[string]any{"unit_id": "mio_commander", "to": map[string]any{"x": json.Number("6"), "y": json.Number("1")}}}, want: "coordinate bounds"},
+		{name: "integer maximum", step: viewer.GameActionStep{Action: "attack_move", Args: map[string]any{"unit_id": "mio_commander", "to": map[string]any{"x": json.Number("1"), "y": json.Number("1")}, "radius": json.Number("4")}}, want: "at most 3"},
+		{name: "direct enum", step: viewer.GameActionStep{Action: "assault", Args: map[string]any{"target_faction": "midori"}}, want: "declared enum"},
+	}
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := contracts.validate(tc.step); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validate(%+v) error=%v, want %q", tc.step, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseGameActionContractsRejectsMalformedReferences(t *testing.T) {
+	_, _, err := parseGameActionContracts(map[string]any{
+		"action_contracts": map[string]any{"attack_move": map[string]any{"args": map[string]any{
+			"unit_id": map[string]any{"type": "string", "required": true, "enum_ref": "missing_units"},
+		}}},
+		"legal_ids": map[string]any{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "references missing legal_ids.missing_units") {
+		t.Fatalf("malformed enum reference error=%v", err)
+	}
+}
+
+func herzogZweiAttackMoveContractObservation() map[string]any {
+	return map[string]any{
+		"action_contracts": map[string]any{
+			"attack_move": map[string]any{"args": map[string]any{
+				"unit_id": map[string]any{"type": "string", "required": true, "enum_ref": "own_units"},
+				"to":      map[string]any{"type": "coordinate", "required": true, "bounds_ref": "coordinates"},
+			}},
+			"wait": map[string]any{},
+		},
+		"legal_ids": map[string]any{
+			"own_units":   []string{"mio_commander"},
+			"coordinates": map[string]any{"x_min": 0, "x_max": 23, "y_min": 0, "y_max": 23},
+		},
+	}
+}
+
 func TestGameAgentDecisionServiceKeepsNetHackTokenContract(t *testing.T) {
 	provider := &gameDecisionLLMProvider{responses: []string{"search"}}
 	service := newTestGameDecisionService(provider)
