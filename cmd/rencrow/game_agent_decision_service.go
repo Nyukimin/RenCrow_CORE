@@ -164,18 +164,23 @@ func generateValidatedStructuredGameActionWithContract(generate func(string) (st
 		step, err := decodeStructuredGameAction(raw, availableActions)
 		if err != nil {
 			lastErr = err
+			feedback = structuredGameActionFeedback(err)
 			continue
 		}
 		if validateContract != nil {
 			if err := validateContract(step); err != nil {
 				lastErr = err
-				feedback = "The previous action violated its supplied action contract: " + err.Error() + ". Re-read the complete action_contracts and legal_ids in the original Game turn input and return a corrected action object. Do not invent missing values."
+				feedback = structuredGameActionFeedback(err)
 				continue
 			}
 		}
 		return step, nil
 	}
 	return viewer.GameActionStep{}, fmt.Errorf("Agent structured game action remained invalid after %d attempts: %w", attempts, lastErr)
+}
+
+func structuredGameActionFeedback(err error) string {
+	return "The previous action was invalid: " + err.Error() + ". Return exactly one JSON object with only the top-level fields action, optional target, and optional args; put action parameters inside args. Follow available_actions and any supplied action_contracts and legal_ids in the original Game turn input. Do not invent missing values."
 }
 
 func structuredPromptWithFeedback(prompt, feedback string) string {

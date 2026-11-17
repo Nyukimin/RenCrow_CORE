@@ -258,6 +258,51 @@ func TestGameAgentDecisionServiceRetriesMissingContractArgsWithFeedback(t *testi
 	}
 }
 
+func TestGameAgentDecisionServiceRetriesMalformedStructuredActionsWithFeedback(t *testing.T) {
+	provider := &gameDecisionLLMProvider{responses: []string{
+		`{"action":"attack_move","to":{"x":2,"y":1}}`,
+		`not json`,
+		`{"action":"attack_move","args":{"unit_id":"mio_commander","to":{"x":2,"y":1}}}`,
+	}}
+	service := newTestGameDecisionService(provider)
+	decision, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+		GameID:           "herzog_zwei",
+		SessionID:        "hz_decode_retry_feedback",
+		Turn:             126,
+		Persona:          "mio",
+		Observation:      herzogZweiAttackMoveContractObservation(),
+		AvailableActions: []string{"attack_move", "wait"},
+		Request:          "issue_orders",
+	})
+	if err != nil {
+		t.Fatalf("DecideGameTurn() error = %v", err)
+	}
+	if len(provider.requests) != 3 {
+		t.Fatalf("Agent calls = %d, want corrective feedback on both retries", len(provider.requests))
+	}
+	if len(decision.ActionPlan) != 1 {
+		t.Fatalf("action plan length = %d, want one corrected action", len(decision.ActionPlan))
+	}
+	step := decision.ActionPlan[0]
+	if decision.Intent != "attack_move" || step.Args["unit_id"] != "mio_commander" || step.Target != "" {
+		t.Fatalf("corrected decision changed or inferred action fields: %+v", decision)
+	}
+	feedbackPrompts := []string{
+		provider.requests[1].Messages[len(provider.requests[1].Messages)-1].Content,
+		provider.requests[2].Messages[len(provider.requests[2].Messages)-1].Content,
+	}
+	for i, required := range []string{`unknown Agent action field "to"`, "Agent structured game action must be one JSON object"} {
+		if !strings.Contains(feedbackPrompts[i], required) {
+			t.Fatalf("attempt %d omitted prior decoder error %q", i+2, required)
+		}
+		for _, reminder := range []string{"top-level fields action, optional target, and optional args", "put action parameters inside args", "available_actions", "action_contracts", "legal_ids", "Do not invent missing values"} {
+			if !strings.Contains(feedbackPrompts[i], reminder) {
+				t.Fatalf("attempt %d omitted schema reminder %q", i+2, reminder)
+			}
+		}
+	}
+}
+
 func TestGameAgentDecisionServiceStopsAfterThreeContractInvalidAttempts(t *testing.T) {
 	provider := &gameDecisionLLMProvider{responses: []string{
 		`{"action":"attack_move","args":{"to":{"x":2,"y":1}}}`,
