@@ -2657,6 +2657,10 @@ func (r *agentRoutineRuntime) checkDiaryAmendment(ctx context.Context, actorID, 
 		r.amendmentMu.Lock()
 		r.lastAmendmentCheck[key] = now.Add(-29 * time.Minute)
 		r.amendmentMu.Unlock()
+	} else if changed {
+		r.amendmentMu.Lock()
+		delete(r.lastAmendmentCheck, key)
+		r.amendmentMu.Unlock()
 	}
 	return changed, err
 }
@@ -2679,6 +2683,9 @@ func (r *agentRoutineRuntime) readDiaryAmendment(ctx context.Context, actorID, d
 		return false, nil
 	}
 	if diary.ReflectionVersion != agentRoutineDiaryReflectionVersion {
+		return true, nil
+	}
+	if routineDiaryIsLegacyFormat(date, diary.Body) {
 		return true, nil
 	}
 	latestBody, err := r.buildDiaryBody(readCtx, actorID, date)

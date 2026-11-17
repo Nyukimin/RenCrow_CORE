@@ -15,6 +15,14 @@ type routineDiaryTranscriptLine struct {
 	Text    string `json:"text"`
 }
 
+const routineDiaryLegacyHeader = "記録の範囲: COREの確定記録と、認証済みWORLDイベント・canonical GAMES sessionで確認できた事実のみです。\n"
+
+// routineDiaryIsLegacyFormat recognizes only the exact header emitted by the
+// previous renderer. A body that merely mentions the old wording is not legacy.
+func routineDiaryIsLegacyFormat(date, body string) bool {
+	return strings.HasPrefix(body, date+" の記録\n\n"+routineDiaryLegacyHeader)
+}
+
 // renderRoutineDiary turns confirmed source facts into a short life record.
 // It deliberately describes only observed events and transcript text.
 func renderRoutineDiary(date string, facts []agentroutine.Activity, location *time.Location) string {

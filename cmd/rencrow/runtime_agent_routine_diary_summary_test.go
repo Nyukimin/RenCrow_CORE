@@ -280,8 +280,9 @@ func TestReadDiaryAmendmentDetectsLegacyBodyWithoutVersionBump(t *testing.T) {
 	runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
 		actorID: {composition: &boardCommunicationComposition{boardClient: client}},
 	}
+	oldBody := date + " の記録\n\n記録の範囲: COREの確定記録と、認証済みWORLDイベント・canonical GAMES sessionで確認できた事実のみです。\n"
 	old, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
-		ActorID: actorID, Date: date, Body: date + " の記録\n\n記録の範囲: COREの確定記録", Reflection: "感想",
+		ActorID: actorID, Date: date, Body: oldBody, Reflection: "感想",
 		ReflectionVersion: agentRoutineDiaryReflectionVersion, Revision: 1,
 	})
 	if err != nil {
@@ -295,11 +296,196 @@ func TestReadDiaryAmendmentDetectsLegacyBodyWithoutVersionBump(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtime.tasks = nil
 	changed, err := runtime.readDiaryAmendment(context.Background(), actorID, date)
 	if err != nil || !changed {
-		t.Fatalf("readDiaryAmendment legacy body with current reflection version = %t, %v; want body comparison to trigger a revision", changed, err)
+		t.Fatalf("readDiaryAmendment legacy body with unavailable fact collectors = %t, %v; want cheap legacy detection", changed, err)
 	}
 	if old.PostingKey == "" {
 		t.Fatal("saved diary has no stable posting identity")
+	}
+}
+
+func TestReadDiaryAmendmentStillDetectsLateFactsForCurrentFormat(t *testing.T) {
+	const actorID, date = "aka", "2026-11-16"
+	runtime := newRoutineDiaryTestRuntime(t, nil)
+	loc := runtime.location()
+	runtime.now = func() time.Time { return time.Date(2026, time.November, 17, 10, 0, 0, 0, loc) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	client, err := boardcommunication.NewClient(boardcommunication.Options{
+		URL: server.URL, TokenSource: func(context.Context) ([]byte, error) { return []byte("test-token"), nil },
+		ExpectedConnection: boardcommunication.ConnectionIdentity{PrincipalID: "rencrow-comm", JournalInstanceID: "journal_0123456789abcdef0123456789abcdef"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	runtime.cfg = &config.Config{}
+	runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
+		actorID: {composition: &boardCommunicationComposition{boardClient: client}},
+	}
+	body, err := runtime.buildDiaryBody(context.Background(), actorID, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routineDiaryIsLegacyFormat(date, body) {
+		t.Fatal("current renderer output was classified as legacy")
+	}
+	diary, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: body, Reflection: "感想",
+		ReflectionVersion: agentRoutineDiaryReflectionVersion, Revision: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: diary.Body, Reflection: diary.Reflection,
+		ReflectionVersion: diary.ReflectionVersion, Revision: diary.Revision, PostingKey: diary.PostingKey,
+		Receipt: "old-board-receipt", ReceiptRevision: "1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fact := agentroutine.Activity{
+		ActorID: actorID, Date: date, Key: "late-confirmed-fact", Kind: agentroutine.ActivityHobby,
+		At: time.Date(2026, time.November, 16, 14, 0, 0, 0, loc), Source: agentRoutineModuleID,
+		Confirmed: true, Summary: "後から確認された活動です。",
+	}
+	if _, err := runtime.store.SaveFact(context.Background(), fact); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := runtime.readDiaryAmendment(context.Background(), actorID, date)
+	if err != nil || !changed {
+		t.Fatalf("current-format late fact comparison = %t, %v; want body difference candidate", changed, err)
+	}
+}
+
+func TestRoutineDiaryLegacyFormatRequiresExactDateAndHeaderPrefix(t *testing.T) {
+	const date = "2026-11-16"
+	legacy := date + " の記録\n\n" + routineDiaryLegacyHeader + "朝に起きました。\n"
+	if !routineDiaryIsLegacyFormat(date, legacy) {
+		t.Fatal("exact legacy date header was not recognized")
+	}
+	for _, body := range []string{
+		"別の日 の記録\n\n" + routineDiaryLegacyHeader,
+		date + " の記録\n追記\n" + routineDiaryLegacyHeader,
+		date + " の記録\n\n本文中に" + routineDiaryLegacyHeader,
+		date + " の記録\n\n記録の範囲: COREの確定記録",
+	} {
+		if routineDiaryIsLegacyFormat(date, body) {
+			t.Errorf("malformed or nonprefix old wording recognized as legacy: %q", body)
+		}
+	}
+}
+
+func TestCheckDiaryAmendmentDoesNotCachePositiveDiscovery(t *testing.T) {
+	const actorID, date = "aka", "2026-11-16"
+	runtime := newRoutineDiaryTestRuntime(t, nil)
+	loc := runtime.location()
+	now := time.Date(2026, time.November, 17, 10, 0, 0, 0, loc)
+	runtime.now = func() time.Time { return now }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	client, err := boardcommunication.NewClient(boardcommunication.Options{
+		URL: server.URL, TokenSource: func(context.Context) ([]byte, error) { return []byte("test-token"), nil },
+		ExpectedConnection: boardcommunication.ConnectionIdentity{PrincipalID: "rencrow-comm", JournalInstanceID: "journal_0123456789abcdef0123456789abcdef"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	runtime.cfg = &config.Config{}
+	runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
+		actorID: {composition: &boardCommunicationComposition{boardClient: client}},
+	}
+	currentBody, err := runtime.buildDiaryBody(context.Background(), actorID, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: currentBody + "\n追記前の別内容。", Reflection: "感想",
+		ReflectionVersion: agentRoutineDiaryReflectionVersion, Revision: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: old.Body, Reflection: old.Reflection,
+		ReflectionVersion: old.ReflectionVersion, Revision: old.Revision, PostingKey: old.PostingKey,
+		Receipt: "old-board-receipt", ReceiptRevision: "1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := runtime.checkDiaryAmendment(context.Background(), actorID, date)
+	if err != nil || !changed {
+		t.Fatalf("first amendment discovery = %t, %v; want positive discovery", changed, err)
+	}
+	tasks := runtime.tasks
+	runtime.tasks = nil
+	now = now.Add(time.Minute)
+	changed, err = runtime.checkDiaryAmendment(context.Background(), actorID, date)
+	if err == nil || changed {
+		t.Fatalf("second check after positive discovery = %t, %v; want a fresh read that fails without collectors", changed, err)
+	}
+	runtime.tasks = tasks
+	now = now.Add(time.Minute)
+	changed, err = runtime.checkDiaryAmendment(context.Background(), actorID, date)
+	if err != nil || !changed {
+		t.Fatalf("rediscovery after transient revalidation error = %t, %v; want positive discovery again", changed, err)
+	}
+}
+
+func TestCheckDiaryAmendmentCachesUnchangedBodyForThirtyMinutes(t *testing.T) {
+	const actorID, date = "aka", "2026-11-16"
+	runtime := newRoutineDiaryTestRuntime(t, nil)
+	loc := runtime.location()
+	now := time.Date(2026, time.November, 17, 10, 0, 0, 0, loc)
+	runtime.now = func() time.Time { return now }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	client, err := boardcommunication.NewClient(boardcommunication.Options{
+		URL: server.URL, TokenSource: func(context.Context) ([]byte, error) { return []byte("test-token"), nil },
+		ExpectedConnection: boardcommunication.ConnectionIdentity{PrincipalID: "rencrow-comm", JournalInstanceID: "journal_0123456789abcdef0123456789abcdef"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	runtime.cfg = &config.Config{}
+	runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
+		actorID: {composition: &boardCommunicationComposition{boardClient: client}},
+	}
+	body, err := runtime.buildDiaryBody(context.Background(), actorID, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diary, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: body, Reflection: "感想",
+		ReflectionVersion: agentRoutineDiaryReflectionVersion, Revision: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.store.SaveDiary(context.Background(), agentroutine.Diary{
+		ActorID: actorID, Date: date, Body: diary.Body, Reflection: diary.Reflection,
+		ReflectionVersion: diary.ReflectionVersion, Revision: diary.Revision, PostingKey: diary.PostingKey,
+		Receipt: "old-board-receipt", ReceiptRevision: "1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := runtime.checkDiaryAmendment(context.Background(), actorID, date)
+	if err != nil || changed {
+		t.Fatalf("unchanged body check = %t, %v; want no change", changed, err)
+	}
+	runtime.tasks = nil
+	now = now.Add(29 * time.Minute)
+	changed, err = runtime.checkDiaryAmendment(context.Background(), actorID, date)
+	if err != nil || changed {
+		t.Fatalf("cached check at 29 minutes = %t, %v; want cached no change", changed, err)
+	}
+	now = now.Add(time.Minute)
+	changed, err = runtime.checkDiaryAmendment(context.Background(), actorID, date)
+	if err == nil || changed {
+		t.Fatalf("check at cache expiry = %t, %v; want a fresh read that fails without collectors", changed, err)
 	}
 }
