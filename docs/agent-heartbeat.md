@@ -6,8 +6,8 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 
 ## ハートビートと着手
 
-- 通常のWork継続は「Work完了→結果評価→必要な次intentの登録」である。Work ownerは結果を正本へ保存して再読・評価し、必要な後続intentをその所有機能の既存正本へ永続化した後に実行枠を解放する。結果Taskとqueue intentが別owner storeにある場合、それぞれの保存確認を行うが、同一DBへの原子的な一括保存を意味しない。schedulerは登録済みintentを通常の優先順位で再選択する。LLMによる自主Taskの提案は[非定型タスク創出](02_機能仕様.md#非定型タスク創出)の本人用・低優先・有界な契約に従う。
-- 専用TaskはTask ownerが保存済み結果を再読し、Task／Runの成功を検証して対応するqueue itemをterminalにする。`Work.Run`がnil errorを返しただけでは成功としない。BOARD workはcommit済み応答と配送状態を照合する。pauseするworkはcheckpointとinsert-only successor intentをdurably保存してから停止を完了する。評価・後続登録の保存を確認できなければ継続成功を報告せず、未回収の段階をownerの既存再開・回収経路に残す。元成果の成功は独立して保持する。
+- 通常のWork継続は「Work完了→結果評価→必要な次intentの登録」である。Work ownerは結果を正本へ保存して再読・評価し、必要な後続intentをその所有機能の既存正本へ永続化した後に実行枠を解放する。結果Taskとqueue intentが別owner storeにある場合、それぞれの保存確認を行うが、同一DBへの原子的な一括保存を意味しない。schedulerは登録済みintentを通常の優先順位で再選択する。LLMに任意の新しいTaskを発明させない。
+- 専用TaskはTask ownerが保存済み結果を再読し、Task／Runの成功を検証して対応するqueue itemをterminalにする。`Work.Run`がnil errorを返しただけでは成功としない。BOARD workはcommit済み応答と配送状態を照合する。pauseするworkはcheckpointとinsert-only successor intentをdurably保存してから停止を完了する。どれかの保存に失敗したら成功を報告せず、ownerの既存再開・回収経路に残す。
 - `rencrow run`の常駐処理は、周期heartbeatによる永続sourceの再確認・取りこぼし回収を行う。既定の10秒周期は未通知intent、期限切れclaim、停止後の未照合結果を確認する周期であり、通常の次作業を待たせる間隔ではない。各periodic sweepは新しい重複抑制epochであり、durable ownerの状態を再検証する。決定的な確認はLLMを呼ばず、遅い依存先やWork実行を待って他actorの確認を止めない。
 - 実行中に保留されたperiodic要求は、Work解放後もtimer契機とそれに伴うIdle許可を保持する。これはWork完了だけを契機とする即時再scanでは新規Idleを開始しない規則とは別である。
 - CORE所有のTask enqueueは、正規handlerがqueue intentをdurable insertした後に`Scheduler.Wake(actor)`で該当actorの再確認を促す。Wakeは低遅延hintであり、Task／Run、queue、BOARD、日課記録が唯一の正本である。外部BOARD/browser側のarrival通知はこの配線契約に含めず、既存pollingとperiodic sweepで回収する。Wake欠落や失敗はintentを取消さず、次のperiodic heartbeat、startup scan、recovery sweepが回収する。Wakeはprocess lifetime contextで動作し、HTTP request contextを保持しない。busy／scanning／foreground pending中の通知はcoalesceし、同一即時継続系列内の同一sourceとWork IDは重複実行しない。Wake spamで重複抑制を解除しない。periodic sweepでは正本状態に基づく再試行を許す。
@@ -33,7 +33,7 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 
 1. Timer、process start、またはrecovery sweepの許可された契機で、COREは各キャラクターの実行枠、優先会話、自分宛てのBOARD、専用キューを確認する。arrival WakeやWork完了後の即時継続では、仕事の再選択だけを行い、新しい日課・雑談・ゲームは開始しない。仕事は優先会話、自分宛てのBOARD、専用キューの順で扱う。各キューでは優先度の高いもの、同じ優先度なら古いものを先に扱う。再開可能な仕事もこの選択に含める。
 2. BOARDが復旧中なら担当の有無は不明として扱い、専用キューを進める。新しい雑談・趣味は、許可されたIdle起動契機にBOARDが読めて着手・再開できる仕事がないと確認できたときだけ候補にする。
-3. 許可されたIdle起動契機で仕事がない場合、現在の時刻、睡眠状態、在室、日課の進行記録から次の行動を選ぶ。就寝・起床の時刻に達していれば先に状態を更新する。起きている間は、前日までの未作成の日記を古い日付からまとめ、それから時刻に応じた活動へ進む。実行を伴う日課は同じキャラクターの実行枠で低優先度のTaskとして1件ずつ積む。進行中・再開待ちの同じ日課には既存のTaskを使う。実際に始めた休憩・睡眠はcheckpointで状態を保持し、部屋にいるだけでは活動完了にしない。明示された業務Taskがないことを、日課も未設定の状態とは扱わない。
+3. 許可されたIdle起動契機で仕事がない場合、現在の時刻、睡眠状態、在室、日課の進行記録から次の行動を選ぶ。就寝・起床の時刻に達していれば先に状態を更新する。起きている間は、前日までの未作成の日記を古い日付からまとめ、それから時刻に応じた活動へ進む。実行を伴う日課は同じキャラクターの実行枠で低優先度のTaskとして1件ずつ積む。進行中・再開待ちの同じ日課には既存のTaskを使う。くつろぎや睡眠が続く間は状態を保持する。明示された業務Taskがないことを、日課も未設定の状態とは扱わない。
 4. 仕事が来たら、日課を安全な区切りで一時停止または終了し、仕事に切り替える。Work完了またはforeground解放だけでは日課を開始しない。次の許可されたtimer／startup／recovery契機で時間帯と参加者を照合し、条件が合う日課は同じTaskのcheckpointから再開し、条件が変わっていれば実行した分を記録して閉じる。実行中に就寝予定や朝9時などの境界に達したときも、安全な区切りで閉じる。
 
 選択、時刻・在室の照合、登録、復旧確認、日記の投稿と照合はCLIで行う。LLMは発話、資料の意味理解、創作、本人の感想など、生成や意味判断が必要な工程で呼ぶ。COREはTaskと認知活動を、WORLDは位置・在室・移動・姿勢などの確定状態を管理する。会話や趣味ツールの実行にはCOREの認証済みの本人と既存の権限を使う。 [COREとWORLDの接続境界](04_アーキテクチャ概要.md)
@@ -48,20 +48,14 @@ COREが認証済みの実行主体、Task、Run、実行状態を管理する。
 | 就寝中 | 起床予定まで睡眠を続ける。仕事が来たら対応し、起床予定前に空けば睡眠へ戻れる。 |
 | 05:00〜08:00 | キャラクターごとの起床予定で起床する。起床しても仕事中なら朝の日課は空くまで待つ。 |
 | 起床後〜09:00 | リビング・ダイニングで雑談、または自室で趣味。起床時点からこの行を適用する。 |
-| 22:00〜翌06:00のうち、起きていて翌朝の日課の開始前 | 自室で趣味。趣味が未設定、または実行できる趣味がない場合は、自室で短い内省を行い、本人の記録が保存されたときだけ休憩を完了する。在室だけでは完了にしない。 |
-| 上記以外 | 既存の空き時間の活動を先に確認する。候補がなく休憩が適格なら、共有室では正確なWORLD seat到着を確認してから読書・会話・お茶休憩のTask/Runを実行する。席や外部reader/Workerを利用できない場合は成功を記録せず、上限付きで再試行または終了する。夜間の自室休憩も短い実際の内省を行い、本人の記録が保存された場合だけ完了する。 |
+| 22:00〜翌06:00のうち、起きていて翌朝の日課の開始前 | 自室で趣味。趣味が未設定、または実行できる趣味がない場合は自室でくつろぐ。 |
+| 上記以外 | 既存の空き時間の活動を先に確認し、候補がなければ現在いる許可済みの共有室または自室で休憩する。許可済みの部屋への移動が必要な場合だけ既存のWORLD実行経路を使う。部屋を確認できない場合は確認待ちとし、活動した実績を作らない。 |
 
 就寝予定と起床予定は日付・キャラクターごとに各時間帯から1回決めて保存する。予定と実際の就寝・起床は別々に記録する。仕事で就寝枠が過ぎた場合はその回の就寝を見送り、起床予定時刻を過ぎてから朝の活動を選べる。仕事で一時的に起きた場合は通常起床と区別する。再起動時は保存済みの予定と確定状態を読み、現在時刻に合う行動を再評価する。停止中の行動は確認できた記録から回収する。
 
-共有室の休憩は、在室確認だけで完了にせず、実際の読書・会話・お茶休憩をcanonical Task/Runのstepとして実行する。COREは候補seat (`sofa`、`sofa-guest`、`dining`、`dining-guest`、`dining-aisle-north/south`、`dining-window-north/south`)を共有室設定に照合する。`life.home.move`のaccepted receiptは予約開始であり、着席成功ではない。fresh authenticated WORLD snapshotで本人が指定room/slotに到着し、他のWORLD activityがないことを確かめてからstepを始める。room anchorや座席不足を成功扱いしない。拒否理由が汎用の場合はsnapshotで同じslotの別actor占有を照合し、根拠のないseat再試行は最大3 operationで終える。
+休憩のTaskとRunは、部屋の確認を含む着手処理の完了で閉じる。その後の休憩期間は、確認時刻、終了時刻、部屋を日課の既存状態へ保存する。保存はintentの完了と同じ更新で行い、再送や再読取で期間を延長しない。休憩期間は保存済みの完了時刻から45分を上限とし、次の就寝予定に達する場合はその時刻で区切る。その場で休む場合も確認と完了の時刻を同じcheckpointに保存し、停止後の再開時刻を休憩の新しい開始時刻にしない。夜間の自室条件と、既存の移動checkpointの照合・再開を維持する。仕事が来れば通常の優先順位で着手し、休憩を理由に実行枠を占有しない。
 
-`sofa_reading`はlivingの正確なsofa seatを確認後、実本文chunkを読み手へ提示して`rest_reading_chunk_presented`を保存し、読み手のRunがrunningの間だけ投影する。完了時は作品名、著者、出典、権利情報、本文hash、実際の範囲、読み手の感想、次のcursorを残す。本文全文は活動記録へ保存しない。cursorはactorごとに持続し、出典本文が変わった場合は先へ進めず、カタログ末尾で先頭に戻らない。
-
-`sofa_chat`は両者のliving seatと会話開始checkpointの確認後に投影する。`dining_tea_chat`は同じ条件に加え、構造化したお茶休憩の開始を保存してから投影する。発話は各本人の実際のWorker turnを逐次保存する。soloの`dining_tea`も正確なdining seat、お茶休憩開始、本人の記録が揃った後だけ投影する。お茶休憩の記録は飲用actionやWORLD animationの確認を意味しない。失敗・中断・座席未確認は休憩成功factや実活動表示へ変換しない。
-
-reading/chat/teaの開始checkpointとcanonical Runがrunningであることが、活動中の表示条件である。Runがpaused/waitingなら具体的な活動表示は止め、保存済みcheckpointから再開する。BOARD・private task・睡眠などの優先activityへ切り替える場合は未完の休憩を成功扱いせず、必要なWORLD actionを安全にsettleしてから制御を渡す。座席拒否上限で終了する場合はintentを成功factなしで閉じ、休憩間隔だけを短時間設定する。夜間の自室くつろぎも実際の短い内省と本人の記録が必要で、在室だけでは完了しない。
-
-LIVINGの実行枠の`waiting`は「Taskが未設定」を意味しない。read-only活動投影は実行枠と具体的activityを区別する。waiting中は`sleep_window | waiting | moving_home`、running/routine中は検証済み`moving_home`、またはstep開始済みの`sofa_reading | sofa_chat | dining_tea_chat | dining_tea`だけを返す。`sleep_window`はCOREの保存済み就寝時間であり、WORLDでの就寝確認を意味しない。読書は実本文chunk提示、会話は会話開始、お茶は構造化したお茶休憩開始のcheckpointとcanonical Runのrunningを要する。実行中の仕事を日課で上書きせず、停止中や確認不能なsnapshotで具体activityを表示しない。複数actorのread-only投影ではWORLD snapshotを一回だけ共有し、候補がない場合は読み取らない。投影はTaskを作成しない。
+LIVINGの実行枠の`waiting`は「Taskが未設定」を意味しない。読み取り専用の活動投影は、実行枠と、継続する休憩・就寝時間を区別する。`routine_availability`は`available | disabled | unavailable`、待機中の`ongoing_activity`は`sleep_window | rest | waiting`とする。`sleep_window`はCOREが保存した就寝時間であり、WORLDでの就寝確認を意味しない。`rest`は保存済みの期間が有効で、現在も同じ許可済みの部屋にいるとWORLDで再確認できた場合だけ返す。実行中・停止中・確認中の仕事はこの投影より優先し、無効設定や読み取り失敗を休憩中と見せない。投影の読み取りはTaskを作成しない。
 
 朝の **3：1** は、雑談と趣味の両方を選べるときに本人が選んで開始した活動の回数で数える。キャラクターごとに4回の選択で雑談3回・自室での趣味1回とし、選択位置を日付や再起動をまたいで保持する。中断した活動を再開する場合は開始時の1回に含める。雑談はリビングかダイニングで、在室していて仕事中・睡眠中でない参加可能な相手と始める。参加者それぞれの実行枠を確保し、競合で開始できない場合や相手がいない場合は、自室の趣味またはリビングでのくつろぎを選ぶ。3：1を数えるのは両方を選べた場合に限る。
 
@@ -208,8 +202,8 @@ CLIは日課の着手、移動の要求と到着の照合、時刻と再生位�
 | HB-18 | Scheduler unitではA.Runがowner相当のsource stateへBをcommitし、B.RunがCをcommitして、追加TickなしにA→B→Cを評価・実行する。runtime integrationでは正規enqueue HTTP handlerのWakeで実Task Aを開始し、実行中にWakeなしでdurable済みB/C intentを見せ、A完了rescanだけでA/B/CのTask・Run・queueを全件terminal保存する。これは既存private ownerが後続Taskを生成する契約を主張しない。既存receiptの再送もWakeし、受付済みintentはWake失敗で取消・HTTP失敗にしない。 |
 | HB-19 | busy／scan中／foreground pending中のWakeをcoalesceし、同一seriesのsource＋Work ID再提示を実行・低優先sourceへのfallthroughに使わない。Wake spamは抑制を解除せず、次periodic epochはownerを再照会する。 |
 | HB-20 | 正常完了、arrival Wake、foreground解放ではIdle／game／routineを新規開始せず、timer／startup／recoveryだけが仕事不在を確認してIdleを開始する。既存routine Workの工程継続は保つ。 |
-| HB-21 | 日中の既存Idle候補が空なら、適格な共有休憩をcanonical Task/Runとして実行する。座席はconfigured slotへのfresh WORLD到着snapshotを確認してから使用し、room anchorやmove receipt acceptedだけで開始しない。読書は実本文chunk・書誌/範囲/hash/本人の感想/cursor、会話は本人たちの実発話、お茶は開始・終了・本人の記録を保存する。物理飲用をWORLDで確認したとは主張しない。外部取得・Worker・seatが利用不可なら成功factを作らず、bounded retryまたはcancelに留める。 |
-| HB-22 | 投影はstep開始checkpoint、running Run、fresh exact-seat snapshotを揃えて`sofa_reading / sofa_chat / dining_tea_chat / dining_tea`を区別する。waiting中は`sleep_window / waiting / moving_home`だけを返す。未開始・完了・paused・snapshot不一致を活動中と見せない。複数actorのread-only投影は必要なfresh WORLD snapshotを一回共有し、Taskを作成しない。higher-priority taskとsleep/wakeはretrying restをyield/preemptし、checkpointを成功へ偽装しない。 |
+| HB-21 | 日中の既存Idle候補が空なら、確認済みの許可部屋で休憩Task／Runを実行し、休憩の確認記録と期間を保存する。実WORLDを使う隔離受入で8体の着手と完了を確認する。既に許可部屋にいる場合は移動せず、移動が必要な場合と進行中の既存移動はWORLD ownerの実行・復旧契約を使う。 |
+| HB-22 | 休憩期間と就寝時間は実行枠のwaitingと区別して読み取れる。再読取、再起動、Wake、checkpoint再開でTaskや休憩期限を増やさず、仕事の実行を優先する。8体の休憩投影は1回の新しいWORLD snapshotを共有し、在室不明・別活動中・期限切れ・読取失敗を休憩中にしない。 |
 
 ## 現行実装の境界
 
