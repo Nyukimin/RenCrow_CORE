@@ -232,6 +232,10 @@ func issueDCIIdentityPreEvidence(t *testing.T, server *httptest.Server, deps ver
 func TestDCIIdentityPreAndPostUseFixedAuthenticatedRouteAndBoundedEvidence(t *testing.T) {
 	runtimeState, server, deps := newDCIIdentityTestRuntime(t)
 	defer server.Close()
+	// This file digest contains the prior PID digits; PID checks must inspect fields.
+	if err := os.WriteFile(runtimeState.artifact, []byte("dci-test-artifact-1586"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	evidenceDir := t.TempDir()
 	preManifest := testManifest(t, dciIdentityPreCommandID)
 	preArgs := verifierArgs(preManifest, "core_dci_identity_pre_restart", evidenceDir)
@@ -282,8 +286,8 @@ func TestDCIIdentityPreAndPostUseFixedAuthenticatedRouteAndBoundedEvidence(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(postRaw), dciIdentityFixedQuery) || strings.Contains(string(postRaw), runtimeState.token) || strings.Contains(postOutput.String(), runtimeState.token) || strings.Contains(string(postRaw), "4101") {
-		t.Fatal("post receipt/evidence leaked fixture, token, or prior pid")
+	if strings.Contains(string(postRaw), dciIdentityFixedQuery) || strings.Contains(string(postRaw), runtimeState.token) || strings.Contains(postOutput.String(), runtimeState.token) {
+		t.Fatal("post receipt/evidence leaked fixture or token")
 	}
 	var postEvidence map[string]any
 	if err := decodeStrictJSON(postRaw, &postEvidence); err != nil {
