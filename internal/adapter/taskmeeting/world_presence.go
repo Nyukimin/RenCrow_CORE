@@ -7,9 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	appmeeting "github.com/Nyukimin/RenCrow_CORE/internal/application/taskmeeting"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -37,6 +40,30 @@ type TaskMeetingScopedWorldSnapshotClient interface {
 // TaskMeetingWorldSnapshotClientFactory creates a new authenticated client
 // only when an actual source snapshot is required.
 type TaskMeetingWorldSnapshotClientFactory func() (TaskMeetingScopedWorldSnapshotClient, error)
+
+// NewConfiguredWorldSnapshotClient builds an authenticated client from the
+// explicit WORLD projection settings. Construction validates and freezes its
+// scope but does not issue a WORLD request.
+func NewConfiguredWorldSnapshotClient(settings config.WorldProjectionConfig, timeout time.Duration) (TaskMeetingScopedWorldSnapshotClient, error) {
+	baseURL := strings.TrimSpace(settings.BaseURL)
+	tokenEnv := strings.TrimSpace(settings.TokenEnv)
+	if baseURL == "" || tokenEnv == "" {
+		return nil, fmt.Errorf("TaskMeeting World read: base_url and token_env are required")
+	}
+	credential := os.Getenv(tokenEnv)
+	if credential == "" {
+		return nil, fmt.Errorf("TaskMeeting World read: credential environment %s is empty", tokenEnv)
+	}
+	actorIDs := make([]string, 0, len(settings.Actors))
+	for _, actor := range settings.Actors {
+		actorIDs = append(actorIDs, actor.ActorID)
+	}
+	return worldread.New(worldread.Config{
+		BaseURL: baseURL, Credential: credential,
+		WorldID: settings.WorldID, TimelineID: settings.TimelineID, TimelineEpoch: settings.TimelineEpoch,
+		ActorIDs: actorIDs, Timeout: timeout,
+	})
+}
 
 // PinnedWorldSnapshotReader preserves a non-secret frozen scope while delaying
 // credential lookup until Snapshot. This lets receipt replay and deadline

@@ -1422,7 +1422,10 @@ func newRuntimeTaskMeetingPinnedWorldReader(cfg *config.Config, declaration doma
 		Actors: runtimeTaskMeetingWorldProjectionActors(declaration.WorldActorBindings),
 	}
 	return worldmeeting.NewPinnedWorldSnapshotReader(declaration, func() (worldmeeting.TaskMeetingScopedWorldSnapshotClient, error) {
-		return newStoryPlayerReadClient(&worldConfig)
+		return worldmeeting.NewConfiguredWorldSnapshotClient(
+			worldConfig.WorldProjection,
+			worldProjectionDuration(worldConfig.WorldProjection.TimeoutSeconds, defaultWorldProjectionTimeout),
+		)
 	})
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	worldmeeting "github.com/Nyukimin/RenCrow_CORE/internal/adapter/taskmeeting"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainmeeting "github.com/Nyukimin/RenCrow_CORE/internal/domain/taskmeeting"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
@@ -141,7 +142,10 @@ func taskMeetingWorldReadAvailabilityForDeclaration(cfg *config.Config, declarat
 		WorldID: declaration.WorldID, TimelineID: declaration.TimelineID, TimelineEpoch: declaration.TimelineEpoch,
 		Actors: actors,
 	}
-	client, err := newStoryPlayerReadClient(&worldConfig)
+	client, err := worldmeeting.NewConfiguredWorldSnapshotClient(
+		worldConfig.WorldProjection,
+		worldProjectionDuration(worldConfig.WorldProjection.TimeoutSeconds, defaultWorldProjectionTimeout),
+	)
 	if err != nil || client == nil {
 		return "world_credential_unavailable"
 	}

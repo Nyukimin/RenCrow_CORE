@@ -6,9 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	appmeeting "github.com/Nyukimin/RenCrow_CORE/internal/application/taskmeeting"
 	domainmeeting "github.com/Nyukimin/RenCrow_CORE/internal/domain/taskmeeting"
@@ -17,6 +20,47 @@ import (
 type scopedWorldSnapshotClientFixture struct {
 	scope worldread.ReadScope
 	calls int
+}
+
+func TestNewConfiguredWorldSnapshotClientRequiresCredential(t *testing.T) {
+	const tokenEnv = "RENCROW_TASKMEETING_WORLD_TEST_TOKEN"
+	t.Setenv(tokenEnv, "")
+	_, err := NewConfiguredWorldSnapshotClient(config.WorldProjectionConfig{
+		BaseURL: "https://world.example.test", TokenEnv: tokenEnv,
+		WorldID: "house", TimelineID: "main", TimelineEpoch: "epoch-4",
+		Actors: []config.WorldProjectionActorConfig{{ActorID: "world-mio"}},
+	}, time.Second)
+	if err == nil || !strings.Contains(err.Error(), tokenEnv) {
+		t.Fatalf("missing credential error = %v, want an error naming the configured environment", err)
+	}
+}
+
+func TestNewConfiguredWorldSnapshotClientUsesExactScopeWithoutRequest(t *testing.T) {
+	const tokenEnv = "RENCROW_TASKMEETING_WORLD_TEST_TOKEN"
+	t.Setenv(tokenEnv, "synthetic-world-token")
+	client, err := NewConfiguredWorldSnapshotClient(config.WorldProjectionConfig{
+		BaseURL: "https://world.example.test", TokenEnv: tokenEnv,
+		WorldID: "house", TimelineID: "main", TimelineEpoch: "epoch-4",
+		Actors: []config.WorldProjectionActorConfig{{ActorID: "world-shiro"}, {ActorID: "world-mio"}},
+	}, 3*time.Second)
+	if err != nil {
+		t.Fatalf("NewConfiguredWorldSnapshotClient: %v", err)
+	}
+	scope := client.ReadScope()
+	want := worldread.ReadScope{
+		BaseURL: "https://world.example.test", WorldID: "house", TimelineID: "main", TimelineEpoch: "epoch-4",
+		ActorIDs: []string{"world-mio", "world-shiro"},
+	}
+	if !reflect.DeepEqual(scope, want) {
+		t.Fatalf("ReadScope = %+v, want %+v", scope, want)
+	}
+	encoded, err := json.Marshal(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "synthetic-world-token") {
+		t.Fatal("ReadScope exposed the configured credential")
+	}
 }
 
 func (client *scopedWorldSnapshotClientFixture) ReadScope() worldread.ReadScope { return client.scope }
