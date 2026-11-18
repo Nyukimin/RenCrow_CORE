@@ -252,28 +252,37 @@ func (m *Manager) HasTerminalGameTaskSession(ctx context.Context, gameID, sessio
 	} {
 		var after modulecore.TaskID
 		for {
-			filter := domaintask.Filter{Route: domaintask.RouteGAME, Status: status, Limit: domaintask.MaxTaskListPageSize}
-			if after != "" {
-				filter.TaskIDAfter = &after
+			filter := domaintask.Filter{
+				Route: domaintask.RouteGAME, Status: status, Limit: domaintask.MaxTaskListPageSize,
+				TaskIDAfter: &after,
 			}
 			tasks, err := m.List(ctx, filter)
 			if err != nil {
 				return false, fmt.Errorf("list terminal GAME Tasks: %w", err)
 			}
 			for _, item := range tasks {
-				state, err := m.GetGameTaskState(ctx, item.TaskID)
+				shared, err := loadPrivateTextSharedContext(ctx, m.store, item.TaskID)
 				if err != nil {
-					return false, fmt.Errorf("read terminal GAME Task %s: %w", item.TaskID, err)
+					return false, fmt.Errorf("read terminal GAME Task context %s: %w", item.TaskID, err)
+				}
+				if shared.GameSpec == nil && shared.GameProgress == nil {
+					continue
+				}
+				if shared.GameSpec == nil || shared.GameProgress == nil {
+					return false, fmt.Errorf("terminal GAME Task %s has an incomplete typed checkpoint", item.TaskID)
+				}
+				if err := shared.GameProgress.Validate(item.TaskID, *shared.GameSpec); err != nil {
+					return false, fmt.Errorf("terminal GAME Task %s has an invalid typed checkpoint: %w", item.TaskID, err)
 				}
 				actorOwnsSession := false
-				for _, persona := range state.Spec.Personas {
+				for _, persona := range shared.GameSpec.Personas {
 					if persona == actorID {
 						actorOwnsSession = true
 						break
 					}
 				}
-				if state.Task.Status == status && state.Progress.SessionID == sessionID &&
-					state.Spec.GameID == gameID && actorOwnsSession {
+				if item.Status == status && shared.GameProgress.SessionID == sessionID &&
+					shared.GameSpec.GameID == gameID && actorOwnsSession {
 					return true, nil
 				}
 			}

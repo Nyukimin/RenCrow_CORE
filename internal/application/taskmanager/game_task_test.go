@@ -3,6 +3,8 @@ package taskmanager
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -182,4 +184,109 @@ func TestGameTaskReceiptCannotRegressRunningStatus(t *testing.T) {
 	if err != nil || current.Progress.Status != domaintask.GameExecutionRunning {
 		t.Fatalf("stale receipt regressed durable status to %s: err=%v", current.Progress.Status, err)
 	}
+}
+
+func TestHasTerminalGameTaskSessionUsesStableCursorAcrossPages(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.November, 18, 10, 0, 0, 0, time.UTC)
+	spec, err := domaintask.NormalizeGameSpec(domaintask.GameSpec{
+		GameID: "herzog_zwei", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 40, Mode: "realtime",
+	})
+	if err != nil {
+		t.Fatalf("normalize GAME spec: %v", err)
+	}
+	store := &terminalGameTaskPageStore{contexts: make(map[modulecore.TaskID]domaintask.SharedRoleContext)}
+	const taskCount = domaintask.MaxTaskListPageSize + 1
+	typedTaskIDs := make([]modulecore.TaskID, 0, taskCount)
+	for index := 0; index < taskCount; index++ {
+		taskID := modulecore.NewTaskID()
+		typedTaskIDs = append(typedTaskIDs, taskID)
+		progress, err := domaintask.NewGameProgress(taskID, spec, now)
+		if err != nil {
+			t.Fatalf("create GAME progress %d: %v", index, err)
+		}
+		sessionID := fmt.Sprintf("herzog_zwei_terminal_%03d", index)
+		resultOK := true
+		progress.Status = domaintask.GameExecutionCompleted
+		progress.SessionID = sessionID
+		progress.ResultOK = &resultOK
+		progress.ResultGameID = spec.GameID
+		progress.ResultSessionID = sessionID
+		progress.ResultStatus = string(domaintask.GameExecutionCompleted)
+		progress.GameResultJSON = `{"winner":"aka"}`
+		task := domaintask.Task{
+			TaskID: taskID, Title: fmt.Sprintf("terminal game %d", index), OwnerID: "operator", Assignee: "mio",
+			Route: domaintask.RouteGAME, Status: domaintask.StatusSucceeded, CreatedAt: now, UpdatedAt: now, Summary: "completed",
+		}
+		store.tasks = append(store.tasks, task)
+		store.contexts[taskID] = domaintask.SharedRoleContext{TaskID: taskID, GameSpec: &spec, GameProgress: &progress, UpdatedAt: now}
+	}
+	legacyTaskID := modulecore.NewTaskID()
+	store.tasks = append(store.tasks, domaintask.Task{
+		TaskID: legacyTaskID, Title: "legacy generic GAME task", OwnerID: "operator", Assignee: "mio",
+		Route: domaintask.RouteGAME, Status: domaintask.StatusSucceeded, CreatedAt: now, UpdatedAt: now, Summary: "legacy completion",
+	})
+	sort.Slice(typedTaskIDs, func(i, j int) bool { return typedTaskIDs[i] < typedTaskIDs[j] })
+	oldestState := store.contexts[typedTaskIDs[0]]
+	manager := New(store, DefaultParallelLimits())
+	found, err := manager.HasTerminalGameTaskSession(ctx, spec.GameID, oldestState.GameProgress.SessionID, "aka")
+	if err != nil || !found {
+		t.Fatalf("terminal session in the second normal-order page = (%t, %v), want found", found, err)
+	}
+	found, err = manager.HasTerminalGameTaskSession(ctx, spec.GameID, oldestState.GameProgress.SessionID, "shiro")
+	if err != nil || found {
+		t.Fatalf("nonparticipant terminal session match = (%t, %v), want absent", found, err)
+	}
+	found, err = manager.HasTerminalGameTaskSession(ctx, spec.GameID, "herzog_zwei_legacy_session", "aka")
+	if err != nil || found {
+		t.Fatalf("different same-actor legacy session match = (%t, %v), want absent", found, err)
+	}
+}
+
+type terminalGameTaskPageStore struct {
+	domaintask.Store
+	tasks    []domaintask.Task
+	contexts map[modulecore.TaskID]domaintask.SharedRoleContext
+}
+
+func (store *terminalGameTaskPageStore) ListTasks(_ context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	items := make([]domaintask.Task, 0, len(store.tasks))
+	for _, item := range store.tasks {
+		if filter.Route != "" && item.Route != filter.Route {
+			continue
+		}
+		if filter.Status != "" && item.Status != filter.Status {
+			continue
+		}
+		if filter.TaskIDAfter != nil && item.TaskID <= *filter.TaskIDAfter {
+			continue
+		}
+		items = append(items, item)
+	}
+	if filter.TaskIDAfter == nil {
+		sort.Slice(items, func(i, j int) bool { return items[i].TaskID > items[j].TaskID })
+	} else {
+		sort.Slice(items, func(i, j int) bool { return items[i].TaskID < items[j].TaskID })
+	}
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
+	}
+	return items, nil
+}
+
+func (store *terminalGameTaskPageStore) GetTask(_ context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	for _, item := range store.tasks {
+		if item.TaskID == taskID {
+			return item, nil
+		}
+	}
+	return domaintask.Task{}, domaintask.ErrNotFound
+}
+
+func (store *terminalGameTaskPageStore) GetContext(_ context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
+	shared, ok := store.contexts[taskID]
+	if !ok {
+		return domaintask.SharedRoleContext{}, domaintask.ErrNotFound
+	}
+	return shared, nil
 }

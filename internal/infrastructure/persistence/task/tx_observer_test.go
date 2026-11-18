@@ -87,6 +87,34 @@ func TestJSONLStoreLabelsEveryBatchEntryPoint(t *testing.T) {
 			t.Fatalf("%s: line = %q, want no task_id", name, lines[0])
 		}
 	}
+	type expectedLabel struct {
+		op     string
+		kind   string
+		taskID modulecore.TaskID
+	}
+	expectSequence := func(name string, want []expectedLabel, run func() error) {
+		t.Helper()
+		if err := run(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		lines := drain()
+		if len(lines) != len(want) {
+			t.Fatalf("%s: lines = %v, want exactly %d", name, lines, len(want))
+		}
+		for i, expected := range want {
+			line := lines[i]
+			if !strings.Contains(line, " kind="+expected.kind+" ") || !strings.Contains(line, " op="+expected.op+" ") {
+				t.Fatalf("%s: line[%d] = %q, want kind=%s op=%s", name, i, line, expected.kind, expected.op)
+			}
+			hasTaskID := strings.Contains(line, " task_id=")
+			if expected.taskID != "" && !strings.Contains(line, " task_id="+string(expected.taskID)+" ") {
+				t.Fatalf("%s: line[%d] = %q, want task_id=%s", name, i, line, expected.taskID)
+			}
+			if expected.taskID == "" && hasTaskID {
+				t.Fatalf("%s: line[%d] = %q, want no task_id", name, i, line)
+			}
+		}
+	}
 
 	expectOne("SaveTask", "TaskTransaction", task.TaskID, "write", func() error { return store.SaveTask(ctx, task) })
 	expectOne("GetTask", "ReadTransaction", "", "read", func() error { _, err := store.GetTask(ctx, task.TaskID); return err })
@@ -105,18 +133,30 @@ func TestJSONLStoreLabelsEveryBatchEntryPoint(t *testing.T) {
 		})
 		return err
 	})
-	expectOne("LookupTaskOperation", "LookupTaskOperation", "", "read", func() error {
+	expectSequence("LookupTaskOperation", []expectedLabel{
+		{op: "LookupTaskOperation", kind: "read"},
+		{op: "ReadTransaction", kind: "read"},
+	}, func() error {
 		_, err := store.LookupTaskOperation(ctx, "op:label-1")
 		return err
 	})
-	expectOne("AcquireTaskExecutionFence", "AcquireTaskExecutionFence", task.TaskID, "write", func() error {
+	expectSequence("AcquireTaskExecutionFence", []expectedLabel{
+		{op: "ReadTransaction", kind: "read"},
+		{op: "AcquireTaskExecutionFence", kind: "write", taskID: task.TaskID},
+	}, func() error {
 		return store.AcquireTaskExecutionFence(ctx, task.TaskID, "capability:label-1")
 	})
-	expectOne("GetTaskExecutionFence", "GetTaskExecutionFence", task.TaskID, "read", func() error {
+	expectSequence("GetTaskExecutionFence", []expectedLabel{
+		{op: "ReadTransaction", kind: "read"},
+		{op: "GetTaskExecutionFence", kind: "read", taskID: task.TaskID},
+	}, func() error {
 		_, err := store.GetTaskExecutionFence(ctx, task.TaskID)
 		return err
 	})
-	expectOne("ReleaseTaskExecutionFence", "ReleaseTaskExecutionFence", task.TaskID, "write", func() error {
+	expectSequence("ReleaseTaskExecutionFence", []expectedLabel{
+		{op: "ReadTransaction", kind: "read"},
+		{op: "ReleaseTaskExecutionFence", kind: "write", taskID: task.TaskID},
+	}, func() error {
 		return store.ReleaseTaskExecutionFence(ctx, task.TaskID, "capability:label-1")
 	})
 }
