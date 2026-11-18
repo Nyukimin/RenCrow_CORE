@@ -17,6 +17,7 @@ func TestHandleGameBridgeStatus(t *testing.T) {
 	HandleGameBridgeStatus(GameBridgeStatusOptions{
 		ConversationEngineEnabled: true,
 		L1StoreEnabled:            true,
+		SupportedGames:            []string{"nethack", "survival_garden", "territory_commander", "herzog_zwei"},
 	}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -33,7 +34,7 @@ func TestHandleGameBridgeStatus(t *testing.T) {
 	if !ok {
 		t.Fatalf("supported_games=%T want array: %+v", got["supported_games"], got)
 	}
-	wantGames := []string{"herzog_zwei", "territory_commander", "survival_garden", "nethack"}
+	wantGames := []string{"nethack", "survival_garden", "territory_commander", "herzog_zwei"}
 	if len(supported) != len(wantGames) {
 		t.Fatalf("supported_games=%v want=%v", supported, wantGames)
 	}
@@ -41,6 +42,23 @@ func TestHandleGameBridgeStatus(t *testing.T) {
 		if supported[i] != want {
 			t.Fatalf("supported_games[%d]=%v want=%q", i, supported[i], want)
 		}
+	}
+}
+
+func TestHandleGameBridgeStatusFailsClosedWhenAgentGameCapabilitiesAreOmitted(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/games/status", nil)
+	HandleGameBridgeStatus(GameBridgeStatusOptions{}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	supported, ok := got["supported_games"].([]any)
+	if !ok || len(supported) != 0 {
+		t.Fatalf("omitted Agent game capabilities must fail closed, got=%v", got["supported_games"])
 	}
 }
 

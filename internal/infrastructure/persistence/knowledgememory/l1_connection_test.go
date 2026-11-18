@@ -2,8 +2,10 @@ package knowledgememory
 
 import (
 	"context"
+	"errors"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,27 @@ type fakeL1KnowledgeMemoryStore struct {
 	registry []l1sqlite.L1SourceRegistryEntry
 }
 
+type failOnceKnowledgeMemoryStagingStore struct {
+	delegate *l1sqlite.L1SQLiteStore
+	calls    int
+}
+
+func (s *failOnceKnowledgeMemoryStagingStore) SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error) {
+	s.calls++
+	if s.calls == 1 {
+		return nil, errors.New("temporary staging failure")
+	}
+	return s.delegate.SaveStagingItem(ctx, item)
+}
+
+func (s *failOnceKnowledgeMemoryStagingStore) SaveSourceRegistryEntry(ctx context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error) {
+	return s.delegate.SaveSourceRegistryEntry(ctx, entry)
+}
+
+func (s *failOnceKnowledgeMemoryStagingStore) FindStagingItemByNamespaceEventID(ctx context.Context, namespace, eventID string) (l1sqlite.L1StagingItem, bool, error) {
+	return s.delegate.FindStagingItemByNamespaceEventID(ctx, namespace, eventID)
+}
+
 func (s *fakeL1KnowledgeMemoryStore) SaveStagingItem(_ context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error) {
 	s.staging = append(s.staging, item)
 	return &item, nil
@@ -24,6 +47,16 @@ func (s *fakeL1KnowledgeMemoryStore) SaveStagingItem(_ context.Context, item l1s
 func (s *fakeL1KnowledgeMemoryStore) SaveSourceRegistryEntry(_ context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error) {
 	s.registry = append(s.registry, entry)
 	return &entry, nil
+}
+
+func (s *fakeL1KnowledgeMemoryStore) FindStagingItemByNamespaceEventID(_ context.Context, namespace, eventID string) (l1sqlite.L1StagingItem, bool, error) {
+	for i := len(s.staging) - 1; i >= 0; i-- {
+		item := s.staging[i]
+		if item.Namespace == namespace && item.EventID == eventID {
+			return item, true, nil
+		}
+	}
+	return l1sqlite.L1StagingItem{}, false, nil
 }
 
 func TestDailyIntakeRegistryAdapterConvertsSourceRegistryEntry(t *testing.T) {
@@ -104,6 +137,68 @@ func TestL1ConnectedStoreStagesPersonalArchiveWithoutPromote(t *testing.T) {
 	}
 	if item.Meta["protected_original"] != true || item.Meta["auto_promote"] != false || item.Meta["review_required"] != true {
 		t.Fatalf("expected protected review metadata, got %#v", item.Meta)
+	}
+}
+
+func TestL1ConnectedReceiptArchivePreservesOriginalAndRetryRecoversStage(t *testing.T) {
+	base, err := NewSQLiteStore(filepath.Join(t.TempDir(), "knowledge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+	underlyingL1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer underlyingL1.Close()
+	l1 := &failOnceKnowledgeMemoryStagingStore{delegate: underlyingL1}
+	store := WithL1Connection(base, l1)
+	locator := "gmail://ren%40example.com/messages/0123456789abcdef"
+	original := "first line\n" + strings.Repeat("keep all source text", 400) + "\nlast line"
+	item := luminaDiaryReceiptItem("diary-l1-retry", "ren", locator, original)
+	if reused, err := store.(PersonalArchiveReceiptWriter).SavePersonalArchiveEntryWithReceipt(context.Background(), item, locator, "lumina"); err == nil || reused {
+		t.Fatalf("first staged write = reused %v, err %v", reused, err)
+	}
+	reused, err := store.(PersonalArchiveReceiptWriter).SavePersonalArchiveEntryWithReceipt(context.Background(), item, locator, "lumina")
+	if err != nil || !reused {
+		t.Fatalf("recovered replay = reused %v, err %v", reused, err)
+	}
+	staged, found, err := underlyingL1.FindStagingItemByNamespaceEventID(context.Background(), "user:ren", item.EntryID)
+	if err != nil || !found || staged.RawText != original || staged.Namespace != "user:ren" || staged.SourceURL != "" {
+		t.Fatalf("L1 staged item did not preserve private original: %#v found=%v err=%v", staged, found, err)
+	}
+	meta := staged.Meta
+	if meta["title"] != item.Title || meta["archive_source_kind"] != item.SourceKind || meta["author_id"] != "lumina" || meta["diary_date"] != item.DiaryDate || meta["source_ref"] != locator || meta["review_required"] != true || meta["auto_promote"] != false {
+		t.Fatalf("L1 source metadata missing: %#v", meta)
+	}
+	if staged.ValidationStatus != l1sqlite.L1StagingStatusPending {
+		t.Fatalf("staged archive status = %s", staged.ValidationStatus)
+	}
+	staged.RawText = "owner-edited stage review"
+	staged.Meta["review_note"] = "owner edit"
+	if _, err := underlyingL1.SaveStagingItem(context.Background(), staged); err != nil {
+		t.Fatalf("save owner-edited staging state: %v", err)
+	}
+	if reused, err := store.(PersonalArchiveReceiptWriter).SavePersonalArchiveEntryWithReceipt(context.Background(), item, locator, "lumina"); err != nil || !reused {
+		t.Fatalf("replay after owner edit = reused %v, err %v", reused, err)
+	}
+	staged, found, err = underlyingL1.FindStagingItemByNamespaceEventID(context.Background(), "user:ren", item.EntryID)
+	if err != nil || !found || staged.RawText != "owner-edited stage review" || staged.Meta["review_note"] != "owner edit" {
+		t.Fatalf("source replay overwrote L1 owner edit: %#v found=%v err=%v", staged, found, err)
+	}
+}
+
+func TestL1ConnectedReceiptArchiveRequiresReceiptCapableBase(t *testing.T) {
+	base := NewJSONLStore(t.TempDir())
+	store := WithL1Connection(base, &fakeL1KnowledgeMemoryStore{})
+	item := luminaDiaryReceiptItem("diary-no-receipt", "ren", "gmail://ren%40example.com/messages/0123456789abcdef", "original")
+	_, err := store.(PersonalArchiveReceiptWriter).SavePersonalArchiveEntryWithReceipt(context.Background(), item, item.SourceRef, "lumina")
+	if err == nil || !strings.Contains(err.Error(), "SQLite owner store") {
+		t.Fatalf("JSONL fallback receipt error = %v", err)
+	}
+	stored, listErr := base.ListPersonalArchiveEntries(context.Background(), 10)
+	if listErr != nil || len(stored) != 0 {
+		t.Fatalf("unreceipted fallback rows=%#v err=%v", stored, listErr)
 	}
 }
 

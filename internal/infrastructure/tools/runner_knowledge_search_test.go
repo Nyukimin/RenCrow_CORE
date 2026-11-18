@@ -57,6 +57,17 @@ func TestToolRunnerKnowledgeSearchRequiresReadyIndexedCapability(t *testing.T) {
 				if metadata.Parameters["additionalProperties"] != false {
 					t.Fatalf("metadata must reject additional properties: %#v", metadata.Parameters)
 				}
+				properties := metadata.Parameters["properties"].(map[string]any)
+				recordType := properties["record_type"].(map[string]any)
+				foundArchive := false
+				for _, value := range recordType["enum"].([]any) {
+					if value == "personal_archive" {
+						foundArchive = true
+					}
+				}
+				if !foundArchive {
+					t.Fatalf("personal archive missing from record type enum: %#v", recordType)
+				}
 			}
 		}
 		if found != ready {
@@ -158,6 +169,42 @@ func TestToolRunnerKnowledgeSearchUsesPublicOnlyForPublicScope(t *testing.T) {
 	}
 	if len(stub.requests) != 1 || stub.requests[0].Scope != (appkm.SearchScope{Scope: appkm.SearchScopePublic}) {
 		t.Fatalf("public scope request = %#v", stub.requests)
+	}
+}
+
+func TestToolRunnerKnowledgeSearchAllowsPrivateArchiveOnlyForTrustedUser(t *testing.T) {
+	stub := &knowledgeSearchStub{results: []appkm.SearchResult{{
+		RecordType: "personal_archive", RecordID: "diary-1", Scope: appkm.SearchScopeUser,
+		UserID: "user-a", Title: "Lumina diary email · 2026-11-15", Summary: "source date only", Visibility: "private",
+	}}}
+	runner := NewToolRunner(ToolRunnerConfig{
+		KnowledgeMemorySearcher:    stub,
+		KnowledgeMemorySearchReady: true,
+		DisableToolHarness:         true,
+	})
+	userCtx := knowledgeSearchTestScope(t, "user-a", tool.DataScopeUser)
+	response, err := runner.ExecuteV2(userCtx, "knowledge.search", map[string]any{
+		"query": "late diary evidence", "record_type": "personal_archive",
+	})
+	if err != nil || response == nil || response.Error != nil {
+		t.Fatalf("owner archive search response=%#v err=%v", response, err)
+	}
+	if len(stub.requests) != 1 || stub.requests[0].Scope != (appkm.SearchScope{Scope: appkm.SearchScopeUser, UserID: "user-a"}) || stub.requests[0].RecordType != "personal_archive" {
+		t.Fatalf("archive request did not use trusted private owner scope: %#v", stub.requests)
+	}
+	if strings.Contains(response.String(), "original body") {
+		t.Fatalf("archive search returned original source text: %s", response.String())
+	}
+
+	publicCtx := knowledgeSearchTestScope(t, "", tool.DataScopePublic)
+	response, err = runner.ExecuteV2(publicCtx, "knowledge.search", map[string]any{
+		"query": "late diary evidence", "record_type": "personal_archive",
+	})
+	if err != nil || response == nil || response.Error == nil || response.Error.Code != tool.ErrValidationFailed {
+		t.Fatalf("public archive search response=%#v err=%v, want validation error", response, err)
+	}
+	if len(stub.requests) != 1 {
+		t.Fatalf("public scope reached the archive searcher: %#v", stub.requests)
 	}
 }
 

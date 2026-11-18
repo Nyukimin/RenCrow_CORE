@@ -21,10 +21,11 @@ func knowledgeSearchMetadata() tool.ToolMetadata {
 		Version:     "1.0.0",
 		Category:    "query",
 		Origin:      tool.OriginCoreRuntime,
-		Description: "レビュー済みKnowledge Memoryの固定索引だけを、認証済みscope内で検索する。",
+		Description: "レビュー済みKnowledge Memoryと認証済みownerのpersonal archiveを、固定索引内で検索する。",
 		Invariants: []string{
 			"scope is read from trusted ToolExecutionScope context",
 			"tool arguments never select user, scope, database, SQL, or raw payload",
+			"personal_archive requires the authenticated user scope and never uses public fallback",
 			"missing or invalid scope is blocked without public fallback",
 		},
 		Parameters: map[string]any{
@@ -32,7 +33,7 @@ func knowledgeSearchMetadata() tool.ToolMetadata {
 			"additionalProperties": false,
 			"properties": map[string]any{
 				"query":       map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
-				"record_type": map[string]any{"type": "string", "enum": []any{"creative_knowledge", "news_knowledge"}},
+				"record_type": map[string]any{"type": "string", "enum": []any{"creative_knowledge", "news_knowledge", "personal_archive"}},
 				"limit":       map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
 			},
 			"required": []any{"query", "record_type"},
@@ -104,7 +105,7 @@ func (r *ToolRunner) executeKnowledgeSearchV2(ctx context.Context, args map[stri
 
 func validKnowledgeRecordType(recordType string) bool {
 	switch recordType {
-	case "creative_knowledge", "news_knowledge":
+	case "creative_knowledge", "news_knowledge", "personal_archive":
 		return true
 	default:
 		return false

@@ -174,6 +174,9 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 	if method == http.MethodPost && path == "/viewer/surface-presence" {
 		return true
 	}
+	if method == http.MethodPost && path == "/viewer/atlas/gmail/diary-backfill" {
+		return true
+	}
 	if method != http.MethodGet {
 		return false
 	}

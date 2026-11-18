@@ -679,10 +679,8 @@ func TestKnowledgeMemoryStatusReturnsDetailByTypeAndID(t *testing.T) {
 			ReviewStatus: "pending",
 		}},
 	}
-	req := httptest.NewRequest(http.MethodGet, "/viewer/knowledge-memory?detail_type=personal_archive&id=pa_1", nil)
-	rec := httptest.NewRecorder()
-
-	HandleKnowledgeMemoryStatus(store).ServeHTTP(rec, req)
+	handler := WithKnowledgeMemoryNewsOwnerAccess(HandleKnowledgeMemoryStatus(store), "ren", []byte(knowledgeMemoryNewsOwnerTestToken))
+	rec := serveKnowledgeMemoryNewsOwnerRequest(handler, http.MethodGet, "/viewer/knowledge-memory?detail_type=personal_archive&id=pa_1", knowledgeMemoryNewsOwnerTestToken, "cmd-diagnostics", "127.0.0.1:4171")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())

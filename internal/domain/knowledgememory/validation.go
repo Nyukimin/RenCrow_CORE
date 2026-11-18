@@ -2,7 +2,9 @@ package knowledgememory
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -15,6 +17,7 @@ const (
 	MaxCreativeCandidateEntryRunes     = 512
 	MaxCreativeCandidateArrayItems     = 32
 	MaxCreativeCandidateTotalTextRunes = 8192
+	MaxLuminaDiaryOriginalBytes        = 128 << 10
 )
 
 func ValidatePersonalArchiveEntry(item PersonalArchiveEntry) error {
@@ -33,7 +36,54 @@ func ValidatePersonalArchiveEntry(item PersonalArchiveEntry) error {
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("created_at is required")
 	}
+	if item.Title != "" || item.SourceKind != "" || item.AuthorID != "" || item.DiaryDate != "" {
+		if !utf8.ValidString(item.Title) || strings.TrimSpace(item.Title) == "" || utf8.RuneCountInString(item.Title) > MaxCreativeCandidateTitleRunes {
+			return fmt.Errorf("personal archive title is invalid")
+		}
+		if item.SourceKind != "lumina_diary_email" {
+			return fmt.Errorf("unsupported personal archive source_kind")
+		}
+		if item.AuthorID != "lumina" {
+			return fmt.Errorf("personal archive author_id must be lumina")
+		}
+		if parsed, err := time.Parse("2006-01-02", item.DiaryDate); err != nil || parsed.Format("2006-01-02") != item.DiaryDate {
+			return fmt.Errorf("personal archive diary_date must be YYYY-MM-DD")
+		}
+		if !isCanonicalPersonalArchiveGmailLocator(item.SourceRef) {
+			return fmt.Errorf("personal archive source_ref must be a canonical Gmail message locator")
+		}
+		if len([]byte(item.OriginalText)) > MaxLuminaDiaryOriginalBytes {
+			return fmt.Errorf("personal archive original_text exceeds %d bytes", MaxLuminaDiaryOriginalBytes)
+		}
+		if !utf8.ValidString(item.OriginalText) {
+			return fmt.Errorf("personal archive original_text must be valid UTF-8")
+		}
+	}
 	return nil
+}
+
+func isCanonicalPersonalArchiveGmailLocator(value string) bool {
+	const prefix = "gmail://"
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	accountPart, messagePart, found := strings.Cut(strings.TrimPrefix(value, prefix), "/messages/")
+	if !found || accountPart == "" || messagePart == "" || strings.Contains(messagePart, "/") {
+		return false
+	}
+	account, err := url.QueryUnescape(accountPart)
+	if err != nil || strings.TrimSpace(account) == "" || strings.ContainsAny(account, "\x00\r\n") {
+		return false
+	}
+	canonicalAccount := strings.ReplaceAll(url.QueryEscape(account), "+", "%20")
+	if canonicalAccount != accountPart {
+		return false
+	}
+	messageID, err := url.PathUnescape(messagePart)
+	if err != nil || strings.TrimSpace(messageID) == "" || strings.ContainsAny(messageID, "\x00\r\n") {
+		return false
+	}
+	return url.PathEscape(messageID) == messagePart
 }
 
 func ValidateCreativeKnowledgeItem(item CreativeKnowledgeItem) error {

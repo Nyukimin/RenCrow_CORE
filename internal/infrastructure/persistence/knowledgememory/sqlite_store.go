@@ -54,6 +54,7 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	// From this point the SQLiteStore owns db; callers close it through Close.
 	store := &SQLiteStore{db: db}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
@@ -98,6 +99,7 @@ func (s *SQLiteStore) EnsureOwnerRouteSchema(ctx context.Context) error {
 	}
 	statements = append(statements, knowledgeMemoryStorageHostReceiptSchemaStatements()...)
 	statements = append(statements, newsKnowledgeReceiptSchemaStatements()...)
+	statements = append(statements, personalArchiveReceiptSchemaStatements()...)
 	for _, stmt := range statements {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("ensure knowledge memory owner schema: %w", err)
@@ -204,6 +206,7 @@ func (s *SQLiteStore) migrate() error {
 	}
 	stmts = append(stmts, knowledgeMemoryStorageHostReceiptSchemaStatements()...)
 	stmts = append(stmts, newsKnowledgeReceiptSchemaStatements()...)
+	stmts = append(stmts, personalArchiveReceiptSchemaStatements()...)
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
@@ -215,6 +218,21 @@ func (s *SQLiteStore) migrate() error {
 func (s *SQLiteStore) SavePersonalArchiveEntry(ctx context.Context, item domainkm.PersonalArchiveEntry) error {
 	if err := domainkm.ValidatePersonalArchiveEntry(item); err != nil {
 		return err
+	}
+	if item.SourceKind == "lumina_diary_email" {
+		return fmt.Errorf("Lumina diary archive writes require a source receipt")
+	}
+	if s == nil || s.db == nil {
+		return fmt.Errorf("knowledge memory sqlite store is closed")
+	}
+	if ready, err := s.personalArchiveReceiptSchemaPresent(ctx); err != nil {
+		return err
+	} else if ready {
+		if _, found, err := findPersonalArchiveReceiptByColumn(ctx, s.db, "entry_id", strings.TrimSpace(item.EntryID)); err != nil {
+			return err
+		} else if found {
+			return fmt.Errorf("%w: receipt-bound protected archive rows require the source-aware owner route", ErrKnowledgeMemoryRequestConflict)
+		}
 	}
 	return s.save(ctx, "personal_archive", "entry_id", item.EntryID, "user_id", item.UserID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }

@@ -130,13 +130,14 @@ type Activity struct {
 
 // Diary stores one revisioned draft for one actor and JST calendar date.
 type Diary struct {
-	ActorID         string    `json:"actor_id"`
-	Date            string    `json:"date"`
-	Body            string    `json:"body"`
-	Reflection      string    `json:"reflection"`
-	Revision        int64     `json:"revision"`
-	PostingKey      string    `json:"posting_key"`
-	Receipt         string    `json:"receipt,omitempty"`
-	ReceiptRevision string    `json:"receipt_revision,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ActorID           string    `json:"actor_id"`
+	Date              string    `json:"date"`
+	Body              string    `json:"body"`
+	Reflection        string    `json:"reflection"`
+	ReflectionVersion string    `json:"reflection_version,omitempty"`
+	Revision          int64     `json:"revision"`
+	PostingKey        string    `json:"posting_key"`
+	Receipt           string    `json:"receipt,omitempty"`
+	ReceiptRevision   string    `json:"receipt_revision,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }

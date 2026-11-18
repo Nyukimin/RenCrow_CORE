@@ -23,6 +23,10 @@ type KnowledgeMemoryLister interface {
 	ListDreamConsolidationRuns(ctx context.Context, limit int) ([]domainkm.DreamConsolidationRun, error)
 }
 
+type PersonalArchiveDetailReader interface {
+	GetPersonalArchiveEntry(ctx context.Context, entryID, userID string) (domainkm.PersonalArchiveEntry, bool, error)
+}
+
 type KnowledgeMemoryStore interface {
 	KnowledgeMemoryLister
 	SavePersonalArchiveEntry(ctx context.Context, item domainkm.PersonalArchiveEntry) error
@@ -67,6 +71,7 @@ func HandleKnowledgeMemoryStatus(store KnowledgeMemoryLister) http.HandlerFunc {
 			return
 		}
 		personal, _ := store.ListPersonalArchiveEntries(r.Context(), limit)
+		personal = filterPersonalArchive(r.Context(), personal)
 		creative, _ := store.ListCreativeKnowledgeItems(r.Context(), limit)
 		news, err := store.ListNewsKnowledgeItems(r.Context(), limit)
 		if err != nil {
@@ -275,12 +280,20 @@ func handleKnowledgeMemoryDetail(w http.ResponseWriter, r *http.Request, store K
 func findKnowledgeMemoryDetail(ctx context.Context, store KnowledgeMemoryLister, detailType string, id string, limit int) (any, bool, error) {
 	switch strings.TrimSpace(detailType) {
 	case "personal_archive":
+		access := knowledgeMemoryNewsOwnerAccessFromContext(ctx)
+		if !access.authenticated || access.userID == "" {
+			return nil, false, nil
+		}
+		if reader, ok := store.(PersonalArchiveDetailReader); ok {
+			item, found, err := reader.GetPersonalArchiveEntry(ctx, id, access.userID)
+			return item, found, err
+		}
 		items, err := store.ListPersonalArchiveEntries(ctx, limit)
 		if err != nil {
 			return nil, false, err
 		}
 		for _, item := range items {
-			if item.EntryID == id {
+			if item.EntryID == id && item.UserID == access.userID {
 				return item, true, nil
 			}
 		}
@@ -600,6 +613,20 @@ func nonNilPersonalArchive(items []domainkm.PersonalArchiveEntry) []domainkm.Per
 		return []domainkm.PersonalArchiveEntry{}
 	}
 	return items
+}
+
+func filterPersonalArchive(ctx context.Context, items []domainkm.PersonalArchiveEntry) []domainkm.PersonalArchiveEntry {
+	access := knowledgeMemoryNewsOwnerAccessFromContext(ctx)
+	if !access.authenticated || access.userID == "" {
+		return []domainkm.PersonalArchiveEntry{}
+	}
+	filtered := make([]domainkm.PersonalArchiveEntry, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.UserID) == access.userID {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func nonNilCreativeKnowledge(items []domainkm.CreativeKnowledgeItem) []domainkm.CreativeKnowledgeItem {

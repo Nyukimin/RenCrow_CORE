@@ -18,6 +18,7 @@ import (
 const (
 	creativeKnowledgeRecordType = "creative_knowledge"
 	newsKnowledgeRecordType     = "news_knowledge"
+	personalArchiveRecordType   = "personal_archive"
 	searchVisibilityPublic      = "public"
 	maxSearchCandidates         = 50
 )
@@ -25,6 +26,7 @@ const (
 var searchableKnowledgeRecordTypes = []string{
 	creativeKnowledgeRecordType,
 	newsKnowledgeRecordType,
+	personalArchiveRecordType,
 }
 
 type safeSearchProjection struct {
@@ -118,11 +120,53 @@ func newsSearchProjection(item domainkm.NewsKnowledgeItem) *safeSearchProjection
 	)
 }
 
+func personalArchiveSearchProjection(item domainkm.PersonalArchiveEntry) *safeSearchProjection {
+	if item.SourceKind != "lumina_diary_email" || item.UserID == "" || item.Title == "" {
+		return nil
+	}
+	summary := "Lumina diary email · " + item.DiaryDate
+	binding := strings.Join([]string{item.SourceRef, item.SourceKind, item.AuthorID, item.DiaryDate, item.OriginalText}, "\x00")
+	projection := newSafeSearchProjectionWithOwnerAndIndexText(
+		personalArchiveRecordType,
+		item.EntryID,
+		item.Title,
+		summary,
+		item.CreatedAt,
+		item.UserID,
+		"private",
+		strings.Join([]string{item.Title, summary}, " "),
+		binding,
+	)
+	if projection == nil {
+		return nil
+	}
+	sourceTokens, err := appkm.IndexSourceTokens(item.OriginalText)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(projection.tokens)+len(sourceTokens))
+	for _, token := range projection.tokens {
+		seen[token] = struct{}{}
+	}
+	for _, token := range sourceTokens {
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		projection.tokens = append(projection.tokens, token)
+	}
+	return projection
+}
+
 func newSafeSearchProjection(recordType, recordID, title, summary string, sourceUpdatedAt time.Time) *safeSearchProjection {
 	return newSafeSearchProjectionWithOwner(recordType, recordID, title, summary, sourceUpdatedAt, "", "")
 }
 
 func newSafeSearchProjectionWithOwner(recordType, recordID, title, summary string, sourceUpdatedAt time.Time, userID, visibility string) *safeSearchProjection {
+	return newSafeSearchProjectionWithOwnerAndIndexText(recordType, recordID, title, summary, sourceUpdatedAt, userID, visibility, strings.TrimSpace(strings.Join([]string{title, summary}, " ")), "")
+}
+
+func newSafeSearchProjectionWithOwnerAndIndexText(recordType, recordID, title, summary string, sourceUpdatedAt time.Time, userID, visibility, indexText, contentBinding string) *safeSearchProjection {
 	title = strings.TrimSpace(title)
 	summary = strings.TrimSpace(summary)
 	userID = strings.TrimSpace(userID)
@@ -139,13 +183,18 @@ func newSafeSearchProjectionWithOwner(recordType, recordID, title, summary strin
 	if scope == appkm.SearchScopePublic && visibility != searchVisibilityPublic {
 		return nil
 	}
-	text := strings.TrimSpace(strings.Join([]string{title, summary}, " "))
-	tokens, err := appkm.IndexTokens(text)
+	if indexText == "" {
+		indexText = strings.TrimSpace(strings.Join([]string{title, summary}, " "))
+	}
+	tokens, err := appkm.IndexTokens(indexText)
 	if err != nil {
 		return nil
 	}
 	source := sourceUpdatedAt.UTC().Format(timeFormatRFC3339Nano)
 	hashInput := strings.Join([]string{recordType, recordID, scope, userID, title, summary, visibility, source}, "\x00")
+	if contentBinding != "" {
+		hashInput += "\x00" + contentBinding
+	}
 	hash := sha256.Sum256([]byte(hashInput))
 	return &safeSearchProjection{
 		recordType:      recordType,
@@ -378,8 +427,23 @@ func searchRecordTypes(recordType string) []string {
 		return []string{creativeKnowledgeRecordType}
 	case newsKnowledgeRecordType:
 		return []string{newsKnowledgeRecordType}
+	case personalArchiveRecordType:
+		return []string{personalArchiveRecordType}
 	default:
 		return searchableKnowledgeRecordTypes
+	}
+}
+
+func searchSourceTable(recordType string) (string, string) {
+	switch recordType {
+	case creativeKnowledgeRecordType:
+		return "creative_knowledge", "item_id"
+	case newsKnowledgeRecordType:
+		return "news_knowledge", "item_id"
+	case personalArchiveRecordType:
+		return "personal_archive", "entry_id"
+	default:
+		return "", ""
 	}
 }
 

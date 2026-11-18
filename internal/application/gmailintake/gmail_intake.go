@@ -16,6 +16,7 @@ import (
 	appbacklog "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
@@ -72,6 +73,9 @@ type GmailIntake struct {
 	receipts        GmailReceiptStore
 	atlas           *appbacklog.Service
 	knowledgeWriter GmailKnowledgeWriter
+	archiveWriter   GmailPersonalArchiveWriter
+	diaryWriter     GmailDiaryWriter
+	startBackfill   func() bool
 	clock           func() time.Time
 	mu              sync.Mutex
 }
@@ -104,6 +108,31 @@ func (g *GmailIntake) WithKnowledgeWriter(writer GmailKnowledgeWriter) *GmailInt
 		g.knowledgeWriter = writer
 	}
 	return g
+}
+
+func (g *GmailIntake) WithPersonalArchiveWriter(writer GmailPersonalArchiveWriter) *GmailIntake {
+	if g != nil {
+		g.archiveWriter = writer
+	}
+	return g
+}
+
+func (g *GmailIntake) WithDiaryWriter(writer GmailDiaryWriter) *GmailIntake {
+	if g != nil {
+		g.diaryWriter = writer
+	}
+	return g
+}
+
+func (g *GmailIntake) WithDiaryBackfillStarter(start func() bool) *GmailIntake {
+	if g != nil {
+		g.startBackfill = start
+	}
+	return g
+}
+
+func (g *GmailIntake) StartGmailDiaryBackfill() bool {
+	return g != nil && g.startBackfill != nil && g.startBackfill()
 }
 
 // Receipts is the authenticated owner read surface. The configured account is
@@ -221,6 +250,68 @@ func (g *GmailIntake) Run(ctx context.Context) (GmailRunReport, error) {
 		return report, fmt.Errorf("save Gmail cursor: %w", err)
 	}
 	report.HasMore = strings.TrimSpace(page.NextPageToken) != ""
+	return report, nil
+}
+
+// RunDiaryBackfill explicitly scans every page of the fixed Lumina diary
+// query. It shares the normal execution lock and source receipts but never
+// reads or advances the general Gmail cursor.
+func (g *GmailIntake) RunDiaryBackfill(ctx context.Context) (GmailRunReport, error) {
+	var report GmailRunReport
+	if err := g.validateRunContext(ctx); err != nil {
+		return report, err
+	}
+	if !g.mu.TryLock() {
+		return report, ErrGmailIntakeBusy
+	}
+	defer g.mu.Unlock()
+	if g == nil || g.receipts == nil || strings.TrimSpace(g.account) == "" || strings.TrimSpace(g.userID) == "" {
+		return report, errors.New("Gmail diary backfill dependencies are unavailable")
+	}
+	collector, ok := g.collector.(GmailDiaryCollector)
+	if !ok {
+		return report, errors.New("Gmail diary backfill collector is unavailable")
+	}
+	report.Account = g.account
+	pageToken := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
+		page, err := collector.CollectDiaries(ctx, pageToken)
+		if err != nil {
+			return report, fmt.Errorf("Gmail diary backfill collection failed: %w", err)
+		}
+		if err := validateGmailPageForQuery(page, g.account, GmailDiaryQuery); err != nil {
+			return report, err
+		}
+		for _, message := range page.Messages {
+			if err := ctx.Err(); err != nil {
+				return report, err
+			}
+			report.Processed++
+			created, status, ids, err := g.processMessage(ctx, message)
+			if err != nil {
+				return report, err
+			}
+			report.Created += created
+			report.BacklogItemIDs = appendUniqueStrings(report.BacklogItemIDs, ids)
+			_, _, err = g.receipts.Get(ctx, g.account, message.ID)
+			if err != nil {
+				return report, fmt.Errorf("read backfilled diary receipt: %w", err)
+			}
+			switch status {
+			case "skipped":
+				report.Skipped++
+			case "blocked":
+				report.Blocked++
+			}
+		}
+		pageToken = page.NextPageToken
+		if strings.TrimSpace(pageToken) == "" {
+			break
+		}
+	}
 	return report, nil
 }
 
@@ -363,6 +454,8 @@ func (g *GmailIntake) processMessage(ctx context.Context, message GmailMessage) 
 		return g.resumePrepared(ctx, receipt)
 	case gmailSubjectDaily:
 		return g.processDaily(ctx, message)
+	case gmailSubjectDiary:
+		return g.processDiary(ctx, message)
 	default:
 		return 0, "", nil, errors.New("unknown Gmail subject classification")
 	}
@@ -477,6 +570,41 @@ func (g *GmailIntake) processDaily(ctx context.Context, message GmailMessage) (i
 	}
 }
 
+func (g *GmailIntake) processDiary(ctx context.Context, message GmailMessage) (int, string, []string, error) {
+	parsed, err := parseGmailDiary(message)
+	if err != nil {
+		receipt := g.newReceipt(ctx, message, "blocked", "diary_source_invalid", nil, nil)
+		if saveErr := g.receipts.Save(ctx, receipt); saveErr != nil {
+			return 0, "", nil, fmt.Errorf("save blocked diary receipt: %w", saveErr)
+		}
+		return 0, "blocked", nil, nil
+	}
+	if !strings.EqualFold(g.account, "nyukimin0811@gmail.com") {
+		return 0, "", nil, errors.New("Lumina diary intake requires its configured native Gmail account")
+	}
+	if g.archiveWriter == nil {
+		return 0, "", nil, errors.New("personal archive writer unavailable")
+	}
+	if g.diaryWriter == nil {
+		return 0, "", nil, errors.New("BOARD diary writer unavailable")
+	}
+	locator := gmailLocator(g.account, message.ID)
+	sourceKey := locator
+	hash := sha256.Sum256([]byte(sourceKey))
+	createdAt, err := time.Parse(time.RFC3339Nano, message.ReceivedAt)
+	if err != nil {
+		return 0, "", nil, errors.New("diary received timestamp is invalid")
+	}
+	entry := domainkm.PersonalArchiveEntry{EntryID: "gmail_diary_" + hex.EncodeToString(hash[:]), UserID: g.userID, SourceRef: locator, Title: message.Subject, SourceKind: "lumina_diary_email", AuthorID: "lumina", DiaryDate: parsed.Date, OriginalText: message.Text, Protected: true, CreatedAt: createdAt.UTC()}
+	prepared := GmailPreparedDiary{SourceKey: sourceKey, Archive: entry, Diary: GmailDiary{ActorID: "lumina", Date: parsed.Date, Revision: 1, Body: parsed.Body, Reflection: parsed.Reflection}}
+	receipt := g.newReceipt(ctx, message, "prepared", "", nil, nil)
+	receipt.PreparedDiary = &prepared
+	if err := g.receipts.Save(ctx, receipt); err != nil {
+		return 0, "", nil, fmt.Errorf("save prepared diary receipt: %w", err)
+	}
+	return g.resumePreparedDiary(ctx, receipt)
+}
+
 func (g *GmailIntake) atlasSnapshot(ctx context.Context) ([]string, error) {
 	items, err := g.atlas.List(ctx, 0)
 	if err != nil {
@@ -585,6 +713,9 @@ func (g *GmailIntake) sanitizeEvaluatorSourceRefs(_ GmailMessage, refs []domainb
 }
 
 func (g *GmailIntake) resumePrepared(ctx context.Context, receipt GmailReceipt) (int, string, []string, error) {
+	if receipt.PreparedDiary != nil {
+		return g.resumePreparedDiary(ctx, receipt)
+	}
 	if (len(receipt.Prepared) == 0 && len(receipt.PreparedKnowledge) == 0) || len(receipt.Prepared) > maxGmailProposals || len(receipt.PreparedKnowledge) > maxGmailKnowledgeItems {
 		return 0, "", nil, errors.New("prepared Gmail receipt has invalid requests")
 	}
@@ -685,6 +816,94 @@ func (g *GmailIntake) resumePrepared(ctx context.Context, receipt GmailReceipt) 
 	return created, "complete", ids, nil
 }
 
+func (g *GmailIntake) resumePreparedDiary(ctx context.Context, receipt GmailReceipt) (int, string, []string, error) {
+	if receipt.PreparedDiary == nil {
+		return 0, "", nil, errors.New("prepared Gmail diary is missing")
+	}
+	if g.archiveWriter == nil || g.diaryWriter == nil {
+		return 0, "", nil, errors.New("Gmail diary persistence writer unavailable")
+	}
+	if err := ValidateGmailReceipt(receipt); err != nil {
+		return 0, "", nil, fmt.Errorf("prepared Gmail diary receipt is invalid: %w", err)
+	}
+	if receipt.Account != g.account {
+		return 0, "", nil, errors.New("prepared diary receipt does not match the configured account")
+	}
+	if strings.TrimSpace(g.userID) == "" || receipt.PreparedDiary.Archive.UserID != g.userID {
+		return 0, "", nil, errors.New("prepared Gmail diary archive user does not match the configured owner")
+	}
+	if receipt.Status != "prepared" {
+		return 0, "", nil, errors.New("prepared diary receipt status is invalid")
+	}
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("canonical Gmail execution identity is required: %w", err)
+	}
+	receipt.TaskID, receipt.RunID, receipt.TraceID = string(identity.TaskID), string(identity.RunID), string(identity.TraceID)
+	receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+	if err := g.receipts.Save(ctx, receipt); err != nil {
+		return 0, "", nil, fmt.Errorf("save diary resume identity: %w", err)
+	}
+	prepared := receipt.PreparedDiary
+	if err := ctx.Err(); err != nil {
+		return 0, "", nil, err
+	}
+	if !receipt.ArchiveSaved {
+		if _, err := g.archiveWriter.SavePersonalArchiveEntryWithReceipt(ctx, prepared.Archive, prepared.SourceKey, receipt.ActorID); err != nil {
+			return 0, "", nil, fmt.Errorf("save private diary archive: %w", err)
+		}
+		receipt.ArchiveSaved = true
+		receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+		if err := g.receipts.Save(ctx, receipt); err != nil {
+			return 0, "", nil, fmt.Errorf("checkpoint diary archive: %w", err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, "", nil, err
+	}
+	boardCreated := false
+	if !receipt.DiarySaved {
+		remote, found, err := g.diaryWriter.GetDiary(ctx, prepared.Diary.Date)
+		if err != nil {
+			return 0, "", nil, fmt.Errorf("read BOARD diary: %w", err)
+		}
+		if found {
+			if remote.ActorID != "lumina" {
+				return 0, "", nil, errors.New("BOARD diary actor conflict")
+			}
+			if remote.Body != prepared.Diary.Body || remote.Reflection != prepared.Diary.Reflection {
+				receipt.Status, receipt.Reason = "blocked", "diary_remote_conflict"
+				receipt.ArchiveSaved = true
+				receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+				if err := g.receipts.Save(ctx, receipt); err != nil {
+					return 0, "", nil, fmt.Errorf("save diary conflict receipt: %w", err)
+				}
+				return 0, "blocked", nil, nil
+			}
+		} else {
+			if _, err := g.diaryWriter.PutDiary(ctx, prepared.Diary); err != nil {
+				return 0, "", nil, fmt.Errorf("write BOARD diary: %w", err)
+			}
+			boardCreated = true
+		}
+		receipt.DiarySaved = true
+		receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+		if err := g.receipts.Save(ctx, receipt); err != nil {
+			return 0, "", nil, fmt.Errorf("checkpoint BOARD diary: %w", err)
+		}
+	}
+	receipt.Status = "complete"
+	receipt.Reason = ""
+	receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+	if err := g.receipts.Save(ctx, receipt); err != nil {
+		return 0, "", nil, fmt.Errorf("complete diary receipt: %w", err)
+	}
+	if boardCreated {
+		return 1, "complete", nil, nil
+	}
+	return 0, "complete", nil, nil
+}
+
 func (g *GmailIntake) newReceipt(ctx context.Context, message GmailMessage, status, reason string, prepared []appbacklog.IntakeRequest, ids []string) GmailReceipt {
 	var actorID, taskID, runID, traceID string
 	if scope, ok := domaintool.ToolExecutionScopeFromContext(ctx); ok {
@@ -706,13 +925,17 @@ func (g *GmailIntake) receiptNow() time.Time {
 }
 
 func validateGmailPage(page GmailPage, account string) error {
+	return validateGmailPageForQuery(page, account, GmailQuery)
+}
+
+func validateGmailPageForQuery(page GmailPage, account, query string) error {
 	if page.Schema != gmailSchema {
 		return errors.New("Gmail page schema is invalid")
 	}
 	if !utf8.ValidString(page.Account) || strings.TrimSpace(page.Account) == "" || strings.ContainsAny(page.Account, "\x00\r\n") || !strings.EqualFold(page.Account, account) {
 		return errors.New("Gmail page account does not match the configured account")
 	}
-	if page.Query != GmailQuery {
+	if page.Query != query {
 		return errors.New("Gmail page query does not match CORE policy")
 	}
 	if len(page.Messages) > maxGmailMessages {
@@ -773,6 +996,9 @@ func ValidateGmailReceipt(receipt GmailReceipt) error {
 		return errors.New("receipt policy revision is invalid")
 	}
 	preparedCount := len(receipt.Prepared) + len(receipt.PreparedKnowledge)
+	if receipt.PreparedDiary != nil {
+		preparedCount++
+	}
 	switch receipt.Status {
 	case "prepared":
 		if preparedCount == 0 || len(receipt.Prepared) > maxGmailProposals || len(receipt.PreparedKnowledge) > maxGmailKnowledgeItems || preparedCount > maxGmailProposals+maxGmailKnowledgeItems {
@@ -783,7 +1009,7 @@ func ValidateGmailReceipt(receipt GmailReceipt) error {
 			return errors.New("complete receipt requests are invalid")
 		}
 	case "skipped", "blocked":
-		if preparedCount != 0 || len(receipt.BacklogItemIDs) != 0 || len(receipt.KnowledgeItemIDs) != 0 {
+		if (receipt.Status == "skipped" && preparedCount != 0) || (receipt.Status == "blocked" && preparedCount != 0 && (receipt.PreparedDiary == nil || len(receipt.Prepared) != 0 || len(receipt.PreparedKnowledge) != 0)) || len(receipt.BacklogItemIDs) != 0 || len(receipt.KnowledgeItemIDs) != 0 {
 			return errors.New("terminal receipt must not contain prepared requests or backlog item identities")
 		}
 	default:
@@ -828,7 +1054,7 @@ func ValidateGmailReceipt(receipt GmailReceipt) error {
 	if len(receipt.BacklogItemIDs) > maxGmailProposals || len(receipt.KnowledgeItemIDs) > maxGmailKnowledgeItems {
 		return errors.New("receipt backlog item identity bound exceeded")
 	}
-	if receipt.Status == "complete" && len(receipt.BacklogItemIDs)+len(receipt.KnowledgeItemIDs) == 0 {
+	if receipt.Status == "complete" && receipt.PreparedDiary == nil && len(receipt.BacklogItemIDs)+len(receipt.KnowledgeItemIDs) == 0 {
 		return errors.New("complete receipt backlog item identities are invalid")
 	}
 	if receipt.Status == "complete" && len(receipt.BacklogItemIDs)+len(receipt.KnowledgeItemIDs) > preparedCount {
@@ -869,6 +1095,33 @@ func ValidateGmailReceipt(receipt GmailReceipt) error {
 		if err := validatePreparedGmailKnowledge(receipt, index, prepared); err != nil {
 			return err
 		}
+	}
+	if receipt.PreparedDiary != nil {
+		if len(receipt.Prepared) != 0 || len(receipt.PreparedKnowledge) != 0 || classifyGmailSubject(receipt.Message.Subject) != gmailSubjectDiary {
+			return errors.New("diary receipt contains incompatible prepared outputs")
+		}
+		parsed, err := parseGmailDiary(receipt.Message)
+		if err != nil {
+			return fmt.Errorf("prepared diary source is invalid: %w", err)
+		}
+		archive := receipt.PreparedDiary.Archive
+		diary := receipt.PreparedDiary.Diary
+		receivedAt, receivedErr := time.Parse(time.RFC3339Nano, receipt.Message.ReceivedAt)
+		if receivedErr != nil || receipt.Account != "nyukimin0811@gmail.com" || receipt.PreparedDiary.SourceKey != gmailLocator(receipt.Account, receipt.Message.ID) || archive.SourceRef != receipt.PreparedDiary.SourceKey || archive.OriginalText != receipt.Message.Text || archive.Title != receipt.Message.Subject || archive.SourceKind != "lumina_diary_email" || archive.AuthorID != "lumina" || archive.DiaryDate != parsed.Date || !archive.Protected || !archive.CreatedAt.Equal(receivedAt) {
+			return errors.New("prepared diary archive does not match its original Gmail source")
+		}
+		if err := domainkm.ValidatePersonalArchiveEntry(archive); err != nil {
+			return fmt.Errorf("prepared diary archive is invalid: %w", err)
+		}
+		if diary.ActorID != "lumina" || diary.Date != parsed.Date || diary.Revision != 1 || diary.Body != parsed.Body || diary.Reflection != parsed.Reflection {
+			return errors.New("prepared BOARD diary does not match parsed Gmail source")
+		}
+	}
+	if (receipt.ArchiveSaved || receipt.DiarySaved) && receipt.PreparedDiary == nil {
+		return errors.New("diary acknowledgments require a prepared diary")
+	}
+	if receipt.Status == "complete" && receipt.PreparedDiary != nil && (!receipt.ArchiveSaved || !receipt.DiarySaved) {
+		return errors.New("complete diary receipt requires both sink acknowledgments")
 	}
 	if len(receipt.PreparedKnowledge) > 0 {
 		preparedKnowledgeIDs := make(map[string]struct{}, len(receipt.PreparedKnowledge))
@@ -1012,6 +1265,9 @@ func (g *GmailIntake) validateReceiptKnowledgeOwner(receipt GmailReceipt) error 
 	if g == nil || strings.TrimSpace(g.userID) == "" {
 		return errors.New("Gmail configured Knowledge owner is unavailable")
 	}
+	if receipt.PreparedDiary != nil && receipt.PreparedDiary.Archive.UserID != g.userID {
+		return errors.New("prepared Gmail diary archive user does not match the configured owner")
+	}
 	for _, prepared := range receipt.PreparedKnowledge {
 		if prepared.Item.UserID != g.userID {
 			return errors.New("prepared Gmail Knowledge item user does not match the configured owner")
@@ -1026,9 +1282,13 @@ const (
 	gmailSubjectDaily   gmailSubjectClass = "daily"
 	gmailSubjectDirect  gmailSubjectClass = "direct"
 	gmailSubjectSkipped gmailSubjectClass = "skipped"
+	gmailSubjectDiary   gmailSubjectClass = "diary"
 )
 
 func classifyGmailSubject(subject string) gmailSubjectClass {
+	if gmailDiarySubjectPattern.MatchString(strings.TrimSpace(subject)) {
+		return gmailSubjectDiary
+	}
 	lower := strings.ToLower(subject)
 	if strings.Contains(lower, "rencrow") && strings.Contains(lower, "backlog") {
 		return gmailSubjectDirect

@@ -1,124 +1,22 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
-func TestLivingSeatRoomRecognizesAllSharedSeats(t *testing.T) {
-	for slot, wantRoom := range map[string]string{
-		"sofa": "living", "sofa-guest": "living",
-		"dining": "dining", "dining-guest": "dining",
-		"dining-aisle-north": "dining", "dining-aisle-south": "dining",
-		"dining-window-north": "dining", "dining-window-south": "dining",
-	} {
-		if got := livingSeatRoom(slot); got != wantRoom {
-			t.Errorf("livingSeatRoom(%q) = %q, want %q", slot, got, wantRoom)
-		}
-	}
-}
+type gameObserverSessionsReaderFunc func(context.Context) ([]gameObserverActiveAgentSession, error)
 
-func TestLivingRestSeatCandidatesRotateAcrossEightSeats(t *testing.T) {
-	want := map[string]string{
-		"sofa": "living", "sofa-guest": "living",
-		"dining": "dining", "dining-guest": "dining",
-		"dining-aisle-north": "dining", "dining-aisle-south": "dining",
-		"dining-window-north": "dining", "dining-window-south": "dining",
-	}
-	firstByActor := map[string]string{}
-	for _, actorID := range []string{"mio", "kuro", "shiro", "aka"} {
-		seats := livingRestSeatCandidates(worldread.Snapshot{}, actorID)
-		if len(seats) != len(want) {
-			t.Fatalf("%s candidates = %d, want all %d shared seats: %+v", actorID, len(seats), len(want), seats)
-		}
-		seen := make(map[string]bool, len(seats))
-		for _, seat := range seats {
-			if want[seat.slot] != seat.room || seen[seat.slot] {
-				t.Fatalf("%s candidate is unknown or duplicated: %+v", actorID, seat)
-			}
-			seen[seat.slot] = true
-		}
-		firstByActor[actorID] = seats[0].slot
-	}
-	if firstByActor["mio"] == firstByActor["kuro"] {
-		t.Fatalf("actor-specific ordering did not spread first choices: %+v", firstByActor)
-	}
-}
-
-func TestLivingRestSeatCandidatesKeepOwnersCurrentSeatFirst(t *testing.T) {
-	snapshot := worldread.Snapshot{Actors: []worldread.Actor{
-		{ActorID: "mio", Present: true, RoomID: "dining", SlotID: "dining-window-south"},
-		{ActorID: "other", Present: true, RoomID: "living", SlotID: "sofa"},
-	}}
-	seats := livingRestSeatCandidates(snapshot, "mio")
-	if len(seats) == 0 || seats[0] != (livingSeatActivity{"dining", "dining-window-south", ""}) {
-		t.Fatalf("owner should keep its occupied seat first: %+v", seats)
-	}
-}
-
-func TestLivingRestSeatCandidatesExcludeOccupiedAndReservedSeats(t *testing.T) {
-	snapshot := worldread.Snapshot{Actors: []worldread.Actor{
-		{ActorID: "occupied", Present: true, RoomID: "living", SlotID: "sofa"},
-		{ActorID: "moving", Present: true, RoomID: "living", SlotID: "dining-guest",
-			ActivityID: "move-1", ActivityKind: "move", TargetRoomID: "dining", TargetSlotID: "dining-aisle-north"},
-		{ActorID: "absent", Present: false, ActivityID: "move-2", ActivityKind: "move",
-			TargetRoomID: "dining", TargetSlotID: "dining-aisle-south"},
-		{ActorID: "target-only", Present: true, TargetSlotID: "dining-window-south"},
-		{ActorID: "mio-world", Present: true, RoomID: "living", SlotID: "sofa-guest",
-			ActivityID: "rest-move", ActivityKind: "move", TargetRoomID: "dining", TargetSlotID: "dining-window-north"},
-	}}
-	seats := livingRestSeatCandidates(snapshot, "mio-world")
-	if len(seats) == 0 || seats[0] != (livingSeatActivity{"dining", "dining-window-north", ""}) {
-		t.Fatalf("own in-flight target should be first for resume, got %+v", seats)
-	}
-	seen := make(map[string]bool, len(seats))
-	for _, seat := range seats {
-		seen[seat.slot] = true
-	}
-	for _, slot := range []string{"sofa", "sofa-guest", "dining-guest", "dining-aisle-north", "dining-window-south"} {
-		if seen[slot] {
-			t.Errorf("occupied, moving-source, or reserved seat %q was returned: %+v", slot, seats)
-		}
-	}
-	if !seen["dining-aisle-south"] {
-		t.Errorf("seat reserved only by an absent actor was excluded: %+v", seats)
-	}
-}
-
-func TestLivingRestSeatCandidatesReturnUnavailableWhenAllSeatsAreOccupied(t *testing.T) {
-	snapshot := worldread.Snapshot{Actors: []worldread.Actor{
-		{ActorID: "one", Present: true, RoomID: "living", SlotID: "sofa"},
-		{ActorID: "two", Present: true, RoomID: "living", SlotID: "sofa-guest"},
-		{ActorID: "three", Present: true, RoomID: "dining", SlotID: "dining"},
-		{ActorID: "four", Present: true, RoomID: "dining", SlotID: "dining-guest"},
-		{ActorID: "five", Present: true, RoomID: "dining", SlotID: "dining-aisle-north"},
-		{ActorID: "six", Present: true, RoomID: "dining", SlotID: "dining-aisle-south"},
-		{ActorID: "seven", Present: true, RoomID: "dining", SlotID: "dining-window-north"},
-		{ActorID: "eight", Present: true, RoomID: "dining", SlotID: "dining-window-south"},
-	}}
-	if seats := livingRestSeatCandidates(snapshot, "mio"); len(seats) != 0 {
-		t.Fatalf("unavailable room returned candidates: %+v", seats)
-	}
-}
-
-func TestLivingRestSeatCandidateRaceRespectsConcurrentMoveReservation(t *testing.T) {
-	stale := worldread.Snapshot{}
-	first := livingRestSeatCandidates(stale, "mio")
-	secondFromStale := livingRestSeatCandidates(stale, "aka")
-	if len(first) == 0 || len(secondFromStale) == 0 || first[0] != secondFromStale[0] {
-		t.Fatalf("fixture must select the same initially free seat: first=%+v second=%+v", first, secondFromStale)
-	}
-
-	accepted := first[0]
-	fresh := worldread.Snapshot{Actors: []worldread.Actor{{
-		ActorID: "mio", Present: true, ActivityID: "move-accepted", ActivityKind: "move",
-		TargetRoomID: accepted.room, TargetSlotID: accepted.slot,
-	}}}
-	retried := livingRestSeatCandidates(fresh, "aka")
-	if len(retried) == 0 || retried[0].slot == accepted.slot {
-		t.Fatalf("fresh in-flight reservation was reused after a concurrent acceptance: accepted=%+v retry=%+v", accepted, retried)
-	}
+func (f gameObserverSessionsReaderFunc) ActiveAgentSessions(ctx context.Context) ([]gameObserverActiveAgentSession, error) {
+	return f(ctx)
 }
 
 func TestLivingConversationUsesDistinctSeatsAndTracksCurrentTurn(t *testing.T) {
@@ -150,28 +48,231 @@ func TestLivingConversationUsesDistinctSeatsAndTracksCurrentTurn(t *testing.T) {
 	}
 }
 
-func TestRestSeatReconciliationProtectsPendingMoveAndAllowsPriorityDeparture(t *testing.T) {
-	restSeat := livingSeatActivity{room: "living", slot: "sofa"}
-	prioritySeat := livingSeatActivity{room: "living", slot: "desk-mio"}
+func TestRunningGameLeaseTargetsOwnDeskAndProjectsTyping(t *testing.T) {
+	_, deps, server := newRoutineHouseViewTestRuntime(t, true)
+	defer server.Close()
+	gamesResponse := []byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio","personas":["mio"],"status":"running"}]}`)
+	gamesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(gamesResponse)
+	}))
+	defer gamesServer.Close()
+	gameSessions, err := newGameObserverSessionsHTTPClient(gamesServer.URL)
+	if err != nil {
+		t.Fatalf("create GAMES sessions client: %v", err)
+	}
+	deps.agentRoutine.gameSessions = gameSessions
+	scheduler := startLivingSeatTestScheduler(t)
+	deps.agentHeartbeat = scheduler
+	runtime := deps.agentRoutine
+	runtime.deps = deps
 
-	pendingAtRestSeat := worldread.Actor{
-		Present: true, ActivityKind: "move", ActivityID: "rest-move",
-		TargetRoomID: restSeat.room, TargetSlotID: restSeat.slot,
+	release, err := scheduler.AcquireGameTurn(context.Background(), "mio", domaintask.PriorityHigh, "nethack")
+	if err != nil {
+		t.Fatalf("acquire real game-turn lease: %v", err)
 	}
-	if !shouldDeferRestSeatReconcile(pendingAtRestSeat, livingSeatActivity{}, restSeat, true) {
-		t.Fatal("empty desired target evicted an in-flight pending rest move")
+	defer release()
+
+	seat, ready, err := runtime.livingSeats(context.Background())
+	if err != nil {
+		t.Fatalf("read desired living seats: %v", err)
 	}
-	if !shouldDeferRestSeatReconcile(pendingAtRestSeat, prioritySeat, restSeat, true) {
-		t.Fatal("reconciler raced a higher-priority move against the routine's in-flight move")
+	if !ready {
+		t.Fatal("running scheduler snapshot is unavailable")
 	}
-	idleInSeat := worldread.Actor{Present: true, RoomID: restSeat.room, SlotID: restSeat.slot}
-	if shouldDeferRestSeatReconcile(idleInSeat, prioritySeat, restSeat, true) {
-		t.Fatal("a different higher-priority seat target was blocked after the rest move settled")
+	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
+		t.Fatalf("running mio game seat = %+v, want %+v", got, want)
 	}
-	if !shouldDeferRestSeatReconcile(idleInSeat, restSeat, restSeat, true) {
-		t.Fatal("matching confirmed rest target was not retained")
+
+	actors := make([]worldread.Actor, 0, len(runtime.worldActorIDs))
+	for worldID, coreID := range runtime.worldActorIDs {
+		actor := worldread.Actor{
+			ActorID: worldID, Present: true, RoomID: "room-" + coreID,
+			Position: [3]float64{1, 2, 0}, HasPosition: true,
+			HomeSceneSHA256: routineHouseViewTestSceneSHA256,
+		}
+		if coreID == "mio" {
+			actor.RoomID = "living"
+			actor.SlotID = "desk-mio"
+		}
+		actors = append(actors, actor)
 	}
-	if shouldDeferRestSeatReconcile(idleInSeat, prioritySeat, restSeat, false) {
-		t.Fatal("rest reconciliation hold applied without a pending rest request")
+	read := routineSnapshotRead{
+		snapshot: worldread.Snapshot{
+			WorldID: "home-world", StateSeq: 45, Actors: actors,
+			HomeSceneSHA256: routineHouseViewTestSceneSHA256,
+		},
+		readAt: time.Date(2026, time.November, 16, 0, 0, 0, 0, time.UTC),
+	}
+	projected, err := runtimeRoutineHouseViewProject(context.Background(), runtime, read)
+	if err != nil {
+		t.Fatalf("project canonical house view: %v", err)
+	}
+	foundMio := false
+	for _, actor := range projected.Actors {
+		if actor.ID != "mio" {
+			continue
+		}
+		foundMio = true
+		if actor.SeatID != "desk-mio" || actor.SeatAction != "type" {
+			t.Fatalf("projected mio seat = %q/%q, want desk-mio/type", actor.SeatID, actor.SeatAction)
+		}
+	}
+	if !foundMio {
+		t.Fatal("canonical house projection omitted mio")
+	}
+
+	release()
+	seat, ready, err = runtime.livingSeats(context.Background())
+	if err != nil {
+		t.Fatalf("read desired living seats after release: %v", err)
+	}
+	if !ready {
+		t.Fatal("running scheduler snapshot is unavailable after release")
+	}
+	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
+		t.Fatalf("active game session lost its desk after turn release: got %+v, want %+v", got, want)
+	}
+	projected, err = runtimeRoutineHouseViewProject(context.Background(), runtime, read)
+	if err != nil {
+		t.Fatalf("project house view after game turn release: %v", err)
+	}
+	for _, actor := range projected.Actors {
+		if actor.ID == "mio" && (actor.SeatID != "desk-mio" || actor.SeatAction != "type") {
+			t.Fatalf("active session projection after turn release = %q/%q, want desk-mio/type", actor.SeatID, actor.SeatAction)
+		}
+	}
+	gamesResponse = []byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio-1","personas":["mio"],"status":"running"},{"game_id":"nethack","session_id":"nethack-mio-2","personas":["mio"],"status":"running"}]}`)
+	seat, ready, err = runtime.livingSeats(context.Background())
+	if err != nil || !ready || seat["mio"] != (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}) {
+		t.Fatalf("two active sessions for mio = (%+v, %t, %v), want union retaining desk-mio/type", seat, ready, err)
+	}
+	gamesResponse = []byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio-2","personas":["mio"],"status":"running"}]}`)
+	seat, ready, err = runtime.livingSeats(context.Background())
+	if err != nil || !ready || seat["mio"] != (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}) {
+		t.Fatalf("one remaining session for mio = (%+v, %t, %v), want desk-mio/type", seat, ready, err)
+	}
+	gamesResponse = []byte(`{"ok":true,"source":"local_observer","sessions":[{"game_id":"nethack","session_id":"nethack-mio","persona":"mio","status":"completed"}],"active_agent_sessions":[]}`)
+	seat, ready, err = runtime.livingSeats(context.Background())
+	if err != nil {
+		t.Fatalf("read desired living seats after session completion: %v", err)
+	}
+	if !ready {
+		t.Fatal("successful empty active-session snapshot was unavailable")
+	}
+	if _, exists := seat["mio"]; exists {
+		t.Fatalf("terminal session left a stale desired seat: %+v", seat["mio"])
+	}
+	projected, err = runtimeRoutineHouseViewProject(context.Background(), runtime, read)
+	if err != nil {
+		t.Fatalf("project house view after game session completion: %v", err)
+	}
+	for _, actor := range projected.Actors {
+		if actor.ID == "mio" && actor.SeatAction != "" {
+			t.Fatalf("completed game session retained typing pose %q", actor.SeatAction)
+		}
+	}
+}
+
+func TestActiveGameSessionTargetsDeskBeforeFirstTurnLease(t *testing.T) {
+	_, deps, server := newRoutineHouseViewTestRuntime(t, true)
+	defer server.Close()
+	gamesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio","personas":["mio"],"status":"launching"}]}`))
+	}))
+	defer gamesServer.Close()
+	gameSessions, err := newGameObserverSessionsHTTPClient(gamesServer.URL)
+	if err != nil {
+		t.Fatalf("create GAMES sessions client: %v", err)
+	}
+	deps.agentRoutine.gameSessions = gameSessions
+	scheduler := startLivingSeatTestScheduler(t)
+	deps.agentHeartbeat = scheduler
+	runtime := deps.agentRoutine
+	runtime.deps = deps
+	seat, ready, err := runtime.livingSeats(context.Background())
+	if err != nil {
+		t.Fatalf("read desired living seats before first turn: %v", err)
+	}
+	if !ready {
+		t.Fatal("active launching session was unavailable before its first turn lease")
+	}
+	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
+		t.Fatalf("pre-turn mio game seat = %+v, want %+v", got, want)
+	}
+}
+
+func TestGameSessionSnapshotFailureDoesNotBecomeAnEmptySeatSet(t *testing.T) {
+	_, deps, server := newRoutineHouseViewTestRuntime(t, true)
+	defer server.Close()
+	scheduler := startLivingSeatTestScheduler(t)
+	deps.agentHeartbeat = scheduler
+	runtime := deps.agentRoutine
+	runtime.deps = deps
+	runtime.gameSessions = gameObserverSessionsReaderFunc(func(context.Context) ([]gameObserverActiveAgentSession, error) {
+		return nil, errGameObserverSessionsUnavailable
+	})
+	seats, ready, err := runtime.livingSeats(context.Background())
+	if ready || !errors.Is(err, errGameObserverSessionsUnavailable) || seats != nil {
+		t.Fatalf("livingSeats() = (%+v, %t, %v), want unavailable snapshot", seats, ready, err)
+	}
+	read := routineSnapshotRead{snapshot: worldread.Snapshot{
+		WorldID: "home-world", HomeSceneSHA256: routineHouseViewTestSceneSHA256,
+	}}
+	if _, err := runtimeRoutineHouseViewProject(context.Background(), runtime, read); !errors.Is(err, errGameObserverSessionsUnavailable) {
+		t.Fatalf("house view projection error = %v, want unavailable GAMES snapshot", err)
+	}
+}
+
+func TestGameSessionSeatsYieldToWorkAndConversationSeats(t *testing.T) {
+	sessions := []gameObserverActiveAgentSession{{
+		GameID: "herzog_zwei", SessionID: "multi-agent-game", Personas: []string{"mio", "midori", "shiro", "aka"}, Status: "running",
+	}}
+	activities := []agentheartbeat.LivingActivity{
+		{ActorID: "mio", State: "running", ActivityKind: "board"},
+		{ActorID: "midori", State: "running", ActivityKind: "private"},
+		{ActorID: "shiro", State: "running", ActivityKind: "routine"},
+	}
+	conversations := map[string]livingSeatActivity{"shiro": {room: "dining", slot: "dining-guest", pose: "talk"}}
+	seats := buildLivingSeatTargets(sessions, activities, conversations)
+	want := map[string]livingSeatActivity{
+		"mio":    {room: "living", slot: "desk-mio", pose: "review"},
+		"midori": {room: "living", slot: "desk-midori", pose: "notes"},
+		"shiro":  {room: "dining", slot: "dining-guest", pose: "talk"},
+		"aka":    {room: "living", slot: "desk-aka", pose: "type"},
+	}
+	for actorID, expected := range want {
+		if got := seats[actorID]; got != expected {
+			t.Errorf("seat for %s = %+v, want %+v", actorID, got, expected)
+		}
+	}
+}
+
+func startLivingSeatTestScheduler(t *testing.T) *agentheartbeat.Scheduler {
+	t.Helper()
+	scheduler := agentheartbeat.New(agentHeartbeatActorIDs, agentheartbeat.Sources{}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = scheduler.Start(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer waitCancel()
+		if err := scheduler.Wait(waitCtx); err != nil {
+			t.Errorf("wait for scheduler shutdown: %v", err)
+		}
+	})
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		if _, ready := scheduler.LivingSnapshot(context.Background(), nil); ready {
+			return scheduler
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("scheduler did not become available")
+		default:
+			time.Sleep(time.Millisecond)
+		}
 	}
 }

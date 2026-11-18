@@ -61,7 +61,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
 | `GET /viewer/superagent` | SuperAgentの現在projectionを返す読み取り専用status |
 | `GET /viewer/board/agent-work` | RenCrow_BOARD Studio専用のowner-only読み取りprojection。direct loopback、`LocalAgentOps.AuthTokenFile`のBearer、`RenCrow_BOARD` / `board-studio-readonly` profileを要求する。8 actorのheartbeat/activity、Task current/waiting queue、side-effect-free BOARD inbox preview、foreground waiterのpriority順を別componentで返す。BOARD titleはpreviewのbounded excerptだけで、全本文／ACK receiptは返さない。`availability`と`queue_completeness`で未取得・未設定を空queueから区別する。公開`/viewer/living/heartbeat`のtitle可視性は変更しない |
-| `GET /viewer/living/heartbeat` | direct loopbackからqueryなしで読み取るAgent実行枠と継続する日課の投影。既存の`state`と`activity_kind`は実行枠を表す。実行中の`activity_kind=game`には、現在のturn leaseが既知の固定IDを持つ場合だけoptionalな`game_id`を返す（現在の許可値: `nethack`、`herzog_zwei`、`territory_commander`、`survival_garden`）。未知game IDとfree-form title／prompt／reason、Task／Session IDは返さず、queued waiterはactiveになるまで表示しない。waiting中の`routine_availability`は`available / disabled / unavailable`、`ongoing_activity`は`sleep_window / waiting / moving_home`。running/routine中は優先Taskを上書きせず、検証済み`moving_home`またはstep開始済みの`sofa_reading / sofa_chat / dining_tea_chat / dining_tea`だけを返す。読書は実本文chunk提示、会話は会話開始、お茶は構造化した茶休憩開始のcheckpointとcanonical Runのrunningを要する。茶表示は物理的な飲用動作を検証した意味ではない。複数actorの投影に必要なfresh WORLD snapshotは一呼出しで1回共有し、候補なしなら省略する。非公開のTask、部屋、intent、エラー詳細を返さず、読み取りによるTask作成も行わない |
+| `GET /viewer/living/heartbeat` | direct loopbackからqueryなしで読み取るAgent実行枠と継続する日課の投影。既存の`state`と`activity_kind`は実行枠を表す。実行中の`activity_kind=game`には、現在のturn leaseが既知の固定IDを持つ場合だけoptionalな`game_id`を返す（現在の許可値: `nethack`、`herzog_zwei`、`territory_commander`、`survival_garden`）。未知game IDとfree-form title／prompt／reason、Task／Session IDは返さず、queued waiterはactiveになるまで表示しない。`routine_availability`は`available / disabled / unavailable`、日課が利用可能な待機枠の`ongoing_activity`は`sleep_window / rest / waiting / moving_home`。`sleep_window`はCOREの保存済み就寝時間、`rest`は保存済み期間と新しいWORLD在室確認が一致した休憩を表す。実行中の仕事を日課で上書きせず、非公開のTask、部屋、intent、エラー詳細を返さない。読み取りによるTask作成は行わない |
 | `POST /viewer/superagent/runs/pause` | Task ownerがcanonical Taskとそのcanonical Runを`waiting`へ遷移し、AgentRun projectionだけを`paused`として現在の`task_id`／`run_id`を返す |
 | `POST /viewer/superagent/runs/resume` | `paused` projectionの旧`run_id`をsource selectorとしてcheckpointを検証し、`run_id`なしのqueue intentを登録。`task_id`、`source_run_id`、`status=queued`、`queue_id`、`queue_status=queued`を返し、claim時にTask ownerが新しいRunIDを作成 |
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
@@ -1106,22 +1106,35 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   `observation`、`available_actions`、`request`を持つ。
 - COREは`persona`から実Agentを解決し、Agent固有のPersona／Execution Role／
   推論Target経路でstrict JSONの`BrainDecision`を生成する。
-- Game turnのLLM requestはnon-stream textで実行する。COREは先頭のaction identifier
-  token（`A-Za-z0-9_.-`）だけを決定的に切り出し、`available_actions`の一要素との
-  完全一致だけを受理する。引用符、JSON、Markdown、未知の先頭tokenは拒否する。
-- COREはcomma、空白、改行、引用符をstop sequenceとしてGatewayへ渡し、最初のaction
-  tokenで生成を停止させる。stop適用後もallowlist完全一致を満たさない出力は拒否する。
-- 先頭tokenが不正な場合は同じ実Agent・正規routeで最大3回まで再判断する。各回を同じ
-  allowlist Boundaryで検証し、3回とも不正ならturnをblockedにする。別Brainへfallbackしない。
-- COREは大きなworld観測でもpromptとcompletionをcontext上限内へ収めるため、requestを
-  compact JSONで渡し、全Agentのgame turn completionを共通のbounded token budgetへ固定する。
-- LLM residualは`available_actions`からの`intent`選択だけに限定する。CORE Boundaryは
-  exact tokenをallowlist照合し、Agent identity、選択を表す定型reason、単一stepの
-  action planを決定的に付与してdomain contractを検証する。
+- Game turnのLLM requestはnon-streamで実行する。NetHackは既存のtext契約を保ち、
+  COREは先頭のaction identifier token（`A-Za-z0-9_.-`）だけを決定的に切り出し、
+  `available_actions`の一要素との完全一致を受理する。引用符、JSON、Markdown、未知の
+  先頭tokenは拒否する。completionは16 tokenに制限し、comma、空白、改行、引用符を
+  stop sequenceとしてGatewayへ渡す。
+- `survival_garden`、`territory_commander`、`herzog_zwei`はLLMのresidualとして一つの
+  完全な`ActionStep`をJSON objectで生成する。COREは`ResponseFormatJSONObject`を指定し、
+  256 tokenと16 KiBに制限する。JSON出力にtoken stop sequenceは設定しない。
+- JSON objectは`action`、任意の文字列`target`、任意のobject `args`だけを持つ。
+  COREは未知／重複したトップレベルfield、不正JSON、trailing content、欠落／未知の`action`、
+  不正な`target`／`args`型を拒否し、`action`が`available_actions`に完全一致することを検証する。
+  `observation.action_contracts`と`observation.legal_ids`は選択候補と必須引数を対象Agentへ
+  示す。両fieldがあるrequestでは、COREは選択されたactionのdeclared contractに対して
+  required field、型、enum／reference、座標boundsを検証する。違反時は同じAgent／routeで
+  最大3回まで、具体的な検証errorを添えて再判断する。どちらのmetadataもない旧requestは
+  従来のparser契約を保ち、片方だけあるrequestまたは不正なcontract／referenceは拒否する。
+  COREはtarget／argsを補完・変更せず、undeclared args fieldも変更しない。GAMESは引き続き
+  actual world stateとtitle execution semanticsに対して再検証する。
+- invalidなtokenまたはstructured outputは同じ実Agent・正規routeで最大3回まで再判断する。
+  Gateway／transport errorは再試行せずturnを失敗させる。再試行上限後もturnを失敗させ、
+  別Brainへfallbackしない。
+- COREはrequestをcompact JSONで渡し、Agent固有のPersona／Execution Role／推論Target経路を
+  維持する。NetHackの16 token text契約と他3 titleの256 token JSON契約を混ぜない。
+- COREはAgent identity、選択された`intent`、定型reason、target／argsを保持した単一stepの
+  `action_plan`を決定的に組み立てる。COREはworld stateを直接変更しない。
 - Responseは`agent_id`を必須とし、`agent_id`と`persona`はrequestの`persona`に
   一致しなければならない。
-- GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証して
-  からExecutorへ渡す。COREはworld stateを直接変更しない。
+- GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証し、
+  title固有のtarget／argsをactual world stateに対して検証してからExecutorへ渡す。
 - Agentが利用不能、応答が不正、またはCOREへ到達不能の場合はturnを失敗させる。
   `RuleBasedBrain`や`DummyBrain`へfallbackしてAgent判断として記録しない。
 
@@ -1131,7 +1144,8 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
 ### Game Bridge status／candidate event契約
 
 `GET /viewer/games/status`の`supported_games`は、Agent decision E2Eへ移行済みの
-titleだけを示します。現在は`nethack`です。GAMESのlocal simulation対応title一覧とは
+titleだけを示します。現在のCORE Agent decision capabilityは`nethack`、
+`survival_garden`、`territory_commander`、`herzog_zwei`です。GAMESのlocal simulation対応title一覧とは
 別のcapabilityです。
 autoplayの既定ロースターは`mio`、`shiro`、`kuro`、`midori`の4人です。
 

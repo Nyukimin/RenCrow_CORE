@@ -34,21 +34,19 @@ import (
 )
 
 const (
-	agentRoutineModuleID        = "agent_routine"
-	agentRoutineDiaryBodyMax    = 120 << 10
-	agentRoutineReflectionMax   = 24 << 10
-	agentRoutineSnapshotMaxAge  = 250 * time.Millisecond
-	agentRoutineProviderTimeout = 2 * time.Minute
-	agentRoutineWebTimeout      = 45 * time.Second
-	agentRoutinePersistTimeout  = 15 * time.Second
-	agentRoutineRetryDelay      = 15 * time.Minute
+	agentRoutineModuleID               = "agent_routine"
+	agentRoutineDiaryBodyMax           = 120 << 10
+	agentRoutineReflectionMax          = 24 << 10
+	agentRoutineSnapshotMaxAge         = 250 * time.Millisecond
+	agentRoutineProviderTimeout        = 2 * time.Minute
+	agentRoutineWebTimeout             = 45 * time.Second
+	agentRoutinePersistTimeout         = 15 * time.Second
+	agentRoutineRetryDelay             = 15 * time.Minute
+	agentRoutineDiaryReflectionVersion = "character-v3"
 )
 
-type routineBookFetcher interface {
-	FetchURL(context.Context, modulewebgather.FetchRequest) (modulewebgather.FetchResponse, error)
-}
-
 var errAgentRoutineStopped = errors.New("agent routine stopped")
+var errRoutineGameAdmission = errors.New("routine work is deferred while a GAMES session owns an actor")
 
 type agentRoutineRuntime struct {
 	cfg           *config.Config
@@ -59,11 +57,10 @@ type agentRoutineRuntime struct {
 	ownerID       string
 	workers       map[string]privateTaskWorker
 	tools         agent.ToolRunner
-	bookFetcher   routineBookFetcher
-	restReader    routineRestReader
 	mediaRunner   routineMediaRunner
 	world         *worldread.Client
 	worldLife     *worldread.LifeClient
+	gameSessions  gameObserverActiveSessionsReader
 	worldActorIDs map[string]string // WORLD actor ID -> exact CORE actor ID alias configured by the operator.
 	canStartIdle  func(string) bool
 	webReady      bool
@@ -78,8 +75,6 @@ type agentRoutineRuntime struct {
 	livingConversation   map[string]livingSeatActivity
 	amendmentMu          sync.Mutex
 	lastAmendmentCheck   map[string]time.Time
-	restFactCheckMu      sync.Mutex
-	restFactCheck        map[string]routineRestFactValidation
 }
 
 type routineSnapshotRead struct {
@@ -87,26 +82,21 @@ type routineSnapshotRead struct {
 	readAt   time.Time
 }
 
-type routineRestFactValidation struct {
-	intentID string
-	verified bool
-}
-
 type routineProgress struct {
-	Actors               []routineActorProgress `json:"actors"`
-	Media                *routineMediaProgress  `json:"media,omitempty"`
-	World                *routineWorldProgress  `json:"world,omitempty"`
-	SearchResult         string                 `json:"search_result,omitempty"`
-	HobbyText            string                 `json:"hobby_text,omitempty"`
-	DiaryBody            string                 `json:"diary_body,omitempty"`
-	DiaryReflection      string                 `json:"diary_reflection,omitempty"`
-	DiaryRevision        int64                  `json:"diary_revision,omitempty"`
-	DiaryPostingKey      string                 `json:"diary_posting_key,omitempty"`
-	DiaryReceipt         string                 `json:"diary_receipt,omitempty"`
-	DiaryReceiptRevision string                 `json:"diary_receipt_revision,omitempty"`
-	CompletedAt          time.Time              `json:"completed_at,omitempty"`
-	EffectCompleted      bool                   `json:"effect_completed,omitempty"`
-	Rest                 *routineRestProgress   `json:"rest,omitempty"`
+	Actors                 []routineActorProgress `json:"actors"`
+	Media                  *routineMediaProgress  `json:"media,omitempty"`
+	World                  *routineWorldProgress  `json:"world,omitempty"`
+	SearchResult           string                 `json:"search_result,omitempty"`
+	HobbyText              string                 `json:"hobby_text,omitempty"`
+	DiaryBody              string                 `json:"diary_body,omitempty"`
+	DiaryReflection        string                 `json:"diary_reflection,omitempty"`
+	DiaryReflectionVersion string                 `json:"diary_reflection_version,omitempty"`
+	DiaryRevision          int64                  `json:"diary_revision,omitempty"`
+	DiaryPostingKey        string                 `json:"diary_posting_key,omitempty"`
+	DiaryReceipt           string                 `json:"diary_receipt,omitempty"`
+	DiaryReceiptRevision   string                 `json:"diary_receipt_revision,omitempty"`
+	CompletedAt            time.Time              `json:"completed_at,omitempty"`
+	EffectCompleted        bool                   `json:"effect_completed,omitempty"`
 }
 
 type routineActorProgress struct {
@@ -137,8 +127,14 @@ func newAgentRoutineRuntime(cfg *config.Config, deps *Dependencies, workers map[
 	runtime := &agentRoutineRuntime{
 		cfg: cfg, deps: deps, store: store, tasks: deps.taskManager, journal: deps.canonicalEventStore,
 		ownerID: strings.TrimSpace(cfg.LocalAgentOps.UserID), workers: cloneRoutineWorkers(workers),
-		tools: tools, bookFetcher: deps.webGatherFetcher, restReader: newRoutineRestBookReader(deps.webGatherFetcher),
-		now: time.Now, worldActorIDs: make(map[string]string),
+		tools: tools, now: time.Now, worldActorIDs: make(map[string]string),
+	}
+	if observerURL := strings.TrimSpace(cfg.Games.ObserverURL); observerURL != "" {
+		gameSessions, clientErr := newGameObserverSessionsHTTPClient(observerURL)
+		if clientErr != nil {
+			return nil, fmt.Errorf("configure GAMES session reader: %w", clientErr)
+		}
+		runtime.gameSessions = gameSessions
 	}
 	if routineWorldConfigured(cfg.Heartbeat.Routine) {
 		credential, tokenErr := config.ReadRoutineWorldBearerToken(cfg.Heartbeat.Routine.WorldReadTokenFile)
@@ -317,9 +313,7 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			state.Pending, state.ScheduleDate, state.PlannedSleep, now,
 		)
 		sleepCleanup := state.Pending != nil && r.pendingRoutineSleepExpired(state.Pending, now)
-		retryingRest := state.Pending != nil && state.Pending.Kind == agentroutine.ActivityRelax &&
-			state.Pending.RetryAfter.After(now) && !bedtimeCleanup && !sleepCleanup
-		if state.Pending != nil && state.Pending.RetryAfter.After(now) && !retryingDiary && !retryingRest && !bedtimeCleanup && !sleepCleanup {
+		if state.Pending != nil && state.Pending.RetryAfter.After(now) && !retryingDiary && !bedtimeCleanup && !sleepCleanup {
 			return agentheartbeat.Work{}, false, nil
 		}
 		read, snapshotErr := r.readSnapshot(ctx)
@@ -335,33 +329,22 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			planState.Pending = nil
 			planState.NextDiaryDate = "" // Retry backoff must not monopolize the daylight fallback.
 		}
-		if retryingRest {
-			planState.Pending = nil // Let the ordinary daytime source offer higher-priority work.
+		if state.Pending == nil {
+			localNow := now.In(r.location())
+			hour := localNow.Hour()
+			priorDate := localNow.AddDate(0, 0, -1).Format("2006-01-02")
+			if hour >= 9 && hour < 22 && state.ActivatedOn != "" && priorDate >= state.ActivatedOn {
+				if changed, checkErr := r.checkDiaryAmendment(ctx, actorID, priorDate); checkErr == nil && changed &&
+					(planState.NextDiaryDate == "" || priorDate < planState.NextDiaryDate) {
+					planState.NextDiaryDate = priorDate
+				}
+			}
 		}
 		plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, planState, presence, canHobby)
 		if retryingDiary && plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
 			hour := now.In(r.location()).Hour()
 			if hour < 9 || hour >= 22 {
 				return agentheartbeat.Work{}, false, nil
-			}
-		}
-		if retryingRest {
-			if plan.Kind == agentroutine.ActivityDaytime && daytimeFallback != nil {
-				fallbackWork, found, fallbackErr := daytimeFallback(ctx, actorID)
-				if fallbackErr != nil || found {
-					return fallbackWork, found, fallbackErr
-				}
-			}
-			if plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
-				return agentheartbeat.Work{}, false, nil
-			}
-		}
-		if state.Pending == nil && plan.Kind == agentroutine.ActivityDaytime && now.In(r.location()).Hour() >= 9 && now.In(r.location()).Hour() < 22 {
-			priorDate := now.In(r.location()).AddDate(0, 0, -1).Format("2006-01-02")
-			if state.ActivatedOn == "" || priorDate >= state.ActivatedOn {
-				if changed, checkErr := r.checkDiaryAmendment(ctx, actorID, priorDate); checkErr == nil && changed {
-					plan.Kind, plan.Date, plan.Reason = agentroutine.ActivityDiary, priorDate, "previous-day confirmed facts changed after diary publication"
-				}
 			}
 		}
 		if state.Pending == nil && plan.Kind == agentroutine.ActivitySleep && plan.LogicalSleep && state.LogicalSleepUntil.After(now) {
@@ -400,13 +383,23 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			// the exact participant set durable and auditable.
 			participants = []string{plan.Participants[0]}
 			plan.Participants = participants
-		} else if plan.Kind == agentroutine.ActivityRelax && plan.RelaxRoom == agentroutine.RelaxRoomShared {
-			// Keep discovery aligned with planFresh so daytime shared rest can
-			// reserve a companion when one is actually available.
-			plan.Participants = firstRoutineParticipant(presence.ChatParticipants)
-			participants = append(participants, plan.Participants...)
 		} else {
 			plan.Participants = nil
+		}
+		var pendingProgress routineProgress
+		if state.Pending != nil {
+			pendingProgress, err = decodeRoutineProgress(state.Pending.Output)
+			if err != nil {
+				return agentheartbeat.Work{}, false, err
+			}
+		}
+		gameActors := routineGameActors(actorID, state.Pending, participants, plan.Participants)
+		activeGame, gameErr := r.hasActiveRoutineGame(ctx, gameActors...)
+		wakeValidation := r.worldLife != nil &&
+			((state.Pending == nil && plan.Kind == agentroutine.ActivityWake) ||
+				(state.Pending != nil && state.Pending.Kind == agentroutine.ActivityWake))
+		if (activeGame || gameErr != nil) && !routineGameRecoveryAllowed(state.Pending, pendingProgress) && !wakeValidation {
+			return agentheartbeat.Work{}, false, nil
 		}
 		workID := "agent-routine:" + actorID + ":" + plan.Date + ":" + string(plan.Kind)
 		return agentheartbeat.Work{
@@ -420,39 +413,102 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 	}
 }
 
-func (r *agentRoutineRuntime) preemptPendingRoutineRest(
-	ctx context.Context,
-	stop <-chan struct{},
-	actorID string,
-	state agentroutine.State,
-	plan agentroutine.Plan,
-) error {
-	if state.Pending == nil || state.Pending.Kind != agentroutine.ActivityRelax {
-		return nil
+func (r *agentRoutineRuntime) hasActiveRoutineGame(ctx context.Context, actorIDs ...string) (bool, error) {
+	if r == nil || r.gameSessions == nil {
+		return false, nil
 	}
-	intentID := state.Pending.ID
-	latest, err := r.store.Load(ctx, actorID)
+	sessions, err := r.gameSessions.ActiveAgentSessions(ctx)
 	if err != nil {
-		return err
+		return false, fmt.Errorf("read GAMES sessions for routine admission: %w", err)
 	}
-	if latest.Pending == nil || latest.Pending.ID != intentID || latest.Pending.Kind != agentroutine.ActivityRelax {
-		return nil
+	wanted := make(map[string]struct{}, len(actorIDs))
+	for _, actorID := range actorIDs {
+		if strings.TrimSpace(actorID) != "" {
+			wanted[actorID] = struct{}{}
+		}
 	}
-	progress, err := decodeRoutineProgress(latest.Pending.Output)
+	if len(wanted) == 0 {
+		return false, nil
+	}
+	for _, session := range sessions {
+		if session.Status != "launching" && session.Status != "running" {
+			continue
+		}
+		for _, persona := range session.Personas {
+			if _, ok := wanted[persona]; ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (r *agentRoutineRuntime) routineGameAdmissionBlocked(ctx context.Context, actorIDs ...string) (bool, error) {
+	active, err := r.hasActiveRoutineGame(ctx, actorIDs...)
 	if err != nil {
-		return err
+		return true, fmt.Errorf("%w: %v", errRoutineGameAdmission, err)
 	}
-	settledState, _, err := r.routineWorldStopActiveOperations(ctx, latest, progress)
-	if err != nil {
-		return r.deferRoutineRestIntent(ctx, latest, progress, err)
+	if active {
+		return true, errRoutineGameAdmission
 	}
-	if err := r.cancelStaleIntentWithCooldown(ctx, settledState, time.Time{}); err != nil {
-		return err
+	return false, nil
+}
+
+func routineGameActors(actorID string, intent *agentroutine.Intent, discovered, planned []string) []string {
+	actors := []string{actorID}
+	if intent != nil && intent.Kind == agentroutine.ActivityMorningChat {
+		actors = append(actors, intent.Participants...)
 	}
-	if plan.Kind == agentroutine.ActivitySleep || plan.Kind == agentroutine.ActivityWake {
-		return r.run(ctx, stop, actorID, plan)
+	actors = append(actors, discovered...)
+	actors = append(actors, planned...)
+	return actors
+}
+
+func routineGameRecoveryAllowed(intent *agentroutine.Intent, progress routineProgress) bool {
+	if intent == nil {
+		return false
+	}
+	if routineGameAuthenticatedWakeRecovery(intent, progress) || progress.EffectCompleted || routineProgressNeedsWorldSettlement(progress) ||
+		routineProgressHasUnresolvedWorldAction(progress) || progress.DiaryPostingKey != "" || progress.DiaryReceipt != "" ||
+		progress.HobbyText != "" || (progress.Media != nil && progress.Media.Verified) {
+		return true
+	}
+	return false
+}
+
+func routineGameAuthenticatedWakeRecovery(intent *agentroutine.Intent, progress routineProgress) bool {
+	if intent == nil || intent.Kind != agentroutine.ActivityWake || progress.World == nil || progress.World.SleepStart == nil {
+		return false
+	}
+	binding := progress.World.SleepStart
+	return routineWorldActionIsRecovery(intent, progress, worldread.HomeActionWake,
+		worldread.HomeActionPayload{ActorID: intent.ActorID, ActivityID: binding.ActivityID}, false)
+}
+
+func (r *agentRoutineRuntime) requireNoActiveRoutineGame(ctx context.Context, intent *agentroutine.Intent) error {
+	if intent == nil {
+		return errRoutineGameAdmission
+	}
+	blocked, err := r.routineGameAdmissionBlocked(ctx, routineGameActors(intent.ActorID, intent, nil, nil)...)
+	if err != nil || blocked {
+		return errRoutineGameAdmission
 	}
 	return nil
+}
+
+func routineProgressHasUnresolvedWorldAction(progress routineProgress) bool {
+	if progress.World == nil {
+		return false
+	}
+	for _, operation := range progress.World.Operations {
+		if operation.ReceiptStatus == "rejected" {
+			continue
+		}
+		if operation.ReceiptID == "" || !operation.EventVerified {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *agentRoutineRuntime) ensureState(ctx context.Context, actorID string) (agentroutine.State, time.Time, error) {
@@ -481,110 +537,6 @@ func (r *agentRoutineRuntime) ensureState(ctx context.Context, actorID string) (
 // loadDecisionState makes scheduler discovery read-only. A schedule is
 // projected into this local copy; the reserved Work.Run persists it before
 // drafting any intent or starting a canonical Task.
-
-// projectLegacyRestWindow affects only the read-only policy projection. Older
-// releases stored room presence as a completed rest without activity evidence;
-// that short cooldown must not delay a real activity after this upgrade.
-func (r *agentRoutineRuntime) projectLegacyRestWindow(ctx context.Context, state *agentroutine.State, now time.Time) (bool, error) {
-	if state == nil || state.RestWindow == nil || state.LastFinishedIntentID == "" ||
-		!state.CooldownUntil.After(now) || !state.RestWindow.Until.After(now) {
-		return false, nil
-	}
-	verified, err := r.verifiedRestFactForState(ctx, *state)
-	if err != nil {
-		return false, err
-	}
-	if verified {
-		return false, nil
-	}
-	state.RestWindow = nil
-	state.CooldownUntil = time.Time{}
-	return true, nil
-}
-
-func (r *agentRoutineRuntime) verifiedRestFactForState(ctx context.Context, state agentroutine.State) (bool, error) {
-	if state.RestWindow == nil || state.LastFinishedIntentID == "" {
-		return false, nil
-	}
-	r.restFactCheckMu.Lock()
-	if cached, ok := r.restFactCheck[state.ActorID]; ok && cached.intentID == state.LastFinishedIntentID {
-		r.restFactCheckMu.Unlock()
-		return cached.verified, nil
-	}
-	r.restFactCheckMu.Unlock()
-
-	window := state.RestWindow
-	fromDate := window.ObservedAt.In(r.location()).AddDate(0, 0, -1).Format("2006-01-02")
-	throughDate := window.Until.In(r.location()).AddDate(0, 0, 1).Format("2006-01-02")
-	facts, err := r.store.ListFactsInDateRange(ctx, state.ActorID, fromDate, throughDate)
-	if err != nil {
-		return false, err
-	}
-	verified := false
-	for _, fact := range facts {
-		if fact.SourceID != state.LastFinishedIntentID || fact.Kind != agentroutine.ActivityRelax ||
-			!fact.Confirmed || fact.At.IsZero() || fact.At.Before(window.ObservedAt) || fact.At.After(window.Until) {
-			continue
-		}
-		if routineRestFactHasActivityEvidence(fact, state.ActorID, window.RoomID) {
-			verified = true
-			break
-		}
-	}
-	r.restFactCheckMu.Lock()
-	if r.restFactCheck == nil {
-		r.restFactCheck = make(map[string]routineRestFactValidation)
-	}
-	r.restFactCheck[state.ActorID] = routineRestFactValidation{intentID: state.LastFinishedIntentID, verified: verified}
-	r.restFactCheckMu.Unlock()
-	return verified, nil
-}
-
-func routineRestFactHasActivityEvidence(fact agentroutine.Activity, actorID, roomID string) bool {
-	var reference routineRestFactReference
-	if json.Unmarshal([]byte(fact.Reference), &reference) == nil && reference.Mode != "" {
-		seat, ok := reference.Seats[actorID]
-		if !ok || !seat.Confirmed || seat.RoomID != roomID || seat.SlotID == "" {
-			return false
-		}
-		switch reference.Mode {
-		case routineRestModeReading:
-			return reference.Read != nil && reference.Read.CompletedAt.After(reference.Read.StartedAt) &&
-				reference.Read.Title != "" && reference.Read.Author != "" && reference.Read.SourceURL != "" &&
-				reference.Read.RightsURL != "" && reference.Read.BodyHash != "" && reference.Read.BodyRunes > reference.Read.EndRune &&
-				reference.Read.EndRune > reference.Read.StartRune && reference.Read.NextRune == reference.Read.EndRune &&
-				strings.TrimSpace(reference.Read.Reflection) != ""
-		case routineRestModeTea:
-			return reference.TeaVirtual && reference.Read == nil &&
-				reference.TeaCompletedAt.After(reference.TeaStartedAt) &&
-				strings.TrimSpace(reference.TeaReflection) != "" && reference.FailureReason != "book_fetch_unavailable"
-		case routineRestModeConversation:
-			if len(reference.Conversation) != 2 || !reference.ConversationCompletedAt.After(reference.ConversationStartedAt) {
-				return false
-			}
-			for _, turn := range reference.Conversation {
-				if strings.TrimSpace(turn["actor_id"]) == "" || strings.TrimSpace(turn["text"]) == "" {
-					return false
-				}
-			}
-			return true
-		}
-		return false
-	}
-	var private map[string]json.RawMessage
-	if json.Unmarshal([]byte(fact.Reference), &private) != nil {
-		return false
-	}
-	var scope, recordedRoom, reflection string
-	var observedAt, startedAt, completedAt time.Time
-	return json.Unmarshal(private["scope"], &scope) == nil && scope == "private" &&
-		json.Unmarshal(private["room_id"], &recordedRoom) == nil && recordedRoom == roomID &&
-		json.Unmarshal(private["observed_at"], &observedAt) == nil && !observedAt.IsZero() &&
-		json.Unmarshal(private["started_at"], &startedAt) == nil && !startedAt.IsZero() &&
-		json.Unmarshal(private["completed_at"], &completedAt) == nil && completedAt.After(startedAt) &&
-		json.Unmarshal(private["reflection"], &reflection) == nil && strings.TrimSpace(reflection) != ""
-}
-
 func (r *agentRoutineRuntime) loadDecisionState(ctx context.Context, actorID string) (agentroutine.State, time.Time, error) {
 	now := r.now().In(r.location())
 	state, err := r.store.Load(ctx, actorID)
@@ -604,14 +556,8 @@ func (r *agentRoutineRuntime) loadDecisionState(ctx context.Context, actorID str
 		state.ScheduleDate, state.PlannedSleep, state.PlannedWake = scheduleDate, sleepAt, wakeAt
 		state.LogicalSleepUntil = time.Time{}
 	}
-	if _, err := r.projectLegacyRestWindow(ctx, &state, now); err != nil {
-		return agentroutine.State{}, now, err
-	}
 	if state.ActivatedOn == "" {
 		state.ActivatedOn, state.NextDiaryDate = date, date
-	}
-	if _, err := r.projectLegacyRestWindow(ctx, &state, now); err != nil {
-		return agentroutine.State{}, now, err
 	}
 	return state, now, nil
 }
@@ -944,6 +890,15 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 	if err != nil {
 		return err
 	}
+	allowWorldWakeValidation := r.worldLife != nil &&
+		((state.Pending == nil && planned.Kind == agentroutine.ActivityWake) ||
+			(state.Pending != nil && state.Pending.Kind == agentroutine.ActivityWake))
+	if state.Pending == nil {
+		blocked, admissionErr := r.routineGameAdmissionBlocked(activityCtx, routineGameActors(actorID, nil, nil, planned.Participants)...)
+		if (admissionErr != nil || blocked) && !(planned.Kind == agentroutine.ActivityWake && r.worldLife != nil) {
+			return nil
+		}
+	}
 	if state.Pending == nil {
 		fresh, now, err := r.planFresh(activityCtx, actorID, false, planned.Participants)
 		if err != nil {
@@ -959,6 +914,11 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			}
 			fresh = planned
 		}
+		blocked, admissionErr := r.routineGameAdmissionBlocked(activityCtx, routineGameActors(actorID, nil, nil, fresh.Participants)...)
+		if (admissionErr != nil || blocked) && !(fresh.Kind == agentroutine.ActivityWake && r.worldLife != nil) {
+			return nil
+		}
+		allowWorldWakeValidation = fresh.Kind == agentroutine.ActivityWake && r.worldLife != nil
 		state, err = r.draftIntent(activityCtx, actorID, fresh, now)
 		if err != nil {
 			return err
@@ -968,27 +928,24 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		if decodeErr != nil {
 			return decodeErr
 		}
-		if state.Pending.Kind == agentroutine.ActivityRelax && pendingProgress.EffectCompleted &&
-			!r.routineRestEffectVerified(pendingProgress) {
-			// Room-only rest completions from older releases are not activity
-			// evidence. Close that stale intent without a rest window/cooldown so
-			// the next eligible activity can be scheduled.
-			if routineProgressNeedsWorldSettlement(pendingProgress) {
-				if r.world == nil || r.worldLife == nil {
-					return errors.Join(errRoutineWorldUnavailable, errors.New("legacy rest has an unsettled WORLD activity"))
-				}
-				state, pendingProgress, err = r.routineWorldStopActiveOperations(activityCtx, state, pendingProgress)
-				if err != nil {
-					return err
-				}
+		blocked, admissionErr := r.routineGameAdmissionBlocked(activityCtx, routineGameActors(actorID, state.Pending, nil, nil)...)
+		gameAdmissionRestricted := admissionErr != nil || blocked
+		worldRecoveryPending := routineProgressNeedsWorldSettlement(pendingProgress) || routineProgressHasUnresolvedWorldAction(pendingProgress)
+		if gameAdmissionRestricted && worldRecoveryPending {
+			var recoveryErr error
+			state, pendingProgress, recoveryErr = r.recoverRoutineWorldForGame(activityCtx, state, pendingProgress)
+			pauseErr := r.pausePersistedRoutineRuns(activityCtx, state.Pending, pendingProgress,
+				"routine World recovery settled and paused while a GAMES session owns an involved actor")
+			return errors.Join(recoveryErr, pauseErr)
+		}
+		if admissionErr != nil || blocked {
+			if !routineGameRecoveryAllowed(state.Pending, pendingProgress) && !allowWorldWakeValidation {
+				return r.pausePersistedRoutineRuns(activityCtx, state.Pending, pendingProgress,
+					"routine Run paused while a GAMES session owns an involved actor")
 			}
-			return r.cancelStaleIntentWithCooldown(activityCtx, state, time.Time{})
 		}
 		fresh, now, err := r.planFresh(activityCtx, actorID, true, nil)
 		if err != nil {
-			if state.Pending != nil && state.Pending.Kind == agentroutine.ActivityRelax {
-				return r.deferRoutineRestIntent(activityCtx, state, pendingProgress, err)
-			}
 			return err
 		}
 		if state.Pending.Kind == agentroutine.ActivityDiary && (fresh.Kind == agentroutine.ActivitySleep || fresh.Kind == agentroutine.ActivityWake) {
@@ -1002,7 +959,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			state.Pending, fresh.ScheduleDate, fresh.PlannedSleep, now,
 		)
 		sleepCleanup := r.pendingRoutineSleepExpired(state.Pending, now)
-		if bedtimeCleanup || sleepCleanup {
+		if (bedtimeCleanup || sleepCleanup) && !(gameAdmissionRestricted && routineProgressHasUnresolvedWorldAction(pendingProgress)) {
 			latest, loadErr := r.store.Load(activityCtx, actorID)
 			if loadErr != nil {
 				return loadErr
@@ -1043,9 +1000,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 					return r.cancelStaleIntent(activityCtx, state)
 				}
 			}
-		} else if state.Pending.Kind == agentroutine.ActivityRelax && !pendingProgress.EffectCompleted && fresh.Kind != agentroutine.ActivityRelax {
-			return r.preemptPendingRoutineRest(activityCtx, stop, actorID, state, fresh)
-		} else if state.Pending.RetryAfter.After(now) {
+		} else if state.Pending.RetryAfter.After(now) && !(gameAdmissionRestricted && worldRecoveryPending) {
 			return nil
 		}
 		if routineStopRequested(activityCtx, stop) {
@@ -1053,7 +1008,8 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			return settleErr
 		}
 		if !pendingProgress.EffectCompleted && (state.Pending.Kind == agentroutine.ActivityHobby || state.Pending.Kind == agentroutine.ActivityMorningChat) &&
-			!r.pendingIntentStillEligible(activityCtx, state, now, fresh, pendingProgress) {
+			!r.pendingIntentStillEligible(activityCtx, state, now, fresh, pendingProgress) &&
+			!(gameAdmissionRestricted && worldRecoveryPending) {
 			settledState, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, pendingProgress)
 			if settleErr != nil {
 				return settleErr
@@ -1080,76 +1036,22 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 	if err != nil {
 		return err
 	}
+	blocked, admissionErr := r.routineGameAdmissionBlocked(activityCtx, routineGameActors(intent.ActorID, &intent, nil, nil)...)
+	if admissionErr != nil || blocked {
+		if !routineGameRecoveryAllowed(&intent, progress) && !allowWorldWakeValidation {
+			return r.pausePersistedRoutineRuns(activityCtx, &intent, progress,
+				"routine Run paused while a GAMES session owns an involved actor")
+		}
+	}
 	if intent.Kind == agentroutine.ActivityDiary && r.boardClient(actorID) == nil {
 		return r.deferIntent(activityCtx, state, progress, errors.New("pinned BOARD diary writer is unavailable"))
-	}
-	if intent.Kind == agentroutine.ActivityRelax && !progress.EffectCompleted {
-		if progress.Rest == nil || progress.Rest.Scope == agentroutine.RelaxRoomUnknown {
-			fresh, now, planErr := r.planFresh(activityCtx, intent.ActorID, true, nil)
-			if planErr != nil || fresh.Kind != agentroutine.ActivityRelax {
-				if planErr == nil {
-					planErr = errors.New("pending relaxation is no longer eligible under fresh routine policy")
-				}
-				return r.deferRoutineRestIntent(activityCtx, state, progress, planErr)
-			}
-			progress.Rest = &routineRestProgress{Scope: fresh.RelaxRoom}
-			state, progress, err = r.saveProgress(activityCtx, state, "rest_scope_migrated", progress)
-			if err != nil {
-				return err
-			}
-			_ = now
-		}
-		if progress.Rest.Scope == agentroutine.RelaxRoomShared {
-			state, progress, err = r.prepareRoutineRestPlan(activityCtx, state, progress)
-			if err != nil {
-				return r.deferRoutineRestIntent(activityCtx, state, progress, err)
-			}
-			intent = *state.Pending
-			seated := false
-			for attempt := 0; attempt < 8; attempt++ {
-				state, progress, err = r.ensureRoutineRestSeats(activityCtx, stop, state, progress)
-				if errors.Is(err, errRoutineRestSeatOccupied) {
-					state, progress, err = r.prepareRoutineRestPlan(activityCtx, state, progress)
-					if err != nil {
-						return r.deferRoutineRestIntent(activityCtx, state, progress, err)
-					}
-					continue
-				}
-				if err != nil {
-					if routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) {
-						_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
-						if errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled) {
-							err = nil
-						}
-						return errors.Join(err, settleErr)
-					}
-					if errors.Is(err, errRoutineRestSeatMoveExhausted) {
-						progress.Rest.FailureReason = routineRestFailureCode(err)
-						state, _, saveErr := r.saveProgress(activityCtx, state, "rest_seat_moves_exhausted", progress)
-						if saveErr != nil {
-							return errors.Join(err, saveErr)
-						}
-						return errors.Join(err, r.cancelStaleIntentWithCooldown(activityCtx, state, r.now().Add(agentRoutineRetryDelay)))
-					}
-					return r.deferRoutineRestIntent(activityCtx, state, progress, err)
-				}
-				seated = true
-				break
-			}
-			if !seated {
-				return r.deferRoutineRestIntent(activityCtx, state, progress, errRoutineRestUnavailable)
-			}
-		} else if progress.Rest.Scope != agentroutine.RelaxRoomPrivate {
-			return r.deferRoutineRestIntent(activityCtx, state, progress, errors.New("unknown relaxation room scope"))
-		}
 	}
 	prepared, state, progress, err := r.prepareRuns(activityCtx, stop, state, progress)
 	if err != nil {
 		if routineStopRequested(activityCtx, stop) {
 			_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
 			pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped while starting canonical runs")
-			if !errors.Is(err, taskmanager.ErrStartedRunNotClosed) &&
-				(routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled)) {
+			if (errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled)) && !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
 				err = nil
 			}
 			return errors.Join(err, settleErr, pauseErr)
@@ -1161,11 +1063,22 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped before provider work")
 		return errors.Join(settleErr, pauseErr)
 	}
+	blocked, admissionErr = r.routineGameAdmissionBlocked(activityCtx, routineGameActors(intent.ActorID, &intent, nil, nil)...)
+	if admissionErr != nil || blocked {
+		if !routineGameRecoveryAllowed(&intent, progress) && !allowWorldWakeValidation {
+			pauseErr := r.pauseRuns(activityCtx, prepared, "routine deferred while an active game owns an involved actor")
+			return errors.Join(pauseErr)
+		}
+	}
 	if state.Pending.ChoiceEligible && !state.Pending.ChoiceCommitted && r.worldLife != nil {
 		windowCtx, cancelWindow := r.withRoutineWindow(activityCtx, state.Pending, state)
 		state, progress, err = r.prepareRoutineWorldChoice(windowCtx, stop, state, progress)
 		cancelWindow()
 		if err != nil {
+			if errors.Is(err, errRoutineGameAdmission) {
+				pauseErr := r.pauseRuns(activityCtx, prepared, "WORLD choice deferred while an active game owns an involved actor")
+				return errors.Join(pauseErr)
+			}
 			if routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) {
 				_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
 				pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped before WORLD choice confirmation")
@@ -1194,7 +1107,7 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 	if !progress.EffectCompleted {
 		switch intent.Kind {
 		case agentroutine.ActivityRelax:
-			state, progress, err = r.executeRelaxation(activityCtx, stop, state, progress, prepared)
+			state, progress, err = r.executeRelaxation(activityCtx, stop, state, progress)
 		case agentroutine.ActivitySleep, agentroutine.ActivityWake:
 			if r.worldLife != nil {
 				state, progress, err = r.executeRoutineWorldActivity(activityCtx, stop, state, progress)
@@ -1215,9 +1128,6 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 			state, progress, err = r.executeDiary(activityCtx, stop, state, progress, prepared[0])
 		default:
 			err = fmt.Errorf("unsupported routine intent kind %q", intent.Kind)
-		}
-		if intent.Kind == agentroutine.ActivityRelax {
-			prepared = routinePreparedRunsForActors(prepared, progress.Actors)
 		}
 		if err != nil && intent.Kind == agentroutine.ActivityDiary && errors.Is(err, context.DeadlineExceeded) && !routineStopRequested(activityCtx, stop) {
 			boundary, boundaryAt, boundaryErr := r.planFresh(activityCtx, actorID, true, nil)
@@ -1240,25 +1150,17 @@ func (r *agentRoutineRuntime) run(ctx context.Context, stop <-chan struct{}, act
 		if routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) {
 			_, _, settleErr := r.routineWorldStopActiveOperations(context.Background(), state, progress)
 			pauseErr := r.pauseRuns(activityCtx, prepared, "routine stopped; checkpoint retained")
-			if !errors.Is(err, taskmanager.ErrStartedRunNotClosed) &&
-				(routineStopRequested(activityCtx, stop) || errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled)) {
+			if (errors.Is(err, errAgentRoutineStopped) || errors.Is(err, context.Canceled)) && !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
 				err = nil
 			}
 			return errors.Join(err, settleErr, pauseErr)
 		}
 		if err != nil {
-			if intent.Kind == agentroutine.ActivityRelax && errors.Is(err, errRoutineRestSeatMoveExhausted) {
-				progress.Rest.FailureReason = routineRestFailureCode(err)
-				state, _, saveErr := r.saveProgress(activityCtx, state, "rest_seat_moves_exhausted", progress)
-				if saveErr != nil {
-					return errors.Join(err, saveErr)
-				}
-				return errors.Join(err, r.cancelStaleIntentWithCooldown(activityCtx, state, r.now().Add(agentRoutineRetryDelay)))
+			if errors.Is(err, errRoutineGameAdmission) {
+				pauseErr := r.pauseRuns(activityCtx, prepared, "routine effect deferred while an active game owns an involved actor")
+				return errors.Join(pauseErr)
 			}
 			pauseErr := r.pauseRuns(activityCtx, prepared, "routine step failed; checkpoint retained")
-			if intent.Kind == agentroutine.ActivityRelax {
-				return errors.Join(r.deferRoutineRestIntent(activityCtx, state, progress, err), pauseErr)
-			}
 			return errors.Join(r.deferIntent(activityCtx, state, progress, err), pauseErr)
 		}
 	}
@@ -1381,25 +1283,10 @@ func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, cle
 	if err != nil {
 		return agentroutine.Plan{}, now, err
 	}
-	if _, err := r.projectLegacyRestWindow(ctx, &state, now); err != nil {
-		return agentroutine.Plan{}, now, err
-	}
-	pendingRest := (*agentroutine.Intent)(nil)
-	if clearPending && state.Pending != nil && state.Pending.Kind == agentroutine.ActivityRelax {
-		pendingRest = state.Pending
-	}
 	if clearPending {
 		state.Pending = nil
 	}
 	read, snapshotErr := r.readSnapshotFresh(ctx)
-	if pendingRest != nil {
-		if snapshotErr != nil {
-			return agentroutine.Plan{}, now, fmt.Errorf("pending rest WORLD snapshot is unavailable: %w", snapshotErr)
-		}
-		if err := r.validatePendingRestSnapshot(read.snapshot, pendingRest); err != nil {
-			return agentroutine.Plan{}, now, err
-		}
-	}
 	if snapshotErr != nil {
 		read = routineSnapshotRead{}
 	}
@@ -1407,12 +1294,11 @@ func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, cle
 	canHobby := r.canHobby(actorID)
 	plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, state, presence, canHobby)
 	plan = daytimeRelaxPlan(plan, presence)
-	if plan.Kind == agentroutine.ActivityMorningChat ||
-		(plan.Kind == agentroutine.ActivityRelax && plan.RelaxRoom == agentroutine.RelaxRoomShared) {
+	if plan.Kind == agentroutine.ActivityMorningChat {
 		if len(reservedParticipants) == 1 && containsRoutineActor(presence.ChatParticipants, reservedParticipants[0]) {
 			plan.Participants = append([]string(nil), reservedParticipants...)
 		} else {
-			plan.Participants = firstRoutineParticipant(presence.ChatParticipants)
+			plan.Participants = firstRoutineParticipant(plan.Participants)
 		}
 	} else {
 		plan.Participants = nil
@@ -1422,63 +1308,6 @@ func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, cle
 
 // daytimeRelaxPlan converts an otherwise empty daytime slot into a bounded
 // quiet-time activity only when the latest WORLD observation confirms a room.
-
-func (r *agentRoutineRuntime) validatePendingRestSnapshot(snapshot worldread.Snapshot, intent *agentroutine.Intent) error {
-	if intent == nil || snapshot.WorldID == "" || snapshot.StateHash == "" {
-		return errors.New("pending rest WORLD snapshot is incomplete")
-	}
-	worldActorID, ok := r.routineWorldActorID(intent.ActorID)
-	if !ok {
-		return errors.New("pending rest actor has no exact authenticated WORLD binding")
-	}
-	actors := make(map[string]worldread.Actor, len(snapshot.Actors))
-	for _, actor := range snapshot.Actors {
-		actors[actor.ActorID] = actor
-	}
-	actor, found := actors[worldActorID]
-	if !found || !actor.Present || actor.RoomID == "" {
-		return errors.New("pending rest actor is missing from the fresh WORLD snapshot")
-	}
-	progress, err := decodeRoutineProgress(intent.Output)
-	if err != nil {
-		return fmt.Errorf("decode pending rest checkpoint for WORLD validation: %w", err)
-	}
-	if progress.Rest == nil || progress.Rest.Scope != agentroutine.RelaxRoomShared {
-		return nil
-	}
-	for actorID, seat := range progress.Rest.Seats {
-		worldID, ok := r.routineWorldActorID(actorID)
-		if !ok {
-			return errors.New("pending rest seat actor has no exact authenticated WORLD binding")
-		}
-		seatActor, found := actors[worldID]
-		if !found || !seatActor.Present || seatActor.RoomID == "" || seat.ObservedStateSeq > snapshot.StateSeq {
-			return errors.New("pending rest seat actor is missing or stale in the fresh WORLD snapshot")
-		}
-		if seat.MoveActivityID == "" {
-			continue
-		}
-		var move *routineWorldOperation
-		if progress.World != nil {
-			for index := range progress.World.Operations {
-				candidate := &progress.World.Operations[index]
-				if candidate.ActorID == actorID && candidate.ActivityID == seat.MoveActivityID &&
-					candidate.Action == worldread.HomeActionMove && candidate.ActivityKind == "move" &&
-					candidate.ReceiptStatus == "committed" && candidate.EventVerified &&
-					routineWorldDigest(candidate.SceneSHA256) {
-					move = candidate
-					break
-				}
-			}
-		}
-		if move == nil || snapshot.HomeSceneSHA256 != move.SceneSHA256 ||
-			seatActor.HomeSceneSHA256 != move.SceneSHA256 {
-			return errors.New("pending rest WORLD scene no longer matches its confirmed seat move")
-		}
-	}
-	return nil
-}
-
 func daytimeRelaxPlan(plan agentroutine.Plan, presence agentroutine.Presence) agentroutine.Plan {
 	if plan.Kind != agentroutine.ActivityDaytime {
 		return plan
@@ -1598,12 +1427,6 @@ func (r *agentRoutineRuntime) newRoutineIntent(actorID string, plan agentroutine
 		}
 	}
 	progress := routineProgress{Actors: []routineActorProgress{{ActorID: actorID, TaskID: modulecore.NewTaskID()}}}
-	if plan.Kind == agentroutine.ActivityRelax {
-		progress.Rest = &routineRestProgress{Scope: plan.RelaxRoom}
-		if plan.RelaxRoom == agentroutine.RelaxRoomShared && len(plan.Participants) == 1 {
-			progress.Rest.ParticipantID = plan.Participants[0]
-		}
-	}
 	if plan.Kind == agentroutine.ActivityMorningChat {
 		if len(plan.Participants) != 1 || r.workers[actorID] == nil || r.workers[plan.Participants[0]] == nil {
 			return agentroutine.Intent{}, errors.New("morning chat does not have two eligible private workers")
@@ -1651,47 +1474,17 @@ func decodeRoutineProgress(raw string) (routineProgress, error) {
 }
 
 func (r *agentRoutineRuntime) saveProgress(ctx context.Context, state agentroutine.State, step string, progress routineProgress) (agentroutine.State, routineProgress, error) {
-	if state.Pending == nil {
-		return state, progress, errors.New("cannot checkpoint routine progress without its exact pending intent")
-	}
 	encoded, err := json.Marshal(progress)
 	if err != nil {
 		return state, progress, err
 	}
-	for attempt := 0; attempt < 2; attempt++ {
-		saved, checkpointErr := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
-			return r.store.Checkpoint(persistCtx, state.ActorID, state.Pending.ID, step, string(encoded), state.Revision)
-		})
-		if checkpointErr == nil {
-			return saved, progress, nil
-		}
-		if !errors.Is(checkpointErr, agentroutine.ErrConflict) {
-			return state, progress, checkpointErr
-		}
-		latest, loadErr := r.store.Load(ctx, state.ActorID)
-		if loadErr != nil {
-			return state, progress, errors.Join(checkpointErr, fmt.Errorf("reload routine state after checkpoint conflict: %w", loadErr))
-		}
-		if latest.Pending == nil || latest.Pending.ID != state.Pending.ID {
-			return state, progress, fmt.Errorf("routine checkpoint %q intent changed during save: %w", step, agentroutine.ErrConflict)
-		}
-		if latest.Revision < state.Revision {
-			return state, progress, fmt.Errorf("routine checkpoint %q source revision is newer than durable state: expected revision=%d actual=%d: %w",
-				step, state.Revision, latest.Revision, agentroutine.ErrConflict)
-		}
-		if latest.Pending.Output == string(encoded) {
-			return latest, progress, nil
-		}
-		if latest.Revision <= state.Revision || latest.Pending.Output != state.Pending.Output || attempt == 1 {
-			return state, progress, fmt.Errorf("routine checkpoint %q conflicts with a newer progress payload: expected revision=%d actual=%d: %w",
-				step, state.Revision, latest.Revision, agentroutine.ErrConflict)
-		}
-		// Unrelated state writes such as schedule-date rollover preserve the
-		// pending output. Retry once against the latest revision without
-		// overwriting another activity checkpoint.
-		state = latest
+	saved, err := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.State, error) {
+		return r.store.Checkpoint(persistCtx, state.ActorID, state.Pending.ID, step, string(encoded), state.Revision)
+	})
+	if err != nil {
+		return state, progress, err
 	}
-	return state, progress, agentroutine.ErrConflict
+	return saved, progress, nil
 }
 
 func routinePersist[T any](ctx context.Context, action func(context.Context) (T, error)) (T, error) {
@@ -2047,20 +1840,8 @@ func routineTaskSummary(kind agentroutine.ActivityKind, progress routineProgress
 		}
 		return "Completed a CORE hobby step; activity details were not confirmed."
 	case agentroutine.ActivityRelax:
-		if progress.Rest != nil && progress.Rest.Scope == agentroutine.RelaxRoomShared {
-			if progress.Rest.Mode == routineRestModeReading && progress.Rest.Read != nil {
-				return fmt.Sprintf("Read and reflected on %q, %d-%d runes.", progress.Rest.Read.Title, progress.Rest.Read.StartRune, progress.Rest.Read.EndRune)
-			}
-			if progress.Rest.Mode == routineRestModeConversation {
-				return "Recorded the actual turns from a short private conversation."
-			}
-			if progress.Rest.Mode == routineRestModeTea {
-				return "Recorded a short tea-break reflection."
-			}
-		}
-		if progress.Rest != nil && progress.Rest.Scope == agentroutine.RelaxRoomPrivate &&
-			progress.Rest.CompletedAt.IsZero() == false && progress.Rest.PrivateReflection != "" {
-			return "Recorded a short private reflection during quiet time."
+		if progress.World != nil && progress.World.RelaxRoomID != "" && !progress.World.RelaxObservedAt.IsZero() {
+			return "Confirmed quiet time in the configured home room."
 		}
 		return "Completed the scheduled relaxation step; no room activity was confirmed."
 	case agentroutine.ActivityDiary:
@@ -2097,6 +1878,15 @@ func (r *agentRoutineRuntime) executeMorningChat(ctx context.Context, stop <-cha
 		var err error
 		state, progress, err = r.ensureRoutineMorningArrivals(ctx, stop, state, progress)
 		if err != nil {
+			return state, progress, err
+		}
+	}
+	conversationStarted := false
+	for _, actor := range progress.Actors {
+		conversationStarted = conversationStarted || actor.Output != ""
+	}
+	if !conversationStarted {
+		if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
 			return state, progress, err
 		}
 	}
@@ -2194,6 +1984,9 @@ func (r *agentRoutineRuntime) executeHobby(ctx context.Context, stop <-chan stru
 		return state, progress, errors.New("private hobby requires the actor's configured private room in a fresh WORLD snapshot")
 	}
 	if progress.SearchResult == "" {
+		if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+			return state, progress, err
+		}
 		if routineStopRequested(ctx, stop) {
 			return state, progress, errAgentRoutineStopped
 		}
@@ -2216,6 +2009,9 @@ func (r *agentRoutineRuntime) executeHobby(ctx context.Context, stop <-chan stru
 		return state, progress, errAgentRoutineStopped
 	}
 	if progress.HobbyText == "" {
+		if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+			return state, progress, err
+		}
 		prompt := fmt.Sprintf("次の公開検索結果を読んで、趣味として楽しめる短い創作メモを日本語で書いてください。検索結果の範囲を超えた事実は断定せず、動画再生・映画鑑賞・運動など実行していない行動をしたとは書かないでください。テーマ=%s\n検索結果:\n%s", state.Pending.Label, progress.SearchResult)
 		output, err := r.executePrivateWorker(ctx, prepared, state.Pending.ActorID, prompt)
 		if err != nil {
@@ -2446,32 +2242,45 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 	if boardClient == nil {
 		return state, progress, errors.New("pinned BOARD diary writer is unavailable")
 	}
+	if progress.DiaryPostingKey == "" && progress.DiaryReceipt == "" {
+		if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+			return state, progress, err
+		}
+	}
 	diary, diaryErr := r.store.GetDiary(ctx, actorID, state.Pending.Date)
 	if diaryErr != nil && !errors.Is(diaryErr, agentroutine.ErrNotFound) {
 		return state, progress, diaryErr
 	}
 	if diaryErr == nil && diary.Receipt != "" {
-		if progress.DiaryRevision == diary.Revision && progress.DiaryBody == diary.Body && progress.DiaryReflection == diary.Reflection {
+		if progress.DiaryRevision == diary.Revision && progress.DiaryBody == diary.Body &&
+			progress.DiaryReflection == diary.Reflection && progress.DiaryReflectionVersion == diary.ReflectionVersion &&
+			diary.ReflectionVersion == agentRoutineDiaryReflectionVersion {
 			progress.DiaryReceipt, progress.DiaryReceiptRevision = diary.Receipt, diary.ReceiptRevision
 			progress.DiaryPostingKey = diary.PostingKey
 			progress.EffectCompleted = true
 			return r.saveProgress(ctx, state, "diary_receipt_recovered", progress)
 		}
+		if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+			return state, progress, err
+		}
 		latestBody, bodyErr := r.buildRoutineDiaryBody(ctx, state)
 		if bodyErr != nil {
 			return state, progress, bodyErr
 		}
-		if latestBody == diary.Body {
+		if latestBody == diary.Body && diary.ReflectionVersion == agentRoutineDiaryReflectionVersion {
 			progress.DiaryBody, progress.DiaryReflection = diary.Body, diary.Reflection
+			progress.DiaryReflectionVersion = diary.ReflectionVersion
 			progress.DiaryRevision, progress.DiaryPostingKey = diary.Revision, diary.PostingKey
 			progress.DiaryReceipt, progress.DiaryReceiptRevision = diary.Receipt, diary.ReceiptRevision
 			progress.EffectCompleted = true
 			return r.saveProgress(ctx, state, "diary_receipt_recovered", progress)
 		}
 		// This is a bounded catch-up for the latest previously published day.
-		// Only changed confirmed facts create a new revision.
-		if progress.DiaryRevision != diary.Revision+1 || progress.DiaryBody != latestBody {
+		// Changed confirmed facts or a newer reflection instruction create a revision.
+		if progress.DiaryRevision != diary.Revision+1 || progress.DiaryBody != latestBody ||
+			progress.DiaryReflectionVersion != agentRoutineDiaryReflectionVersion {
 			progress.DiaryBody, progress.DiaryReflection = latestBody, ""
+			progress.DiaryReflectionVersion = ""
 			progress.DiaryRevision, progress.DiaryPostingKey = diary.Revision+1, ""
 		}
 		progress.DiaryReceipt, progress.DiaryReceiptRevision = "", ""
@@ -2485,9 +2294,16 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 		// An unacknowledged outbox draft must be replayed exactly before a newer
 		// body or reflection can be generated.
 		progress.DiaryBody, progress.DiaryReflection = diary.Body, diary.Reflection
+		progress.DiaryReflectionVersion = diary.ReflectionVersion
 		progress.DiaryRevision, progress.DiaryPostingKey = diary.Revision, diary.PostingKey
 	}
 	if errors.Is(diaryErr, agentroutine.ErrNotFound) {
+		newDiaryDraft := progress.DiaryPostingKey == "" && progress.DiaryReceipt == ""
+		if newDiaryDraft {
+			if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+				return state, progress, err
+			}
+		}
 		if progress.DiaryBody == "" {
 			body, err := r.buildRoutineDiaryBody(ctx, state)
 			if err != nil {
@@ -2496,6 +2312,11 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 			progress.DiaryBody = body
 		}
 		if progress.DiaryReflection == "" {
+			if newDiaryDraft {
+				if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+					return state, progress, err
+				}
+			}
 			if routineStopRequested(ctx, stop) {
 				return state, progress, errAgentRoutineStopped
 			}
@@ -2514,6 +2335,7 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 			if progress.DiaryReflection == "" {
 				return state, progress, errors.New("diary reflection provider returned empty text")
 			}
+			progress.DiaryReflectionVersion = agentRoutineDiaryReflectionVersion
 			state, progress, err = r.saveProgress(ctx, state, "diary_reflection_saved", progress)
 			if err != nil {
 				return state, progress, err
@@ -2522,11 +2344,17 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 		diary, err = routinePersist(ctx, func(persistCtx context.Context) (agentroutine.Diary, error) {
 			return r.store.SaveDiary(persistCtx, agentroutine.Diary{
 				ActorID: actorID, Date: state.Pending.Date, Revision: progress.DiaryRevision,
-				Body: progress.DiaryBody, Reflection: progress.DiaryReflection, PostingKey: progress.DiaryPostingKey,
+				Body: progress.DiaryBody, Reflection: progress.DiaryReflection,
+				ReflectionVersion: progress.DiaryReflectionVersion, PostingKey: progress.DiaryPostingKey,
 			})
 		})
 		if err != nil {
 			return state, progress, err
+		}
+		if newDiaryDraft {
+			if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+				return state, progress, err
+			}
 		}
 	}
 	progress.DiaryRevision, progress.DiaryPostingKey = diary.Revision, diary.PostingKey
@@ -2536,6 +2364,11 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 	}
 	if routineStopRequested(ctx, stop) {
 		return state, progress, errAgentRoutineStopped
+	}
+	if progress.DiaryReceipt == "" && errors.Is(diaryErr, agentroutine.ErrNotFound) {
+		if err := r.requireNoActiveRoutineGame(ctx, state.Pending); err != nil {
+			return state, progress, err
+		}
 	}
 	if err := r.validateRoutineRun(ctx, prepared.task, prepared.run, actorID); err != nil {
 		return state, progress, fmt.Errorf("validate diary BOARD write Run: %w", err)
@@ -2566,13 +2399,15 @@ func (r *agentRoutineRuntime) executeDiary(ctx context.Context, stop <-chan stru
 	acknowledged, err := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.Diary, error) {
 		return r.store.SaveDiary(persistCtx, agentroutine.Diary{
 			ActorID: write.ActorID, Date: write.Date, Revision: write.Revision, Body: write.Body, Reflection: write.Reflection,
-			PostingKey: diary.PostingKey, Receipt: entry.CorrelationID, ReceiptRevision: fmt.Sprintf("%d", entry.Revision), UpdatedAt: entry.UpdatedAt.UTC(),
+			ReflectionVersion: diary.ReflectionVersion, PostingKey: diary.PostingKey,
+			Receipt: entry.CorrelationID, ReceiptRevision: fmt.Sprintf("%d", entry.Revision), UpdatedAt: entry.UpdatedAt.UTC(),
 		})
 	})
 	if err != nil {
 		return state, progress, fmt.Errorf("persist validated BOARD diary receipt: %w", err)
 	}
 	progress.DiaryReceipt, progress.DiaryReceiptRevision = acknowledged.Receipt, acknowledged.ReceiptRevision
+	progress.DiaryReflectionVersion = acknowledged.ReflectionVersion
 	progress.EffectCompleted = true
 	return r.saveProgress(ctx, state, "diary_receipt_saved", progress)
 }
@@ -2614,37 +2449,11 @@ func (r *agentRoutineRuntime) buildDiaryBody(ctx context.Context, actorID, date 
 			confirmed = append(confirmed, fact)
 		}
 	}
-	sort.SliceStable(confirmed, func(i, j int) bool {
-		if confirmed[i].At.IsZero() != confirmed[j].At.IsZero() {
-			return !confirmed[i].At.IsZero()
-		}
-		if !confirmed[i].At.Equal(confirmed[j].At) {
-			return confirmed[i].At.Before(confirmed[j].At)
-		}
-		return confirmed[i].Key < confirmed[j].Key
-	})
-	var builder strings.Builder
-	fmt.Fprintf(&builder, "%s の記録\n\n", date)
-	builder.WriteString("記録の範囲: COREの確定記録と、認証済みWORLDイベント・canonical GAMES sessionで確認できた事実のみです。\n")
-	if len(confirmed) == 0 {
-		builder.WriteString("この日に確認できたCORE、WORLD、GAMESの記録はありません。\n")
-		return builder.String(), nil
+	body := renderRoutineDiary(date, confirmed, r.location())
+	if len(body) > agentRoutineDiaryBodyMax {
+		return "", fmt.Errorf("confirmed daily life summary exceeds the %d-byte BOARD diary body limit; refusing incomplete diary", agentRoutineDiaryBodyMax)
 	}
-	builder.WriteString("\n")
-	for _, fact := range confirmed {
-		summary := routineDiaryActivitySummary(fact)
-		line := ""
-		if !fact.At.IsZero() {
-			line = fmt.Sprintf("- %s %s\n", fact.At.In(r.location()).Format("15:04"), summary)
-		} else {
-			line = fmt.Sprintf("- %s\n", summary)
-		}
-		if builder.Len()+len(line) > agentRoutineDiaryBodyMax {
-			return "", fmt.Errorf("confirmed activity facts exceed the %d-byte BOARD diary body limit; refusing incomplete diary", agentRoutineDiaryBodyMax)
-		}
-		builder.WriteString(line)
-	}
-	return builder.String(), nil
+	return body, nil
 }
 
 func routineDiaryActivitySummary(fact agentroutine.Activity) string {
@@ -2665,7 +2474,7 @@ func routineMediaOffsetLabel(milliseconds int64) string {
 }
 
 func routineDiaryReflectionPrompt(body string) string {
-	const prefix = "日記本文の記録だけを根拠に、短く中立的な感想を日本語で作成してください。記録にない出来事や行動は加えないでください。本文:\n"
+	const prefix = "昨日の記録を読んだ今の胸の内だけを、あなた自身の日記として一人称で書いてください。あなたに設定された性格・口調・価値観を前面に出し、記録を読んだ今の感情、迷い、本音、願いを自然な2〜3段落、200〜400文字程度で綴ってください。出来事の時系列や要約は本文にあるので、感想では再説明・再現しないでください。日時、過去の具体的な動作、部屋や風景・音、他者や会話、作品の場面を記録外から補わないでください。「今思う」「気になる」「次はこうしたい」など、振り返る今の内省として書いてください。感情の例を義務にせず、本人に合うものを選んでください。キャラクター設定を作り足したり、他者の内心を断定したりしないでください。出力は感想本文のみとし、指示や実装の説明は含めないでください。本文:\n"
 	if len(prefix)+len(body) <= agentRoutineReflectionMax {
 		return prefix + body
 	}
@@ -2720,7 +2529,6 @@ func (r *agentRoutineRuntime) recordRoutineFacts(ctx context.Context, intent age
 	}
 	var kind agentroutine.ActivityKind
 	summary := ""
-	restReference := ""
 	switch intent.Kind {
 	case agentroutine.ActivityMorningChat:
 		kind = agentroutine.ActivityMorningChat
@@ -2730,47 +2538,19 @@ func (r *agentRoutineRuntime) recordRoutineFacts(ctx context.Context, intent age
 		topic := routineHobbyTopic(intent.ActorID, intent.Label)
 		summary = fmt.Sprintf("%sに関する公開情報を読み、個人用の創作メモを作成しました。", topic)
 	case agentroutine.ActivityRelax:
-		if progress.Rest == nil || progress.World == nil ||
-			progress.World.RelaxRoomID == "" || progress.World.RelaxObservedAt.IsZero() || progress.CompletedAt.IsZero() {
-			return errors.New("rest fact cannot be recorded without a completed activity and verified room")
+		if progress.World == nil || progress.World.RelaxRoomID == "" || progress.World.RelaxObservedAt.IsZero() || r.cfg == nil {
+			return nil
 		}
-		if progress.Rest.Scope == agentroutine.RelaxRoomShared {
-			if progress.Rest.CompletedAt.IsZero() {
-				return errors.New("shared rest fact cannot be recorded before its activity completes")
-			}
-			var err error
-			summary, err = r.routineRestSummary(intent, progress)
-			if err != nil {
-				return err
-			}
-			restReference, err = r.marshalRoutineRestFactReference(progress)
-			if err != nil {
-				return err
-			}
-			completedAt = progress.Rest.CompletedAt
-		} else if progress.Rest.Scope == agentroutine.RelaxRoomPrivate {
-			if progress.Rest.CompletedAt.IsZero() || strings.TrimSpace(progress.Rest.PrivateReflection) == "" {
-				return errors.New("private rest fact requires the actor's completed reflection")
-			}
-			summary = "自室で短い内省を記録しました。"
-			completedAt = progress.Rest.CompletedAt
-			privateReference, err := json.Marshal(struct {
-				Scope       string    `json:"scope"`
-				RoomID      string    `json:"room_id"`
-				ObservedAt  time.Time `json:"observed_at"`
-				StartedAt   time.Time `json:"started_at"`
-				CompletedAt time.Time `json:"completed_at"`
-				Reflection  string    `json:"reflection"`
-			}{Scope: "private", RoomID: progress.World.RelaxRoomID, ObservedAt: progress.World.RelaxObservedAt,
-				StartedAt: progress.Rest.StartedAt, CompletedAt: progress.Rest.CompletedAt, Reflection: progress.Rest.PrivateReflection})
-			if err != nil {
-				return err
-			}
-			restReference = string(privateReference)
-		} else {
-			return errors.New("rest fact has an unknown relaxation scope")
+		roomAllowed := r.cfg.Heartbeat.Routine.PrivateRooms[intent.ActorID] == progress.World.RelaxRoomID
+		for _, sharedRoom := range r.cfg.Heartbeat.Routine.SharedRooms {
+			roomAllowed = roomAllowed || sharedRoom == progress.World.RelaxRoomID
+		}
+		if !roomAllowed {
+			return nil
 		}
 		kind = agentroutine.ActivityRelax
+		completedAt = progress.World.RelaxObservedAt
+		summary = fmt.Sprintf("%sで静かに過ごしました。", routineWorldRoomDiaryLabel(progress.World.RelaxRoomID))
 	case agentroutine.ActivityDiary:
 		kind = agentroutine.ActivityDiary
 		summary = "日記の改訂版をBOARDへ投稿しました。"
@@ -2782,8 +2562,7 @@ func (r *agentRoutineRuntime) recordRoutineFacts(ctx context.Context, intent age
 		// The activity timestamp determines its JST day, even if the step crossed midnight.
 		intent.Date = date
 	}
-	if intent.Kind == agentroutine.ActivityMorningChat ||
-		(intent.Kind == agentroutine.ActivityRelax && progress.Rest != nil && progress.Rest.Mode == routineRestModeConversation) {
+	if intent.Kind == agentroutine.ActivityMorningChat {
 		transcript := make([]map[string]string, 0, len(progress.Actors))
 		for _, actor := range progress.Actors {
 			transcript = append(transcript, map[string]string{"actor_id": actor.ActorID, "text": actor.Output})
@@ -2792,18 +2571,10 @@ func (r *agentRoutineRuntime) recordRoutineFacts(ctx context.Context, intent age
 		if err != nil {
 			return err
 		}
-		participants := append([]string(nil), intent.Participants...)
-		if intent.Kind == agentroutine.ActivityRelax && progress.Rest.ParticipantID != "" {
-			participants = []string{progress.Rest.ParticipantID}
-		}
-		for _, participant := range participants {
-			reference := string(privateTranscript)
-			if intent.Kind == agentroutine.ActivityRelax {
-				reference = restReference
-			}
+		for _, participant := range intent.Participants {
 			fact := agentroutine.Activity{
 				ActorID: participant, Date: date, Key: intent.ID + ":conversation", Kind: kind,
-				At: completedAt.UTC(), Source: agentRoutineModuleID, SourceID: intent.ID, Confirmed: true, Summary: summary, Reference: reference,
+				At: completedAt.UTC(), Source: agentRoutineModuleID, SourceID: intent.ID, Confirmed: true, Summary: summary, Reference: string(privateTranscript),
 			}
 			if _, err := routinePersist(ctx, func(persistCtx context.Context) (agentroutine.Activity, error) {
 				return r.store.SaveFact(persistCtx, fact)
@@ -2826,9 +2597,6 @@ func (r *agentRoutineRuntime) recordRoutineFacts(ctx context.Context, intent age
 			return err
 		}
 		fact.Reference = string(privateTranscript)
-	}
-	if intent.Kind == agentroutine.ActivityRelax {
-		fact.Reference = string(restReference)
 	}
 	if intent.Kind == agentroutine.ActivityHobby {
 		artifact := struct {
@@ -2908,17 +2676,64 @@ func (r *agentRoutineRuntime) pauseRuns(ctx context.Context, prepared []routineP
 	return firstErr
 }
 
-func (r *agentRoutineRuntime) deferRoutineRestIntent(ctx context.Context, state agentroutine.State, progress routineProgress, cause error) error {
-	if cause != nil && state.Pending != nil && state.Pending.Kind == agentroutine.ActivityRelax && progress.Rest != nil &&
-		!errors.Is(cause, errAgentRoutineStopped) && !routineStopRequested(ctx, nil) {
-		progress.Rest.FailureReason = routineRestFailureCode(cause)
-		saved, updated, err := r.saveProgress(ctx, state, "rest_activity_deferred", progress)
-		if err != nil {
-			return errors.Join(cause, err)
-		}
-		state, progress = saved, updated
+func (r *agentRoutineRuntime) pausePersistedRoutineRuns(
+	ctx context.Context,
+	intent *agentroutine.Intent,
+	progress routineProgress,
+	reason string,
+) error {
+	if intent == nil {
+		return nil
 	}
-	return r.deferIntent(ctx, state, progress, cause)
+	allowedActors := map[string]struct{}{intent.ActorID: {}}
+	if intent.Kind == agentroutine.ActivityMorningChat {
+		for _, participant := range intent.Participants {
+			allowedActors[participant] = struct{}{}
+		}
+	}
+	var prepared []routinePreparedRun
+	for index, actor := range progress.Actors {
+		if actor.RunID == "" {
+			continue
+		}
+		if _, allowed := allowedActors[actor.ActorID]; !allowed ||
+			(actor.ActorID == intent.ActorID && intent.TaskID != "" && actor.TaskID != modulecore.TaskID(intent.TaskID)) {
+			return errors.New("persisted routine Run does not belong to an actor and Task in the exact pending intent")
+		}
+		if r.tasks == nil || actor.TaskID == "" || actor.ActorID == "" {
+			return errors.New("persisted routine Run has no exact TaskManager or actor binding")
+		}
+		task, err := r.tasks.Get(ctx, actor.TaskID)
+		if err != nil {
+			return fmt.Errorf("read persisted routine Task %s before pausing: %w", actor.TaskID, err)
+		}
+		if task.TaskID != actor.TaskID || task.OwnerID != r.ownerID || task.ModuleID != agentRoutineModuleID ||
+			task.Assignee != actor.ActorID || task.Route != domaintask.RouteCHAT {
+			return errors.New("persisted routine Task does not match its exact owner, module, actor, and route")
+		}
+		runs, err := r.tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: actor.TaskID})
+		if err != nil {
+			return fmt.Errorf("list persisted routine Runs for Task %s before pausing: %w", actor.TaskID, err)
+		}
+		var exact *domaintask.Run
+		for runIndex := range runs {
+			if runs[runIndex].RunID == actor.RunID {
+				exact = &runs[runIndex]
+				break
+			}
+		}
+		if exact == nil || exact.TaskID != actor.TaskID || exact.Assignee != actor.ActorID || exact.Validate() != nil {
+			return errors.New("persisted routine Run does not match its exact Task and actor checkpoint")
+		}
+		if exact.Status != domaintask.RunStatusRunning {
+			continue
+		}
+		if task.Status != domaintask.StatusRunning {
+			return errors.New("persisted routine Run is running while its exact Task is not running")
+		}
+		prepared = append(prepared, routinePreparedRun{progressIndex: index, task: task, run: *exact})
+	}
+	return r.pauseRuns(ctx, prepared, reason)
 }
 
 func (r *agentRoutineRuntime) deferIntent(ctx context.Context, state agentroutine.State, progress routineProgress, cause error) error {
@@ -3101,6 +2916,9 @@ func (r *agentRoutineRuntime) diaryAmendmentWindow(now time.Time) bool {
 }
 
 func (r *agentRoutineRuntime) checkDiaryAmendment(ctx context.Context, actorID, date string) (bool, error) {
+	if r.boardClient(actorID) == nil {
+		return false, nil
+	}
 	key := actorID
 	now := r.now()
 	r.amendmentMu.Lock()
@@ -3117,6 +2935,10 @@ func (r *agentRoutineRuntime) checkDiaryAmendment(ctx context.Context, actorID, 
 	if err != nil {
 		r.amendmentMu.Lock()
 		r.lastAmendmentCheck[key] = now.Add(-29 * time.Minute)
+		r.amendmentMu.Unlock()
+	} else if changed {
+		r.amendmentMu.Lock()
+		delete(r.lastAmendmentCheck, key)
 		r.amendmentMu.Unlock()
 	}
 	return changed, err
@@ -3138,6 +2960,12 @@ func (r *agentRoutineRuntime) readDiaryAmendment(ctx context.Context, actorID, d
 	}
 	if diary.Receipt == "" {
 		return false, nil
+	}
+	if diary.ReflectionVersion != agentRoutineDiaryReflectionVersion {
+		return true, nil
+	}
+	if routineDiaryIsLegacyFormat(date, diary.Body) {
+		return true, nil
 	}
 	latestBody, err := r.buildDiaryBody(readCtx, actorID, date)
 	if err != nil {

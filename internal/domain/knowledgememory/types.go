@@ -10,6 +10,10 @@ type PersonalArchiveEntry struct {
 	EntryID      string    `json:"entry_id"`
 	UserID       string    `json:"user_id"`
 	SourceRef    string    `json:"source_ref,omitempty"`
+	Title        string    `json:"title,omitempty"`
+	SourceKind   string    `json:"source_kind,omitempty"`
+	AuthorID     string    `json:"author_id,omitempty"`
+	DiaryDate    string    `json:"diary_date,omitempty"`
 	OriginalText string    `json:"original_text"`
 	Protected    bool      `json:"protected"`
 	CreatedAt    time.Time `json:"created_at"`

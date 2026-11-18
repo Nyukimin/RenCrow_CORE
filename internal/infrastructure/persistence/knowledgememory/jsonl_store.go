@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 )
@@ -40,6 +41,10 @@ func (s *JSONLStore) SavePersonalArchiveEntry(_ context.Context, item domainkm.P
 	}
 	return appendJSONL(s.personalPath, item)
 }
+
+func (s *JSONLStore) SavePersonalArchiveEntryWithReceipt(_ context.Context, _ domainkm.PersonalArchiveEntry, _, _ string) (bool, error) {
+	return false, errors.New("personal archive source receipts require the SQLite owner store")
+}
 func (s *JSONLStore) ListPersonalArchiveEntries(_ context.Context, limit int) ([]domainkm.PersonalArchiveEntry, error) {
 	var items []domainkm.PersonalArchiveEntry
 	err := readJSONL(s.personalPath, func(line []byte) error {
@@ -53,6 +58,30 @@ func (s *JSONLStore) ListPersonalArchiveEntries(_ context.Context, limit int) ([
 	return latestByID(items, normalizedLimit(limit), func(item domainkm.PersonalArchiveEntry) string {
 		return item.EntryID
 	}), err
+}
+
+func (s *JSONLStore) GetPersonalArchiveEntry(_ context.Context, entryID, userID string) (domainkm.PersonalArchiveEntry, bool, error) {
+	entryID = strings.TrimSpace(entryID)
+	userID = strings.TrimSpace(userID)
+	if entryID == "" || userID == "" {
+		return domainkm.PersonalArchiveEntry{}, false, errors.New("personal archive entry_id and owner user_id are required")
+	}
+	var match domainkm.PersonalArchiveEntry
+	found := false
+	err := readJSONL(s.personalPath, func(line []byte) error {
+		var item domainkm.PersonalArchiveEntry
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.EntryID == entryID && item.UserID == userID {
+			if err := domainkm.ValidatePersonalArchiveEntry(item); err != nil {
+				return err
+			}
+			match, found = item, true
+		}
+		return nil
+	})
+	return match, found, err
 }
 
 func (s *JSONLStore) SaveCreativeKnowledgeItem(_ context.Context, item domainkm.CreativeKnowledgeItem) error {

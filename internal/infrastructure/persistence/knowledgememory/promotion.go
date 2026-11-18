@@ -73,6 +73,9 @@ func OpenSQLiteStoreWritable(path string) (*SQLiteStore, error) {
 	return openSQLiteStore(path, false)
 }
 
+// openSQLiteStore transfers ownership of the database handle to the returned
+// SQLiteStore. Callers must close the store; initialization failures close db
+// here before returning.
 func openSQLiteStore(path string, readOnly bool) (*SQLiteStore, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("knowledge memory sqlite path is required")
@@ -95,6 +98,7 @@ func openSQLiteStore(path string, readOnly bool) (*SQLiteStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	// From this point the SQLiteStore owns db and is responsible for closing it.
 	store := &SQLiteStore{db: db}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
@@ -142,6 +146,7 @@ var requiredKnowledgeMemoryTables = []string{
 	"dream_consolidation_run",
 	"knowledge_memory_search_documents",
 	"knowledge_memory_search_terms",
+	"knowledge_memory_personal_archive_receipts",
 	"knowledge_memory_index_cursor",
 	"knowledge_memory_import_manifest",
 }
@@ -152,16 +157,17 @@ var requiredKnowledgeMemoryIndexes = []string{
 }
 
 var requiredKnowledgeMemoryColumns = map[string][]string{
-	"personal_archive":                  {"entry_id", "user_id", "created_at", "payload"},
-	"creative_knowledge":                {"item_id", "created_at", "payload"},
-	"news_knowledge":                    {"item_id", "created_at", "payload"},
-	"daily_intake_rule":                 {"rule_id", "user_id", "created_at", "payload"},
-	"temporal_memory_marker":            {"marker_id", "user_id", "created_at", "payload"},
-	"dream_consolidation_run":           {"run_id", "created_at", "payload"},
-	"knowledge_memory_search_documents": {"record_type", "record_id", "scope", "user_id", "title", "summary", "visibility", "source_updated_at", "indexed_at", "content_sha256"},
-	"knowledge_memory_search_terms":     {"scope", "user_id", "token", "record_type", "record_id"},
-	"knowledge_memory_index_cursor":     {"record_type", "last_record_id", "eligible_count", "indexed_count", "state", "updated_at"},
-	"knowledge_memory_import_manifest":  {"manifest_id", "source_count", "imported_count", "source_hash", "imported_hash", "coverage_state", "eligible_count", "indexed_count", "updated_at"},
+	"personal_archive":                           {"entry_id", "user_id", "created_at", "payload"},
+	"creative_knowledge":                         {"item_id", "created_at", "payload"},
+	"news_knowledge":                             {"item_id", "created_at", "payload"},
+	"daily_intake_rule":                          {"rule_id", "user_id", "created_at", "payload"},
+	"temporal_memory_marker":                     {"marker_id", "user_id", "created_at", "payload"},
+	"dream_consolidation_run":                    {"run_id", "created_at", "payload"},
+	"knowledge_memory_search_documents":          {"record_type", "record_id", "scope", "user_id", "title", "summary", "visibility", "source_updated_at", "indexed_at", "content_sha256"},
+	"knowledge_memory_search_terms":              {"scope", "user_id", "token", "record_type", "record_id"},
+	"knowledge_memory_personal_archive_receipts": {"source_key", "entry_id", "user_id", "actor_id", "original_payload_hash", "current_payload_hash"},
+	"knowledge_memory_index_cursor":              {"record_type", "last_record_id", "eligible_count", "indexed_count", "state", "updated_at"},
+	"knowledge_memory_import_manifest":           {"manifest_id", "source_count", "imported_count", "source_hash", "imported_hash", "coverage_state", "eligible_count", "indexed_count", "updated_at"},
 }
 
 func hasRequiredKnowledgeMemoryColumns(ctx context.Context, db *sql.DB) (bool, error) {
@@ -232,8 +238,12 @@ func (s *SQLiteStore) readPromotionReceipt(ctx context.Context) (CoverageReceipt
 	if err != nil {
 		return coverage, KnowledgeMemoryIntegrityFailed, err
 	}
+	personalReceiptsReady, err := s.personalArchiveReceiptSchemaPresent(ctx)
+	if err != nil || !personalReceiptsReady {
+		return coverage, KnowledgeMemoryIntegrityFailed, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT record_type, eligible_count, indexed_count, state
-		FROM knowledge_memory_index_cursor WHERE record_type IN (?, ?)`, creativeKnowledgeRecordType, newsKnowledgeRecordType)
+		FROM knowledge_memory_index_cursor WHERE record_type IN (?, ?, ?)`, creativeKnowledgeRecordType, newsKnowledgeRecordType, personalArchiveRecordType)
 	if err != nil {
 		return coverage, KnowledgeMemoryIntegrityFailed, err
 	}
@@ -315,6 +325,13 @@ func (s *SQLiteStore) readPromotionReceipt(ctx context.Context) (CoverageReceipt
 			return coverage, KnowledgeMemoryIntegrityFailed, nil
 		}
 	}
+	personalOverlaysOK, err := s.verifyPersonalArchiveReceiptOverlays(ctx)
+	if err != nil {
+		return coverage, KnowledgeMemoryIntegrityFailed, err
+	}
+	if !personalOverlaysOK {
+		return coverage, KnowledgeMemoryIntegrityFailed, nil
+	}
 	for _, recordType := range searchableKnowledgeRecordTypes {
 		var count int
 		query := `SELECT COUNT(*) FROM knowledge_memory_search_documents WHERE record_type = ?`
@@ -322,6 +339,11 @@ func (s *SQLiteStore) readPromotionReceipt(ctx context.Context) (CoverageReceipt
 			query += ` AND NOT EXISTS (
 				SELECT 1 FROM knowledge_memory_news_receipts
 				WHERE knowledge_memory_news_receipts.item_id = knowledge_memory_search_documents.record_id
+			)`
+		} else if recordType == personalArchiveRecordType {
+			query += ` AND NOT EXISTS (
+				SELECT 1 FROM knowledge_memory_personal_archive_receipts
+				WHERE knowledge_memory_personal_archive_receipts.entry_id = knowledge_memory_search_documents.record_id
 			)`
 		}
 		if err := s.db.QueryRowContext(ctx, query, recordType).Scan(&count); err != nil {
@@ -344,7 +366,14 @@ func (s *SQLiteStore) readPromotionReceipt(ctx context.Context) (CoverageReceipt
 
 func (s *SQLiteStore) verifySearchProjectionIntegrity(ctx context.Context) (bool, error) {
 	for _, recordType := range searchableKnowledgeRecordTypes {
-		rows, err := s.db.QueryContext(ctx, `SELECT item_id, payload FROM `+recordType+` ORDER BY item_id`)
+		table, idColumn := searchSourceTable(recordType)
+		query := `SELECT ` + idColumn + `, payload FROM ` + table + ` ORDER BY ` + idColumn
+		if recordType == personalArchiveRecordType {
+			query = `SELECT personal_archive.entry_id, personal_archive.payload FROM personal_archive
+				WHERE NOT EXISTS (SELECT 1 FROM knowledge_memory_personal_archive_receipts WHERE knowledge_memory_personal_archive_receipts.entry_id = personal_archive.entry_id)
+				ORDER BY personal_archive.entry_id`
+		}
+		rows, err := s.db.QueryContext(ctx, query)
 		if err != nil {
 			return false, err
 		}
@@ -462,6 +491,10 @@ func (s *SQLiteStore) domainManifest(ctx context.Context) (int, string, error) {
 
 func (s *SQLiteStore) domainManifestWithNewsReceiptSchema(ctx context.Context, newsReceiptsReady bool) (int, string, error) {
 	accumulator := newManifestAccumulator()
+	personalReceiptsReady, err := s.personalArchiveReceiptSchemaPresent(ctx)
+	if err != nil {
+		return 0, "", err
+	}
 	for _, table := range []struct {
 		recordType string
 		table      string
@@ -499,6 +532,13 @@ func (s *SQLiteStore) domainManifestWithNewsReceiptSchema(ctx context.Context, n
 					WHERE knowledge_memory_news_receipts.item_id = news_knowledge.item_id
 				)
 				ORDER BY news_knowledge.item_id`
+		} else if table.recordType == personalArchiveRecordType && personalReceiptsReady {
+			query = `SELECT personal_archive.entry_id, personal_archive.payload FROM personal_archive
+				WHERE NOT EXISTS (
+					SELECT 1 FROM knowledge_memory_personal_archive_receipts
+					WHERE knowledge_memory_personal_archive_receipts.entry_id = personal_archive.entry_id
+				)
+				ORDER BY personal_archive.entry_id`
 		}
 		rows, err := s.db.QueryContext(ctx, query)
 		if err != nil {
@@ -632,7 +672,8 @@ func readLatestJSONL[T any](path string, idOf func(T) string, validate func(T) e
 
 // ImportJSONLToSQLite performs an additive, non-destructive import. The
 // source JSONL remains untouched, while the target is promoted only after the
-// domain rows, bounded projection backfill, and manifest all agree.
+// domain rows, bounded projection backfill, verified private archive projection
+// repair, and manifest all agree.
 func ImportJSONLToSQLite(ctx context.Context, sourceRoot, sqlitePath string) (ImportReport, error) {
 	snapshot, err := readSourceSnapshot(sourceRoot)
 	if err != nil {
@@ -682,6 +723,9 @@ func ImportJSONLToSQLite(ctx context.Context, sourceRoot, sqlitePath string) (Im
 		if coverage.State == KnowledgeMemoryCoverageReady {
 			break
 		}
+	}
+	if _, err := store.rebuildPersonalArchiveReceiptSearchProjections(ctx); err != nil {
+		return ImportReport{}, fmt.Errorf("rebuild verified personal archive search projections: %w", err)
 	}
 	importedCount, importedHash, err := store.domainManifest(ctx)
 	if err != nil {
@@ -746,7 +790,7 @@ func (s *SQLiteStore) BackfillSearchProjection(ctx context.Context, batchSize in
 func (s *SQLiteStore) readBackfillCoverage(ctx context.Context) (CoverageReceipt, error) {
 	var eligible, indexed int
 	ready := true
-	rows, err := s.db.QueryContext(ctx, `SELECT eligible_count, indexed_count FROM knowledge_memory_index_cursor WHERE record_type IN (?, ?)`, creativeKnowledgeRecordType, newsKnowledgeRecordType)
+	rows, err := s.db.QueryContext(ctx, `SELECT eligible_count, indexed_count FROM knowledge_memory_index_cursor WHERE record_type IN (?, ?, ?)`, creativeKnowledgeRecordType, newsKnowledgeRecordType, personalArchiveRecordType)
 	if err != nil {
 		return CoverageReceipt{}, err
 	}
@@ -769,7 +813,7 @@ func (s *SQLiteStore) readBackfillCoverage(ctx context.Context) (CoverageReceipt
 	}
 	if ready {
 		var pending int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM knowledge_memory_index_cursor WHERE record_type IN (?, ?) AND state != ?`, creativeKnowledgeRecordType, newsKnowledgeRecordType, KnowledgeMemoryCoverageReady).Scan(&pending); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM knowledge_memory_index_cursor WHERE record_type IN (?, ?, ?) AND state != ?`, creativeKnowledgeRecordType, newsKnowledgeRecordType, personalArchiveRecordType, KnowledgeMemoryCoverageReady).Scan(&pending); err != nil {
 			return CoverageReceipt{}, err
 		}
 		ready = pending == 0
@@ -794,6 +838,16 @@ func (s *SQLiteStore) backfillRecordTypeBatch(ctx context.Context, recordType st
 			return false, 0, err
 		}
 	}
+	if recordType == personalArchiveRecordType {
+		var err error
+		personalReceiptsReady, err := s.personalArchiveReceiptSchemaPresent(ctx)
+		if err != nil {
+			return false, 0, err
+		}
+		if !personalReceiptsReady {
+			return false, 0, fmt.Errorf("knowledge memory personal archive receipt schema is unavailable")
+		}
+	}
 	var lastID string
 	var cursorState string
 	var indexedCount int
@@ -811,14 +865,21 @@ func (s *SQLiteStore) backfillRecordTypeBatch(ctx context.Context, recordType st
 	if cursorState == KnowledgeMemoryCoverageReady {
 		return true, 0, nil
 	}
-	query := `SELECT item_id, payload FROM ` + table + ` WHERE item_id > ?`
+	idColumn := "item_id"
+	if recordType == personalArchiveRecordType {
+		idColumn = "entry_id"
+	}
+	query := `SELECT ` + idColumn + `, payload FROM ` + table + ` WHERE ` + idColumn + ` > ?`
 	if recordType == newsKnowledgeRecordType && newsReceiptsReady {
 		query += ` AND NOT EXISTS (
 			SELECT 1 FROM knowledge_memory_news_receipts
 			WHERE knowledge_memory_news_receipts.item_id = news_knowledge.item_id
 		)`
 	}
-	query += ` ORDER BY item_id LIMIT ?`
+	if recordType == personalArchiveRecordType {
+		query += ` AND NOT EXISTS (SELECT 1 FROM knowledge_memory_personal_archive_receipts WHERE knowledge_memory_personal_archive_receipts.entry_id = personal_archive.entry_id)`
+	}
+	query += ` ORDER BY ` + idColumn + ` LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, lastID, batchSize)
 	if err != nil {
 		return false, 0, err
@@ -845,6 +906,8 @@ func (s *SQLiteStore) backfillRecordTypeBatch(ctx context.Context, recordType st
 				SELECT 1 FROM knowledge_memory_news_receipts
 				WHERE knowledge_memory_news_receipts.item_id = knowledge_memory_search_documents.record_id
 			)`
+		} else if recordType == personalArchiveRecordType {
+			countQuery += ` AND NOT EXISTS (SELECT 1 FROM knowledge_memory_personal_archive_receipts WHERE knowledge_memory_personal_archive_receipts.entry_id = knowledge_memory_search_documents.record_id)`
 		}
 		if err := s.db.QueryRowContext(ctx, countQuery, recordType).Scan(&count); err != nil {
 			return false, 0, err
@@ -909,6 +972,15 @@ func projectionFromRecord(row promotionRecord) (*safeSearchProjection, error) {
 			return nil, err
 		}
 		return newsSearchProjection(item), nil
+	case personalArchiveRecordType:
+		var item domainkm.PersonalArchiveEntry
+		if err := json.Unmarshal(row.payload, &item); err != nil {
+			return nil, err
+		}
+		if err := domainkm.ValidatePersonalArchiveEntry(item); err != nil {
+			return nil, err
+		}
+		return personalArchiveSearchProjection(item), nil
 	default:
 		return nil, fmt.Errorf("unsupported projection record type %q", row.recordType)
 	}

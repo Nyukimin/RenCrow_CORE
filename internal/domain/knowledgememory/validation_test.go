@@ -31,6 +31,41 @@ func TestValidatePersonalArchiveRequiresProtectedOriginal(t *testing.T) {
 	}
 }
 
+func TestValidatePersonalArchiveDiaryAcceptsCanonicalGmailLocatorAndRejectsMalformedBinding(t *testing.T) {
+	now := time.Date(2026, 11, 16, 1, 0, 0, 0, time.UTC)
+	valid := PersonalArchiveEntry{
+		EntryID: "diary-1", UserID: "ren", SourceRef: "gmail://nyukimin0811%40gmail.com/messages/0123456789abcdef",
+		Title: "【ルミナとれんの会話記録】2026-11-15", SourceKind: "lumina_diary_email", AuthorID: "lumina", DiaryDate: "2026-11-15",
+		OriginalText: "source text", Protected: true, CreatedAt: now,
+	}
+	if err := ValidatePersonalArchiveEntry(valid); err != nil {
+		t.Fatalf("canonical gmailLocator source rejected: %v", err)
+	}
+	for _, mutate := range []func(*PersonalArchiveEntry){
+		func(item *PersonalArchiveEntry) { item.SourceRef = "gmail://nyukimin0811%40gmail.com/messages/" },
+		func(item *PersonalArchiveEntry) { item.SourceRef = "gmail://nyukimin0811%40gmail.com/messages/abc%" },
+		func(item *PersonalArchiveEntry) { item.SourceRef = "gmail://nyukimin0811%40gmail.com/messages/%61bc" },
+		func(item *PersonalArchiveEntry) {
+			item.SourceRef = "gmail://nyukimin0811+0811%40gmail.com/messages/0123456789abcdef"
+		},
+		func(item *PersonalArchiveEntry) { item.DiaryDate = "2026-02-30" },
+		func(item *PersonalArchiveEntry) { item.AuthorID = "ren" },
+		func(item *PersonalArchiveEntry) {
+			item.OriginalText = strings.Repeat("x", MaxLuminaDiaryOriginalBytes+1)
+		},
+	} {
+		invalid := valid
+		mutate(&invalid)
+		if err := ValidatePersonalArchiveEntry(invalid); err == nil {
+			t.Fatalf("invalid diary binding accepted: %+v", invalid)
+		}
+	}
+	legacy := PersonalArchiveEntry{EntryID: "legacy", UserID: "ren", OriginalText: "protected original", Protected: true, CreatedAt: now}
+	if err := ValidatePersonalArchiveEntry(legacy); err != nil {
+		t.Fatalf("legacy zero-value metadata rejected: %v", err)
+	}
+}
+
 func TestValidateKnowledgeMemoryAcceptsCompleteRecords(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	if err := ValidatePersonalArchiveEntry(PersonalArchiveEntry{
