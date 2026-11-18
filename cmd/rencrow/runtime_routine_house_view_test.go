@@ -164,6 +164,49 @@ func TestRoutineHouseViewRetainsMirrorPoseCompletionsWhenKuroIsIdle(t *testing.T
 	}
 }
 
+func TestRoutineHouseViewProjectsFashionShowAndReadingActivityState(t *testing.T) {
+	_, deps, server := newRoutineHouseViewTestRuntime(t, true)
+	defer server.Close()
+	startedAt := time.Date(2026, time.November, 17, 1, 0, 0, 0, time.UTC)
+	dueAt := startedAt.Add(2 * time.Minute)
+	actors := make([]worldread.Actor, 0, len(deps.agentRoutine.worldActorIDs))
+	for worldID, coreID := range deps.agentRoutine.worldActorIDs {
+		actor := worldread.Actor{
+			ActorID: worldID, Present: true, RoomID: "room-" + coreID,
+			Position: [3]float64{1, 2, 0}, HasPosition: true,
+			HomeSceneSHA256: routineHouseViewTestSceneSHA256,
+		}
+		switch coreID {
+		case "mio":
+			actor.ActivityID, actor.ActivityKind, actor.SlotID = "home:mio:2", worldread.HomeActivityFashionShow, "mio-fashion"
+			actor.ActivityStartedAt, actor.ActivityDueAt = startedAt, dueAt
+		case "midori":
+			actor.ActivityID, actor.ActivityKind, actor.SlotID = "home:midori:2", worldread.HomeActivityReading, "midori-reading"
+			actor.ActivityStartedAt, actor.ActivityDueAt = startedAt, dueAt
+		}
+		actors = append(actors, actor)
+	}
+	projected, err := runtimeRoutineHouseViewProject(context.Background(), deps.agentRoutine, routineSnapshotRead{
+		snapshot: worldread.Snapshot{WorldID: "home-world", StateSeq: 45, Actors: actors, HomeSceneSHA256: routineHouseViewTestSceneSHA256},
+		readAt:   startedAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("project hobby activity snapshot: %v", err)
+	}
+	byID := make(map[string]runtimeRoutineHouseViewActorDTO, len(projected.Actors))
+	for _, actor := range projected.Actors {
+		byID[actor.ID] = actor
+	}
+	for _, test := range []struct{ actorID, kind string }{
+		{"mio", worldread.HomeActivityFashionShow}, {"midori", worldread.HomeActivityReading},
+	} {
+		actor := byID[test.actorID]
+		if actor.ActiveKind != test.kind || actor.ActivityStartedAt != startedAt.Format(time.RFC3339Nano) || actor.ActivityDueAt != dueAt.Format(time.RFC3339Nano) {
+			t.Errorf("%s projection = %+v; want kind %q and WORLD timestamps", test.actorID, actor, test.kind)
+		}
+	}
+}
+
 func TestRegisterFeatureRoutesRegistersHouseViewForEnabledRoutine(t *testing.T) {
 	cfg := &config.Config{
 		WorkspaceDir: t.TempDir(),

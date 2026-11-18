@@ -602,6 +602,34 @@ func TestRoutineGameAdmissionAllowsOnlyBoundedWorldRecoveryAndAuthenticatedWake(
 		worldread.HomeActionPayload{ActorID: "mio", ActivityID: "foreign-activity"}, false) {
 		t.Fatal("stop for an unowned activity was admitted")
 	}
+	for _, test := range []struct {
+		actorID, label string
+	}{
+		{actorID: "mio", label: "fashion"},
+		{actorID: "midori", label: "reading"},
+	} {
+		spec, ok := routineWorldHomeHobbyFor(test.actorID, test.label)
+		if !ok {
+			t.Fatalf("missing home hobby spec for %s/%s", test.actorID, test.label)
+		}
+		intent := &agentroutine.Intent{ID: "intent-" + test.actorID, ActorID: test.actorID, Kind: agentroutine.ActivityHobby, Label: test.label}
+		start := routineWorldOperation{
+			Purpose: spec.startPurpose, Action: spec.startAction, EventKind: spec.startEvent,
+			ActorID: test.actorID, Payload: worldread.HomeActionPayload{ActorID: test.actorID},
+			ActivityID: "activity-" + test.actorID, ActivityKind: spec.activityKind,
+			ReceiptID: "start-receipt", ReceiptStatus: "committed", EventVerified: true,
+		}
+		start.Key = routineWorldOperationKey(intent.ID, test.actorID, start.Purpose)
+		progress := routineProgress{World: &routineWorldProgress{Operations: []routineWorldOperation{start}}}
+		if !routineWorldActionIsRecovery(intent, progress, worldread.HomeActionFinish,
+			worldread.HomeActionPayload{ActorID: test.actorID, ActivityID: start.ActivityID}, false) {
+			t.Errorf("verified %s start did not authorize recovery of its exact terminal action", spec.activityKind)
+		}
+		if routineWorldActionIsRecovery(intent, progress, worldread.HomeActionFinish,
+			worldread.HomeActionPayload{ActorID: test.actorID, ActivityID: "foreign-activity"}, false) {
+			t.Errorf("%s recovery accepted a foreign activity", spec.activityKind)
+		}
+	}
 }
 
 func TestRoutineGameAdmissionPerformsAuthenticatedWakeRecoveryWithoutCurrentSleepOperation(t *testing.T) {

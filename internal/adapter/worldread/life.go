@@ -18,14 +18,22 @@ var (
 )
 
 const (
-	HomeActionMove     = "life.home.move"
-	HomeActionSleep    = "life.home.sleep"
-	HomeActionWake     = "life.home.wake"
-	HomeActionExercise = "life.home.exercise"
-	HomeActionMirror   = "life.home.mirror_pose"
-	HomeActionFinish   = "life.home.finish"
-	HomeActionStop     = "life.home.stop"
-	maxIdempotencyKey  = 128
+	HomeActionMove                = "life.home.move"
+	HomeActionSleep               = "life.home.sleep"
+	HomeActionWake                = "life.home.wake"
+	HomeActionExercise            = "life.home.exercise"
+	HomeActionMirror              = "life.home.mirror_pose"
+	HomeActionFashionShow         = "life.home.fashion_show"
+	HomeActionReading             = "life.home.reading"
+	HomeActionFinish              = "life.home.finish"
+	HomeActionStop                = "life.home.stop"
+	HomeActivityFashionShow       = "fashion_show"
+	HomeActivityReading           = "reading"
+	HomeEventFashionShowStarted   = "life.home.fashion_show.started"
+	HomeEventFashionShowCompleted = "life.home.fashion_show.completed"
+	HomeEventReadingStarted       = "life.home.reading.started"
+	HomeEventReadingCompleted     = "life.home.reading.completed"
+	maxIdempotencyKey             = 128
 )
 
 // LifeConfig scopes the action client to one timeline and an exact actor
@@ -182,6 +190,10 @@ func (c *LifeClient) validatePayload(action string, payload HomeActionPayload) e
 		valid = payload.RoomID != "" && payload.ActivityID == "" && payload.PoseID == ""
 	case HomeActionSleep, HomeActionExercise:
 		valid = payload.RoomID == "" && payload.SlotID == "" && payload.ActivityID == "" && payload.PoseID == ""
+	case HomeActionFashionShow:
+		valid = payload.ActorID == "mio" && payload.RoomID == "" && payload.SlotID == "" && payload.ActivityID == "" && payload.PoseID == ""
+	case HomeActionReading:
+		valid = payload.ActorID == "midori" && payload.RoomID == "" && payload.SlotID == "" && payload.ActivityID == "" && payload.PoseID == ""
 	case HomeActionMirror:
 		valid = payload.RoomID == "" && payload.SlotID == "" && payload.ActivityID == "" && payload.PoseID != ""
 	case HomeActionWake, HomeActionFinish, HomeActionStop:
