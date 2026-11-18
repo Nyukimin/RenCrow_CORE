@@ -338,6 +338,10 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 	if dependencies.taskEnqueue != nil {
 		mux.HandleFunc("POST "+tasksEnqueuePath, dependencies.taskEnqueue)
 	}
+	if dependencies.taskCreate != nil {
+		mux.HandleFunc("POST "+tasksCreatePath, dependencies.taskCreate)
+		mux.HandleFunc("POST "+tasksCreateLookupPath, dependencies.taskCreate)
+	}
 	backlogfeature.RegisterRoutes(mux, backlogfeature.Dependencies{Routes: backlogfeature.Routes{Atlas: dependencies.atlasHandler}})
 	workstreamfeature.RegisterRoutes(mux, workstreamfeature.Dependencies{Routes: workstreamfeature.Routes{
 		Status: dependencies.workstreamStatus, Goals: dependencies.workstreamGoal,
