@@ -1236,6 +1236,36 @@ privateなNews Knowledgeは既存Knowledge ownerのDB、immutableなimport manif
 全messageが終端になってから次pageへ進み、末尾で先頭へ戻る。古いcursorによる取得失敗は
 次回の先頭走査へ戻すが、既存receiptとAtlasのdedupeを維持する。
 
+#### Lumina日記の定期走査
+
+件名が`【ルミナとれんの会話記録】YYYY-MM-DD`、送信者が`nyukimi@gmail.com`の
+メールは、通常の混在Gmail queryだけに依存させず、既存の固定Lumina diary queryで
+毎日全pageを走査する。新しいticker、LaunchAgent、queue、新DBや別receipt storeは作らず、
+既存receiptのoptionalな未確定publication intentを使い、
+既存の`heartbeat.gmail` tick、timeout、single-flight collection slotで走査する。
+そのJST日で成功したscanがなければ、次の既存tick（`run_on_start`を含む）で日記scanを先に実行し、
+続いて同じslot・context内で通常Gmail pollを直列実行する。日記scanが失敗または部分完了でも
+contextが生存しadmission deferでなければ通常pollを行い、通常pollの失敗で日記の成功済み日を取り消さない。
+cancel／admission defer時は通常pollをskipする。日記scanは通常pollの共有cursorを読まず、進めない。
+owner手動scanは日記scanのみを実行し、通常pollを追加しない。
+
+日記scanの成功は全page処理とTask／Runの成功終端後にだけ当日完了として扱う。
+slot使用中、admission defer、cancel、timeout、取得・保存・Task終端失敗では完了扱いにせず、
+また一件以上がblockedの部分reportも当日完了にせず、scheduled Taskをfailedで終端してpartial eventを記録し、
+次の既存tickで再試行する。owner手動scanは従来どおりblockedを含むreport semanticsを保つ。
+完了日はプロセス内だけで保持し、再起動後は未完了として一度scanする。
+これにより停止中に到着した日記を拾い直し、別の永続schedule stateを持たない。
+ownerが開始する手動全期間scanは同じslotとreceipt再開を使うが、起動triggerは`owner`のままとする。
+
+各メールの原文はmessage identity単位のprivate Knowledge Memory PersonalArchiveへ保存し、
+既存のL1 connectionを通じてL1 stagingへ反映する。BOARDのLumina日記は日付単位で公開する。
+同じ日付の別messageを処理しても各原文archiveを保持し、BOARD側は
+同日分を既存の同日原文も含め別受信見出しで併記する。未知のowner編集はconflictとして保護する。
+再試行ではmessage単位のreceiptを使い、完了済みarchiveを重複作成せず、BOARDのunknown-ACKは
+読み戻して同一内容を確認してから完了にする。
+Knowledge Memory PersonalArchive／L1は私的原文の保存先であり、一般ニュースのL1 stagingや
+global source registryへLumina原文を複製しない。
+
 ### 17.3 Viewerと受入証拠
 
 AtlasのBacklog画面にGmail処理結果を表示する。

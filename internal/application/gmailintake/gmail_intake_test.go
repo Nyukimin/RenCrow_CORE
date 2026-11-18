@@ -85,7 +85,7 @@ func (s *gmailIntakeReceiptMemory) Get(_ context.Context, account, id string) (G
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	receipt, ok := s.receipts[gmailReceiptMemoryKey(account, id)]
-	return receipt, ok, nil
+	return cloneGmailReceipt(receipt), ok, nil
 }
 
 func (s *gmailIntakeReceiptMemory) Save(_ context.Context, receipt GmailReceipt) error {
@@ -95,7 +95,7 @@ func (s *gmailIntakeReceiptMemory) Save(_ context.Context, receipt GmailReceipt)
 	if s.failSaveAt != 0 && s.saveCalls == s.failSaveAt {
 		return errors.New("synthetic receipt save failure")
 	}
-	s.receipts[gmailReceiptMemoryKey(receipt.Account, receipt.Message.ID)] = receipt
+	s.receipts[gmailReceiptMemoryKey(receipt.Account, receipt.Message.ID)] = cloneGmailReceipt(receipt)
 	return nil
 }
 
@@ -106,13 +106,49 @@ func (s *gmailIntakeReceiptMemory) List(_ context.Context, account string, limit
 	result := make([]GmailReceipt, 0, len(s.receipts))
 	for _, receipt := range s.receipts {
 		if strings.EqualFold(receipt.Account, account) {
-			result = append(result, receipt)
+			result = append(result, cloneGmailReceipt(receipt))
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt > result[j].UpdatedAt })
 	if limit > 0 && len(result) > limit {
 		result = result[:limit]
 	}
+	return result, nil
+}
+
+func (s *gmailIntakeReceiptMemory) ListDiaryReceipts(_ context.Context, account, date string) ([]GmailReceipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]GmailReceipt, 0)
+	for _, receipt := range s.receipts {
+		if receipt.Account == account && receipt.PreparedDiary != nil && receipt.PreparedDiary.Diary.Date == date {
+			result = append(result, cloneGmailReceipt(receipt))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Message.ReceivedAt != result[j].Message.ReceivedAt {
+			return result[i].Message.ReceivedAt < result[j].Message.ReceivedAt
+		}
+		return result[i].Message.ID < result[j].Message.ID
+	})
+	return result, nil
+}
+
+func (s *gmailIntakeReceiptMemory) ListPendingDiaryPublicationIntents(_ context.Context, account string) ([]GmailReceipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]GmailReceipt, 0)
+	for _, receipt := range s.receipts {
+		if receipt.Account == account && receipt.PreparedDiary != nil && receipt.PreparedDiary.PublicationIntent != nil && !receipt.DiarySaved {
+			result = append(result, cloneGmailReceipt(receipt))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].PreparedDiary.Diary.Date != result[j].PreparedDiary.Diary.Date {
+			return result[i].PreparedDiary.Diary.Date < result[j].PreparedDiary.Diary.Date
+		}
+		return result[i].Message.ID < result[j].Message.ID
+	})
 	return result, nil
 }
 

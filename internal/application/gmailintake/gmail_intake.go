@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,18 +24,20 @@ import (
 )
 
 const (
-	gmailSchema            = "rencrow.gmail.v1"
-	gmailPolicyRevision    = "gmail-daily-routing-v4"
-	gmailDailySubject      = "AI・政治デイリーブリーフ"
-	gmailIntakePurpose     = "メールに記載された仕様をRenCrowへ取り込むために検討する"
-	maxGmailMessages       = 100
-	maxGmailTextBytes      = 128 << 10
-	maxGmailSnapshotBytes  = 32 << 10
-	maxGmailProposals      = gmailBriefMaxTopics
-	maxGmailKnowledgeItems = gmailBriefMaxTopics
-	maxGmailTopicOutcomes  = gmailBriefMaxTopics
-	maxGmailReasonBytes    = 512
-	maxGmailSourceSummary  = 8 << 10
+	gmailSchema         = "rencrow.gmail.v1"
+	gmailPolicyRevision = "gmail-daily-routing-v4"
+	gmailDailySubject   = "AI・政治デイリーブリーフ"
+	gmailIntakePurpose  = "メールに記載された仕様をRenCrowへ取り込むために検討する"
+	maxGmailMessages    = 100
+	maxGmailTextBytes   = 128 << 10
+	// Mirrors boardcommunication.maxDiaryTextBytes: BOARD limits Body+Reflection together.
+	maxGmailDiaryCombinedTextBytes = 128 << 10
+	maxGmailSnapshotBytes          = 32 << 10
+	maxGmailProposals              = gmailBriefMaxTopics
+	maxGmailKnowledgeItems         = gmailBriefMaxTopics
+	maxGmailTopicOutcomes          = gmailBriefMaxTopics
+	maxGmailReasonBytes            = 512
+	maxGmailSourceSummary          = 8 << 10
 )
 
 // GmailEnvelopeSchema is the persisted/transport schema owned by CORE.
@@ -42,6 +45,9 @@ const (
 const GmailEnvelopeSchema = gmailSchema
 
 var ErrGmailIntakeBusy = errors.New("Gmail intake is already running")
+
+var errGmailDiaryPayloadTooLarge = errors.New("composed diary exceeds BOARD payload limit")
+var errGmailDiaryRemoteConflict = errors.New("BOARD diary does not match acknowledged Gmail sources")
 
 // ErrGmailKnowledgeWriterUnavailable means a daily brief produced a
 // Knowledge outcome but the owner persistence boundary was not wired. The
@@ -272,6 +278,9 @@ func (g *GmailIntake) RunDiaryBackfill(ctx context.Context) (GmailRunReport, err
 	if !ok {
 		return report, errors.New("Gmail diary backfill collector is unavailable")
 	}
+	if err := g.resolvePendingDiaryPublicationIntents(ctx); err != nil {
+		return report, fmt.Errorf("resolve pending BOARD diary publication: %w", err)
+	}
 	report.Account = g.account
 	pageToken := ""
 	for {
@@ -424,6 +433,13 @@ func (g *GmailIntake) processMessage(ctx context.Context, message GmailMessage) 
 			case "skipped":
 				return 0, "skipped", append([]string(nil), receipt.BacklogItemIDs...), nil
 			case "blocked":
+				if receipt.PreparedDiary != nil && receipt.Reason == "diary_remote_conflict" && receipt.ArchiveSaved && !receipt.DiarySaved {
+					if recovered, recoveryErr := g.recoverLegacyDiaryReceipts(ctx, receipt.PreparedDiary.Diary.Date); recoveryErr != nil {
+						return 0, "", nil, recoveryErr
+					} else if recovered {
+						return 0, "complete", append([]string(nil), receipt.BacklogItemIDs...), nil
+					}
+				}
 				return 0, "blocked", append([]string(nil), receipt.BacklogItemIDs...), nil
 			case "prepared":
 				created, status, ids, resumeErr := g.resumePrepared(ctx, receipt)
@@ -598,6 +614,7 @@ func (g *GmailIntake) processDiary(ctx context.Context, message GmailMessage) (i
 	entry := domainkm.PersonalArchiveEntry{EntryID: "gmail_diary_" + hex.EncodeToString(hash[:]), UserID: g.userID, SourceRef: locator, Title: message.Subject, SourceKind: "lumina_diary_email", AuthorID: "lumina", DiaryDate: parsed.Date, OriginalText: message.Text, Protected: true, CreatedAt: createdAt.UTC()}
 	prepared := GmailPreparedDiary{SourceKey: sourceKey, Archive: entry, Diary: GmailDiary{ActorID: "lumina", Date: parsed.Date, Revision: 1, Body: parsed.Body, Reflection: parsed.Reflection}}
 	receipt := g.newReceipt(ctx, message, "prepared", "", nil, nil)
+	receipt.PolicyRevision = "gmail-diary-publication-v1"
 	receipt.PreparedDiary = &prepared
 	if err := g.receipts.Save(ctx, receipt); err != nil {
 		return 0, "", nil, fmt.Errorf("save prepared diary receipt: %w", err)
@@ -817,6 +834,7 @@ func (g *GmailIntake) resumePrepared(ctx context.Context, receipt GmailReceipt) 
 }
 
 func (g *GmailIntake) resumePreparedDiary(ctx context.Context, receipt GmailReceipt) (int, string, []string, error) {
+	createdCount := 0
 	if receipt.PreparedDiary == nil {
 		return 0, "", nil, errors.New("prepared Gmail diary is missing")
 	}
@@ -861,47 +879,478 @@ func (g *GmailIntake) resumePreparedDiary(ctx context.Context, receipt GmailRece
 	if err := ctx.Err(); err != nil {
 		return 0, "", nil, err
 	}
-	boardCreated := false
+	if err := g.resolvePendingDiaryPublicationIntents(ctx); err != nil {
+		return 0, "", nil, fmt.Errorf("resolve pending diary publication before source: %w", err)
+	}
+	if latest, found, err := g.receipts.Get(ctx, g.account, receipt.Message.ID); err != nil {
+		return 0, "", nil, fmt.Errorf("reload diary receipt after pending publication recovery: %w", err)
+	} else if found && latest.DiarySaved {
+		return 0, "complete", nil, nil
+	}
+	if pending, err := g.hasPendingDiaryPublicationForDate(ctx, prepared.Diary.Date); err != nil {
+		return 0, "", nil, err
+	} else if pending {
+		return 0, "blocked", nil, nil
+	}
 	if !receipt.DiarySaved {
-		remote, found, err := g.diaryWriter.GetDiary(ctx, prepared.Diary.Date)
-		if err != nil {
-			return 0, "", nil, fmt.Errorf("read BOARD diary: %w", err)
+		if _, err := g.recoverLegacyDiaryReceipts(ctx, prepared.Diary.Date); err != nil {
+			return 0, "", nil, err
 		}
-		if found {
-			if remote.ActorID != "lumina" {
-				return 0, "", nil, errors.New("BOARD diary actor conflict")
+		if receipt.PreparedDiary.PublicationIntent == nil {
+			recovered, err := g.recoverPreparedDiaryReadback(ctx, receipt)
+			if err != nil {
+				return 0, "", nil, err
 			}
-			if remote.Body != prepared.Diary.Body || remote.Reflection != prepared.Diary.Reflection {
-				receipt.Status, receipt.Reason = "blocked", "diary_remote_conflict"
-				receipt.ArchiveSaved = true
+			if recovered {
+				return 0, "complete", nil, nil
+			}
+		}
+		stored, found, err := g.receipts.Get(ctx, g.account, receipt.Message.ID)
+		if err != nil {
+			return 0, "", nil, fmt.Errorf("reload diary receipt after recovery: %w", err)
+		}
+		if found && stored.DiarySaved {
+			receipt = stored
+		} else {
+			if receipt.PreparedDiary.PublicationIntent == nil {
+				intent, err := g.buildDiaryPublicationIntent(ctx, receipt)
+				if err != nil {
+					if errors.Is(err, errGmailDiaryPayloadTooLarge) {
+						return g.blockPreparedDiary(ctx, receipt, "diary_publication_payload_too_large", "checkpoint oversized diary publication")
+					}
+					if errors.Is(err, errGmailDiaryRemoteConflict) {
+						return g.blockPreparedDiary(ctx, receipt, "diary_remote_conflict", "checkpoint BOARD diary conflict")
+					}
+					return 0, "", nil, err
+				}
+				receipt.PreparedDiary.PublicationIntent = intent
 				receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
 				if err := g.receipts.Save(ctx, receipt); err != nil {
-					return 0, "", nil, fmt.Errorf("save diary conflict receipt: %w", err)
+					return 0, "", nil, fmt.Errorf("persist BOARD diary publication intent: %w", err)
 				}
-				return 0, "blocked", nil, nil
 			}
-		} else {
-			if _, err := g.diaryWriter.PutDiary(ctx, prepared.Diary); err != nil {
-				return 0, "", nil, fmt.Errorf("write BOARD diary: %w", err)
+			created, status, err := g.resolveDiaryPublicationIntent(ctx, receipt)
+			if err != nil {
+				return created, "", nil, err
 			}
-			boardCreated = true
+			createdCount += created
+			if status != "complete" {
+				return created, status, nil, nil
+			}
+			stored, found, err = g.receipts.Get(ctx, g.account, receipt.Message.ID)
+			if err != nil || !found {
+				return created, "", nil, errors.New("completed diary receipt could not be reloaded")
+			}
+			receipt = stored
+			if created > 0 {
+				receipt.Status = "complete"
+			}
 		}
-		receipt.DiarySaved = true
+	}
+	if receipt.Status != "complete" {
+		receipt.Status, receipt.Reason = "complete", ""
 		receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
 		if err := g.receipts.Save(ctx, receipt); err != nil {
-			return 0, "", nil, fmt.Errorf("checkpoint BOARD diary: %w", err)
+			return 0, "", nil, fmt.Errorf("complete diary receipt: %w", err)
 		}
 	}
-	receipt.Status = "complete"
-	receipt.Reason = ""
+	return createdCount, "complete", nil, nil
+}
+
+func (g *GmailIntake) blockPreparedDiary(ctx context.Context, receipt GmailReceipt, reason, operation string) (int, string, []string, error) {
+	receipt.Status, receipt.Reason = "blocked", reason
 	receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
 	if err := g.receipts.Save(ctx, receipt); err != nil {
-		return 0, "", nil, fmt.Errorf("complete diary receipt: %w", err)
+		return 0, "", nil, fmt.Errorf("%s: %w", operation, err)
 	}
-	if boardCreated {
-		return 1, "complete", nil, nil
+	return 0, "blocked", nil, nil
+}
+
+func (g *GmailIntake) recoverPreparedDiaryReadback(ctx context.Context, receipt GmailReceipt) (bool, error) {
+	if receipt.PreparedDiary == nil || !receipt.ArchiveSaved || receipt.PreparedDiary.PublicationIntent != nil {
+		return false, nil
 	}
-	return 0, "complete", nil, nil
+	date := receipt.PreparedDiary.Diary.Date
+	all, err := g.receipts.ListDiaryReceipts(ctx, g.account, date)
+	if err != nil {
+		return false, fmt.Errorf("list old-format diary sources: %w", err)
+	}
+	accepted := make([]GmailReceipt, 0, len(all))
+	for _, candidate := range all {
+		if err := g.validateDiarySourceScope(candidate); err != nil {
+			return false, err
+		}
+		if candidate.Message.ID == receipt.Message.ID {
+			continue
+		}
+		if candidate.Status == "blocked" && candidate.ArchiveSaved &&
+			(candidate.Reason == "diary_remote_conflict" || candidate.Reason == "diary_publication_payload_too_large") {
+			return false, nil
+		}
+		if candidate.Status == "complete" && candidate.DiarySaved {
+			accepted = append(accepted, candidate)
+		}
+	}
+	accepted = append(accepted, receipt)
+	target, _, err := composeDiaryReceipts(accepted)
+	if err != nil {
+		if errors.Is(err, errGmailDiaryPayloadTooLarge) {
+			return false, nil
+		}
+		return false, err
+	}
+	remote, found, err := g.diaryWriter.GetDiary(ctx, date)
+	if err != nil {
+		return false, fmt.Errorf("read BOARD diary for old-format receipt recovery: %w", err)
+	}
+	if !found || remote.Revision < 1 || !sameDiaryContent(remote, target) {
+		return false, nil
+	}
+	if _, err := g.ackDiaryIntent(ctx, receipt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func diaryPublicationSource(receipt GmailReceipt) GmailDiaryPublicationSource {
+	return GmailDiaryPublicationSource{MessageID: receipt.Message.ID, ContentHash: strings.ToLower(receipt.Message.ContentHash), ReceivedAt: receipt.Message.ReceivedAt}
+}
+
+func composeDiaryReceipts(receipts []GmailReceipt) (GmailDiary, []GmailDiaryPublicationSource, error) {
+	if len(receipts) == 0 || len(receipts) > 1024 {
+		return GmailDiary{}, nil, errors.New("diary publication source count is invalid")
+	}
+	sort.Slice(receipts, func(i, j int) bool {
+		left, _ := time.Parse(time.RFC3339Nano, receipts[i].Message.ReceivedAt)
+		right, _ := time.Parse(time.RFC3339Nano, receipts[j].Message.ReceivedAt)
+		if !left.Equal(right) {
+			return left.Before(right)
+		}
+		return receipts[i].Message.ID < receipts[j].Message.ID
+	})
+	if receipts[0].PreparedDiary == nil {
+		return GmailDiary{}, nil, errors.New("diary publication source is not prepared")
+	}
+	first := receipts[0].PreparedDiary.Diary
+	body, reflection := make([]string, 0, len(receipts)), make([]string, 0, len(receipts))
+	sources := make([]GmailDiaryPublicationSource, 0, len(receipts))
+	zone := time.FixedZone("JST", 9*60*60)
+	for index, receipt := range receipts {
+		if receipt.PreparedDiary == nil || receipt.PreparedDiary.Diary.Date != first.Date || receipt.PreparedDiary.Diary.ActorID != first.ActorID {
+			return GmailDiary{}, nil, errors.New("diary publication sources do not share an identity")
+		}
+		parsed, err := parseGmailDiary(receipt.Message)
+		if err != nil {
+			return GmailDiary{}, nil, err
+		}
+		if len(receipts) == 1 {
+			body, reflection = append(body, parsed.Body), append(reflection, parsed.Reflection)
+		} else {
+			received, err := time.Parse(time.RFC3339Nano, receipt.Message.ReceivedAt)
+			if err != nil {
+				return GmailDiary{}, nil, err
+			}
+			header := fmt.Sprintf("【メール%d／受信: %s JST】", index+1, received.In(zone).Format("2006-01-02 15:04:05"))
+			body = append(body, header+"\n"+parsed.Body)
+			reflection = append(reflection, header+"\n"+parsed.Reflection)
+		}
+		sources = append(sources, diaryPublicationSource(receipt))
+	}
+	target := GmailDiary{ActorID: first.ActorID, Date: first.Date, Body: strings.Join(body, "\n\n"), Reflection: strings.Join(reflection, "\n\n")}
+	if len(target.Body)+len(target.Reflection) > maxGmailDiaryCombinedTextBytes {
+		return GmailDiary{}, nil, errGmailDiaryPayloadTooLarge
+	}
+	return target, sources, nil
+}
+
+func sameDiary(left, right GmailDiary) bool {
+	return left.ActorID == right.ActorID && left.Date == right.Date && left.Revision == right.Revision && left.Body == right.Body && left.Reflection == right.Reflection
+}
+
+func sameDiaryContent(left, right GmailDiary) bool {
+	return left.ActorID == right.ActorID && left.Date == right.Date && left.Body == right.Body && left.Reflection == right.Reflection
+}
+
+func (g *GmailIntake) buildDiaryPublicationIntent(ctx context.Context, receipt GmailReceipt) (*GmailDiaryPublicationIntent, error) {
+	all, err := g.receipts.ListDiaryReceipts(ctx, g.account, receipt.PreparedDiary.Diary.Date)
+	if err != nil {
+		return nil, fmt.Errorf("list same-date diary receipts: %w", err)
+	}
+	accepted := make([]GmailReceipt, 0, len(all))
+	for _, candidate := range all {
+		if err := g.validateDiarySourceScope(candidate); err != nil {
+			return nil, err
+		}
+		if candidate.Message.ID != receipt.Message.ID && candidate.ArchiveSaved && candidate.Status == "blocked" && candidate.PreparedDiary.PublicationIntent == nil {
+			switch candidate.Reason {
+			case "diary_publication_payload_too_large":
+				return nil, errGmailDiaryPayloadTooLarge
+			case "diary_remote_conflict":
+				return nil, errGmailDiaryRemoteConflict
+			}
+		}
+		if candidate.Message.ID != receipt.Message.ID && candidate.DiarySaved && candidate.Status == "complete" {
+			accepted = append(accepted, candidate)
+		}
+	}
+	var baseline *GmailDiary
+	var baselineContent *GmailDiary
+	if len(accepted) > 0 {
+		baselineDiary, _, err := composeDiaryReceipts(accepted)
+		if err != nil {
+			return nil, err
+		}
+		baselineContent = &baselineDiary
+	}
+	accepted = append(accepted, receipt)
+	target, sources, err := composeDiaryReceipts(accepted)
+	if err != nil {
+		return nil, err
+	}
+	remote, found, err := g.diaryWriter.GetDiary(ctx, target.Date)
+	if err != nil {
+		return nil, fmt.Errorf("read BOARD diary before pinning publication revision: %w", err)
+	}
+	if baselineContent == nil {
+		if found {
+			return nil, errGmailDiaryRemoteConflict
+		}
+		target.Revision = 1
+	} else {
+		if !found || !sameDiaryContent(remote, *baselineContent) {
+			return nil, errGmailDiaryRemoteConflict
+		}
+		if remote.Revision <= 0 || remote.Revision == int(^uint(0)>>1) {
+			return nil, errors.New("BOARD diary revision cannot be advanced")
+		}
+		baselineCopy := remote
+		baseline = &baselineCopy
+		target.Revision = remote.Revision + 1
+	}
+	return &GmailDiaryPublicationIntent{Baseline: baseline, Target: target, Sources: sources}, nil
+}
+
+func (g *GmailIntake) resolvePendingDiaryPublicationIntents(ctx context.Context) error {
+	if g == nil || g.receipts == nil || g.diaryWriter == nil {
+		return nil
+	}
+	pending, err := g.receipts.ListPendingDiaryPublicationIntents(ctx, g.account)
+	if err != nil {
+		return err
+	}
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return fmt.Errorf("canonical Gmail execution identity is required: %w", err)
+	}
+	for _, receipt := range pending {
+		if err := g.validateDiarySourceScope(receipt); err != nil {
+			return err
+		}
+		receipt.TaskID, receipt.RunID, receipt.TraceID = string(identity.TaskID), string(identity.RunID), string(identity.TraceID)
+		receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+		if err := g.receipts.Save(ctx, receipt); err != nil {
+			return fmt.Errorf("save pending diary recovery identity: %w", err)
+		}
+		if _, _, err := g.resolveDiaryPublicationIntent(ctx, receipt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *GmailIntake) hasPendingDiaryPublicationForDate(ctx context.Context, date string) (bool, error) {
+	pending, err := g.receipts.ListPendingDiaryPublicationIntents(ctx, g.account)
+	if err != nil {
+		return false, fmt.Errorf("list pending diary publications: %w", err)
+	}
+	for _, receipt := range pending {
+		if err := g.validateDiarySourceScope(receipt); err != nil {
+			return false, err
+		}
+		if receipt.PreparedDiary.Diary.Date == date {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (g *GmailIntake) resolveDiaryPublicationIntent(ctx context.Context, receipt GmailReceipt) (int, string, error) {
+	if err := g.validateDiarySourceScope(receipt); err != nil {
+		return 0, "", err
+	}
+	intent := receipt.PreparedDiary.PublicationIntent
+	if intent == nil {
+		return 0, "", errors.New("diary publication intent is missing")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, "", err
+	}
+	if err := g.validateDiaryIntentMembership(ctx, receipt, *intent); err != nil {
+		return 0, "", err
+	}
+	remote, found, err := g.diaryWriter.GetDiary(ctx, intent.Target.Date)
+	if err != nil {
+		return 0, "", fmt.Errorf("read BOARD diary publication state: %w", err)
+	}
+	if sameDiary(remote, intent.Target) && found {
+		status, err := g.ackDiaryIntent(ctx, receipt)
+		return 0, status, err
+	}
+	baselineMatches := (!found && intent.Baseline == nil) || (found && intent.Baseline != nil && sameDiary(remote, *intent.Baseline))
+	if !baselineMatches {
+		receipt.Status, receipt.Reason = "blocked", "diary_remote_conflict"
+		receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+		if err := g.receipts.Save(ctx, receipt); err != nil {
+			return 0, "", fmt.Errorf("checkpoint BOARD diary conflict: %w", err)
+		}
+		return 0, "blocked", nil
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, "", err
+	}
+	if _, err := g.diaryWriter.PutDiary(ctx, intent.Target); err != nil {
+		return 0, "", fmt.Errorf("write BOARD diary target: %w", err)
+	}
+	status, err := g.ackDiaryIntent(ctx, receipt)
+	created := 0
+	if intent.Baseline == nil {
+		created = 1
+	}
+	return created, status, err
+}
+
+func (g *GmailIntake) ackDiaryIntent(ctx context.Context, receipt GmailReceipt) (string, error) {
+	// Once GET has established the exact target, source receipts themselves are
+	// sufficient to reproduce the next baseline. Dropping the optional intent
+	// keeps ACKed receipts readable by the previous strict JSON decoder.
+	receipt.PreparedDiary.PublicationIntent = nil
+	receipt.DiarySaved, receipt.Status, receipt.Reason = true, "complete", ""
+	receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+	if err := g.receipts.Save(ctx, receipt); err != nil {
+		return "", fmt.Errorf("checkpoint BOARD diary acknowledgment: %w", err)
+	}
+	return "complete", nil
+}
+
+func (g *GmailIntake) validateDiaryIntentMembership(ctx context.Context, receipt GmailReceipt, intent GmailDiaryPublicationIntent) error {
+	all, err := g.receipts.ListDiaryReceipts(ctx, g.account, intent.Target.Date)
+	if err != nil {
+		return fmt.Errorf("list publication source membership: %w", err)
+	}
+	byID := make(map[string]GmailReceipt, len(all))
+	for _, candidate := range all {
+		if err := g.validateDiarySourceScope(candidate); err != nil {
+			return err
+		}
+		byID[candidate.Message.ID] = candidate
+	}
+	members := make([]GmailReceipt, 0, len(intent.Sources))
+	for _, source := range intent.Sources {
+		candidate, found := byID[source.MessageID]
+		if !found || !strings.EqualFold(candidate.Message.ContentHash, source.ContentHash) || candidate.Message.ReceivedAt != source.ReceivedAt || candidate.PreparedDiary == nil || !candidate.ArchiveSaved {
+			return errors.New("diary publication source membership changed")
+		}
+		if err := ValidateGmailReceipt(candidate); err != nil {
+			return fmt.Errorf("diary publication source receipt is invalid: %w", err)
+		}
+		members = append(members, candidate)
+	}
+	memberIDs := make(map[string]struct{}, len(intent.Sources))
+	for _, source := range intent.Sources {
+		memberIDs[source.MessageID] = struct{}{}
+	}
+	for _, candidate := range all {
+		if candidate.DiarySaved && candidate.Status == "complete" {
+			if _, included := memberIDs[candidate.Message.ID]; !included {
+				return errors.New("diary publication intent omitted an acknowledged source")
+			}
+		}
+	}
+	composed, sources, err := composeDiaryReceipts(members)
+	if err != nil {
+		return err
+	}
+	composed.Revision = intent.Target.Revision
+	if !sameDiary(composed, intent.Target) || len(sources) != len(intent.Sources) {
+		return errors.New("diary publication target does not match its source set")
+	}
+	baselineReceipts := make([]GmailReceipt, 0, len(members))
+	for _, candidate := range members {
+		if candidate.Message.ID != receipt.Message.ID && candidate.DiarySaved && candidate.Status == "complete" {
+			baselineReceipts = append(baselineReceipts, candidate)
+		}
+	}
+	if intent.Baseline == nil {
+		if len(baselineReceipts) != 0 {
+			return errors.New("diary publication baseline omitted acknowledged sources")
+		}
+		return nil
+	}
+	if len(baselineReceipts) == 0 {
+		return errors.New("diary publication baseline has no acknowledged sources")
+	}
+	baseline, _, err := composeDiaryReceipts(baselineReceipts)
+	if err != nil {
+		return err
+	}
+	baseline.Revision = intent.Baseline.Revision
+	if intent.Target.Revision != intent.Baseline.Revision+1 {
+		return errors.New("diary publication target revision does not follow its baseline")
+	}
+	if !sameDiary(baseline, *intent.Baseline) {
+		return errors.New("diary publication baseline does not match acknowledged sources")
+	}
+	return nil
+}
+
+func (g *GmailIntake) recoverLegacyDiaryReceipts(ctx context.Context, date string) (bool, error) {
+	all, err := g.receipts.ListDiaryReceipts(ctx, g.account, date)
+	if err != nil {
+		return false, fmt.Errorf("list legacy diary receipts: %w", err)
+	}
+	legacy := make([]GmailReceipt, 0)
+	for _, receipt := range all {
+		if err := g.validateDiarySourceScope(receipt); err != nil {
+			return false, err
+		}
+		if receipt.Status == "blocked" && receipt.Reason == "diary_remote_conflict" && receipt.ArchiveSaved && !receipt.DiarySaved && receipt.PreparedDiary.PublicationIntent == nil {
+			legacy = append(legacy, receipt)
+		}
+	}
+	if len(legacy) == 0 {
+		return false, nil
+	}
+	sources := make([]GmailReceipt, 0, len(all))
+	for _, receipt := range all {
+		if receipt.ArchiveSaved && (receipt.DiarySaved || receipt.Status == "complete" || receipt.Status == "blocked") {
+			sources = append(sources, receipt)
+		}
+	}
+	target, _, err := composeDiaryReceipts(sources)
+	if err != nil {
+		return false, err
+	}
+	remote, found, err := g.diaryWriter.GetDiary(ctx, date)
+	if err != nil {
+		return false, fmt.Errorf("read owner-resolved BOARD diary: %w", err)
+	}
+	if !found || remote.Revision < 1 || !sameDiaryContent(remote, target) {
+		return false, nil
+	}
+	for _, receipt := range legacy {
+		identity, err := domainexecution.IdentityFromContext(ctx)
+		if err != nil {
+			return false, err
+		}
+		receipt.TaskID, receipt.RunID, receipt.TraceID = string(identity.TaskID), string(identity.RunID), string(identity.TraceID)
+		receipt.PreparedDiary.PublicationIntent = nil
+		receipt.DiarySaved, receipt.Status, receipt.Reason = true, "complete", ""
+		receipt.UpdatedAt = g.receiptNow().Format(time.RFC3339Nano)
+		if err := g.receipts.Save(ctx, receipt); err != nil {
+			return false, fmt.Errorf("recover owner-resolved diary receipt: %w", err)
+		}
+	}
+	return true, nil
 }
 
 func (g *GmailIntake) newReceipt(ctx context.Context, message GmailMessage, status, reason string, prepared []appbacklog.IntakeRequest, ids []string) GmailReceipt {
@@ -1116,6 +1565,11 @@ func ValidateGmailReceipt(receipt GmailReceipt) error {
 		if diary.ActorID != "lumina" || diary.Date != parsed.Date || diary.Revision != 1 || diary.Body != parsed.Body || diary.Reflection != parsed.Reflection {
 			return errors.New("prepared BOARD diary does not match parsed Gmail source")
 		}
+		if receipt.PreparedDiary.PublicationIntent != nil {
+			if err := validateDiaryPublicationIntent(receipt, *receipt.PreparedDiary.PublicationIntent); err != nil {
+				return err
+			}
+		}
 	}
 	if (receipt.ArchiveSaved || receipt.DiarySaved) && receipt.PreparedDiary == nil {
 		return errors.New("diary acknowledgments require a prepared diary")
@@ -1139,6 +1593,61 @@ func ValidateGmailReceipt(receipt GmailReceipt) error {
 	}
 	if err := validateGmailTopicOutcomes(receipt.TopicOutcomes); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateDiaryPublicationIntent(receipt GmailReceipt, intent GmailDiaryPublicationIntent) error {
+	if len(intent.Sources) == 0 || len(intent.Sources) > 1024 {
+		return errors.New("diary publication source bound exceeded")
+	}
+	if intent.Target.ActorID != "lumina" || intent.Target.Date != receipt.PreparedDiary.Diary.Date || intent.Target.Revision < 1 || !utf8.ValidString(intent.Target.Body) || !utf8.ValidString(intent.Target.Reflection) || len(intent.Target.Body)+len(intent.Target.Reflection) > maxGmailDiaryCombinedTextBytes {
+		return errors.New("diary publication target is invalid")
+	}
+	if intent.Baseline == nil {
+		if intent.Target.Revision != 1 {
+			return errors.New("initial diary publication revision is invalid")
+		}
+	} else if intent.Baseline.ActorID != "lumina" || intent.Baseline.Date != intent.Target.Date || intent.Baseline.Revision < 1 || intent.Target.Revision != intent.Baseline.Revision+1 || len(intent.Baseline.Body)+len(intent.Baseline.Reflection) > maxGmailDiaryCombinedTextBytes {
+		return errors.New("diary publication baseline is invalid")
+	}
+	seen := make(map[string]struct{}, len(intent.Sources))
+	var previous time.Time
+	previousID := ""
+	containsReceipt := false
+	encodedBound := len(intent.Target.Body) + len(intent.Target.Reflection)
+	if intent.Baseline != nil {
+		encodedBound += len(intent.Baseline.Body) + len(intent.Baseline.Reflection)
+	}
+	for index, source := range intent.Sources {
+		if !isGmailHexID(source.MessageID) || source.MessageID == "" {
+			return errors.New("diary publication source identity is invalid")
+		}
+		if _, err := normalizedSHA256(source.ContentHash); err != nil {
+			return errors.New("diary publication source hash is invalid")
+		}
+		received, err := time.Parse(time.RFC3339Nano, source.ReceivedAt)
+		if err != nil {
+			return errors.New("diary publication source timestamp is invalid")
+		}
+		if index > 0 && (received.Before(previous) || (received.Equal(previous) && source.MessageID < previousID)) {
+			return errors.New("diary publication sources are not canonically ordered")
+		}
+		previous, previousID = received, source.MessageID
+		if _, exists := seen[source.MessageID]; exists {
+			return errors.New("diary publication source is duplicated")
+		}
+		seen[source.MessageID] = struct{}{}
+		encodedBound += len(source.MessageID) + len(source.ContentHash) + len(source.ReceivedAt) + 32
+		if source.MessageID == receipt.Message.ID && strings.EqualFold(source.ContentHash, receipt.Message.ContentHash) && source.ReceivedAt == receipt.Message.ReceivedAt {
+			containsReceipt = true
+		}
+	}
+	if !containsReceipt {
+		return errors.New("diary publication intent does not bind its receipt source")
+	}
+	if encodedBound > 512<<10 {
+		return errors.New("diary publication intent byte bound exceeded")
 	}
 	return nil
 }
@@ -1272,6 +1781,19 @@ func (g *GmailIntake) validateReceiptKnowledgeOwner(receipt GmailReceipt) error 
 		if prepared.Item.UserID != g.userID {
 			return errors.New("prepared Gmail Knowledge item user does not match the configured owner")
 		}
+	}
+	return nil
+}
+
+func (g *GmailIntake) validateDiarySourceScope(receipt GmailReceipt) error {
+	if g == nil || receipt.Account != g.account || receipt.ActorID != "shiro" || receipt.PreparedDiary == nil {
+		return errors.New("diary source receipt scope does not match the configured account and actor")
+	}
+	if err := ValidateGmailReceipt(receipt); err != nil {
+		return fmt.Errorf("diary source receipt is invalid: %w", err)
+	}
+	if err := g.validateReceiptKnowledgeOwner(receipt); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1422,6 +1944,28 @@ func truncateUTF8(value string, maxBytes int) string {
 }
 
 func cloneGmailMessage(message GmailMessage) GmailMessage { return message }
+
+func cloneGmailReceipt(receipt GmailReceipt) GmailReceipt {
+	if receipt.PreparedDiary != nil {
+		prepared := *receipt.PreparedDiary
+		if prepared.PublicationIntent != nil {
+			intent := *prepared.PublicationIntent
+			if intent.Baseline != nil {
+				baseline := *intent.Baseline
+				intent.Baseline = &baseline
+			}
+			intent.Sources = append([]GmailDiaryPublicationSource(nil), intent.Sources...)
+			prepared.PublicationIntent = &intent
+		}
+		receipt.PreparedDiary = &prepared
+	}
+	receipt.Prepared = cloneIntakeRequests(receipt.Prepared)
+	receipt.PreparedKnowledge = cloneGmailPreparedKnowledge(receipt.PreparedKnowledge)
+	receipt.TopicOutcomes = cloneGmailTopicOutcomes(receipt.TopicOutcomes)
+	receipt.BacklogItemIDs = append([]string(nil), receipt.BacklogItemIDs...)
+	receipt.KnowledgeItemIDs = append([]string(nil), receipt.KnowledgeItemIDs...)
+	return receipt
+}
 
 func cloneIntakeRequest(request appbacklog.IntakeRequest) appbacklog.IntakeRequest {
 	request.ExpectedEffect = append([]string(nil), request.ExpectedEffect...)

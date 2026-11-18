@@ -17,6 +17,7 @@ import (
 	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	gmailapp "github.com/Nyukimin/RenCrow_CORE/internal/application/gmailintake"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 	backloginfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/backlog"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -38,6 +39,20 @@ func gmailReceiptTestDirectPrepared(id, body string) gmailapp.GmailReceipt {
 	receipt.Status = "prepared"
 	receipt.Reason = ""
 	receipt.Prepared = []backlogapp.IntakeRequest{{Kind: "idea", Title: receipt.Message.Subject, Body: body, Purpose: "メールに記載された仕様をRenCrowへ取り込むために検討する", Source: locator, Owner: "shiro", OwnerModule: domainbacklog.LifecycleOwnerModule, SourceRefs: []domainbacklog.SourceRef{{Type: "gmail", Locator: locator, ContentHash: receipt.Message.ContentHash, CapturedAt: receipt.Message.ReceivedAt, RawOrSummary: "Gmail message source"}}}}
+	return receipt
+}
+
+func gmailReceiptTestDiaryPrepared(id string, received time.Time) gmailapp.GmailReceipt {
+	text := "1. 今日の会話\nconversation\n2. 今日のまとめ\nsummary\n3. ルミナの感想\nreflection"
+	receipt := gmailReceiptTestReceipt(id, text, received.Format(time.RFC3339Nano))
+	receipt.Account = "nyukimin0811@gmail.com"
+	receipt.Message.Subject = "【ルミナとれんの会話記録】2025-08-16"
+	receipt.Message.From = "Ren <nyukimi@gmail.com>"
+	receipt.Message.ReceivedAt = received.Format(time.RFC3339Nano)
+	locator := "gmail://nyukimin0811%40gmail.com/messages/" + id
+	archive := domainkm.PersonalArchiveEntry{EntryID: "archive_" + id, UserID: "ren", SourceRef: locator, Title: receipt.Message.Subject, SourceKind: "lumina_diary_email", AuthorID: "lumina", DiaryDate: "2025-08-16", OriginalText: text, Protected: true, CreatedAt: received}
+	receipt.Status, receipt.Reason = "prepared", ""
+	receipt.PreparedDiary = &gmailapp.GmailPreparedDiary{SourceKey: locator, Archive: archive, Diary: gmailapp.GmailDiary{ActorID: "lumina", Date: "2025-08-16", Revision: 1, Body: "1. 今日の会話\nconversation\n\n2. 今日のまとめ\nsummary", Reflection: "3. ルミナの感想\nreflection"}}
 	return receipt
 }
 
@@ -200,6 +215,41 @@ func TestGmailReceiptStoreListsNewestHundredWithAccountIsolation(t *testing.T) {
 	}
 	if _, err := store.List(context.Background(), "user@example.com", 101); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGmailReceiptStoreListsEveryExactDateDiaryReceiptBeyondNewestHundred(t *testing.T) {
+	store := NewGmailReceiptStore(gmailReceiptTestRoot(t))
+	base := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+	for index := 0; index < 105; index++ {
+		receipt := gmailReceiptTestDiaryPrepared(fmt.Sprintf("%x", index+1), base.Add(time.Duration(index)*time.Second))
+		if index == 0 {
+			receipt.ArchiveSaved = true
+			receipt.PreparedDiary.PublicationIntent = &gmailapp.GmailDiaryPublicationIntent{Target: receipt.PreparedDiary.Diary, Sources: []gmailapp.GmailDiaryPublicationSource{{MessageID: receipt.Message.ID, ContentHash: receipt.Message.ContentHash, ReceivedAt: receipt.Message.ReceivedAt}}}
+		}
+		if err := store.Save(context.Background(), receipt); err != nil {
+			t.Fatalf("save diary receipt %d: %v", index, err)
+		}
+	}
+	otherDate := gmailReceiptTestDiaryPrepared("ffff", base.Add(time.Hour))
+	otherDate.Message.Subject = "【ルミナとれんの会話記録】2025-08-17"
+	otherDate.PreparedDiary.Diary.Date = "2025-08-17"
+	otherDate.PreparedDiary.Archive.DiaryDate = "2025-08-17"
+	otherDate.PreparedDiary.Archive.Title = otherDate.Message.Subject
+	if err := store.Save(context.Background(), otherDate); err != nil {
+		t.Fatalf("save other-date diary receipt: %v", err)
+	}
+	all, err := store.ListDiaryReceipts(context.Background(), "nyukimin0811@gmail.com", "2025-08-16")
+	if err != nil || len(all) != 105 {
+		t.Fatalf("exact-date receipt count=%d err=%v, want 105", len(all), err)
+	}
+	for _, receipt := range all {
+		if receipt.Account != "nyukimin0811@gmail.com" || receipt.PreparedDiary.Diary.Date != "2025-08-16" {
+			t.Fatalf("exact-date query returned unrelated receipt: %#v", receipt)
+		}
+	}
+	if pending, err := store.ListPendingDiaryPublicationIntents(context.Background(), "nyukimin0811@gmail.com"); err != nil || len(pending) != 1 || pending[0].Message.ID != "1" {
+		t.Fatalf("pending intents=%d err=%v, want the single unacknowledged intent", len(pending), err)
 	}
 }
 

@@ -56,9 +56,24 @@ type GmailPersonalArchiveWriter interface {
 }
 
 type GmailPreparedDiary struct {
-	SourceKey string                        `json:"source_key"`
-	Archive   domainkm.PersonalArchiveEntry `json:"archive"`
-	Diary     GmailDiary                    `json:"diary"`
+	SourceKey         string                        `json:"source_key"`
+	Archive           domainkm.PersonalArchiveEntry `json:"archive"`
+	Diary             GmailDiary                    `json:"diary"`
+	PublicationIntent *GmailDiaryPublicationIntent  `json:"publication_intent,omitempty"`
+}
+
+type GmailDiaryPublicationSource struct {
+	MessageID   string `json:"message_id"`
+	ContentHash string `json:"content_hash"`
+	ReceivedAt  string `json:"received_at"`
+}
+
+// GmailDiaryPublicationIntent durably binds the exact BOARD compare-and-set
+// payload to every original Gmail source that contributes to that date.
+type GmailDiaryPublicationIntent struct {
+	Baseline *GmailDiary                   `json:"baseline,omitempty"`
+	Target   GmailDiary                    `json:"target"`
+	Sources  []GmailDiaryPublicationSource `json:"sources"`
 }
 
 // GmailBriefEvaluator returns proposals, never writes Atlas state or invokes tools.
@@ -171,6 +186,8 @@ type GmailReceiptStore interface {
 	Get(context.Context, string, string) (GmailReceipt, bool, error)
 	Save(context.Context, GmailReceipt) error
 	List(context.Context, string, int) ([]GmailReceipt, error)
+	ListDiaryReceipts(context.Context, string, string) ([]GmailReceipt, error)
+	ListPendingDiaryPublicationIntents(context.Context, string) ([]GmailReceipt, error)
 	Cursor(context.Context, string, string) (string, error)
 	SaveCursor(context.Context, string, string, string) error
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // autoplay ランナーの安全クランプ (RenCrow_GAMES/docs/10 §2)。
@@ -65,13 +66,14 @@ type gameAutoplayDecision struct {
 // play=true なら PerformGameLaunch で自発起動する常駐ランナー
 // (RenCrow_GAMES/docs/10_RenCrow自発プレイ仕様.md)。
 type GameAutoplayService struct {
-	provider llm.LLMProvider
-	launch   GameLaunchOptions
-	recall   GameBridgeSessionLister
-	personas []string
-	dailyCap int
-	client   *http.Client
-	now      func() time.Time
+	provider         llm.LLMProvider
+	launch           GameLaunchOptions
+	recall           GameBridgeSessionLister
+	personas         []string
+	personasExplicit bool
+	dailyCap         int
+	client           *http.Client
+	now              func() time.Time
 
 	mu            sync.Mutex
 	dayKey        string
@@ -94,6 +96,7 @@ func NewGameAutoplayService(opts GameAutoplayOptions) *GameAutoplayService {
 			personas = append(personas, persona)
 		}
 	}
+	personasExplicit := len(personas) > 0
 	if len(personas) == 0 {
 		personas = append(personas, gameAutoplayDefaultPersonas...)
 	}
@@ -110,14 +113,15 @@ func NewGameAutoplayService(opts GameAutoplayOptions) *GameAutoplayService {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &GameAutoplayService{
-		provider: opts.Provider,
-		launch:   opts.Launch,
-		recall:   opts.Recall,
-		personas: personas,
-		dailyCap: dailyCap,
-		client:   client,
-		now:      now,
-		done:     make(chan struct{}),
+		provider:         opts.Provider,
+		launch:           opts.Launch,
+		recall:           opts.Recall,
+		personas:         personas,
+		personasExplicit: personasExplicit,
+		dailyCap:         dailyCap,
+		client:           client,
+		now:              now,
+		done:             make(chan struct{}),
 	}
 }
 
@@ -200,8 +204,23 @@ func (s *GameAutoplayService) runOnce(ctx context.Context, preserveLaunch bool) 
 		return next
 	}
 
-	personas := s.filterToRoster(decision.Personas)
-	if strings.TrimSpace(decision.GameID) == "" || len(personas) == 0 {
+	gameID := strings.TrimSpace(decision.GameID)
+	roster, available := s.personasForTitle(gameID)
+	if !available {
+		log.Printf("[GamesAutoplay] play decision selected unavailable title %q, skipped", gameID)
+		return next
+	}
+	var personas []string
+	if isFourPlayerAutoplayTitle(gameID) {
+		if !equalAutoplayPersonas(decision.Personas, roster) {
+			log.Printf("[GamesAutoplay] play decision roster does not match %s roster, skipped: %v", gameID, decision.Personas)
+			return next
+		}
+		personas = roster
+	} else {
+		personas = s.filterToRoster(decision.Personas)
+	}
+	if gameID == "" || len(personas) == 0 {
 		log.Printf("[GamesAutoplay] play decision missing game_id or personas, skipped: %+v", decision)
 		return next
 	}
@@ -218,7 +237,7 @@ func (s *GameAutoplayService) runOnce(ctx context.Context, preserveLaunch bool) 
 		defer cancelLaunch()
 	}
 	result, _, err := PerformGameLaunch(launchCtx, s.launch, GameLaunchRequest{
-		GameID:   strings.TrimSpace(decision.GameID),
+		GameID:   gameID,
 		Personas: personas,
 		Reason:   strings.TrimSpace(decision.Reason),
 	})
@@ -230,6 +249,53 @@ func (s *GameAutoplayService) runOnce(ctx context.Context, preserveLaunch bool) 
 	log.Printf("[GamesAutoplay] launched %s session=%s personas=%v reason=%q (next check in %s)",
 		result.GameID, result.SessionID, personas, decision.Reason, next)
 	return next
+}
+
+func (s *GameAutoplayService) personasForTitle(gameID string) ([]string, bool) {
+	switch gameID {
+	case "survival_garden", "herzog_zwei":
+		spec, err := domaintask.NormalizeGameSpec(domaintask.GameSpec{GameID: gameID})
+		if err != nil {
+			return nil, false
+		}
+		if s.personasExplicit {
+			for _, required := range spec.Personas {
+				if !containsAutoplayPersona(s.personas, required) {
+					return nil, false
+				}
+			}
+		}
+		return spec.Personas, true
+	case "nethack", "territory_commander":
+		return append([]string(nil), s.personas...), true
+	default:
+		return nil, false
+	}
+}
+
+func isFourPlayerAutoplayTitle(gameID string) bool {
+	return gameID == "survival_garden" || gameID == "herzog_zwei"
+}
+
+func containsAutoplayPersona(personas []string, wanted string) bool {
+	for _, persona := range personas {
+		if persona == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func equalAutoplayPersonas(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for i := range expected {
+		if actual[i] != expected[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func clampGameAutoplayCheck(minutes int) time.Duration {
@@ -366,14 +432,27 @@ func (s *GameAutoplayService) askProvider(ctx context.Context) (gameAutoplayDeci
 	ctx, cancel := context.WithTimeout(ctx, gameAutoplayDecisionTimeout)
 	defer cancel()
 
+	titles := make(map[string]any, 4)
+	for _, title := range []struct {
+		gameID      string
+		description string
+	}{
+		{gameID: "herzog_zwei", description: "4人対戦RTS"},
+		{gameID: "territory_commander", description: "1-2人 (2人でLLM対戦)"},
+		{gameID: "survival_garden", description: "4人の独立生存 (遭遇あり)"},
+		{gameID: "nethack", description: "1人 (スコア争い)"},
+	} {
+		personas, available := s.personasForTitle(title.gameID)
+		if !available {
+			continue
+		}
+		titles[title.gameID] = map[string]any{
+			"description": title.description,
+			"personas":    personas,
+		}
+	}
 	payload := map[string]any{
-		"personas": s.personas,
-		"titles": map[string]any{
-			"herzog_zwei":         "1-4人対戦RTS (足りない陣営はbot)",
-			"territory_commander": "1-2人 (2人でLLM対戦)",
-			"survival_garden":     "1-4人の独立生存 (遭遇あり)",
-			"nethack":             "1人 (スコア争い)",
-		},
+		"titles":          titles,
 		"leaderboard":     s.fetchLeaderboard(ctx),
 		"recent_sessions": s.recentSessions(ctx),
 		"now":             s.now().Format(time.RFC3339),
@@ -406,7 +485,7 @@ Return only one strict JSON object:
 {"play":false,"game_id":"","personas":[],"reason":"","next_check_minutes":60}
 or
 {"play":true,"game_id":"<title id>","personas":["<from the given roster>"],"reason":"<motive in Japanese, first person>","next_check_minutes":<when to consider playing again>}
-Rules: personas must come from the given roster. Respect the per-title persona counts. next_check_minutes is required (how many minutes until you want to think about playing again). No markdown, no extra keys.`
+Each entry in titles includes that title's own eligible personas list. Choose only a game_id present in titles. For survival_garden and herzog_zwei, return all four listed personas in exactly the listed order. For nethack, return exactly one listed persona; for territory_commander, return one or two listed personas. If a title is omitted, do not choose it. Do not substitute aliases or use another title's roster. next_check_minutes is required (how many minutes until you want to think about playing again). No markdown, no extra keys.`
 
 func decodeGameAutoplayDecision(content string) (gameAutoplayDecision, error) {
 	trimmed := strings.TrimSpace(content)

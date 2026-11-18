@@ -253,7 +253,9 @@ func (field gameActionFieldContract) validate(value any, path string) error {
 			return fmt.Errorf("%s must be a string", path)
 		}
 		if field.enumSet && !containsGameActionContractValue(field.enum, text) {
-			return fmt.Errorf("%s must be one of the values in its declared enum", path)
+			rejectedJSON, _ := json.Marshal(text)
+			allowedJSON, _ := json.Marshal(field.enum)
+			return fmt.Errorf("%s must be one of the values in its declared enum: rejected %s; allowed values %s", path, rejectedJSON, allowedJSON)
 		}
 	case "integer":
 		integer, ok := integerValue(value)

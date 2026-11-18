@@ -425,6 +425,72 @@ func TestGameAgentActionContractsValidateEnumsBoundsAndIntegerConstraints(t *tes
 	}
 }
 
+func TestGameAgentDecisionServiceRetriesCaptureEnumWithEscapedValueAndRequestLegalIDs(t *testing.T) {
+	provider := &gameDecisionLLMProvider{responses: []string{
+		`{"action":"capture","args":{"unit_id":"gin-capture-unit","outpost_id":"invalid\"outpost\n"}}`,
+		`{"action":"capture","args":{"unit_id":"gin-capture-unit","outpost_id":"gin-post-2"}}`,
+		`{"action":"capture","args":{"unit_id":"aka-capture-unit","outpost_id":"foreign-aka-target"}}`,
+		`{"action":"capture","args":{"unit_id":"aka-capture-unit","outpost_id":"aka-post-3"}}`,
+	}}
+	service := newTestGameDecisionService(provider)
+	observation := func(captureUnit string, legalOutposts []string) map[string]any {
+		return map[string]any{
+			"action_contracts": map[string]any{
+				"capture": map[string]any{
+					"args": map[string]any{
+						"unit_id":    map[string]any{"type": "string", "required": true, "enum_ref": "capture_units"},
+						"outpost_id": map[string]any{"type": "string", "required": true, "enum_ref": "outposts"},
+					},
+				},
+				"wait": map[string]any{},
+			},
+			"legal_ids": map[string]any{"capture_units": []string{captureUnit}, "outposts": legalOutposts},
+		}
+	}
+
+	first, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+		GameID: "herzog_zwei", SessionID: "hz_capture_enum_feedback_gin", Persona: "gin",
+		Observation:      observation("gin-capture-unit", []string{"gin-post-1", "gin-post-2", "gin-post-3", "gin-post-4"}),
+		AvailableActions: []string{"capture", "wait"}, Request: "issue_orders",
+	})
+	if err != nil || first.Intent != "capture" || len(first.ActionPlan) != 1 || first.ActionPlan[0].Args["outpost_id"] != "gin-post-2" || first.ActionPlan[0].Args["unit_id"] != "gin-capture-unit" || len(provider.requests) != 2 {
+		t.Fatalf("Gin decision=%+v calls=%d err=%v, want enum correction within the same Agent turn", first, len(provider.requests), err)
+	}
+	ginFeedback := provider.requests[1].Messages[len(provider.requests[1].Messages)-1].Content
+	for _, required := range []string{
+		`args.outpost_id must be one of the values in its declared enum: rejected "invalid\"outpost\n"; allowed values ["gin-post-1","gin-post-2","gin-post-3","gin-post-4"]`,
+		"gin-post-1", "gin-post-2", "gin-post-3", "gin-post-4",
+	} {
+		if !strings.Contains(ginFeedback, required) {
+			t.Fatalf("Gin retry prompt omitted enum feedback %q: %s", required, ginFeedback)
+		}
+	}
+	if strings.Contains(ginFeedback, "aka-post-") {
+		t.Fatalf("Gin retry prompt included another actor's legal IDs: %s", ginFeedback)
+	}
+
+	second, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+		GameID: "herzog_zwei", SessionID: "hz_capture_enum_feedback_aka", Persona: "aka",
+		Observation:      observation("aka-capture-unit", []string{"aka-post-1", "aka-post-2", "aka-post-3", "aka-post-4"}),
+		AvailableActions: []string{"capture", "wait"}, Request: "issue_orders",
+	})
+	if err != nil || second.Intent != "capture" || len(second.ActionPlan) != 1 || second.ActionPlan[0].Args["outpost_id"] != "aka-post-3" || second.ActionPlan[0].Args["unit_id"] != "aka-capture-unit" || len(provider.requests) != 4 {
+		t.Fatalf("Aka decision=%+v calls=%d err=%v, want its own legal enum correction", second, len(provider.requests), err)
+	}
+	akaFeedback := provider.requests[3].Messages[len(provider.requests[3].Messages)-1].Content
+	for _, required := range []string{
+		`args.outpost_id must be one of the values in its declared enum: rejected "foreign-aka-target"; allowed values ["aka-post-1","aka-post-2","aka-post-3","aka-post-4"]`,
+		"aka-post-1", "aka-post-2", "aka-post-3", "aka-post-4",
+	} {
+		if !strings.Contains(akaFeedback, required) {
+			t.Fatalf("Aka retry prompt omitted request-local enum feedback %q: %s", required, akaFeedback)
+		}
+	}
+	if strings.Contains(akaFeedback, "gin-post-") {
+		t.Fatalf("Aka retry prompt leaked another actor's legal IDs: %s", akaFeedback)
+	}
+}
+
 func TestParseGameActionContractsRejectsMalformedReferences(t *testing.T) {
 	_, _, err := parseGameActionContracts(map[string]any{
 		"action_contracts": map[string]any{"attack_move": map[string]any{"args": map[string]any{
