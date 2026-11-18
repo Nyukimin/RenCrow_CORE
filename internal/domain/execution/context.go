@@ -56,6 +56,20 @@ func IdentityFromContext(ctx context.Context) (Identity, error) {
 	return identity, nil
 }
 
+// WithIssuedChildIdentity binds a TaskManager-issued child Run while proving
+// the caller already carries the exact parent identity. TaskManager must
+// validate the persisted child descriptor before calling this helper.
+func WithIssuedChildIdentity(ctx context.Context, parent Identity, child Identity) (context.Context, error) {
+	current, err := IdentityFromContext(ctx)
+	if err != nil || current != parent {
+		return nil, fmt.Errorf("parent execution identity does not match the issued planning invocation")
+	}
+	if err := child.Validate(); err != nil {
+		return nil, err
+	}
+	return context.WithValue(ctx, identityContextKey{}, child), nil
+}
+
 func (i Identity) Validate() error {
 	if err := i.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id: %w", err)
