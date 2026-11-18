@@ -26,10 +26,11 @@ import (
 // route/port decision in D-14, private-room redaction, and Observation delivery.
 //
 // Lesson / Invariant: while D-27's production route/DTO stays undecided, no
-// production file outside the R04 PoC owners may name a PoC world route, and no
-// production file outside this client package may import this package. A browser
-// never receives a WORLD reader credential, DB path, or private Memory reference,
-// and the R04 mock DTO never becomes the production DTO.
+// production file outside the R04 PoC owners may name a PoC world route, and
+// imports outside this package are limited to the exact consumers in the
+// reviewed allowlist. Those exceptions do not establish a general read bridge.
+// A browser never receives a WORLD reader credential, DB path, or private
+// Memory reference, and the R04 mock DTO never becomes the production DTO.
 //
 // Enforcement: this test scans the repository's production sources. It is
 // syntactic, so both allowlists are part of the contract; wiring needs an entry
@@ -62,13 +63,15 @@ var pocWorldRouteOwners = map[string]bool{
 // stays undecided, and every entry must name the decision it closed.
 var pocRoutePromotionAllowlist = map[string]string{}
 
-// readBridgeConsumerAllowlist maps reviewed internal CORE consumers of the
-// source-level client. These are private routine owners only; they do not add a
-// PORTAL route or promote the R04 PoC. D-27 and D-14 remain open for the future
-// authenticated CORE read bridge.
+// readBridgeConsumerAllowlist maps reviewed consumers of the source-level
+// client. It covers private routine owners, the in-process TaskMeeting adapter,
+// and the existing loopback-only PORTAL house projection. These exact consumers
+// do not add a general read bridge or promote the R04 PoC. D-27 and D-14 remain
+// open for any future authenticated CORE read bridge.
 var readBridgeConsumerAllowlist = map[string]string{
 	"cmd/rencrow/runtime_agent_routine.go":           "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only discovers authenticated WORLD state for CORE's private agent routine scheduler.",
 	"cmd/rencrow/runtime_living_seats.go":            "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only reconciles authenticated WORLD seating for CORE's private LIVING routine scheduler, without adding a route or Viewer DTO.",
+	"cmd/rencrow/runtime_routine_house_view.go":      "Preserve the deployed GET-only exact-path/no-query house projection for X-RenCrow-Client=RenCrow_PORTAL and portal-living, direct loopback only, with complete routine actor scope; this is not the general authenticated CORE read bridge, whose D-27 route/DTO and D-14 canonical route remain open.",
 	"cmd/rencrow/runtime_routine_world.go":           "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only performs authenticated CORE-owned home lifecycle actions and reads their receipts/events.",
 	"internal/adapter/taskmeeting/world_presence.go": "CORE meeting-owner decision 2026-11-18: one authenticated in-process World snapshot adapter for frozen TaskMeeting occurrence receipts. D-27's production route/DTO and D-14's canonical route remain undecided; no browser DTO, generic projection, production route, or World write is added.",
 }
