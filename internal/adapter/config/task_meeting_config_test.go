@@ -92,6 +92,6 @@ func validMeetingConfig() *Config {
 		Coder4:          CoderConfig{Name: "coder4"},
 		LocalAgentOps:   LocalAgentOpsConfig{Enabled: true, UserID: "owner-1", AuthTokenFile: "/tmp/rencrow-test-token"},
 		WorldProjection: WorldProjectionConfig{BaseURL: "http://127.0.0.1:9000", TokenEnv: "WORLD_READ_TOKEN", WorldID: "world-1", TimelineID: "timeline-1", TimelineEpoch: "epoch-1"},
-		Heartbeat:       HeartbeatConfig{Routine: HeartbeatRoutineConfig{DailyReportMeetings: validDailyReportMeetingsConfig()}},
+		Heartbeat:       HeartbeatConfig{Routine: RoutineHeartbeatConfig{DailyReportMeetings: validDailyReportMeetingsConfig()}},
 	}
 }

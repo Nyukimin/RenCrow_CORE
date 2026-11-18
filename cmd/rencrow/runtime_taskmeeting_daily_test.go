@@ -333,7 +333,7 @@ func validRuntimeTaskMeetingConfig() *config.Config {
 			BaseURL: "http://world.example.test", TokenEnv: "WORLD_READ_TOKEN",
 			WorldID: "world-private", TimelineID: "timeline-private", TimelineEpoch: "epoch-private",
 		},
-		Heartbeat: config.HeartbeatConfig{Enabled: true, Routine: config.HeartbeatRoutineConfig{DailyReportMeetings: config.DailyReportMeetingsConfig{
+		Heartbeat: config.HeartbeatConfig{Enabled: true, Routine: config.RoutineHeartbeatConfig{DailyReportMeetings: config.DailyReportMeetingsConfig{
 			Enabled: true, Revision: 1, OwnerUserID: "owner-1", DataScope: tool.DataScopeUser,
 			CoordinatorActorID: "shiro", Actors: actors,
 			LivingRoomRef: "room-private-living", DiningRoomRef: "room-private-dining",
