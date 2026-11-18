@@ -177,45 +177,45 @@ type OccurrenceRecord struct {
 }
 
 type Meeting struct {
-	Key                      OccurrenceKey         `json:"occurrence_key"`
-	ScheduleRevision         uint64                `json:"schedule_revision"`
-	Timing                   modulecore.TaskTiming `json:"timing"`
-	WorldBaseURL             string                `json:"world_base_url,omitempty"`
-	WorldCredentialEnv       string                `json:"world_credential_env,omitempty"`
-	WorldID                  string                `json:"world_id,omitempty"`
-	TimelineID               string                `json:"timeline_id,omitempty"`
-	TimelineEpoch            string                `json:"timeline_epoch,omitempty"`
-	Participants             []string              `json:"participants"`
-	WorldActorBindings       []WorldActorBinding   `json:"world_actor_bindings"`
-	RegistrationEvidenceID   modulecore.EvidenceID `json:"registration_evidence_id"`
-	Rooms                    RoomRefs              `json:"rooms"`
-	MeetingDeadlineAfterSecs int64                 `json:"meeting_deadline_after_seconds"`
-	ScheduledAt              time.Time             `json:"scheduled_at"`
-	DeadlineAt               time.Time             `json:"deadline_at"`
-	Status                   string                `json:"status"`
-	Generation               uint64                `json:"generation"`
-	Epoch                    uint64                `json:"epoch"`
-	ProgressionRevision      uint64                `json:"progression_revision"`
-	CheckpointSequence       uint64                `json:"checkpoint_sequence"`
-	EvidenceClaims           []EvidenceClaim       `json:"evidence_claims"`
-	TaskRef                  *modulecore.TaskID    `json:"task_ref,omitempty"`
-	RunRef                   *modulecore.RunID     `json:"run_ref,omitempty"`
-	TaskManagerEvidenceID    modulecore.EvidenceID `json:"task_manager_evidence_id,omitempty"`
-	ScopeEvidence            *WorldScopeEvidence   `json:"scope_evidence,omitempty"`
-	ScopeEvidenceHistory     []WorldScopeEvidence  `json:"scope_evidence_history,omitempty"`
-	SharedThreadID           modulecore.ThreadID   `json:"shared_thread_id,omitempty"`
-	ThreadRequestID          string                `json:"thread_request_id,omitempty"`
-	GatherRequestID          string                `json:"gather_request_id,omitempty"`
-	TranscriptRequestID      string                `json:"transcript_request_id,omitempty"`
-	Attendance               []Attendance          `json:"attendance"`
-	AttendanceHistory        []Attendance          `json:"attendance_history,omitempty"`
-	CurrentReportIndex       int                   `json:"current_report_index"`
-	Reports                  []Report              `json:"reports"`
-	Answers                  []Answer              `json:"answers"`
-	AnswerAttempts           []AnswerAttempt       `json:"answer_attempts,omitempty"`
-	CurrentTurn              *Turn                 `json:"current_turn,omitempty"`
-	FinishEvidence           *FinalizationEvidence `json:"finish_evidence,omitempty"`
-	PartialEvidence          *PartialEvidence      `json:"partial_evidence,omitempty"`
+	Key                      OccurrenceKey           `json:"occurrence_key"`
+	ScheduleRevision         uint64                  `json:"schedule_revision"`
+	Timing                   modulecore.TaskTiming   `json:"timing"`
+	WorldBaseURL             string                  `json:"world_base_url,omitempty"`
+	WorldCredentialEnv       string                  `json:"world_credential_env,omitempty"`
+	WorldID                  string                  `json:"world_id,omitempty"`
+	TimelineID               string                  `json:"timeline_id,omitempty"`
+	TimelineEpoch            string                  `json:"timeline_epoch,omitempty"`
+	Participants             []string                `json:"participants"`
+	WorldActorBindings       []WorldActorBinding     `json:"world_actor_bindings"`
+	RegistrationEvidenceID   modulecore.EvidenceID   `json:"registration_evidence_id"`
+	Rooms                    RoomRefs                `json:"rooms"`
+	MeetingDeadlineAfterSecs int64                   `json:"meeting_deadline_after_seconds"`
+	ScheduledAt              time.Time               `json:"scheduled_at"`
+	DeadlineAt               time.Time               `json:"deadline_at"`
+	Status                   string                  `json:"status"`
+	Generation               uint64                  `json:"generation"`
+	Epoch                    uint64                  `json:"epoch"`
+	ProgressionRevision      uint64                  `json:"progression_revision"`
+	CheckpointSequence       uint64                  `json:"checkpoint_sequence"`
+	EvidenceClaims           []EvidenceClaim         `json:"evidence_claims"`
+	TaskRef                  *modulecore.TaskID      `json:"task_ref,omitempty"`
+	RunRef                   *modulecore.RunID       `json:"run_ref,omitempty"`
+	TaskManagerEvidenceID    modulecore.EvidenceID   `json:"task_manager_evidence_id,omitempty"`
+	ScopeEvidence            *WorldScopeEvidence     `json:"scope_evidence,omitempty"`
+	ScopeEvidenceHistory     []WorldScopeEvidence    `json:"scope_evidence_history,omitempty"`
+	SharedThreadID           modulecore.ThreadID     `json:"shared_thread_id,omitempty"`
+	ThreadRequestID          string                  `json:"thread_request_id,omitempty"`
+	GatherRequestID          string                  `json:"gather_request_id,omitempty"`
+	TranscriptRequestID      string                  `json:"transcript_request_id,omitempty"`
+	Attendance               []Attendance            `json:"attendance"`
+	AttendanceHistory        []Attendance            `json:"attendance_history,omitempty"`
+	CurrentReportIndex       int                     `json:"current_report_index"`
+	Reports                  []Report                `json:"reports"`
+	Answers                  []Answer                `json:"answers"`
+	AnswerAttempts           []AnswerAttempt         `json:"answer_attempts,omitempty"`
+	CurrentTurn              *Turn                   `json:"current_turn,omitempty"`
+	FinishEvidence           *FinalizationEvidence   `json:"finish_evidence,omitempty"`
+	PartialEvidence          *PartialEvidence        `json:"partial_evidence,omitempty"`
 	PartialMinutes           *PartialMinutesEvidence `json:"partial_minutes,omitempty"`
 }
 
@@ -417,25 +417,25 @@ type PartialEvidence struct {
 // MinutesArtifactReference is the exact private Workstream owner receipt used
 // to recover persisted meeting minutes. It contains no transcript body.
 type MinutesArtifactReference struct {
-	RequestID              string                `json:"request_id"`
-	ArtifactID             modulecore.ArtifactID `json:"artifact_id"`
+	RequestID              string                  `json:"request_id"`
+	ArtifactID             modulecore.ArtifactID   `json:"artifact_id"`
 	WorkstreamID           modulecore.WorkstreamID `json:"workstream_id"`
-	OwnerUserID            string                `json:"owner_user_id"`
-	CoordinatorActorID     string                `json:"coordinator_actor_id"`
-	Key                    OccurrenceKey         `json:"occurrence_key"`
-	RegistrationEvidenceID modulecore.EvidenceID `json:"registration_evidence_id"`
-	ConfigRevision         uint64                `json:"config_revision"`
-	ConfigSHA256           string                `json:"config_sha256"`
-	Audience               []string              `json:"audience"`
-	AudienceSHA256         string                `json:"audience_sha256"`
-	Guard                  Guard                 `json:"guard"`
-	TranscriptSHA256       string                `json:"transcript_sha256"`
-	CreatedAt              time.Time             `json:"created_at"`
+	OwnerUserID            string                  `json:"owner_user_id"`
+	CoordinatorActorID     string                  `json:"coordinator_actor_id"`
+	Key                    OccurrenceKey           `json:"occurrence_key"`
+	RegistrationEvidenceID modulecore.EvidenceID   `json:"registration_evidence_id"`
+	ConfigRevision         uint64                  `json:"config_revision"`
+	ConfigSHA256           string                  `json:"config_sha256"`
+	Audience               []string                `json:"audience"`
+	AudienceSHA256         string                  `json:"audience_sha256"`
+	Guard                  Guard                   `json:"guard"`
+	TranscriptSHA256       string                  `json:"transcript_sha256"`
+	CreatedAt              time.Time               `json:"created_at"`
 }
 
 type PartialMinutesEvidence struct {
-	EvidenceID modulecore.EvidenceID      `json:"evidence_id"`
-	Reference  MinutesArtifactReference  `json:"reference"`
+	EvidenceID modulecore.EvidenceID    `json:"evidence_id"`
+	Reference  MinutesArtifactReference `json:"reference"`
 }
 
 type ResumeEvidence struct {
