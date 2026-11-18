@@ -258,7 +258,7 @@ func TestSharedDueLoopDoesNotLetPronunciationBlockMeeting(t *testing.T) {
 		}
 	}
 	pnc := &blockingPronunciationExecutor{started: make(chan struct{}), release: make(chan struct{})}
-	meeting := &recordingTaskMeetingOccurrenceExecutor{called: make(chan struct{})}
+	meeting := &recordingTaskMeetingOccurrenceExecutor{called: make(chan struct{}, 1)}
 	router := schedulerTargetRouter{pronunciation: pnc, taskMeeting: meeting}
 	service := schedulerapp.NewService(store, router).WithNow(func() time.Time { return current })
 	cancel, done := startSharedSchedulerLoop(context.Background(), service, []modulecore.ScheduleID{pncID, meetingID})
