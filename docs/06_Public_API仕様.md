@@ -821,6 +821,24 @@ canonical Task／Run statusをHTTP 500または503で返し、入力本文、内
 }
 ```
 
+### 認証済みGAME Task作成
+
+`POST /v1/agent/tasks/create`は、既存CORE processのTaskManager経由で型付きGAME Taskを作成します。
+稼働中Task writerを別processから開かず、`local_agent_ops.enabled=true`、loopback、owner-only Bearer tokenを要求します。
+routeは`GAME`のみを受理し、ownerは認証済み`local_agent_ops.user_id`から設定します。任意の`owner_id`はその値との一致確認にだけ使います。
+
+bodyは最大16 KiBのJSON objectです。対応fieldは`request_id`（必須canonical RequestID）、`title`、`route`、`owner_id`、`assignee`、`priority`、
+`plan`、`module_id`、`module_root`、`read_only`、`parent_task_id`、`dependency_task_ids`、`origin_session_id`、`origin_thread_id`、
+`origin_turn_id`、`origin_message_id`、`workstream_id`、`goal_id`、`supersedes_task_id`、`game_spec`です。
+未知field、TaskIDやstatusなどowner-managed fieldは受け付けません。`game_spec`は正規化してからTask operation receiptへ結び付けます。
+
+同じowner・`request_id`・正規化済み入力の再送は、保存済みの同じTaskIDを返します。入力が異なる再送はconflictです。
+Task、SharedRoleContext、作成receiptは既存Task storeの同一transactionで保存され、TaskIDはtransaction内で割り当てられます。
+応答は`request_id`、`task_id`、現在の`task`を返します。応答が不明な場合、同じrequest/bodyを再送するか、同じbodyを
+`POST /v1/agent/tasks/create/lookup`へ送ってreceiptを読み取れます。lookupは作成せず、未登録は404です。
+Taskの作成は実行開始ではありません。実行は既存の`POST /v1/agent/tasks/enqueue`へ返却された`task_id`を渡します。
+`rencrow tasks create`のGAME routeもこのloopback APIを使い、COREが利用できない場合に別writerへfallbackしません。
+
 ### Worker data.write receipt
 
 Worker専用Tool `data.write` の成功結果は、Owner routeが確定したreceiptです。`audit_ref`はOwnerが生成した

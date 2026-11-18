@@ -160,6 +160,7 @@ type Dependencies struct {
 	viewerSpeechCancel                  http.HandlerFunc                            // per-turn Viewer SpeechPlan cancellation
 	viewerSpeechProgress                http.HandlerFunc                            // turn-scoped Viewer playback pacing progress
 	agentOps                            http.HandlerFunc                            // local authenticated Agent OPS ingress
+	taskCreate                          http.HandlerFunc                            // local authenticated GAME Task creation ingress
 	taskEnqueue                         http.HandlerFunc                            // local authenticated canonical Task first-run ingress
 	viewerGamesStatus                   http.HandlerFunc                            // RenCrow_GAMES bridge status API
 	viewerGamesResult                   http.HandlerFunc                            // RenCrow_GAMES result callback API
@@ -2184,6 +2185,11 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		log.Fatalf("Failed to initialize local Task enqueue ingress: %v", err)
 	}
 	deps.taskEnqueue = taskEnqueueHandler
+	taskCreateHandler, err := newConfiguredTaskCreateHandler(cfg, deps.taskManager)
+	if err != nil {
+		log.Fatalf("Failed to initialize local Task create ingress: %v", err)
+	}
+	deps.taskCreate = taskCreateHandler
 	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore, conversationRuntime.L1Store)
 	if deps.gmailIntake != nil && deps.heartbeatSvc != nil {
 		deps.gmailIntake.WithDiaryBackfillStarter(deps.heartbeatSvc.StartGmailDiaryBackfill)

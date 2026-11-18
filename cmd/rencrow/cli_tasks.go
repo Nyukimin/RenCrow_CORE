@@ -42,6 +42,10 @@ func cmdTasks() {
 		cmdTasksStorage()
 		return
 	}
+	if isTasksOnlineGameCreateSubcommand(os.Args[2:]) {
+		cmdTasksCreateGame()
+		return
+	}
 	manager, err := loadTaskManager(getConfigPath(), os.Args[2:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize task manager: %v\n", err)
