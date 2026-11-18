@@ -106,6 +106,16 @@ type Snapshot struct {
 	HomeSceneSHA256 string
 }
 
+// ReadScope exposes only the non-secret source scope used by a Client. The
+// credential itself is intentionally unavailable to callers.
+type ReadScope struct {
+	BaseURL       string
+	WorldID       string
+	TimelineID    string
+	TimelineEpoch string
+	ActorIDs      []string
+}
+
 // Event is one CORE-visible WORLD Event. Payload is the exact WORLD bytes for
 // an event that is either Actor-global or scoped to an allowed Actor.
 type Event struct {
@@ -265,6 +275,16 @@ func New(cfg Config) (*Client, error) {
 			},
 		},
 	}, nil
+}
+
+// ReadScope returns a copy of the immutable non-secret scope captured at
+// construction time.
+func (c *Client) ReadScope() ReadScope {
+	if c == nil || c.base == nil {
+		return ReadScope{}
+	}
+	return ReadScope{BaseURL: c.base.String(), WorldID: c.worldIDValue, TimelineID: c.timelineIDValue,
+		TimelineEpoch: c.epoch, ActorIDs: append([]string(nil), c.actorOrder...)}
 }
 
 // Snapshot reads the current WORLD Snapshot for the configured scope.

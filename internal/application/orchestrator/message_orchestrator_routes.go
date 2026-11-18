@@ -527,7 +527,15 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 	}
 	var resp string
 	var err error
-	if chatDraft != nil && speaker == "mio" && !d.speechPlanEnabled {
+	nativePlanningHandled := false
+	if speaker == "mio" {
+		if native, ok := d.mio.(interface {
+			DispatchNativePlanning(context.Context, domainconversation.TurnInput) (string, bool, error)
+		}); ok {
+			resp, nativePlanningHandled, err = native.DispatchNativePlanning(streamCtx, input)
+		}
+	}
+	if err == nil && !nativePlanningHandled && chatDraft != nil && speaker == "mio" && !d.speechPlanEnabled {
 		chatAgent, ok := d.mio.(interface {
 			ChatWithDraft(context.Context, domainconversation.TurnInput, *domainagent.MioChatDraft) (string, error)
 		})
@@ -540,7 +548,7 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 			return "", err
 		}
 		resp, err = chatAgent.ChatWithDraft(streamCtx, input, chatDraft)
-	} else {
+	} else if err == nil && !nativePlanningHandled {
 		resp, err = d.generateChatResponse(streamCtx, input, speaker)
 	}
 	if err != nil {
@@ -553,7 +561,7 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 		abortUnpublished(ttsStream)
 		return resp, err
 	}
-	if guardedMioFinal {
+	if guardedMioFinal && !nativePlanningHandled {
 		preparedGuard := chatDraft.TransferPreparedChatTurnGuard()
 		if preparedGuard == nil {
 			abortUnpublished(ttsStream)

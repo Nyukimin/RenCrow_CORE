@@ -155,6 +155,24 @@ func TestTransactionSnapshotDefensiveCopiesProductionMetadata(t *testing.T) {
 	}
 }
 
+func TestCloneTaskTimingPreservesNilAndPresentEmptyCollections(t *testing.T) {
+	timing := modulecore.TaskTiming{
+		AllowedWindows: []modulecore.TaskTimeWindow{},
+		Recurrence: &modulecore.TaskRecurrence{
+			Frequency: "daily",
+			Times:     []string{},
+			Weekdays:  []time.Weekday{},
+		},
+	}
+	cloned := cloneTaskTiming(timing)
+	if cloned.AllowedWindows == nil || cloned.Recurrence == nil || cloned.Recurrence.Times == nil || cloned.Recurrence.Weekdays == nil {
+		t.Fatal("present empty timing collections became nil in a transaction snapshot")
+	}
+	if nilClone := cloneTaskTiming(modulecore.TaskTiming{}); nilClone.AllowedWindows != nil || nilClone.Recurrence != nil {
+		t.Fatal("nil timing collections changed during clone")
+	}
+}
+
 func TestTaskCriteriaRevisionIsImmutableAcrossSaveAndReopen(t *testing.T) {
 	root := t.TempDir()
 	ctx := context.Background()

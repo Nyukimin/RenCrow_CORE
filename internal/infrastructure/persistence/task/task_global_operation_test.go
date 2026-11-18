@@ -110,6 +110,142 @@ func TestGlobalTaskOperationReceiptRaisesWriterGenerationFloorAfterRestart(t *te
 	}
 }
 
+func TestLookupGlobalTaskOperationIsReadOnlyAndReturnsCopiedResult(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJSONLStore: %v", err)
+	}
+	defer store.Close()
+	const operationID = "global-read-only"
+	hash := taskOperationHash("read-only")
+	want := json.RawMessage(`{"committed":true}`)
+	if _, err := store.ExecuteIdempotentGlobalTaskOperation(context.Background(), operationID, hash, func(domaintask.Store) (json.RawMessage, error) {
+		return append(json.RawMessage(nil), want...), nil
+	}); err != nil {
+		t.Fatalf("create global receipt: %v", err)
+	}
+	generationBefore, err := store.WriterGeneration()
+	if err != nil {
+		t.Fatalf("WriterGeneration before read: %v", err)
+	}
+	got, found, err := store.LookupGlobalTaskOperation(context.Background(), operationID, hash)
+	if err != nil || !found || string(got) != string(want) {
+		t.Fatalf("LookupGlobalTaskOperation=(%s,%t,%v), want (%s,true,nil)", got, found, err, want)
+	}
+	got[0] = 'x'
+	if _, found, err := store.LookupGlobalTaskOperation(context.Background(), "global-absent", hash); err != nil || found {
+		t.Fatalf("missing global receipt=(found %t, err %v), want (false,nil)", found, err)
+	}
+	again, found, err := store.LookupGlobalTaskOperation(context.Background(), operationID, hash)
+	if err != nil || !found || string(again) != string(want) {
+		t.Fatalf("second LookupGlobalTaskOperation=(%s,%t,%v), want independent copy %s", again, found, err, want)
+	}
+	generationAfter, err := store.WriterGeneration()
+	if err != nil {
+		t.Fatalf("WriterGeneration after read: %v", err)
+	}
+	if generationAfter != generationBefore {
+		t.Fatalf("writer generation changed across read-only lookups: before=%d after=%d", generationBefore, generationAfter)
+	}
+}
+
+func TestLookupGlobalTaskOperationRejectsChangedHashAndTaskScopedReceipt(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJSONLStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	globalID := "global-hash-conflict"
+	globalHash := taskOperationHash("original")
+	if _, err := store.ExecuteIdempotentGlobalTaskOperation(ctx, globalID, globalHash, func(domaintask.Store) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true}`), nil
+	}); err != nil {
+		t.Fatalf("create global receipt: %v", err)
+	}
+	if _, _, err := store.LookupGlobalTaskOperation(ctx, globalID, taskOperationHash("changed")); !errors.Is(err, ErrTaskOperationConflict) {
+		t.Fatalf("changed request hash error=%v, want ErrTaskOperationConflict", err)
+	}
+
+	taskID := modulecore.NewTaskID()
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	taskValue := domaintask.Task{
+		TaskID: taskID, Title: "task scoped receipt", Route: domaintask.RouteGeneral,
+		Status: domaintask.StatusQueued, Priority: domaintask.PriorityNormal,
+		InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.Transaction(ctx, func(tx domaintask.Store) error { return tx.SaveTask(ctx, taskValue) }); err != nil {
+		t.Fatalf("save Task for scoped receipt: %v", err)
+	}
+	const scopedID = "task-scoped-global-query"
+	scopedHash := taskOperationHash("task scoped")
+	if _, err := store.ExecuteIdempotentTaskOperation(ctx, taskID, scopedID, scopedHash, func(domaintask.Store) (json.RawMessage, error) {
+		return json.RawMessage(`{"task":true}`), nil
+	}); err != nil {
+		t.Fatalf("create task-scoped receipt: %v", err)
+	}
+	if _, _, err := store.LookupGlobalTaskOperation(ctx, scopedID, scopedHash); !errors.Is(err, ErrTaskOperationConflict) {
+		t.Fatalf("task-scoped receipt lookup error=%v, want ErrTaskOperationConflict", err)
+	}
+}
+
+func TestLookupGlobalTaskOperationPreservesCanceledClosedAndInvalidErrors(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJSONLStore: %v", err)
+	}
+	hash := taskOperationHash("lookup errors")
+	if _, _, err := store.LookupGlobalTaskOperation(nil, "global-errors", hash); err == nil {
+		t.Fatal("nil context unexpectedly passed lookup validation")
+	}
+	if _, _, err := store.LookupGlobalTaskOperation(context.Background(), "", hash); err == nil {
+		t.Fatal("invalid operation ID unexpectedly passed lookup validation")
+	}
+	if _, _, err := store.LookupGlobalTaskOperation(context.Background(), "global-errors", "bad-hash"); err == nil {
+		t.Fatal("invalid request hash unexpectedly passed lookup validation")
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := store.LookupGlobalTaskOperation(canceled, "global-errors", hash); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled lookup error=%v, want context.Canceled", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, _, err := store.LookupGlobalTaskOperation(context.Background(), "global-errors", hash); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("closed store lookup error=%v, want os.ErrClosed", err)
+	}
+}
+
+func TestLookupGlobalTaskOperationDoesNotMapCorruptReceiptToNotFound(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewJSONLStoreWithOptions(root, OpenOptions{Index: false})
+	if err != nil {
+		t.Fatalf("NewJSONLStoreWithOptions: %v", err)
+	}
+	defer store.Close()
+	hash := taskOperationHash("corrupt receipt")
+	if _, err := store.ExecuteIdempotentGlobalTaskOperation(context.Background(), "global-corrupt", hash, func(domaintask.Store) (json.RawMessage, error) {
+		return json.RawMessage(`{"ok":true}`), nil
+	}); err != nil {
+		t.Fatalf("create receipt: %v", err)
+	}
+	receiptFile, err := os.OpenFile(filepath.Join(root, taskOperationReceiptFilename), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatalf("open receipt log for corruption fixture: %v", err)
+	}
+	if _, err := receiptFile.WriteString("{\"operation_id\":\n"); err != nil {
+		_ = receiptFile.Close()
+		t.Fatalf("append corrupt receipt fixture: %v", err)
+	}
+	if err := receiptFile.Close(); err != nil {
+		t.Fatalf("close receipt fixture: %v", err)
+	}
+	if _, found, err := store.LookupGlobalTaskOperation(context.Background(), "global-corrupt", hash); found || !errors.Is(err, ErrTaskOperationReceiptCorrupt) {
+		t.Fatalf("corrupt receipt lookup=(found %t, err %v), want corrupt error and no NotFound", found, err)
+	}
+}
+
 func TestTaskOperationReceiptScopeRejectsInvalidGlobalTaskIDAndUnknownScope(t *testing.T) {
 	for _, test := range []struct {
 		name  string

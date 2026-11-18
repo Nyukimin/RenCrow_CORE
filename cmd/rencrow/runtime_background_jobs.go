@@ -458,23 +458,23 @@ func startDailyIntakeSweeper(rules knowledgememoryapp.DailyIntakeRuleStore, regi
 	}()
 }
 
-func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFailureReporter) {
+func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFailureReporter) bool {
 	if cfg == nil {
-		return
+		return false
 	}
 	if movieCatalogBackfillDisabled() {
 		log.Printf("[MovieCatalogBackfill] disabled by environment")
-		return
+		return false
 	}
 	dbPath := resolveMovieCatalogBackfillDBPath(cfg.Storage.Databases.MovieCatalog)
 	if dbPath == "" {
 		log.Printf("[MovieCatalogBackfill] skipped: movie catalog DB not found")
-		return
+		return false
 	}
 	crawlerURL := resolveMovieCatalogCrawlerBaseURL(cfg)
 	if crawlerURL == "" {
 		log.Printf("[MovieCatalogBackfill] skipped: movie_catalog.crawler_url is not configured")
-		return
+		return false
 	}
 	interval := movieCatalogBackfillDurationEnv("RENCROW_MOVIE_CATALOG_BACKFILL_INTERVAL_SEC", 5*time.Minute, time.Minute)
 	initialDelay := movieCatalogBackfillDurationEnv("RENCROW_MOVIE_CATALOG_BACKFILL_INITIAL_DELAY_SEC", 10*time.Second, 0)
@@ -509,6 +509,7 @@ func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFail
 	}()
 	log.Printf("[MovieCatalogBackfill] enabled: db=%s interval=%s initial_delay=%s timeout=%s max_pages=%d crawler_delay=%s",
 		dbPath, interval, initialDelay, timeout, maxPages, crawlerDelay)
+	return true
 }
 
 func resolveMovieCatalogCrawlerBaseURL(cfg *config.Config) string {

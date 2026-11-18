@@ -19,6 +19,16 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 	requestHash string,
 	fn func(domaintask.Store) (json.RawMessage, error),
 ) (json.RawMessage, error) {
+	return s.executeIdempotentGlobalTaskOperation(ctx, operationID, requestHash, false, fn)
+}
+
+func (s *JSONLStore) executeIdempotentGlobalTaskOperation(
+	ctx context.Context,
+	operationID string,
+	requestHash string,
+	allowOwnerOnlyReplay bool,
+	fn func(domaintask.Store) (json.RawMessage, error),
+) (json.RawMessage, error) {
 	if s == nil {
 		return nil, errors.New("task store is nil")
 	}
@@ -66,6 +76,12 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 			if effectiveTaskOperationScope(previous.Scope) != TaskOperationScopeGlobal || previous.TaskID != "" || previous.RequestHash != requestHash {
 				return nil, ErrTaskOperationConflict
 			}
+			if previous.OwnerOnly && !allowOwnerOnlyReplay {
+				return nil, ErrTaskOperationNotFound
+			}
+			if allowOwnerOnlyReplay && !previous.OwnerOnly {
+				return nil, ErrTaskOperationReceiptCorrupt
+			}
 			result = append(json.RawMessage(nil), previous.Result...)
 			return nil, nil
 		}
@@ -73,9 +89,13 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 		tx := newTaskTransaction(s, false, modulecore.TaskID(""), nil)
 		defer tx.end()
 		callbackResult, callbackErr := fn(tx)
+		ownerOnly, ownerOnlyErr := taskTransactionTouchesOwnerOnlyTask(ctx, tx)
 		snapshot := tx.freezeAndSnapshot()
 		if callbackErr != nil {
 			return nil, callbackErr
+		}
+		if ownerOnlyErr != nil {
+			return nil, ownerOnlyErr
 		}
 		if err := validateTaskOperationResult(callbackResult); err != nil {
 			return nil, err
@@ -87,6 +107,7 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 			OperationID:      operationID,
 			RequestHash:      requestHash,
 			Scope:            TaskOperationScopeGlobal,
+			OwnerOnly:        ownerOnly,
 			Result:           append(json.RawMessage(nil), callbackResult...),
 			WriterGeneration: s.writerGeneration,
 		}
@@ -105,4 +126,74 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 		return nil, err
 	}
 	return append(json.RawMessage(nil), result...), nil
+}
+
+func taskTransactionTouchesOwnerOnlyTask(ctx context.Context, tx *transactionStore) (bool, error) {
+	if tx == nil || tx.state == nil {
+		return false, errTaskTransactionExpired
+	}
+	tx.state.mu.Lock()
+	if tx.state.ownerOnlyAccessed {
+		tx.state.mu.Unlock()
+		return true, nil
+	}
+	touched := make([]modulecore.TaskID, 0, len(tx.state.touched))
+	for taskID := range tx.state.touched {
+		touched = append(touched, taskID)
+	}
+	tx.state.mu.Unlock()
+	for _, taskID := range touched {
+		task, err := tx.getTaskRaw(ctx, taskID)
+		if err != nil {
+			return false, err
+		}
+		if task.PrivateAccess != nil || domaintask.IsOwnerManagedTask(task) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// LookupGlobalTaskOperation returns a committed global Task operation result
+// without creating or repairing any owner state. A matching operation ID with
+// a different request hash or scope is a conflict, never a replay.
+func (s *JSONLStore) LookupGlobalTaskOperation(
+	ctx context.Context,
+	operationID string,
+	requestHash string,
+) (json.RawMessage, bool, error) {
+	if s == nil {
+		return nil, false, errors.New("task store is nil")
+	}
+	if ctx == nil {
+		return nil, false, errors.New("global task operation lookup context is nil")
+	}
+	if err := validateTaskOperationID(operationID); err != nil {
+		return nil, false, err
+	}
+	if err := validateTaskRequestHash(requestHash); err != nil {
+		return nil, false, err
+	}
+	receipt, err := s.LookupTaskOperation(ctx, operationID)
+	if errors.Is(err, ErrTaskOperationNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if effectiveTaskOperationScope(receipt.Scope) != TaskOperationScopeGlobal || receipt.TaskID != "" || receipt.RequestHash != requestHash {
+		return nil, false, ErrTaskOperationConflict
+	}
+	var linked struct {
+		TaskID modulecore.TaskID `json:"task_id"`
+	}
+	if err := json.Unmarshal(receipt.Result, &linked); err == nil && linked.TaskID != "" {
+		if _, err := s.GetTask(ctx, linked.TaskID); err != nil {
+			if errors.Is(err, domaintask.ErrNotFound) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+	}
+	return append(json.RawMessage(nil), receipt.Result...), true, nil
 }

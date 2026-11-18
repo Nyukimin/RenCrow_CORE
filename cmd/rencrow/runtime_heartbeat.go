@@ -102,6 +102,10 @@ func buildHeartbeatRuntime(
 	memStore *memorypersistence.FileStore,
 	l1Store *l1sqlite.L1SQLiteStore,
 ) {
+	registerRuntimeHeartbeatDailySource(deps, cfg, l1Store)
+	if cfg == nil || deps == nil {
+		return
+	}
 	if !cfg.Heartbeat.Enabled {
 		return
 	}

@@ -37,6 +37,10 @@ func buildIdleChatRuntime(
 	dailySourceBriefResearch idlechat.DailySourceBriefResearch,
 	ttsBridge orchestrator.TTSBridge,
 ) {
+	registerRuntimeIdleChatDailySource(deps, cfg)
+	if cfg == nil || deps == nil {
+		return
+	}
 	if !cfg.IdleChat.Enabled {
 		return
 	}
@@ -232,9 +236,11 @@ func buildIdleChatRuntime(
 		},
 	)
 	if schedulerErr != nil {
+		deps.idleChatNightPreparationAvailable = false
 		log.Printf("ERROR: IdleChat night preparation disabled by invalid schedule: %v", schedulerErr)
 	} else {
 		idleChatOrch.SetNightPreparationScheduler(scheduler)
+		deps.idleChatNightPreparationAvailable = true
 	}
 	if err := idlechatfeature.StartBackground(context.Background(), idlechatfeature.Dependencies{Background: idleChatOrch}); err != nil {
 		log.Printf("WARN: idlechat background start failed: %v", err)

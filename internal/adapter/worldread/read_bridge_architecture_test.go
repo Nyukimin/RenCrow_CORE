@@ -67,9 +67,10 @@ var pocRoutePromotionAllowlist = map[string]string{}
 // PORTAL route or promote the R04 PoC. D-27 and D-14 remain open for the future
 // authenticated CORE read bridge.
 var readBridgeConsumerAllowlist = map[string]string{
-	"cmd/rencrow/runtime_agent_routine.go": "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only discovers authenticated WORLD state for CORE's private agent routine scheduler.",
-	"cmd/rencrow/runtime_living_seats.go":  "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only reconciles authenticated WORLD seating for CORE's private LIVING routine scheduler, without adding a route or Viewer DTO.",
-	"cmd/rencrow/runtime_routine_world.go": "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only performs authenticated CORE-owned home lifecycle actions and reads their receipts/events.",
+	"cmd/rencrow/runtime_agent_routine.go":           "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only discovers authenticated WORLD state for CORE's private agent routine scheduler.",
+	"cmd/rencrow/runtime_living_seats.go":            "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only reconciles authenticated WORLD seating for CORE's private LIVING routine scheduler, without adding a route or Viewer DTO.",
+	"cmd/rencrow/runtime_routine_world.go":           "D-27 production PORTAL route/DTO and D-14 canonical route remain open; this file only performs authenticated CORE-owned home lifecycle actions and reads their receipts/events.",
+	"internal/adapter/taskmeeting/world_presence.go": "CORE meeting-owner decision 2026-11-18: one authenticated in-process World snapshot adapter for frozen TaskMeeting occurrence receipts. D-27's production route/DTO and D-14's canonical route remain undecided; no browser DTO, generic projection, production route, or World write is added.",
 }
 
 func TestPoCWorldRoutesStayOffProductionRoutes(t *testing.T) {

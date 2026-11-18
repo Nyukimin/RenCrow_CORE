@@ -44,6 +44,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	skillapp "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskcenter"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	xbookmarkworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/xbookmarkworkflow"
@@ -324,7 +325,12 @@ type Dependencies struct {
 	aiWorkflowStore                     viewer.AIWorkflowStore                      // workflow telemetry store
 	schedulerStatus                     http.HandlerFunc                            // viewer in-app scheduler API
 	schedulerStore                      viewer.SchedulerStore                       // in-app scheduler persistent store
+	schedulerRuntimeCancel              context.CancelFunc                          // shared Scheduler due loop
+	schedulerRuntimeDone                <-chan struct{}                             // joined before persistence owners close
 	pronunciationCheckCancel            context.CancelFunc                          // TTS pronunciation CORE task
+	taskMeetingOccurrenceExecutor       taskMeetingOccurrenceExecutor               // typed scheduler-only meeting execution
+	taskMeetingBindingsReady            bool                                        // exact configured roster resolves to registered runtime actors
+	taskMeetingScheduleID               modulecore.ScheduleID                       // trusted owner-issued stable scheduler identity
 	knowledgeMemoryStatus               http.HandlerFunc                            // viewer knowledge memory status API
 	personalArchiveCreate               http.HandlerFunc                            // viewer personal archive API
 	creativeKnowledgeCreate             http.HandlerFunc                            // viewer creative knowledge API
@@ -339,6 +345,13 @@ type Dependencies struct {
 	atlasService                        *backlogapp.Service                         // Atlas lifecycle owner service
 	atlasHandler                        http.HandlerFunc                            // Atlas read projection + authenticated owner API
 	workstreamStore                     heartbeat.WorkstreamHeartbeatStore          // Workstream heartbeat draft runner
+	revenueDailyReadStore               viewer.RevenueLister                        // Revenue owner readonly daily report projection
+	taskCenter                          *taskcenter.Service                         // TaskCenter Goal owner service
+	taskCenterDailySources              []taskcenter.DailySource                    // owner-colocated readonly daily sources
+	taskCenterCenter                    *taskcenter.Center                          // HTTP facade over optional managed and daily owners
+	taskCenterUnavailableReason         string                                      // safe startup capability state
+	taskCenterUserID                    string                                      // LocalAgentOps principal copied at startup
+	taskCenterUserToken                 []byte                                      // LocalAgentOps token copied at startup
 	revenueStore                        heartbeat.RevenueDailyRoutineStore          // Revenue daily routine draft runner
 	entryHandler                        http.HandlerFunc                            // unified entry endpoint
 	chromeBridge                        http.HandlerFunc                            // chrome bridge endpoint
@@ -348,6 +361,7 @@ type Dependencies struct {
 	router                              *transport.MessageRouter                    // v4 distributed mode
 	localTransports                     map[string]*transport.LocalTransport        // v4 local transports
 	idleChatOrch                        *idlechat.IdleChatOrchestrator              // v4 idle chat
+	idleChatNightPreparationAvailable   bool                                        // safe runtime state of the native night window owner
 	surfacePresence                     *surfacePresenceController                  // PORTAL Chat/IdleChat shared surface lease arbitration
 	dailyNewsBriefReader                domainnews.DailyNewsBriefReader             // scheduled cache with persistent L1 fallback
 	sshTransports                       map[string]domaintransport.Transport        // v4 SSH transports
@@ -549,8 +563,16 @@ func (d *Dependencies) Shutdown() {
 	if d.advisorScoreCancel != nil {
 		d.advisorScoreCancel()
 	}
-	if d.pronunciationCheckCancel != nil {
+	if d.schedulerRuntimeCancel != nil {
+		d.schedulerRuntimeCancel()
+	} else if d.pronunciationCheckCancel != nil {
 		d.pronunciationCheckCancel()
+	}
+	if d.schedulerRuntimeDone != nil {
+		if !waitForSchedulerWorkers(d.schedulerRuntimeDone, 30*time.Second) {
+			log.Printf("Scheduler workers did not finish within the shutdown bound")
+			queueOwnersSafeToClose = false
+		}
 	}
 	if d.gameAutoplay != nil {
 		d.gameAutoplay.Stop()
@@ -840,6 +862,9 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		taskStoreRotation: cfg.TaskStore.Rotation.Enabled, taskStoreSizeValve: cfg.TaskStore.Rotation.SizeValveBytes,
 		taskParallelLimits: taskParallelLimitsPointer(taskParallelLimitsFromConfig(cfg)),
 	}
+	registerRuntimeBackupDailySource(deps, cfg)
+	registerRuntimeLogMaintenanceDailySource(deps)
+	registerRuntimeResilienceDailySource(deps)
 	var err error
 	deps.persistenceQueue, err = newRuntimePersistenceQueue()
 	if err != nil {
@@ -856,6 +881,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if err := initializeRuntimeTaskOwnerWithCriteriaRevision(deps, cfg.WorkspaceDir, expectedCriteriaRevision, storageOwners.TaskStore); err != nil {
 		log.Fatalf("Failed to initialize canonical Task lifecycle owner: %v", err)
 	}
+	registerRuntimeTaskStoreRotationDailySource(deps, cfg, deps.taskStore)
 	if runtimeTaskStoreSupportsRAMAdmission(deps.taskStore) {
 		if err := bindRuntimeOwnerPersistenceQueue(deps.taskManager, deps.persistenceQueue); err != nil {
 			log.Fatalf("Failed to bind indexed Task owner to shared persistence queue: %v", err)
@@ -905,6 +931,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	runtimeActionManager := runtimeActionOwner.manager
 	deps.actionManager = runtimeActionManager
 	deps.actionStoreHealth = runtimeActionOwner.store
+	registerRuntimeActionStoreRotationDailySource(deps, cfg, runtimeActionOwner.store)
 	deps.transportManager, err = newRuntimeTransportManager(cfg.WorkspaceDir, runtimeActionManager, deps.persistenceQueue)
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical transport receipt owner: %v", err)
@@ -1264,6 +1291,13 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}
+	registerRuntimePersonRelatedDailySource(
+		deps,
+		cfg,
+		toolRuntime.PersonRelatedCollectionWorker,
+		toolRuntime.PersonRelatedSummaryWorker,
+		toolRuntime.PersonRelatedIdentityWorker,
+	)
 	if toolRuntime.PersonRelatedCatalogLookup != nil {
 		lookup := toolRuntime.PersonRelatedCatalogLookup
 		deps.personRelatedCatalogLookup = func(ctx context.Context, personID, category string, limit int) (personrelatedcatalogapp.LookupResult, error) {
@@ -1347,6 +1381,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		)
 	}
 	deps.conversationBackgroundStop = startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay, deps.canonicalEventStore)
+	registerRuntimeMemoryDailySource(deps, cfg, conversationRuntime.L1Store, memoryLifecycleJobConfigFromEnv(time.Now))
+	registerRuntimeArchiveParquetDailySource(deps)
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}
@@ -1533,8 +1569,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			deps.sandboxPromotionRollback = viewer.HandleSandboxPromotionRollback(sandboxStore, promotionDiffApplier)
 		}
 	}
+	var workstreamStore viewer.WorkstreamStore
 	if cfg.Workstream.IsEnabled() {
-		var workstreamStore viewer.WorkstreamStore
 		if cfg.Workstream.Storage == "sqlite" {
 			store, err := workstreampersistence.NewSQLiteStoreWithVault(cfg.Workstream.SQLitePath, cfg.Workstream.VaultRoot)
 			if err != nil {
@@ -1567,6 +1603,9 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		if sandboxStore != nil && promotionDiffPreviewer != nil {
 		}
 	}
+	registerRuntimeWorkstreamDailySource(deps, cfg, workstreamStore)
+	buildTaskCenterRuntime(cfg, deps, workstreamStore, agents, toolRuntime)
+	attachCoderTaskPlanningPorts(cfg, deps, llmRuntime.Coder1, llmRuntime.Coder2, llmRuntime.Coder3, llmRuntime.Coder4)
 	// Atlas shares the established Backlog JSONL and Workstream store. No
 	// lifecycle state is initialized when either owner store is unavailable;
 	// reads still expose an empty/legacy-safe projection and writes fail closed.
@@ -1661,6 +1700,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	} else {
 		deps.atlasHandler = viewer.NewAtlasHandler(deps.atlasService, cfg.LocalAgentOps.UserID, atlasToken)
 	}
+	registerRuntimeRevenueDailySource(deps, cfg)
 	if cfg.Revenue.IsEnabled() {
 		var revenueStore viewer.RevenueStore
 		if cfg.Revenue.Storage == "sqlite" {
@@ -1673,6 +1713,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			revenueStore = revenuepersistence.NewJSONLStore(cfg.Revenue.LogPath)
 		}
 		deps.revenueStore = revenueStore
+		deps.revenueDailyReadStore = revenueStore
 		if err := registerRuntimeDataRecallRevenue(dataRecallRegistry, revenueStore); err != nil {
 			log.Fatalf("Failed to register Revenue data recall: %v", err)
 		}
@@ -1937,6 +1978,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			deps.sandboxWorktreeClose = viewer.HandleSandboxWorktreeClose(worktreeSandboxManager, cfg.AIWorkflow.WorktreeBaseDir)
 		}
 	}
+	dailyIntakeReadState := &runtimeDailyIntakeReadState{registry: conversationRuntime.L1Store}
+	registerRuntimeDailyIntakeSource(deps, cfg, dailyIntakeReadState)
 	if cfg.KnowledgeMemory.IsEnabled() {
 		var knowledgeMemoryStore viewer.KnowledgeMemoryStore
 		if cfg.KnowledgeMemory.Storage == "sqlite" {
@@ -1982,8 +2025,11 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 					deps.gmailIntake.WithKnowledgeWriter(writer)
 				}
 			}
-			if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
-				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
+			if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok {
+				dailyIntakeReadState.rules = dailyRules
+				if conversationRuntime.L1Store != nil {
+					startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
+				}
 			}
 			deps.knowledgeMemoryStatus = viewer.WithKnowledgeMemoryNewsOwnerAccess(viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore), cfg.LocalAgentOps.UserID, atlasToken)
 			deps.personalArchiveCreate = viewer.HandlePersonalArchiveCreate(knowledgeMemoryStore)
@@ -2011,6 +2057,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		return combineRuntimeCapabilityContexts(
 			runtimeCapabilitySnapshot.render(runtimeSkillMetadata, runtimeSkillManifests, serenaRuntime.currentObservations()),
 			renderRuntimeDataRouteContext(dataRecallRegistry, dataWriteRegistry),
+			renderNativeTaskPlanningCapability(cfg, deps, agents,
+				llmRuntime.Coder1, llmRuntime.Coder2, llmRuntime.Coder3, llmRuntime.Coder4),
 		)
 	}
 	applyRuntimeAgentCapabilityContext(
@@ -2094,8 +2142,10 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if conversationRuntime.L1Store != nil {
 		persistentNewsReader = newsbriefapp.NewL1Reader(conversationRuntime.L1Store)
 	}
+	registerRuntimeDailyNewsBriefSource(deps, persistentNewsReader)
 	deps.dailyNewsBriefReader = newsbriefapp.NewFallbackReader(deps.idleChatOrch, persistentNewsReader)
-	startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay))
+	backfillStarted := startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay))
+	registerRuntimeMovieCatalogBackfillDailySource(deps, cfg, backfillStarted)
 	buildOrchestratorRuntime(
 		cfg,
 		deps,
@@ -2126,9 +2176,10 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	}
 	deps.taskEnqueue = taskEnqueueHandler
 	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore, conversationRuntime.L1Store)
-	buildPronunciationCheckRuntime(cfg, deps)
+	buildPronunciationCheckRuntime(cfg, deps, agents, llmRuntime.Coder1, llmRuntime.Coder2, llmRuntime.Coder3, llmRuntime.Coder4)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)
 	buildLLMOpsHandlers(cfg, deps)
+	finalizeTaskCenterDaily(deps)
 	boardPeerChatProviders := make(map[string]domainagent.ConversationGenerationProvider, len(responseFirstReadbackAssigneeOrder))
 	for _, actorID := range responseFirstReadbackAssigneeOrder {
 		provider := llmRuntime.Readback[actorID]

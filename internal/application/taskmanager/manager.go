@@ -75,6 +75,16 @@ func WithIDIndex() Option {
 	return func(m *Manager) { m.idIndexed = true }
 }
 
+// WithClock supplies the construction-time clock used for Task lifecycle and
+// admission timestamps. Production callers should omit it to use UTC wall time.
+func WithClock(now func() time.Time) Option {
+	return func(m *Manager) {
+		if now != nil {
+			m.now = func() time.Time { return now().UTC() }
+		}
+	}
+}
+
 // IDIndexed reports whether the Manager was told its store has an ID index
 // (WithIDIndex).
 func (m *Manager) IDIndexed() bool {
@@ -297,6 +307,9 @@ func (m *Manager) createAndStartRunInTransaction(ctx context.Context, draft doma
 }
 
 func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if domaintask.IsOwnerManagedTask(draft) {
+		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
+	}
 	if draft.Autonomous != nil || shared.AutonomousDecision != nil {
 		return domaintask.Task{}, errors.New("autonomous Task metadata requires the autonomous Task owner API")
 	}
@@ -413,6 +426,9 @@ func (m *Manager) recordRoutingInTransaction(ctx context.Context, taskID modulec
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		return domaintask.Task{}, err
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
 	}
 	task.Route = route
 	task.RoutingEventID = eventID
@@ -564,6 +580,12 @@ func (m *Manager) startWithReasonAndCheckpointAndTrace(ctx context.Context, task
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
 	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Task{}, domaintask.Run{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	if err := task.ValidateStartTiming(m.now()); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
 	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
@@ -602,6 +624,9 @@ func (m *Manager) startWithReasonAndCheckpointAndTrace(ctx context.Context, task
 		if !allowed {
 			return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("%w: %s", ErrParallelLimit, limitReason)
 		}
+	}
+	if err := task.ValidateStartTiming(m.now()); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	var started domaintask.Task
 	if domaintask.IsTerminal(task.Status) {
@@ -738,6 +763,9 @@ func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID moduleco
 	if err != nil {
 		return domaintask.Task{}, err
 	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
+	}
 	if !domaintask.CanTransition(task.Status, status) {
 		return domaintask.Task{}, &domaintask.InvalidStatusTransitionError{From: task.Status, To: status}
 	}
@@ -813,7 +841,17 @@ func (m *Manager) List(ctx context.Context, filter domaintask.Filter) ([]domaint
 	if m == nil || m.store == nil {
 		return nil, errors.New("task manager store is unavailable")
 	}
-	return m.store.ListTasks(ctx, filter)
+	items, err := m.store.ListTasks(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	public := items[:0]
+	for _, item := range items {
+		if !domaintask.IsOwnerManagedTask(item) {
+			public = append(public, item)
+		}
+	}
+	return public, nil
 }
 
 // ListPrivateTextRecoveryTasks returns a bounded snapshot for the private
@@ -839,14 +877,25 @@ func (m *Manager) Get(ctx context.Context, taskID modulecore.TaskID) (domaintask
 	if m == nil || m.store == nil {
 		return domaintask.Task{}, errors.New("task manager store is unavailable")
 	}
-	return m.store.GetTask(ctx, taskID)
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	return task, nil
 }
 
 func (m *Manager) Context(ctx context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
 	if m == nil || m.store == nil {
 		return domaintask.SharedRoleContext{}, errors.New("task manager store is unavailable")
 	}
-	shared, err := m.store.GetContext(ctx, taskID)
+	task, err := m.Get(ctx, taskID)
+	if err != nil {
+		return domaintask.SharedRoleContext{}, err
+	}
+	shared, err := m.store.GetContext(ctx, task.TaskID)
 	if err != nil {
 		return domaintask.SharedRoleContext{}, err
 	}
@@ -865,14 +914,42 @@ func (m *Manager) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]
 	if m == nil || m.store == nil {
 		return nil, errors.New("task manager store is unavailable")
 	}
-	return m.store.ListRuns(ctx, filter)
+	runs, err := m.store.ListRuns(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]domaintask.Run, 0, len(runs))
+	for _, run := range runs {
+		task, taskErr := m.store.GetTask(ctx, run.TaskID)
+		if taskErr != nil {
+			if errors.Is(taskErr, domaintask.ErrNotFound) || errors.Is(taskErr, domaintask.ErrTypedTaskRequiresOwner) {
+				continue
+			}
+			return nil, taskErr
+		}
+		if !domaintask.IsOwnerManagedTask(task) {
+			visible = append(visible, run)
+		}
+	}
+	return visible, nil
 }
 
 func (m *Manager) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
 	if m == nil || m.store == nil {
 		return domaintask.Run{}, errors.New("task manager store is unavailable")
 	}
-	return m.store.GetRun(ctx, runID)
+	run, err := m.store.GetRun(ctx, runID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	task, err := m.store.GetTask(ctx, run.TaskID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Run{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	return run, nil
 }
 
 // ValidateRunExecution admits an external effect only while the requested Run
@@ -918,6 +995,12 @@ func (m *Manager) validateRunExecutionInTransaction(ctx context.Context, taskID 
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		return err
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	if err := task.ValidateStartTiming(m.now()); err != nil {
+		return fmt.Errorf("%w: %v", ErrRunConflict, err)
 	}
 	if err := task.Validate(); err != nil {
 		return fmt.Errorf("%w: task record is invalid: %v", ErrRunConflict, err)
@@ -1034,6 +1117,12 @@ func (m *Manager) CanStart(ctx context.Context, candidate domaintask.Task) (bool
 }
 
 func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintask.Task) (bool, string, error) {
+	if domaintask.IsOwnerManagedTask(candidate) {
+		return false, "", domaintask.ErrTypedTaskRequiresOwner
+	}
+	if err := candidate.ValidateStartTiming(m.now()); err != nil {
+		return false, "", err
+	}
 	for _, dependencyID := range candidate.DependencyTaskIDs {
 		dependency, err := m.store.GetTask(ctx, dependencyID)
 		if err != nil {
@@ -1084,6 +1173,13 @@ func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintas
 		case domaintask.RouteOperations:
 			operations++
 		}
+	}
+	if counter, ok := m.store.(domaintask.TaskMeetingActiveGenerationCounter); ok {
+		activeMeetingGenerations, countErr := counter.CountTaskMeetingActiveGenerations(ctx)
+		if countErr != nil {
+			return false, "", countErr
+		}
+		global += activeMeetingGenerations
 	}
 	if m.limits.Global > 0 && global >= m.limits.Global {
 		return false, "global running task limit reached", nil

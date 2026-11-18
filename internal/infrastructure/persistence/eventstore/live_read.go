@@ -351,6 +351,9 @@ func (s *SQLiteStore) ReadCompleteSessionTail(ctx context.Context, sessionID mod
 	if !found {
 		return CanonicalTail{}, ErrConversationSessionConflict
 	}
+	if state.RuntimeVersion == taskMeetingRuntimeVersion {
+		return CanonicalTail{}, ErrTaskMeetingForbidden
+	}
 	var through modulecore.EventSeq
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(event_seq), 0) FROM event_envelope`).Scan(&through); err != nil {
 		return CanonicalTail{}, err
@@ -513,6 +516,9 @@ func (s *SQLiteStore) ReadLegacySessionProjection(ctx context.Context, sessionID
 	state, journaled, err := readSessionStateTx(ctx, tx, sessionID, ownerID)
 	if err != nil {
 		return LegacyProjection{}, err
+	}
+	if state.RuntimeVersion == taskMeetingRuntimeVersion {
+		return LegacyProjection{}, ErrTaskMeetingForbidden
 	}
 	if journaled && state.CutoverSeq == 0 {
 		if throughSeq != 0 {

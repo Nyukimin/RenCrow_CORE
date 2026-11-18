@@ -54,6 +54,7 @@ type JSONLStore struct {
 	contextPath       string
 	notificationsPath string
 	commitObserver    atomic.Pointer[func()]
+	taskMeetingClock  func() time.Time
 }
 
 // SetCommitObserver registers a callback that runs after a successful Task
@@ -143,6 +144,7 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 		taskPersistence:   newTaskPersistenceQueueState(),
 		fenceByID:         make(map[string]persistedTaskFence),
 		activeFences:      make(map[modulecore.TaskID]string),
+		taskMeetingClock:  opts.TaskMeetingClock,
 	}
 	store.readOnly = readOnly
 	if readOnly {

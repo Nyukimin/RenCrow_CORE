@@ -1,0 +1,10 @@
+schema_version: 1
+task_kinds:
+  movie.catalog.lookup:
+    allowed_agents:
+      mode: all_registered
+  writing.novel:
+    allowed_agents:
+      mode: explicit
+      actor_ids:
+        - midori

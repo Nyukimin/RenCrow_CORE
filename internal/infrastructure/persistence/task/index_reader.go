@@ -110,6 +110,10 @@ func (s *JSONLStore) TaskHistory(ctx context.Context, taskID modulecore.TaskID) 
 		return nil, domaintask.ErrNotFound
 	}
 	rec := &ix.tasks[slot]
+	if rec.flags&flagPrivateAccess != 0 {
+		ix.mu.RUnlock()
+		return nil, domaintask.ErrNotFound
+	}
 	for _, pos := range ix.lt.positions(rec.stateHead) {
 		found = append(found, located{kindState, pos})
 	}

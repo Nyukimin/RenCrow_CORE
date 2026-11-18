@@ -47,6 +47,12 @@ type Executor interface {
 	ExecuteSchedule(ctx context.Context, schedule domainscheduler.Schedule) (string, error)
 }
 
+// OccurrenceExecutor receives the concrete due slot and its timing policy.
+// Legacy executors remain supported through Executor.
+type OccurrenceExecutor interface {
+	ExecuteScheduledOccurrence(ctx context.Context, schedule domainscheduler.Schedule, occurrence domainscheduler.ScheduledOccurrence) (string, error)
+}
+
 type Service struct {
 	store    Store
 	executor Executor
@@ -75,9 +81,12 @@ func (s *Service) CreateSchedule(ctx context.Context, schedule domainscheduler.S
 	if schedule.CreatedAt.IsZero() {
 		schedule.CreatedAt = now
 	}
+	if schedule.Timing == nil {
+		schedule.Timing = &modulecore.TaskTiming{Recurrence: &modulecore.TaskRecurrence{Frequency: modulecore.TaskRecurrenceNone}}
+	}
 	schedule.UpdatedAt = now
 	schedule.Enabled = true
-	next, err := domainscheduler.NextRunAfter(schedule.Schedule, now)
+	next, err := domainscheduler.NextRunAfterSchedule(schedule, now)
 	if err != nil {
 		return domainscheduler.Schedule{}, err
 	}
@@ -99,27 +108,65 @@ func (s *Service) DueSchedules(ctx context.Context, limit int) ([]domainschedule
 	now := s.now().UTC()
 	out := make([]domainscheduler.DueSchedule, 0)
 	for _, schedule := range schedules {
-		if !schedule.Enabled || schedule.NextRunAt.IsZero() || schedule.NextRunAt.After(now) {
+		if !schedule.Enabled || schedule.NextRunAt.IsZero() || schedule.NextRunAt.After(now) || !timingAllowsStart(schedule, now) {
 			continue
 		}
-		out = append(out, domainscheduler.DueSchedule{Schedule: schedule, Scheduled: schedule.NextRunAt})
+		scheduled := schedule.NextRunAt
+		if schedule.PendingOccurrenceAt != nil {
+			scheduled = *schedule.PendingOccurrenceAt
+		}
+		zone := "UTC"
+		if schedule.Timing != nil && schedule.Timing.Timezone != "" {
+			zone = schedule.Timing.Timezone
+		}
+		occurrenceKey, identityErr := domainscheduler.OccurrenceKey(schedule, scheduled, zone)
+		if identityErr != nil {
+			return nil, identityErr
+		}
+		out = append(out, domainscheduler.DueSchedule{Schedule: schedule, Scheduled: scheduled, OccurrenceKey: occurrenceKey})
 	}
 	return out, nil
 }
 
 func (s *Service) RunDueSchedule(ctx context.Context, scheduleID string) (domainscheduler.RunLog, bool, error) {
-	due, err := s.DueSchedules(ctx, 1000)
+	wantID := strings.TrimSpace(scheduleID)
+	schedule, err := s.findSchedule(ctx, wantID)
 	if err != nil {
 		return domainscheduler.RunLog{}, false, err
 	}
-	wantID := strings.TrimSpace(scheduleID)
-	for _, item := range due {
-		if string(item.Schedule.ScheduleID) == wantID {
-			log, err := s.RunSchedule(ctx, wantID, "due")
-			return log, true, err
-		}
+	now := s.now().UTC()
+	if !schedule.Enabled || schedule.NextRunAt.IsZero() || schedule.NextRunAt.After(now) {
+		return domainscheduler.RunLog{}, false, nil
 	}
-	return domainscheduler.RunLog{}, false, nil
+	if !timingAllowsStart(schedule, now) {
+		// A due slot that has passed its start gate is skipped. Move to the
+		// next eligible slot so a closed window cannot leave a stale due row.
+		next, nextErr := domainscheduler.NextRunAfterSchedule(schedule, now)
+		if nextErr != nil {
+			return domainscheduler.RunLog{}, false, nextErr
+		}
+		schedule.NextRunAt = next
+		schedule.PendingOccurrenceAt = nil
+		schedule.UpdatedAt = now
+		if err := s.store.SaveSchedule(ctx, schedule); err != nil {
+			return domainscheduler.RunLog{}, false, err
+		}
+		return domainscheduler.RunLog{}, false, nil
+	}
+	scheduled := schedule.NextRunAt
+	if schedule.PendingOccurrenceAt != nil {
+		scheduled = *schedule.PendingOccurrenceAt
+	}
+	zone := "UTC"
+	if schedule.Timing != nil && schedule.Timing.Timezone != "" {
+		zone = schedule.Timing.Timezone
+	}
+	occurrenceKey, err := domainscheduler.OccurrenceKey(schedule, scheduled, zone)
+	if err != nil {
+		return domainscheduler.RunLog{}, false, err
+	}
+	log, err := s.runOccurrence(ctx, schedule, scheduled, occurrenceKey, "due")
+	return log, true, err
 }
 
 func (s *Service) RunSchedule(ctx context.Context, scheduleID string, trigger string) (domainscheduler.RunLog, error) {
@@ -130,18 +177,55 @@ func (s *Service) RunSchedule(ctx context.Context, scheduleID string, trigger st
 	if err != nil {
 		return domainscheduler.RunLog{}, err
 	}
+	return s.runOccurrence(ctx, schedule, time.Time{}, "", trigger)
+}
+
+func (s *Service) runOccurrence(ctx context.Context, schedule domainscheduler.Schedule, scheduled time.Time, occurrenceKey string, trigger string) (domainscheduler.RunLog, error) {
 	now := s.now().UTC()
+	if !timingAllowsStart(schedule, now) {
+		return domainscheduler.RunLog{}, errors.New("schedule timing does not allow start")
+	}
+	if scheduled.IsZero() {
+		scheduled = now
+	}
+	isDue := strings.EqualFold(strings.TrimSpace(trigger), "due")
+	if occurrenceKey == "" && isDue {
+		zone := "UTC"
+		if schedule.Timing != nil && schedule.Timing.Timezone != "" {
+			zone = schedule.Timing.Timezone
+		}
+		var err error
+		occurrenceKey, err = domainscheduler.OccurrenceKey(schedule, scheduled, zone)
+		if err != nil {
+			return domainscheduler.RunLog{}, err
+		}
+	}
 	log := domainscheduler.RunLog{
-		RunID:      modulecore.NewRunID(),
-		ScheduleID: schedule.ScheduleID,
-		TaskID:     modulecore.NewTaskID(),
-		Trigger:    firstNonEmpty(trigger, "manual"),
-		Status:     "completed",
-		StartedAt:  now,
+		RunID:         modulecore.NewRunID(),
+		ScheduleID:    schedule.ScheduleID,
+		Trigger:       firstNonEmpty(trigger, "manual"),
+		OccurrenceKey: occurrenceKey,
+		Status:        "completed",
+		StartedAt:     now,
 	}
 	var deferredRetryAfter time.Duration
 	if s.executor != nil {
-		summary, execErr := s.executor.ExecuteSchedule(ctx, schedule)
+		var summary string
+		var execErr error
+		executionSchedule := schedule
+		executionSchedule.Timing = cloneTaskTiming(schedule.Timing)
+		occurrenceTiming := cloneTaskTiming(schedule.Timing)
+		var occurrencePolicy modulecore.TaskTiming
+		if occurrenceTiming != nil {
+			occurrencePolicy = *occurrenceTiming
+		}
+		if executor, ok := s.executor.(OccurrenceExecutor); ok && isDue {
+			summary, execErr = executor.ExecuteScheduledOccurrence(ctx, executionSchedule, domainscheduler.ScheduledOccurrence{
+				OccurrenceKey: occurrenceKey, ScheduledAt: scheduled, Timing: occurrencePolicy,
+			})
+		} else {
+			summary, execErr = s.executor.ExecuteSchedule(ctx, executionSchedule)
+		}
 		log.Summary = strings.TrimSpace(summary)
 		if execErr != nil {
 			var deferred *DeferredError
@@ -162,8 +246,14 @@ func (s *Service) RunSchedule(ctx context.Context, scheduleID string, trigger st
 	log.CompletedAt = s.now().UTC()
 	schedule.LastRunAt = log.StartedAt
 	if log.Status == "deferred" && deferredRetryAfter > 0 {
+		if isDue && schedule.PendingOccurrenceAt == nil {
+			pending := scheduled
+			schedule.PendingOccurrenceAt = &pending
+		}
 		schedule.NextRunAt = log.CompletedAt.Add(deferredRetryAfter)
-	} else if next, err := domainscheduler.NextRunAfter(schedule.Schedule, log.StartedAt); err == nil {
+	} else if next, err := domainscheduler.NextRunAfterSchedule(schedule, log.StartedAt); err == nil {
+		// Advance from the actual start so missed slots are skipped consistently.
+		schedule.PendingOccurrenceAt = nil
 		schedule.NextRunAt = next
 	} else {
 		schedule.Enabled = false
@@ -178,6 +268,51 @@ func (s *Service) RunSchedule(ctx context.Context, scheduleID string, trigger st
 		return domainscheduler.RunLog{}, err
 	}
 	return log, nil
+}
+
+func cloneTaskTiming(timing *modulecore.TaskTiming) *modulecore.TaskTiming {
+	if timing == nil {
+		return nil
+	}
+	cloned := *timing
+	cloned.ScheduledStartAt = cloneTimePtr(timing.ScheduledStartAt)
+	cloned.NotBefore = cloneTimePtr(timing.NotBefore)
+	cloned.DeadlineAt = cloneTimePtr(timing.DeadlineAt)
+	if timing.EstimatedDurationSeconds != nil {
+		value := *timing.EstimatedDurationSeconds
+		cloned.EstimatedDurationSeconds = &value
+	}
+	cloned.AllowedWindows = append([]modulecore.TaskTimeWindow(nil), timing.AllowedWindows...)
+	if timing.Recurrence != nil {
+		recurrence := *timing.Recurrence
+		recurrence.Times = append([]string(nil), timing.Recurrence.Times...)
+		recurrence.Weekdays = append([]time.Weekday(nil), timing.Recurrence.Weekdays...)
+		if timing.Recurrence.IntervalSeconds != nil {
+			seconds := *timing.Recurrence.IntervalSeconds
+			recurrence.IntervalSeconds = &seconds
+		}
+		cloned.Recurrence = &recurrence
+	}
+	return &cloned
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func timingAllowsStart(schedule domainscheduler.Schedule, now time.Time) bool {
+	if schedule.Timing == nil {
+		return true
+	}
+	timing := schedule.Timing
+	if timing.Validate() != nil || !timing.Ready(now) {
+		return false
+	}
+	return true
 }
 
 func (s *Service) DisableSchedule(ctx context.Context, scheduleID string, disabledBy string) (domainscheduler.Schedule, error) {

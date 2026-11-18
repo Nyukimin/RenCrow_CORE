@@ -65,9 +65,19 @@ type MioAgent struct {
 	viewerPrompts          map[string]string
 	runtimeContextProvider RuntimeContextProvider
 	stableRuntimeContexts  map[string]string
+	nativePlanningPort     NativePlanningPort
+	nativePlanningActor    string
+	taskMeetingActorID     string
 	expressionHistoryMu    sync.RWMutex
 	expressionHistory      MioExpressionHistory
 	generation             MioGenerationOptions
+}
+
+func (m *MioAgent) WithNativePlanningPort(port NativePlanningPort, actorID string) *MioAgent {
+	if m != nil {
+		m.nativePlanningPort, m.nativePlanningActor = port, strings.TrimSpace(actorID)
+	}
+	return m
 }
 
 // NewMioAgent は新しいMioAgentを作成
@@ -221,6 +231,9 @@ func classifierEvidence(decision routing.Decision) []routing.DecisionEvidence {
 
 // Chat は会話を実行（v5.1: ConversationEngine + 明示指示時のみWeb検索）
 func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
+	if response, handled, err := dispatchNativePlanning(ctx, m.nativePlanningPort, m.nativePlanningActor, t.MessageText()); handled || err != nil {
+		return response, err
+	}
 	turntiming.Mark(ctx, turntiming.PointAgentInvocationStarted)
 	userMessage := t.MessageText()
 	currentSpeaker := conversationSpeakerForViewerRecipient(t.ViewerRecipient(), conversation.SpeakerMio)
@@ -380,6 +393,13 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	}
 
 	return response, nil
+}
+
+// DispatchNativePlanning handles a reserved TaskCenter command after the
+// orchestrator has bound the real Task/Run and Agent scope, before it consumes
+// a prepared draft or performs retrieval continuation.
+func (m *MioAgent) DispatchNativePlanning(ctx context.Context, t conversation.TurnInput) (string, bool, error) {
+	return dispatchNativePlanning(ctx, m.nativePlanningPort, m.nativePlanningActor, t.MessageText())
 }
 
 func (m *MioAgent) systemPromptForViewerRecipient(recipient string) string {

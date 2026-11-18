@@ -520,6 +520,51 @@ func TestJSONLStoreExecutionFenceReleasePersistenceFailureStaysBlocked(t *testin
 	}
 }
 
+func TestGenericExecutionFenceRejectsNativePlanningTask(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		name := "without_index"
+		if indexed {
+			name = "with_index"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			options := OpenOptions{Index: indexed}
+			if indexed {
+				options.Persist = true
+			}
+			task := newExecutionFenceTestTask("native planning task")
+			task.Route, task.Assignee, task.ReadOnly = domaintask.RoutePLAN, "aka", true
+			task.ParentTaskID = modulecore.NewTaskID()
+			task.NativePlanningInvocation = &domaintask.NativePlanningInvocation{
+				ParentTaskID: task.ParentTaskID, ParentRunID: modulecore.NewRunID(), ParentActorID: "shiro", ActorID: "aka",
+				Purpose: "task_center_planning", RequestKey: modulecore.NewRequestID(), EnvelopeSHA256: taskOperationHash("{}"),
+				ParentReadOnly: true, DataScope: "public",
+			}
+			encoded, err := json.Marshal(task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, stateFilename), append(encoded, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewJSONLStoreWithOptions(root, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			called := false
+			err = store.WithTaskExecutionFence(ctx, task.TaskID, func() error {
+				called = true
+				return nil
+			})
+			if !errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) || called {
+				t.Fatalf("generic execution fence err=%v callback_called=%t, want typed-owner denial before callback", err, called)
+			}
+		})
+	}
+}
+
 func TestJSONLStoreExecutionFenceCrashLeavesDurableAdmission(t *testing.T) {
 	if root := os.Getenv("RENCROW_TASK_FENCE_CRASH_ROOT"); root != "" {
 		store, err := NewJSONLStore(root)

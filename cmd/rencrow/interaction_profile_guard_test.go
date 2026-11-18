@@ -1007,6 +1007,46 @@ func TestCmdControlAtlasQueueFreezeResolveRouteIsExactPostOnly(t *testing.T) {
 	}
 }
 
+func TestTaskCenterInteractionProfileIsExact(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := withInteractionProfileGuard(next)
+	tests := []struct {
+		name, client, profile, method, path string
+		want                                int
+	}{
+		{name: "viewer page", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/viewer/task-center", want: http.StatusNoContent},
+		{name: "capabilities", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/capabilities", want: http.StatusNoContent},
+		{name: "items", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/items", want: http.StatusNoContent},
+		{name: "item", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/item", want: http.StatusNoContent},
+		{name: "submit receipt", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/request", want: http.StatusNoContent},
+		{name: "claim receipt", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/claim", want: http.StatusNoContent},
+		{name: "result acceptance", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/result/acceptance", want: http.StatusNoContent},
+		{name: "submit", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/requests", want: http.StatusNoContent},
+		{name: "claim", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/claims", want: http.StatusNoContent},
+		{name: "accept result", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/result/accept", want: http.StatusNoContent},
+		{name: "wrong client", client: "RenCrow_CMD", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/capabilities", want: http.StatusForbidden},
+		{name: "wrong method", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/capabilities", want: http.StatusForbidden},
+		{name: "unknown endpoint", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/unknown", want: http.StatusForbidden},
+		{name: "expanded endpoint", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/requests/extra", want: http.StatusForbidden},
+		{name: "unrelated route", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/viewer/status", want: http.StatusForbidden},
+		{name: "unknown profile", client: "RenCrow_Viewer", profile: "task-center-extra", method: http.MethodGet, path: "/api/v1/task-center/capabilities", want: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("X-RenCrow-Client", tt.client)
+			req.Header.Set(interactionProfileHeader, tt.profile)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
 func TestCmdControlKnowledgeNewsRoutesAreExactPostOnly(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

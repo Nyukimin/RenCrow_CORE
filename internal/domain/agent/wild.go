@@ -27,6 +27,16 @@ type WildAgent struct {
 	stableRuntimeContext   string
 	conversationEngine     conversation.ConversationEngine
 	imageGenerator         ImageGenerator
+	nativePlanningPort     NativePlanningPort
+	nativePlanningActor    string
+	taskMeetingActorID     string
+}
+
+func (w *WildAgent) WithNativePlanningPort(port NativePlanningPort, actorID string) *WildAgent {
+	if w != nil {
+		w.nativePlanningPort, w.nativePlanningActor = port, strings.TrimSpace(actorID)
+	}
+	return w
 }
 
 type ImageGenerator interface {
@@ -100,6 +110,9 @@ func (w *WildAgent) ExecutePrivateWork(ctx context.Context, input conversation.T
 }
 
 func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
+	if response, handled, err := dispatchNativePlanning(ctx, w.nativePlanningPort, w.nativePlanningActor, t.MessageText()); handled || err != nil {
+		return response, err
+	}
 	return w.generate(ctx, t, true)
 }
 

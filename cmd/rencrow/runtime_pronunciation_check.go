@@ -26,36 +26,113 @@ func (e pronunciationSchedulerExecutor) ExecuteSchedule(ctx context.Context, sch
 	return e.inner.ExecuteSchedule(ctx, schedule)
 }
 
-func buildPronunciationCheckRuntime(cfg *config.Config, deps *Dependencies) {
-	settings := cfg.TTS.PronunciationCheck
-	if !settings.Enabled || deps == nil || deps.schedulerStore == nil {
+func buildPronunciationCheckRuntime(cfg *config.Config, deps *Dependencies, agents agentRuntime, coders ...*coderAdapter) {
+	registerRuntimePronunciationDailySource(deps, cfg)
+	if deps == nil {
 		return
 	}
-	timeout := time.Duration(settings.TimeoutMinutes) * time.Minute
-	toolClient := pronunciationtool.NewClient(
-		settings.ToolBaseURL,
-		&http.Client{Timeout: timeout},
-		5*time.Second,
+	if cfg == nil {
+		registerRuntimeTaskMeetingDailySource(deps, nil)
+		return
+	}
+	if deps.taskMeetingOccurrenceExecutor == nil {
+		deps.taskMeetingOccurrenceExecutor = newRuntimeTaskMeetingOccurrenceExecutor(cfg, deps, agents, coders...)
+	}
+	deps.taskMeetingBindingsReady = taskMeetingRuntimeBindingsReady(cfg, agents, coders...)
+	registrationID, registrationReady, registrationErr := registerRuntimeTaskMeetingSchedule(
+		context.Background(), cfg, deps, agents, coders...,
 	)
-	service := pronunciationapp.NewService(toolClient, toolClient, pronunciationapp.Config{
-		GPUMatch: settings.GPUMatch, MinFreeMB: settings.MinFreeMB,
-		MaxUtilizationPercent: settings.MaxUtilizationPercent,
-		IdleSamples:           settings.IdleSamples,
-		SampleInterval:        time.Duration(settings.SampleIntervalSeconds) * time.Second,
-		RetryAfter:            time.Duration(settings.RetryIntervalSeconds) * time.Second,
-	})
-	executor := pronunciationSchedulerExecutor{inner: pronunciationapp.NewScheduledExecutor(service)}
-	schedulerService := schedulerapp.NewService(deps.schedulerStore, executor)
-	scheduleID, err := ensurePronunciationCheckSchedule(context.Background(), deps.schedulerStore, schedulerService, settings.Schedule)
-	if err != nil {
-		log.Printf("[PronunciationCheck] failed to register CORE task: %v", err)
-		return
+	deps.taskMeetingScheduleID = registrationID
+	if registrationErr != nil {
+		log.Printf("[TaskMeeting] owner registration unavailable; meeting schedule will remain inactive")
 	}
-	deps.schedulerStatus = viewer.HandleSchedulerWithExecutor(deps.schedulerStore, executor)
-	ctx, cancel := context.WithCancel(context.Background())
-	deps.pronunciationCheckCancel = cancel
-	go runPronunciationCheckScheduler(ctx, schedulerService, scheduleID)
-	log.Printf("[PronunciationCheck] CORE task enabled (schedule_id=%s schedule=%s gpu=%s)", scheduleID, settings.Schedule, settings.GPUMatch)
+	settings := cfg.TTS.PronunciationCheck
+	var pronunciationExecutor schedulerapp.Executor
+	var pronunciationScheduleID modulecore.ScheduleID
+	if settings.Enabled && deps.schedulerStore != nil {
+		timeout := time.Duration(settings.TimeoutMinutes) * time.Minute
+		toolClient := pronunciationtool.NewClient(
+			settings.ToolBaseURL,
+			&http.Client{Timeout: timeout},
+			5*time.Second,
+		)
+		service := pronunciationapp.NewService(toolClient, toolClient, pronunciationapp.Config{
+			GPUMatch: settings.GPUMatch, MinFreeMB: settings.MinFreeMB,
+			MaxUtilizationPercent: settings.MaxUtilizationPercent,
+			IdleSamples:           settings.IdleSamples,
+			SampleInterval:        time.Duration(settings.SampleIntervalSeconds) * time.Second,
+			RetryAfter:            time.Duration(settings.RetryIntervalSeconds) * time.Second,
+		})
+		candidateExecutor := pronunciationSchedulerExecutor{inner: pronunciationapp.NewScheduledExecutor(service)}
+		schedulerService := schedulerapp.NewService(deps.schedulerStore, candidateExecutor)
+		scheduleID, err := ensurePronunciationCheckSchedule(context.Background(), deps.schedulerStore, schedulerService, settings.Schedule)
+		if err != nil {
+			log.Printf("[PronunciationCheck] failed to register CORE task: %v", err)
+		} else {
+			pronunciationExecutor = candidateExecutor
+			pronunciationScheduleID = scheduleID
+			log.Printf("[PronunciationCheck] CORE task enabled (schedule_id=%s schedule=%s gpu=%s)", scheduleID, settings.Schedule, settings.GPUMatch)
+		}
+	}
+
+	router := schedulerTargetRouter{
+		pronunciation: pronunciationExecutor,
+		taskMeeting:   deps.taskMeetingOccurrenceExecutor,
+	}
+	schedulerService := schedulerapp.NewService(deps.schedulerStore, router)
+	targets := make([]modulecore.ScheduleID, 0, 2)
+	if pronunciationScheduleID != "" {
+		targets = append(targets, pronunciationScheduleID)
+	}
+	meetingEnabled, meetingDisabledReason := taskMeetingEffectivelyEnabled(cfg)
+	if meetingEnabled && registrationErr == nil && registrationReady && deps.schedulerStore != nil && router.taskMeeting != nil && deps.taskMeetingBindingsReady && deps.taskMeetingScheduleID != "" {
+		meetingConfig := cfg.Heartbeat.Routine.DailyReportMeetings
+		projectionTiming, timingErr := taskMeetingPendingProjectionTiming(
+			context.Background(), cfg, deps, deps.taskMeetingScheduleID, meetingConfig.TaskTiming(),
+		)
+		if timingErr != nil {
+			log.Printf("[TaskMeeting] frozen pending occurrence config is unavailable; no meeting schedule was activated")
+			if disableErr := disableTaskMeetingSchedule(context.Background(), deps.schedulerStore, deps.taskMeetingScheduleID); disableErr != nil {
+				log.Printf("[TaskMeeting] prior owner schedule could not be disabled safely")
+			}
+		} else {
+			registeredID, err := ensureTaskMeetingSchedule(context.Background(), deps.schedulerStore, schedulerService, deps.taskMeetingScheduleID, projectionTiming)
+			if err != nil {
+				log.Printf("[TaskMeeting] scheduler owner unavailable; no meeting schedule was activated")
+				if disableErr := disableTaskMeetingSchedule(context.Background(), deps.schedulerStore, deps.taskMeetingScheduleID); disableErr != nil {
+					log.Printf("[TaskMeeting] prior owner schedule could not be disabled safely")
+				}
+			} else {
+				targets = append(targets, registeredID)
+			}
+		}
+	} else if deps.schedulerStore != nil {
+		if err := disableTaskMeetingSchedule(context.Background(), deps.schedulerStore, deps.taskMeetingScheduleID); err != nil {
+			log.Printf("[TaskMeeting] prior owner schedule could not be disabled safely")
+		} else if deps.taskMeetingScheduleID != "" && (meetingDisabledReason != "feature_disabled" || cfg.Heartbeat.Routine.DailyReportMeetings.Enabled) {
+			log.Printf("[TaskMeeting] meeting schedule remains disabled by owner configuration/runtime availability")
+		}
+	}
+	protectedIDs, err := protectedTaskMeetingScheduleIDs(context.Background(), deps.schedulerStore)
+	if err != nil {
+		protectedIDs = nil
+		log.Printf("[Scheduler] owner schedule policy scan unavailable; generic scheduler reads will fail closed")
+	}
+	if deps.taskMeetingScheduleID != "" {
+		protectedIDs = append(protectedIDs, string(deps.taskMeetingScheduleID))
+	}
+	deps.schedulerStatus = viewer.HandleSchedulerWithExecutorAndProtectedTargets(
+		deps.schedulerStore, router, []string{taskMeetingScheduledTarget}, protectedIDs,
+	)
+	registerRuntimeTaskMeetingDailySource(deps, cfg)
+	if len(targets) > 0 {
+		cancel, done := startSharedSchedulerLoop(context.Background(), schedulerService, targets)
+		deps.schedulerRuntimeCancel = cancel
+		deps.schedulerRuntimeDone = done
+		if pronunciationScheduleID != "" {
+			deps.pronunciationCheckCancel = cancel
+		}
+	}
 }
 
 func ensurePronunciationCheckSchedule(ctx context.Context, store viewer.SchedulerStore, service *schedulerapp.Service, scheduleExpr string) (modulecore.ScheduleID, error) {
@@ -96,21 +173,4 @@ func ensurePronunciationCheckSchedule(ctx context.Context, store viewer.Schedule
 		return "", err
 	}
 	return created.ScheduleID, nil
-}
-
-func runPronunciationCheckScheduler(ctx context.Context, service *schedulerapp.Service, scheduleID modulecore.ScheduleID) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		if logEntry, ran, err := service.RunDueSchedule(ctx, string(scheduleID)); err != nil {
-			log.Printf("[PronunciationCheck] CORE task failed: %v", err)
-		} else if ran {
-			log.Printf("[PronunciationCheck] CORE task status=%s summary=%s", logEntry.Status, logEntry.Summary)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }

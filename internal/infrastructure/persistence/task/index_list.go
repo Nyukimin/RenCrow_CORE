@@ -127,6 +127,9 @@ func (ix *taskIndex) collectTasksLocked(filter domaintask.Filter, pending map[ke
 	if !impossible {
 		for i := range ix.tasks {
 			rec := &ix.tasks[i]
+			if rec.flags&flagPrivateAccess != 0 {
+				continue
+			}
 			if filter.Status != "" && uint32(rec.status) != wantStatus {
 				continue
 			}
@@ -146,6 +149,9 @@ func (ix *taskIndex) collectTasksLocked(filter domaintask.Filter, pending map[ke
 		}
 	}
 	for key, value := range pending {
+		if value.PrivateAccess != nil {
+			continue
+		}
 		if !taskMatchesFilter(value, filter) {
 			continue
 		}

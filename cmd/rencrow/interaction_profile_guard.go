@@ -76,6 +76,10 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_CMD",
 		allow:  cmdControlInteractionAllowed,
 	},
+	"task-center": {
+		client: "RenCrow_Viewer",
+		allow:  taskCenterInteractionAllowed,
+	},
 	"agent-ops": {
 		client: "RenCrow_CMD",
 		allow: func(method, path string) bool {
@@ -90,6 +94,28 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/internal/assistant/notifications/line"))
 		},
 	},
+}
+
+func taskCenterInteractionAllowed(method, path string) bool {
+	if method == http.MethodGet && path == "/viewer/task-center" {
+		return true
+	}
+	switch method {
+	case http.MethodGet:
+		switch path {
+		case "/api/v1/task-center/capabilities",
+			"/api/v1/task-center/items",
+			"/api/v1/task-center/item",
+			"/api/v1/task-center/request",
+			"/api/v1/task-center/claim",
+			"/api/v1/task-center/result",
+			"/api/v1/task-center/result/acceptance":
+			return true
+		}
+	case http.MethodPost:
+		return path == "/api/v1/task-center/requests" || path == "/api/v1/task-center/claims" || path == "/api/v1/task-center/result/accept"
+	}
+	return false
 }
 
 func withInteractionProfileGuard(next http.Handler) http.Handler {

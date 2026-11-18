@@ -184,6 +184,27 @@ func isTransactionContextError(err error) bool {
 func cloneTransactionTask(value domaintask.Task) domaintask.Task {
 	value.CoderRoles = append([]string(nil), value.CoderRoles...)
 	value.DependencyTaskIDs = append([]modulecore.TaskID(nil), value.DependencyTaskIDs...)
+	if value.PrivateAccess != nil {
+		privateAccess := *value.PrivateAccess
+		value.PrivateAccess = &privateAccess
+	}
+	if value.TaskMeetingInvocation != nil {
+		invocation := *value.TaskMeetingInvocation
+		invocation.FrozenConfig = append([]byte(nil), value.TaskMeetingInvocation.FrozenConfig...)
+		invocation.FrozenInput = append([]byte(nil), value.TaskMeetingInvocation.FrozenInput...)
+		invocation.Audience = append([]string(nil), value.TaskMeetingInvocation.Audience...)
+		invocation.FrozenSourceMessages = append([]domaintask.TaskMeetingConsumedMessage(nil), value.TaskMeetingInvocation.FrozenSourceMessages...)
+		invocation.Timing = cloneTaskTiming(value.TaskMeetingInvocation.Timing)
+		value.TaskMeetingInvocation = &invocation
+	}
+	if value.TaskMeetingResult != nil {
+		result := *value.TaskMeetingResult
+		value.TaskMeetingResult = &result
+	}
+	if value.Timing != nil {
+		timing := cloneTaskTiming(*value.Timing)
+		value.Timing = &timing
+	}
 	if value.OriginPublication != nil {
 		originPublication := *value.OriginPublication
 		value.OriginPublication = &originPublication
@@ -213,6 +234,7 @@ func cloneTransactionContext(value domaintask.SharedRoleContext) domaintask.Shar
 	value.Decisions = append([]string(nil), value.Decisions...)
 	value.Constraints = append([]string(nil), value.Constraints...)
 	value.Artifacts = append([]string(nil), value.Artifacts...)
+	value.TaskMeetingConsumedMessages = append([]domaintask.TaskMeetingConsumedMessage(nil), value.TaskMeetingConsumedMessages...)
 	if value.PrivateText != nil {
 		privateText := *value.PrivateText
 		value.PrivateText = &privateText
@@ -220,6 +242,43 @@ func cloneTransactionContext(value domaintask.SharedRoleContext) domaintask.Shar
 	if value.AutonomousDecision != nil {
 		decision := *value.AutonomousDecision
 		value.AutonomousDecision = &decision
+	}
+	return value
+}
+
+func cloneTaskTiming(value modulecore.TaskTiming) modulecore.TaskTiming {
+	if value.AllowedWindows != nil {
+		value.AllowedWindows = append(make([]modulecore.TaskTimeWindow, 0, len(value.AllowedWindows)), value.AllowedWindows...)
+	}
+	if value.ScheduledStartAt != nil {
+		stamp := *value.ScheduledStartAt
+		value.ScheduledStartAt = &stamp
+	}
+	if value.NotBefore != nil {
+		stamp := *value.NotBefore
+		value.NotBefore = &stamp
+	}
+	if value.DeadlineAt != nil {
+		stamp := *value.DeadlineAt
+		value.DeadlineAt = &stamp
+	}
+	if value.EstimatedDurationSeconds != nil {
+		duration := *value.EstimatedDurationSeconds
+		value.EstimatedDurationSeconds = &duration
+	}
+	if value.Recurrence != nil {
+		recurrence := *value.Recurrence
+		if recurrence.Times != nil {
+			recurrence.Times = append(make([]string, 0, len(recurrence.Times)), recurrence.Times...)
+		}
+		if recurrence.Weekdays != nil {
+			recurrence.Weekdays = append(make([]time.Weekday, 0, len(recurrence.Weekdays)), recurrence.Weekdays...)
+		}
+		if recurrence.IntervalSeconds != nil {
+			interval := *recurrence.IntervalSeconds
+			recurrence.IntervalSeconds = &interval
+		}
+		value.Recurrence = &recurrence
 	}
 	return value
 }

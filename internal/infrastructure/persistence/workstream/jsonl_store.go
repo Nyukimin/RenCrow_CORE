@@ -41,6 +41,8 @@ type JSONLStore struct {
 	// resolutionAppendHook is a test-only fault seam.  It is intentionally
 	// unexported so production callers cannot alter the lifecycle protocol.
 	resolutionAppendHook func(string) error
+	// taskCenterGuardMu keeps legacy managed-record checks adjacent to appends.
+	taskCenterGuardMu sync.Mutex
 }
 
 func NewJSONLStore(root string) *JSONLStore {
@@ -669,7 +671,12 @@ func NewJSONLStoreWithVault(root, vaultRoot string) *JSONLStore {
 }
 
 func (s *JSONLStore) SaveWorkstream(_ context.Context, item domainworkstream.Workstream) error {
+	s.taskCenterGuardMu.Lock()
+	defer s.taskCenterGuardMu.Unlock()
 	if err := domainworkstream.ValidateWorkstream(item); err != nil {
+		return err
+	}
+	if err := s.ensureLegacyWorkstreamWritable(item); err != nil {
 		return err
 	}
 	if s.vaultRoot != "" {
@@ -699,11 +706,16 @@ func (s *JSONLStore) ListWorkstreams(_ context.Context, limit int) ([]domainwork
 	}); err != nil {
 		return nil, err
 	}
-	return reverseLimit(items, limit), nil
+	return latestUnmanagedTaskCenterItems(items, func(item domainworkstream.Workstream) string { return item.WorkstreamID }, func(item domainworkstream.Workstream) bool { return item.TaskCenterScope != nil }, limit), nil
 }
 
 func (s *JSONLStore) SaveGoal(_ context.Context, goal domainworkstream.Goal) error {
+	s.taskCenterGuardMu.Lock()
+	defer s.taskCenterGuardMu.Unlock()
 	if err := domainworkstream.ValidateGoal(goal); err != nil {
+		return err
+	}
+	if err := s.ensureLegacyGoalWritable(goal); err != nil {
 		return err
 	}
 	return appendJSONL(s.goalPath, goal)
@@ -726,6 +738,9 @@ func (s *JSONLStore) FindGoalByID(_ context.Context, goalID string) (domainworks
 	}); err != nil {
 		return domainworkstream.Goal{}, false, err
 	}
+	if found.TaskPlan != nil {
+		return domainworkstream.Goal{}, false, nil
+	}
 	return found, matched, nil
 }
 
@@ -744,11 +759,19 @@ func (s *JSONLStore) ListGoals(_ context.Context, limit int) ([]domainworkstream
 	}); err != nil {
 		return nil, err
 	}
-	return reverseLimit(items, limit), nil
+	return latestUnmanagedTaskCenterItems(items, func(item domainworkstream.Goal) string { return item.GoalID }, func(item domainworkstream.Goal) bool { return item.TaskPlan != nil }, limit), nil
 }
 
 func (s *JSONLStore) SaveArtifact(_ context.Context, item domainworkstream.Artifact) error {
+	s.taskCenterGuardMu.Lock()
+	defer s.taskCenterGuardMu.Unlock()
+	if isTaskCenterInternalArtifactType(item.Type) {
+		return domainworkstream.ErrTaskPlanForbidden
+	}
 	if err := domainworkstream.ValidateArtifact(item); err != nil {
+		return err
+	}
+	if err := s.ensureLegacyArtifactWritable(item); err != nil {
 		return err
 	}
 	return appendJSONL(s.artifactPath, item)
@@ -769,12 +792,21 @@ func (s *JSONLStore) ListArtifacts(_ context.Context, limit int) ([]domainworkst
 	}); err != nil {
 		return nil, err
 	}
-	return reverseLimit(items, limit), nil
+	return latestUnmanagedTaskCenterItems(items, func(item domainworkstream.Artifact) string { return item.ArtifactID }, func(item domainworkstream.Artifact) bool { return isTaskCenterInternalArtifactType(item.Type) }, limit), nil
 }
 
 func (s *JSONLStore) SaveArtifactAnnotation(_ context.Context, item domainworkstream.ArtifactAnnotation) error {
+	s.taskCenterGuardMu.Lock()
+	defer s.taskCenterGuardMu.Unlock()
 	if err := domainworkstream.ValidateArtifactAnnotation(item); err != nil {
 		return err
+	}
+	reserved, err := s.isTaskCenterInternalArtifactID(item.ArtifactID)
+	if err != nil {
+		return err
+	}
+	if reserved {
+		return domainworkstream.ErrTaskPlanForbidden
 	}
 	return appendJSONL(s.annotationPath, item)
 }
@@ -784,17 +816,47 @@ func (s *JSONLStore) ListArtifactAnnotations(_ context.Context, limit int) ([]do
 		limit = 50
 	}
 	var items []domainworkstream.ArtifactAnnotation
+	reservedIDs := make(map[string]struct{})
+	if err := readJSONL(s.artifactPath, func(line []byte) error {
+		var artifact domainworkstream.Artifact
+		if err := json.Unmarshal(line, &artifact); err != nil {
+			return err
+		}
+		if isTaskCenterInternalArtifactType(artifact.Type) {
+			reservedIDs[artifact.ArtifactID] = struct{}{}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	if err := readJSONL(s.annotationPath, func(line []byte) error {
 		var item domainworkstream.ArtifactAnnotation
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
 		}
-		items = append(items, item)
+		if _, reserved := reservedIDs[item.ArtifactID]; !reserved {
+			items = append(items, item)
+		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 	return reverseLimit(items, limit), nil
+}
+
+func (s *JSONLStore) isTaskCenterInternalArtifactID(artifactID string) (bool, error) {
+	found := false
+	err := readJSONL(s.artifactPath, func(line []byte) error {
+		var artifact domainworkstream.Artifact
+		if err := json.Unmarshal(line, &artifact); err != nil {
+			return err
+		}
+		if artifact.ArtifactID == artifactID && isTaskCenterInternalArtifactType(artifact.Type) {
+			found = true
+		}
+		return nil
+	})
+	return found, err
 }
 
 func (s *JSONLStore) SaveSteeringItem(_ context.Context, item domainworkstream.SteeringItem) error {

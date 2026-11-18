@@ -3,22 +3,70 @@ package moviecatalog
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
 
 const (
-	defaultLookupLimit = 10
-	maxLookupLimit     = 20
+	DefaultLookupLimit = 10
+	MaxLookupLimit     = 20
 )
+
+// LookupInputSchema is the owner-published form metadata for a frozen
+// movie.catalog.lookup request. Validation and normalization remain owned by
+// NormalizeLookupRequest.
+func LookupInputSchema() json.RawMessage {
+	value := struct {
+		SchemaID string `json:"schema_id"`
+		Version  int    `json:"version"`
+		Fields   []any  `json:"fields"`
+	}{
+		SchemaID: "movie.catalog.lookup", Version: 1,
+		Fields: []any{
+			map[string]any{"name": "kind", "label": "対象", "help": "映画または人物を選びます。", "type": "enum", "required": true, "options": lookupKindInputOptions()},
+			map[string]any{"name": "name", "label": "名前", "help": "既存カタログから完全一致で探します。", "type": "string", "required": true},
+			map[string]any{"name": "information", "label": "表示情報", "help": "対象種別に合う情報を追加で読みます。", "type": "enum_by_kind", "required": false, "options_by_kind": map[string][]map[string]string{"movie": lookupInformationInputOptions("movie"), "person": lookupInformationInputOptions("person")}},
+			map[string]any{"name": "limit", "label": "上限", "help": "候補と関連情報の最大件数です。", "type": "integer", "required": false, "default": DefaultLookupLimit, "minimum": 1, "maximum": MaxLookupLimit},
+		},
+	}
+	encoded, _ := json.Marshal(value)
+	return encoded
+}
 
 // LookupRequest is intentionally narrower than the Viewer fuzzy-search API.
 // Name is resolved only through a normalized equality lookup.
 type LookupRequest struct {
-	Kind        string
-	Name        string
-	Information string
-	Limit       int
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	Information string `json:"information,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+}
+
+// NormalizeLookupRequest is the shared validation and canonicalization
+// contract for all exact indexed movie/person lookups. Callers can freeze its
+// result before dispatch so retries never derive defaults from live state.
+func NormalizeLookupRequest(req LookupRequest) (LookupRequest, error) {
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	if !containsLookupInformation(LookupKinds(), kind) {
+		return LookupRequest{}, fmt.Errorf("kind must be movie or person")
+	}
+	name := strings.TrimSpace(req.Name)
+	if NormalizeLookupKey(name) == "" {
+		return LookupRequest{}, fmt.Errorf("name is required")
+	}
+	limit := req.Limit
+	if limit == 0 {
+		limit = DefaultLookupLimit
+	}
+	if limit < 1 || limit > MaxLookupLimit {
+		return LookupRequest{}, fmt.Errorf("limit must be between 1 and %d", MaxLookupLimit)
+	}
+	information := strings.ToLower(strings.TrimSpace(req.Information))
+	if err := validateLookupInformation(kind, information); err != nil {
+		return LookupRequest{}, err
+	}
+	return LookupRequest{Kind: kind, Name: name, Information: information, Limit: limit}, nil
 }
 
 type MovieLookupCandidate struct {
@@ -118,26 +166,12 @@ func Lookup(db *sql.DB, req LookupRequest) (LookupResult, error) {
 	if db == nil {
 		return LookupResult{}, fmt.Errorf("movie catalog database is nil")
 	}
-	kind := strings.ToLower(strings.TrimSpace(req.Kind))
-	if kind != "movie" && kind != "person" {
-		return LookupResult{}, fmt.Errorf("kind must be movie or person")
-	}
-	name := strings.TrimSpace(req.Name)
-	key := NormalizeLookupKey(name)
-	if key == "" {
-		return LookupResult{}, fmt.Errorf("name is required")
-	}
-	limit := req.Limit
-	if limit == 0 {
-		limit = defaultLookupLimit
-	}
-	if limit < 1 || limit > maxLookupLimit {
-		return LookupResult{}, fmt.Errorf("limit must be between 1 and %d", maxLookupLimit)
-	}
-	information := strings.ToLower(strings.TrimSpace(req.Information))
-	if err := validateLookupInformation(kind, information); err != nil {
+	canonical, err := NormalizeLookupRequest(req)
+	if err != nil {
 		return LookupResult{}, err
 	}
+	kind, name, limit, information := canonical.Kind, canonical.Name, canonical.Limit, canonical.Information
+	key := NormalizeLookupKey(name)
 	if err := validateIndexedLookupSchema(db); err != nil {
 		return LookupResult{}, err
 	}
@@ -195,16 +229,49 @@ func Lookup(db *sql.DB, req LookupRequest) (LookupResult, error) {
 }
 
 func validateLookupInformation(kind, information string) error {
-	if information == "" {
-		return nil
-	}
-	if kind == "movie" && (information == "overview" || information == "cast" || information == "staff") {
-		return nil
-	}
-	if kind == "person" && (information == "profile" || information == "filmography") {
+	if containsLookupInformation(LookupInformationOptions(kind), information) {
 		return nil
 	}
 	return fmt.Errorf("information %q is not valid for kind %q", information, kind)
+}
+
+func LookupInformationOptions(kind string) []string {
+	switch kind {
+	case "movie":
+		return []string{"", "overview", "cast", "staff"}
+	case "person":
+		return []string{"", "profile", "filmography"}
+	default:
+		return nil
+	}
+}
+
+func LookupKinds() []string { return []string{"movie", "person"} }
+
+func lookupKindInputOptions() []map[string]string {
+	return []map[string]string{{"value": "movie", "label": "映画"}, {"value": "person", "label": "人物"}}
+}
+
+func lookupInformationInputOptions(kind string) []map[string]string {
+	labels := map[string]string{
+		"": "基本情報", "overview": "概要", "cast": "出演者", "staff": "スタッフ",
+		"profile": "プロフィール", "filmography": "出演作品",
+	}
+	options := LookupInformationOptions(kind)
+	result := make([]map[string]string, 0, len(options))
+	for _, value := range options {
+		result = append(result, map[string]string{"value": value, "label": labels[value]})
+	}
+	return result
+}
+
+func containsLookupInformation(options []string, value string) bool {
+	for _, option := range options {
+		if option == value {
+			return true
+		}
+	}
+	return false
 }
 
 func projectMovieLookupDetail(detail map[string]any, information string, limit int) map[string]any {

@@ -41,6 +41,9 @@ type OpenOptions struct {
 	// which the next write starts another segment of the same day. Zero selects
 	// DefaultRotationSizeValve.
 	RotationSizeValve int64
+	// TaskMeetingClock is an optional construction-time clock used only for
+	// typed TaskMeeting receipts. A nil value uses real UTC time.
+	TaskMeetingClock func() time.Time
 
 	// checkpoint, failpoint and now are seams for tests. A nil checkpoint selects the
 	// production policy; failpoint, if set, is called at each stage of a sidecar
@@ -225,6 +228,10 @@ func (s *JSONLStore) indexGetTask(ctx context.Context, taskID modulecore.TaskID)
 		return domaintask.Task{}, err
 	}
 	defer release()
+	return s.indexReadPublicTask(taskID)
+}
+
+func (s *JSONLStore) indexReadPublicTask(taskID modulecore.TaskID) (domaintask.Task, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
@@ -238,7 +245,17 @@ func (s *JSONLStore) indexGetTask(ctx context.Context, taskID modulecore.TaskID)
 	if !ok {
 		return domaintask.Task{}, domaintask.ErrNotFound
 	}
-	return s.idx.readTaskAt(pos, key)
+	task, err := s.idx.readTaskAt(pos, key)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	if task.PrivateAccess != nil {
+		return domaintask.Task{}, domaintask.ErrNotFound
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	return task, nil
 }
 
 func (s *JSONLStore) indexGetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
@@ -260,7 +277,18 @@ func (s *JSONLStore) indexGetRun(ctx context.Context, runID modulecore.RunID) (d
 	if !ok {
 		return domaintask.Run{}, domaintask.ErrNotFound
 	}
-	return s.idx.readRunAt(pos, key)
+	run, err := s.idx.readRunAt(pos, key)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	task, err := s.indexReadPublicTask(run.TaskID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Run{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	return run, nil
 }
 
 func (s *JSONLStore) indexGetContext(ctx context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
@@ -270,6 +298,9 @@ func (s *JSONLStore) indexGetContext(ctx context.Context, taskID modulecore.Task
 	}
 	defer release()
 	if err := taskID.Validate(); err != nil {
+		return domaintask.SharedRoleContext{}, err
+	}
+	if _, err := s.indexReadPublicTask(taskID); err != nil {
 		return domaintask.SharedRoleContext{}, err
 	}
 	key, err := parseCanonicalKey(string(taskID), taskKeyPrefix)

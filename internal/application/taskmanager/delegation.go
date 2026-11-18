@@ -16,9 +16,13 @@ import (
 const delegationStartOperation = "start"
 
 var (
-	ErrDelegationAdmissionCheckRequired = errors.New("delegation admission check is required")
-	ErrDelegationReceiptCorrupt         = errors.New("delegation Task receipt is corrupt")
-	ErrGlobalTaskOperationUnsupported   = errors.New("Task store does not support global idempotent operations")
+	ErrDelegationAdmissionCheckRequired           = errors.New("delegation admission check is required")
+	ErrDelegationReceiptReadAuthorizationRequired = errors.New("delegation receipt read authorization is required")
+	ErrDelegationReceiptReadForbidden             = errors.New("delegation receipt read is forbidden")
+	ErrDelegationReceiptNotFound                  = errors.New("delegation Task receipt not found")
+	ErrDelegationReceiptCorrupt                   = errors.New("delegation Task receipt is corrupt")
+	ErrGlobalTaskOperationUnsupported             = errors.New("Task store does not support global idempotent operations")
+	ErrGlobalTaskOperationReadUnsupported         = errors.New("Task store does not support global operation receipt reads")
 )
 
 // DelegationAdmissionCheck must read the current authenticated delegation
@@ -33,8 +37,33 @@ var (
 // read-only and safe to call more than once.
 type DelegationAdmissionCheck = func(context.Context, modulecore.RequestID, uint64) error
 
+// DelegationReceiptReadAuthorizationInput binds read permission to the exact
+// frozen delegation request. The owner must confirm the current readable source
+// record matches these identities and snapshots; having access to some other
+// Goal is not sufficient to query a known operation ID.
+type DelegationReceiptReadAuthorizationInput struct {
+	DelegationID modulecore.RequestID
+	Revision     uint64
+	RequestHash  string
+	Draft        domaintask.Task
+	Shared       domaintask.SharedRoleContext
+}
+
+// DelegationReceiptReadAuthorizationCheck verifies the caller's current
+// read/reconciliation permission for the exact frozen request. It does not
+// authorize Task creation or execution and is called before the receipt query
+// and again before returning its result. Implementations must only read the
+// source owner and must not hold its transaction across the TaskStore read.
+// Return context errors for cancellation; other errors are sanitized to
+// ErrDelegationReceiptReadForbidden.
+type DelegationReceiptReadAuthorizationCheck = func(context.Context, DelegationReceiptReadAuthorizationInput) error
+
 type globalTaskOperationStore interface {
 	ExecuteIdempotentGlobalTaskOperation(context.Context, string, string, func(Store) (json.RawMessage, error)) (json.RawMessage, error)
+}
+
+type globalTaskOperationReader interface {
+	LookupGlobalTaskOperation(context.Context, string, string) (json.RawMessage, bool, error)
 }
 
 type delegationTaskOperationReceipt struct {
@@ -105,14 +134,18 @@ func (m *Manager) EnsureTaskForDelegation(
 	if err := check(ctx, delegationID, revision); err != nil {
 		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("delegation admission check: %w", err)
 	}
-	operationID := DelegationTaskOperationID(delegationID, revision)
-	requestHash, err := hashDelegationTaskOperation(delegationTaskOperationRequest{
+	request, err := snapshotDelegationTaskOperationRequest(delegationTaskOperationRequest{
 		Operation:    delegationStartOperation,
 		DelegationID: delegationID,
 		Revision:     revision,
 		Task:         draft,
 		Shared:       shared,
 	})
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("snapshot delegation Task request: %w", err)
+	}
+	operationID := DelegationTaskOperationID(request.DelegationID, request.Revision)
+	requestHash, err := hashDelegationTaskOperation(request)
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("hash delegation Task request: %w", err)
 	}
@@ -128,13 +161,13 @@ func (m *Manager) EnsureTaskForDelegation(
 			idIndexed:                m.idIndexed,
 			now:                      m.now,
 		}
-		task, run, err := txManager.createAndStartRunInTransaction(ctx, draft, shared)
+		task, run, err := txManager.createAndStartRunInTransaction(ctx, request.Task, request.Shared)
 		if err != nil {
 			return nil, err
 		}
 		// Revalidate after staging all Task-owner records and directly before
 		// returning the transaction payload to its commit boundary.
-		if err := check(ctx, delegationID, revision); err != nil {
+		if err := check(ctx, request.DelegationID, request.Revision); err != nil {
 			return nil, fmt.Errorf("delegation pre-commit admission check: %w", err)
 		}
 		return json.Marshal(delegationTaskOperationReceipt{TaskID: task.TaskID, RunID: run.RunID})
@@ -147,9 +180,138 @@ func (m *Manager) EnsureTaskForDelegation(
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
 	}
+	task, run, err := m.readDelegationTaskReceipt(ctx, receipt)
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	return task, run, nil
+}
+
+// LookupTaskForDelegation is a read-only receipt recovery path for an owner
+// whose current execution admission has expired. It never creates a Task and
+// never relaxes EnsureTaskForDelegation's admission requirement.
+func (m *Manager) LookupTaskForDelegation(
+	ctx context.Context,
+	delegationID modulecore.RequestID,
+	revision uint64,
+	draft domaintask.Task,
+	shared domaintask.SharedRoleContext,
+	authorize DelegationReceiptReadAuthorizationCheck,
+) (domaintask.Task, domaintask.Run, error) {
+	if m == nil || m.store == nil {
+		return domaintask.Task{}, domaintask.Run{}, errors.New("task manager store is unavailable")
+	}
+	if ctx == nil {
+		return domaintask.Task{}, domaintask.Run{}, errors.New("delegation receipt lookup context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	if err := delegationID.Validate(); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("delegation_id is invalid: %w", err)
+	}
+	if revision == 0 {
+		return domaintask.Task{}, domaintask.Run{}, errors.New("delegation revision must be positive")
+	}
+	if authorize == nil {
+		return domaintask.Task{}, domaintask.Run{}, ErrDelegationReceiptReadAuthorizationRequired
+	}
+	request, err := snapshotDelegationTaskOperationRequest(delegationTaskOperationRequest{
+		Operation: delegationStartOperation, DelegationID: delegationID, Revision: revision,
+		Task: draft, Shared: shared,
+	})
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("snapshot delegation Task request: %w", err)
+	}
+	requestHash, err := hashDelegationTaskOperation(request)
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("hash delegation Task request: %w", err)
+	}
+	readAuthorization := DelegationReceiptReadAuthorizationInput{
+		DelegationID: request.DelegationID, Revision: request.Revision,
+		RequestHash: requestHash, Draft: request.Task, Shared: request.Shared,
+	}
+	if err := authorizeDelegationReceiptRead(ctx, readAuthorization, authorize); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	reader, ok := m.store.(globalTaskOperationReader)
+	if !ok {
+		if err := authorizeDelegationReceiptRead(ctx, readAuthorization, authorize); err != nil {
+			return domaintask.Task{}, domaintask.Run{}, err
+		}
+		return domaintask.Task{}, domaintask.Run{}, ErrGlobalTaskOperationReadUnsupported
+	}
+	operationID := DelegationTaskOperationID(request.DelegationID, request.Revision)
+	result, found, readErr := reader.LookupGlobalTaskOperation(ctx, operationID, requestHash)
+	if err := ctx.Err(); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	if err := authorizeDelegationReceiptRead(ctx, readAuthorization, authorize); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	if readErr != nil {
+		return domaintask.Task{}, domaintask.Run{}, readErr
+	}
+	if !found {
+		return domaintask.Task{}, domaintask.Run{}, ErrDelegationReceiptNotFound
+	}
+
+	receipt, resultErr := decodeDelegationTaskOperationReceipt(result)
 	var task domaintask.Task
 	var run domaintask.Run
-	err = m.readTransaction(ctx, func(txManager *Manager) error {
+	if resultErr == nil {
+		task, run, resultErr = m.readDelegationTaskReceipt(ctx, receipt)
+	}
+	if err := ctx.Err(); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	if err := authorizeDelegationReceiptRead(ctx, readAuthorization, authorize); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	if resultErr != nil {
+		return domaintask.Task{}, domaintask.Run{}, resultErr
+	}
+	return task, run, nil
+}
+
+func authorizeDelegationReceiptRead(
+	ctx context.Context,
+	input DelegationReceiptReadAuthorizationInput,
+	check DelegationReceiptReadAuthorizationCheck,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	request, err := snapshotDelegationTaskOperationRequest(delegationTaskOperationRequest{
+		Operation: delegationStartOperation, DelegationID: input.DelegationID, Revision: input.Revision,
+		Task: input.Draft, Shared: input.Shared,
+	})
+	if err != nil {
+		return err
+	}
+	copyInput := DelegationReceiptReadAuthorizationInput{
+		DelegationID: request.DelegationID, Revision: request.Revision, RequestHash: input.RequestHash,
+		Draft: request.Task, Shared: request.Shared,
+	}
+	if err := check(ctx, copyInput); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if errors.Is(err, context.Canceled) {
+			return context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return context.DeadlineExceeded
+		}
+		return ErrDelegationReceiptReadForbidden
+	}
+	return ctx.Err()
+}
+
+func (m *Manager) readDelegationTaskReceipt(ctx context.Context, receipt delegationTaskOperationReceipt) (domaintask.Task, domaintask.Run, error) {
+	var task domaintask.Task
+	var run domaintask.Run
+	err := m.readTransaction(ctx, func(txManager *Manager) error {
 		var err error
 		task, err = txManager.store.GetTask(ctx, receipt.TaskID)
 		if err != nil {
@@ -185,6 +347,18 @@ func hashDelegationTaskOperation(request delegationTaskOperationRequest) (string
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func snapshotDelegationTaskOperationRequest(request delegationTaskOperationRequest) (delegationTaskOperationRequest, error) {
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return delegationTaskOperationRequest{}, err
+	}
+	var snapshot delegationTaskOperationRequest
+	if err := json.Unmarshal(encoded, &snapshot); err != nil {
+		return delegationTaskOperationRequest{}, err
+	}
+	return snapshot, nil
 }
 
 func decodeDelegationTaskOperationReceipt(raw json.RawMessage) (delegationTaskOperationReceipt, error) {

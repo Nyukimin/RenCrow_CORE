@@ -3,6 +3,7 @@ package workstream
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -30,6 +31,23 @@ func ValidateGoal(goal Goal) error {
 	if strings.TrimSpace(goal.Status) == StatusCompleted && goal.CompletedAt.IsZero() {
 		return errors.New("completed_at is required for completed goal")
 	}
+	if goal.TaskPlan != nil {
+		if err := goal.TaskPlan.Validate(); err != nil {
+			return fmt.Errorf("task_plan: %w", err)
+		}
+		if result := goal.TaskPlan.ExecutionResult; result != nil {
+			criteriaDigest, err := TaskPlanCriteriaSHA256(goal.SuccessCriteria, goal.Verification)
+			if err != nil || criteriaDigest != result.CriteriaSHA256 {
+				return errors.New("task_plan execution result criteria digest does not match the Goal")
+			}
+			if result.Verification == TaskPlanResultVerificationAccepted && (goal.Status != StatusCompleted || goal.CompletedAt.IsZero()) {
+				return errors.New("accepted task_plan execution result requires a completed Goal")
+			}
+			if result.Verification == TaskPlanResultVerificationPending && goal.Status == StatusCompleted {
+				return errors.New("pending task_plan execution result cannot complete the Goal")
+			}
+		}
+	}
 	return nil
 }
 
@@ -45,6 +63,11 @@ func ValidateWorkstream(item Workstream) error {
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
+	}
+	if item.TaskCenterScope != nil {
+		if err := item.TaskCenterScope.Validate(); err != nil {
+			return fmt.Errorf("task_center_scope: %w", err)
+		}
 	}
 	return nil
 }

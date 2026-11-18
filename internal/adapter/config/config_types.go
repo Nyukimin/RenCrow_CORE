@@ -4,21 +4,22 @@ import "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 
 // Config はアプリケーション全体の設定
 type Config struct {
-	Server             ServerConfig              `yaml:"server"`
-	Session            SessionConfig             `yaml:"session"`
-	Storage            StorageConfig             `yaml:"storage"`
-	DurableStore       DurableStoreConfig        `yaml:"durable_store"`
-	TaskStore          TaskStoreConfig           `yaml:"task_store"`
-	TaskParallelLimits *TaskParallelLimitsConfig `yaml:"task_parallel_limits"`
-	WorldProjection    WorldProjectionConfig     `yaml:"world_projection"`
-	ActionStore        ActionStoreConfig         `yaml:"action_store"`
-	Backup             BackupConfig              `yaml:"backup"`
-	Worker             WorkerConfig              `yaml:"worker"`
-	Line               LineConfig                `yaml:"line"`
-	Telegram           TelegramConfig            `yaml:"telegram"`
-	Discord            DiscordConfig             `yaml:"discord"`
-	Slack              SlackConfig               `yaml:"slack"`
-	Log                LogConfig                 `yaml:"log"`
+	Server                  ServerConfig              `yaml:"server"`
+	Session                 SessionConfig             `yaml:"session"`
+	Storage                 StorageConfig             `yaml:"storage"`
+	DurableStore            DurableStoreConfig        `yaml:"durable_store"`
+	TaskStore               TaskStoreConfig           `yaml:"task_store"`
+	TaskParallelLimits      *TaskParallelLimitsConfig `yaml:"task_parallel_limits"`
+	WorldProjection         WorldProjectionConfig     `yaml:"world_projection"`
+	ActionStore             ActionStoreConfig         `yaml:"action_store"`
+	Backup                  BackupConfig              `yaml:"backup"`
+	Worker                  WorkerConfig              `yaml:"worker"`
+	Line                    LineConfig                `yaml:"line"`
+	Telegram                TelegramConfig            `yaml:"telegram"`
+	Discord                 DiscordConfig             `yaml:"discord"`
+	Slack                   SlackConfig               `yaml:"slack"`
+	Log                     LogConfig                 `yaml:"log"`
+	TaskExecutionPolicyFile string                    `yaml:"task_execution_policy_file"`
 
 	// === v4.0 追加フィールド ===
 	Distributed DistributedConfig `yaml:"distributed"`
@@ -556,17 +557,18 @@ type HeartbeatConfig struct {
 
 // RoutineHeartbeatConfig scopes autonomous routine facts and optional WORLD reads.
 type RoutineHeartbeatConfig struct {
-	Enabled            bool                          `yaml:"enabled"`
-	Media              map[string][]RoutineMediaItem `yaml:"media"`
-	WorldReadTokenFile string                        `yaml:"world_read_token_file"`
-	WorldLifeTokenFile string                        `yaml:"world_life_token_file"`
-	WorldActors        map[string]string             `yaml:"world_actors"`
-	SharedRooms        []string                      `yaml:"shared_rooms"`
-	PrivateRooms       map[string]string             `yaml:"private_rooms"`
-	WorldURL           string                        `yaml:"world_url"`
-	WorldID            string                        `yaml:"world_id"`
-	TimelineID         string                        `yaml:"timeline_id"`
-	TimelineEpoch      string                        `yaml:"timeline_epoch"`
+	Enabled             bool                          `yaml:"enabled"`
+	Media               map[string][]RoutineMediaItem `yaml:"media"`
+	DailyReportMeetings DailyReportMeetingsConfig     `yaml:"daily_report_meetings"`
+	WorldReadTokenFile  string                        `yaml:"world_read_token_file"`
+	WorldLifeTokenFile  string                        `yaml:"world_life_token_file"`
+	WorldActors         map[string]string             `yaml:"world_actors"`
+	SharedRooms         []string                      `yaml:"shared_rooms"`
+	PrivateRooms        map[string]string             `yaml:"private_rooms"`
+	WorldURL            string                        `yaml:"world_url"`
+	WorldID             string                        `yaml:"world_id"`
+	TimelineID          string                        `yaml:"timeline_id"`
+	TimelineEpoch       string                        `yaml:"timeline_epoch"`
 }
 
 // RoutineMediaItem is operator-owned, direct media input for one canonical CORE actor.

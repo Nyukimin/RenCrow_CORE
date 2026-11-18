@@ -2,7 +2,9 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -110,6 +112,23 @@ func (e *DefaultCodeExecutor) ExecuteCode(ctx context.Context, req CodeExecution
 	log.Printf("[CodeExecutor] code handoff route=%s target=%s task=%s", route, target.name, req.TaskID)
 
 	e.emitCodeHandoffStart(req, target)
+	if strings.HasPrefix(strings.TrimSpace(req.Input.MessageText()), "/tasks ") {
+		planningCoder, ok := target.coder.(interface {
+			DispatchTaskPlanning(context.Context, string) (string, bool, error)
+		})
+		if !ok {
+			return CodeExecutionResponse{}, fmt.Errorf("%s does not expose native TaskCenter planning", target.name)
+		}
+		response, handled, err := planningCoder.DispatchTaskPlanning(ctx, req.Input.MessageText())
+		if err != nil {
+			return CodeExecutionResponse{}, err
+		}
+		if !handled {
+			return CodeExecutionResponse{}, fmt.Errorf("native TaskCenter command was not dispatched")
+		}
+		e.emitCoderGenerateResponse(req, target, response)
+		return buildCoderGenerateResponse(response), nil
+	}
 
 	// CoderLoop パス: CoderAgentWithLoop かつ loopPrompt が設定されている場合
 	if loopPrompt, ok := e.coderLoopPrompts[target.name]; ok && loopPrompt != "" {

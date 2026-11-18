@@ -19,6 +19,9 @@ func (s *SQLiteStore) ReadComponentPage(ctx context.Context, component string, a
 	if ctx == nil || strings.TrimSpace(component) == "" || component != strings.TrimSpace(component) || after < 0 || through < 0 || limit <= 0 || limit > maxListLimit {
 		return nil, 0, errors.New("invalid event replay query")
 	}
+	if component == taskMeetingComponent {
+		return []modulecore.EventEnvelope{}, through, nil
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, 0, err

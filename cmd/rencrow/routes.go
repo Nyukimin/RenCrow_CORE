@@ -363,6 +363,7 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		AdvisorScores: dependencies.advisorScores, Profiles: dependencies.agentProfiles,
 		PolicyDecisions: dependencies.agentPolicyDecisions,
 	}})
+	registerTaskCenterRoutes(mux, cfg, dependencies)
 }
 
 func registerSTTAndAudioRoutes(mux *http.ServeMux, cfg *config.Config, sttRuntime sttRuntime, voiceChatRuntime voiceChatRuntime, dependencies *Dependencies) {

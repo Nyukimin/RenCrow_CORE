@@ -21,6 +21,16 @@ type HeavyAgent struct {
 	runtimeContextProvider RuntimeContextProvider
 	stableRuntimeContext   string
 	conversationEngine     conversation.ConversationEngine
+	nativePlanningPort     NativePlanningPort
+	nativePlanningActor    string
+	taskMeetingActorID     string
+}
+
+func (h *HeavyAgent) WithNativePlanningPort(port NativePlanningPort, actorID string) *HeavyAgent {
+	if h != nil {
+		h.nativePlanningPort, h.nativePlanningActor = port, strings.TrimSpace(actorID)
+	}
+	return h
 }
 
 func NewHeavyAgent(llmProvider llm.LLMProvider, systemPrompt string) *HeavyAgent {
@@ -60,6 +70,9 @@ func (h *HeavyAgent) ExecutePrivateWork(ctx context.Context, input conversation.
 }
 
 func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
+	if response, handled, err := dispatchNativePlanning(ctx, h.nativePlanningPort, h.nativePlanningActor, t.MessageText()); handled || err != nil {
+		return response, err
+	}
 	userMessage := stripHeavyCommand(t.MessageText())
 	speechPlanMode := SpeechPlanCallbackFromContext(ctx) != nil
 	messages := []llm.Message{}

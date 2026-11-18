@@ -34,6 +34,21 @@ func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreConstructionClosesOnMigrationFailure(t *testing.T) {
+	// A directory cannot be used as a SQLite database file, so migration must
+	// fail after sql.Open and the constructor's deferred cleanup must run.
+	store, err := NewSQLiteStore(t.TempDir())
+	if err == nil {
+		if store != nil {
+			_ = store.Close()
+		}
+		t.Fatal("NewSQLiteStore() unexpectedly accepted a directory as its database path")
+	}
+	if store != nil {
+		t.Fatalf("NewSQLiteStore() returned a store with error: %#v", store)
+	}
+}
+
 func TestSQLiteStoreImplementationLeaseIsSingletonAndPersisted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workstream.db")
 	store, err := NewSQLiteStore(path)

@@ -78,7 +78,7 @@ func (s *JSONLStore) TaskTransaction(ctx context.Context, taskID modulecore.Task
 // exclusive Task gate. Only the short validation transaction runs under the
 // global JSONL lock; the callback runs after that lock is released.
 func (s *JSONLStore) WithTaskExecutionFence(ctx context.Context, taskID modulecore.TaskID, fn func() error) error {
-	return s.withDurableTaskExecutionFence(ctx, taskID, fn)
+	return s.withGenericTaskExecutionFence(ctx, taskID, fn)
 }
 
 func validateTransactionArgs(s *JSONLStore, ctx context.Context, fn func(domaintask.Store) error) error {
@@ -191,15 +191,16 @@ type transactionStore struct {
 }
 
 type transactionState struct {
-	mu             sync.Mutex
-	active         bool
-	pending        map[string][]byte
-	touched        map[modulecore.TaskID]struct{}
-	pendingVersion uint64
-	baseLoaded     bool
-	base           *transactionTaskRunBase
-	viewVersion    uint64
-	view           *transactionTaskRunView
+	mu                sync.Mutex
+	active            bool
+	pending           map[string][]byte
+	touched           map[modulecore.TaskID]struct{}
+	ownerOnlyAccessed bool
+	pendingVersion    uint64
+	baseLoaded        bool
+	base              *transactionTaskRunBase
+	viewVersion       uint64
+	view              *transactionTaskRunView
 	// ov mirrors the pending appends as decoded records; it is set only for a
 	// write transaction on an indexed store (see index_tx.go).
 	ov *txOverlay
@@ -221,11 +222,12 @@ func newTaskTransaction(parent *JSONLStore, readOnly bool, scopeTaskID modulecor
 }
 
 type transactionSnapshot struct {
-	payloads        map[string][]byte
-	touched         map[modulecore.TaskID]struct{}
-	owner           *taskExecutionLease
-	base            *transactionTaskRunBase
-	admittedPending map[string][]byte
+	payloads          map[string][]byte
+	touched           map[modulecore.TaskID]struct{}
+	owner             *taskExecutionLease
+	base              *transactionTaskRunBase
+	admittedPending   map[string][]byte
+	ownerOnlyAccessed bool
 }
 
 func (s *transactionStore) setAdmissionOverlay(payloads map[string][]byte) error {
@@ -256,14 +258,19 @@ func validateTaskTransaction(ctx context.Context, parent *JSONLStore, snapshot t
 	if parent == nil {
 		return errors.New("task store is unavailable")
 	}
+	settlingTask, settling := taskMeetingSettlementTask(ctx, parent, snapshot)
 	if parent.executionFence != nil {
 		if activeTaskID := parent.executionFence.hasActive(snapshot.touched, snapshot.owner); activeTaskID != "" {
-			return fmt.Errorf("%w: task transaction conflicts with active execution fence for task %s", ErrTaskExecutionFenceActive, activeTaskID)
+			if !settling || activeTaskID != settlingTask {
+				return fmt.Errorf("%w: task transaction conflicts with active execution fence for task %s", ErrTaskExecutionFenceActive, activeTaskID)
+			}
 		}
 	}
 	for taskID := range snapshot.touched {
 		if err := parent.activeTaskExecutionFenceError(taskID); err != nil {
-			return err
+			if !settling || taskID != settlingTask {
+				return err
+			}
 		}
 	}
 	if parent.idx != nil {
@@ -464,6 +471,7 @@ func (s *transactionStore) freezeAndSnapshot() transactionSnapshot {
 	}
 	snapshot.base = s.state.base
 	snapshot.admittedPending = cloneTaskPayloads(s.admittedPending)
+	snapshot.ownerOnlyAccessed = s.state.ownerOnlyAccessed
 	return snapshot
 }
 
@@ -500,6 +508,48 @@ func (s *transactionStore) pendingBytes(filename string) []byte {
 }
 
 func (s *transactionStore) SaveTask(ctx context.Context, value domaintask.Task) error {
+	if domaintask.IsOwnerManagedTask(value) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	if value.PrivateAccess != nil {
+		return domaintask.ErrPrivateTaskWriteAuthorizationRequired
+	}
+	return s.saveTask(ctx, value)
+}
+
+func (s *transactionStore) SaveTaskAuthorized(ctx context.Context, value domaintask.Task, authorize domaintask.TaskWriteAuthorizationCheck) error {
+	if domaintask.IsOwnerManagedTask(value) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	if ctx == nil {
+		return errors.New("private Task write context is nil")
+	}
+	if authorize == nil {
+		return domaintask.ErrPrivateTaskWriteAuthorizationRequired
+	}
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	input, err := domaintask.PrivateTaskWriteInput(value)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := authorize(ctx, input); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return domaintask.ErrPrivateTaskAccessForbidden
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.saveTask(ctx, value)
+}
+
+func (s *transactionStore) saveTask(ctx context.Context, value domaintask.Task) error {
 	if err := s.checkWrite(ctx); err != nil {
 		return err
 	}
@@ -597,6 +647,69 @@ func (s *transactionStore) appendTask(ctx context.Context, value domaintask.Task
 }
 
 func (s *transactionStore) SaveRun(ctx context.Context, value domaintask.Run) error {
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	parent, err := s.getTaskRaw(ctx, value.TaskID)
+	if err != nil {
+		if !errors.Is(err, domaintask.ErrNotFound) {
+			return err
+		}
+		return fmt.Errorf("run task is unavailable: %w", domaintask.ErrNotFound)
+	}
+	if parent.PrivateAccess != nil {
+		return domaintask.ErrPrivateTaskWriteAuthorizationRequired
+	}
+	if domaintask.IsOwnerManagedTask(parent) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	return s.saveRun(ctx, value)
+}
+
+func (s *transactionStore) SaveRunAuthorized(ctx context.Context, value domaintask.Run, authorize domaintask.TaskWriteAuthorizationCheck) error {
+	if ctx == nil {
+		return errors.New("private Run write context is nil")
+	}
+	if authorize == nil {
+		return domaintask.ErrPrivateTaskWriteAuthorizationRequired
+	}
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	parent, err := s.getTaskRaw(ctx, value.TaskID)
+	if err != nil {
+		return domaintask.ErrNotFound
+	}
+	if parent.PrivateAccess == nil {
+		return errors.New("authorized private Run write requires a private Task")
+	}
+	if domaintask.IsOwnerManagedTask(parent) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	input, err := domaintask.TaskWriteInput(parent, domaintask.TaskWriteResourceRun, value.RunID)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := authorize(ctx, input); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return domaintask.ErrPrivateTaskAccessForbidden
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	currentParent, err := s.getTaskRaw(ctx, value.TaskID)
+	if err != nil || !samePrivateTaskAccess(currentParent, parent) {
+		return domaintask.ErrPrivateTaskAccessForbidden
+	}
+	return s.saveRun(ctx, value)
+}
+
+func (s *transactionStore) saveRun(ctx context.Context, value domaintask.Run) error {
 	if err := s.checkWrite(ctx); err != nil {
 		return err
 	}
@@ -661,32 +774,24 @@ func (s *transactionStore) SaveRun(ctx context.Context, value domaintask.Run) er
 }
 
 func (s *transactionStore) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
-	if err := s.check(ctx); err != nil {
-		return domaintask.Run{}, err
-	}
-	if err := runID.Validate(); err != nil {
-		return domaintask.Run{}, err
-	}
-	if s.parent.idx != nil {
-		return s.idxGetRun(runID)
-	}
-	items, err := s.loadRuns(ctx)
+	run, err := s.getRunRaw(ctx, runID)
 	if err != nil {
 		return domaintask.Run{}, err
 	}
-	tasks, err := s.loadTasks(ctx)
+	task, err := s.getTaskRaw(ctx, run.TaskID)
+	if errors.Is(err, domaintask.ErrNotFound) || err == nil && task.PrivateAccess != nil {
+		return domaintask.Run{}, domaintask.ErrNotFound
+	}
 	if err != nil {
 		return domaintask.Run{}, err
 	}
-	if err := validateRunOwners(items, tasks); err != nil {
-		return domaintask.Run{}, err
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Run{}, domaintask.ErrTypedTaskRequiresOwner
 	}
-	for _, item := range items {
-		if item.RunID == runID {
-			return item, nil
-		}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Run{}, domaintask.ErrTypedTaskRequiresOwner
 	}
-	return domaintask.Run{}, domaintask.ErrNotFound
+	return run, nil
 }
 
 func (s *transactionStore) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
@@ -715,8 +820,21 @@ func (s *transactionStore) ListRuns(ctx context.Context, filter domaintask.RunFi
 	if err := validateRunOwners(items, tasks); err != nil {
 		return nil, err
 	}
+	privateTasks := privateTaskIDs(tasks)
+	ownerManagedTasks := make(map[modulecore.TaskID]struct{})
+	for _, task := range tasks {
+		if domaintask.IsOwnerManagedTask(task) {
+			ownerManagedTasks[task.TaskID] = struct{}{}
+		}
+	}
 	filtered := make([]domaintask.Run, 0, len(items))
 	for _, item := range items {
+		if _, private := privateTasks[item.TaskID]; private {
+			continue
+		}
+		if _, owned := ownerManagedTasks[item.TaskID]; owned {
+			continue
+		}
 		if filter.TaskID != "" && item.TaskID != filter.TaskID {
 			continue
 		}
@@ -738,25 +856,17 @@ func (s *transactionStore) ListRuns(ctx context.Context, filter domaintask.RunFi
 }
 
 func (s *transactionStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
-	if err := s.check(ctx); err != nil {
-		return domaintask.Task{}, err
-	}
-	if err := taskID.Validate(); err != nil {
-		return domaintask.Task{}, err
-	}
-	if s.parent.idx != nil {
-		return s.idxGetTask(taskID)
-	}
-	items, err := s.loadTasks(ctx)
+	task, err := s.getTaskRaw(ctx, taskID)
 	if err != nil {
 		return domaintask.Task{}, err
 	}
-	for _, item := range items {
-		if item.TaskID == taskID {
-			return item, nil
-		}
+	if task.PrivateAccess != nil {
+		return domaintask.Task{}, domaintask.ErrNotFound
 	}
-	return domaintask.Task{}, domaintask.ErrNotFound
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	return task, nil
 }
 
 func (s *transactionStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
@@ -788,7 +898,17 @@ func (s *transactionStore) ListTasks(ctx context.Context, filter domaintask.Filt
 		return cloneTransactionTasks(page.result()), nil
 	}
 	if s.parent.idx != nil {
-		return s.idxListTasks(ctx, filter)
+		items, err := s.idxListTasks(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		filtered := items[:0]
+		for _, item := range items {
+			if item.PrivateAccess == nil && !domaintask.IsOwnerManagedTask(item) {
+				filtered = append(filtered, item)
+			}
+		}
+		return filtered, nil
 	}
 	items, err := s.loadTasks(ctx)
 	if err != nil {
@@ -796,6 +916,9 @@ func (s *transactionStore) ListTasks(ctx context.Context, filter domaintask.Filt
 	}
 	filtered := make([]domaintask.Task, 0, len(items))
 	for _, item := range items {
+		if item.PrivateAccess != nil || domaintask.IsOwnerManagedTask(item) {
+			continue
+		}
 		if filter.Status != "" && item.Status != filter.Status {
 			continue
 		}
@@ -841,32 +964,67 @@ func (s *transactionStore) SaveContext(ctx context.Context, value domaintask.Sha
 	if err := s.touchTask(ctx, value.TaskID); err != nil {
 		return err
 	}
-	if _, err := s.GetTask(ctx, value.TaskID); err != nil {
+	parent, err := s.GetTask(ctx, value.TaskID)
+	if err != nil {
+		return err
+	}
+	if domaintask.IsOwnerManagedTask(parent) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	return s.appendValue(ctx, contextFilename, value)
+}
+
+func (s *transactionStore) SaveContextAuthorized(ctx context.Context, value domaintask.SharedRoleContext, authorize domaintask.TaskWriteAuthorizationCheck) error {
+	if ctx == nil {
+		return errors.New("private context write context is nil")
+	}
+	if authorize == nil {
+		return domaintask.ErrPrivateTaskWriteAuthorizationRequired
+	}
+	if err := value.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	parent, err := s.getTaskRaw(ctx, value.TaskID)
+	if err != nil || parent.PrivateAccess == nil {
+		return domaintask.ErrNotFound
+	}
+	input, err := domaintask.TaskWriteInput(parent, domaintask.TaskWriteResourceContext, "")
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := authorize(ctx, input); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return domaintask.ErrPrivateTaskAccessForbidden
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	currentParent, err := s.getTaskRaw(ctx, value.TaskID)
+	if err != nil || !samePrivateTaskAccess(currentParent, parent) {
+		return domaintask.ErrPrivateTaskAccessForbidden
+	}
+	if err := s.checkWrite(ctx); err != nil {
+		return err
+	}
+	if err := s.touchTask(ctx, value.TaskID); err != nil {
 		return err
 	}
 	return s.appendValue(ctx, contextFilename, value)
 }
 
 func (s *transactionStore) GetContext(ctx context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
-	if err := s.check(ctx); err != nil {
-		return domaintask.SharedRoleContext{}, err
-	}
-	if err := taskID.Validate(); err != nil {
-		return domaintask.SharedRoleContext{}, err
-	}
-	if s.parent.idx != nil {
-		return s.idxGetContext(taskID)
-	}
-	items, err := readJSONLLinesWithPending[domaintask.SharedRoleContext](ctx, s.parent.contextPath, s.pendingBytes(contextFilename))
-	if err != nil {
-		return domaintask.SharedRoleContext{}, err
-	}
-	for index := len(items) - 1; index >= 0; index-- {
-		if items[index].TaskID == taskID {
-			return cloneTransactionContext(items[index]), nil
+	if _, err := s.GetTask(ctx, taskID); err != nil {
+		if errors.Is(err, domaintask.ErrNotFound) {
+			return domaintask.SharedRoleContext{}, domaintask.ErrNotFound
 		}
+		return domaintask.SharedRoleContext{}, err
 	}
-	return domaintask.SharedRoleContext{}, domaintask.ErrNotFound
+	return s.getContextRaw(ctx, taskID)
 }
 
 func (s *transactionStore) SaveNotification(ctx context.Context, value domaintask.Notification) error {
@@ -881,6 +1039,13 @@ func (s *transactionStore) SaveNotification(ctx context.Context, value domaintas
 	}
 	if strings.TrimSpace(value.Type) == "" {
 		return fmt.Errorf("notification type is required")
+	}
+	if parent, err := s.getTaskRaw(ctx, value.TaskID); err == nil && parent.PrivateAccess != nil {
+		return domaintask.ErrPrivateTaskWriteAuthorizationRequired
+	} else if err == nil && domaintask.IsOwnerManagedTask(parent) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	} else if err != nil && !errors.Is(err, domaintask.ErrNotFound) {
+		return err
 	}
 	return s.appendValue(ctx, notificationsFilename, value)
 }
@@ -903,8 +1068,21 @@ func (s *transactionStore) ListNotifications(ctx context.Context, limit int, int
 		return items[i].CreatedAt.After(items[j].CreatedAt)
 	})
 	filtered := make([]domaintask.Notification, 0, len(items))
+	tasks, err := s.loadTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	publicTasks := make(map[modulecore.TaskID]struct{}, len(tasks))
+	for _, task := range tasks {
+		if task.PrivateAccess == nil && !domaintask.IsOwnerManagedTask(task) {
+			publicTasks[task.TaskID] = struct{}{}
+		}
+	}
 	for _, item := range items {
 		if interruptOnly && !item.Interrupt {
+			continue
+		}
+		if _, visible := publicTasks[item.TaskID]; !visible {
 			continue
 		}
 		filtered = append(filtered, item)
@@ -913,6 +1091,16 @@ func (s *transactionStore) ListNotifications(ctx context.Context, limit int, int
 		filtered = filtered[:limit]
 	}
 	return filtered, nil
+}
+
+func privateTaskIDs(tasks []domaintask.Task) map[modulecore.TaskID]struct{} {
+	private := make(map[modulecore.TaskID]struct{})
+	for _, task := range tasks {
+		if task.PrivateAccess != nil {
+			private[task.TaskID] = struct{}{}
+		}
+	}
+	return private
 }
 
 func (s *transactionStore) loadTasks(ctx context.Context) ([]domaintask.Task, error) {

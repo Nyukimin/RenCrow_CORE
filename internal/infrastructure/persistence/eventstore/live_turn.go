@@ -1150,6 +1150,9 @@ func validateAcceptInput(input AcceptInput) error {
 			return fmt.Errorf("%s is required", name)
 		}
 	}
+	if input.RuntimeVersion == taskMeetingRuntimeVersion {
+		return ErrTaskMeetingForbidden
+	}
 	if input.GenerationEpoch <= 0 {
 		return errors.New("generation_epoch must be positive")
 	}
@@ -1354,6 +1357,9 @@ func validateCommitInput(input CommitInput) error {
 	for _, event := range input.Events {
 		if err := modulecore.ValidateEventEnvelope(event); err != nil {
 			return fmt.Errorf("validate commit event %q: %w", event.EventID, err)
+		}
+		if event.ComponentID == taskMeetingComponent {
+			return ErrTaskMeetingForbidden
 		}
 		if event.EventSeq != 0 {
 			return fmt.Errorf("commit event %q event_seq must be zero", event.EventID)

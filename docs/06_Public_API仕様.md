@@ -2189,3 +2189,43 @@ receiptはCORE発行のrequest／turn／trace／message等の相関、BOARD参�
 観測stageは、CORE durable accepted、BOARD stored、notification attempted／accepted、recipient body read、processing claim、実Agent生成・canonical commit、BOARD reply stored、相関済みpeer reply受領を区別します。未観測時刻は空のまま保持します。配送callback成功やSSE cursor進行を既読・処理成功へ変換しません。
 
 BOARD wireは既存v1のcontexts、threads、send、inbox、receipt、processing-claim、ACK、message statusと認証済みSSEを使用します。接続identityの読取としてGET /api/v1/connectionを追加し、currentなscoped非admin Bearer本人のprincipal_idとjournal_instance_idだけを返します。既存contexts／flat inbox／senderとrecipientの双方が取得できるreceiptでは、期待principalとjournal継続性を観測できないための追加です。GETはidentity初期化を行いません。COREはX-BOARD-Journal-Instance-IDとX-BOARD-Principal-IDを後続要求へ付けます。両header無は既存peer互換、片方だけ・形式不正は400 connection_identity_precondition_invalid、認証後の期待tuple不一致は409 connection_identity_mismatchとし現在値を開示しません。BOARDはSend／新thread／claim／ACKのcanonical mutation lock内で現在credentialと期待tupleをcommit前に検証します。COREはprecondition無しへfallbackせず、mismatchを未commit証明や再pin許可にしません。各操作でchannel／thread／reply_to／mentions／recipient／ACL契約を維持し、旧管理routeへfallbackしません。CORE起点requestへのreplyはreply_to、expected peer、context、causation照合後に終端化し、新たなMio生成を起動しません。詳細は[アーキテクチャ](04_アーキテクチャ概要.md#board-communication)と[安全方針](07_安全・自動実行・データ方針.md#board-communication)を参照します。
+
+## TaskCenter API
+
+Status: ローカル実装・検証済み（2026-11-18）。本番未反映。既存`GET /viewer/tasks`のcanonical Task APIを維持し、`GET /viewer/task-center`を追加する。検証範囲は08に記録する。
+
+TaskCenter page／API clientは`X-RenCrow-Client: RenCrow_Viewer`と`X-RenCrow-Interaction-Profile: task-center`を送ります。このprofileは`GET /viewer/task-center`、表中のGET endpoint、`POST /api/v1/task-center/requests`、`POST /api/v1/task-center/claims`、`POST /api/v1/task-center/result/accept`だけを許可します。認証の代替ではなく、profile guardは未登録のmethod／pathを拒否します。
+
+| 入口 | 契約 |
+|---|---|
+| `GET /api/v1/task-center/capabilities` | 認可された種類、Agent、owner、policy revision |
+| `GET /api/v1/task-center/items` | remaining／claimable／daily／historyのbounded読取 |
+| `GET /api/v1/task-center/item` | scope内のnative IDによる詳細 |
+| `POST /api/v1/task-center/requests` | 指示・完了条件・検証・担当・時間条件の永続受理 |
+| `POST /api/v1/task-center/claims` | 認証selfによる未割当仕事の原子的引受 |
+| `GET /api/v1/task-center/request`、`GET /api/v1/task-center/claim` | 同じownerとidempotency keyによる受理結果の回復 |
+| `GET /api/v1/task-center/result` | 認可済みGoalの保存済み実行結果を取得 |
+| `POST /api/v1/task-center/result/accept` | 作成したuserが、確認した結果を明示的に承認 |
+| `GET /api/v1/task-center/result/acceptance` | 同じGoalとidempotency keyによる承認結果の回復 |
+
+Actor／user scopeは認証contextから決定し、bodyやqueryによる偽装を許さない。userの全体表示も認可範囲内、Agentのself表示は有効割当を参照する。GETは実行・LLM・設定変更を起動しない。全項目に共通時間情報とsource revisionを返し、取得不能・未知を空一覧へ丸めない。
+
+claimはexpected revision／policy revision／idempotency keyを用い、競合は409、権限外は拒否、保存先不通は利用不能として返す。追加とclaimは実行開始や完了を意味しない。Tokenや元メール・個人会話の原文を一覧・errorへ出さない。
+
+現在のHTTP入口は認証済みuser用であり、Agentになりすますbody／headerを受け付けない。userによるclaims POSTは403となる。Agentの追加・引受・自己残件確認は、trusted scopeを持つWorkerの`tasks.add`／`tasks.claim`／`tasks.list_remaining`／`tasks.list_claimable`を利用する。`tasks.capabilities`も同じ認証・実行許可境界に従う。`tasks.get`はChat／Workerの読取入口であり、trusted scope内のGoalの本文・成功条件・検証条件を返す。一覧の本文は240文字以内の要約とし、詳細条件は認可済みの詳細取得で確認する。
+
+結果取得は`goal_id`を指定し、`goal_id`、`revision`、`assignment_epoch`、`result_artifact_id`、`result_sha256`、`execution_verification`、`result`を返す。本文はWorkstreamの正本Artifactから取得し、native Task／Runの完了証跡とdigestを照合する。任意のArtifact IDやファイルパスを受け取らず、実行機能の現在の稼働状態にかかわらず保存済みの結果を読める。実行成功とGoalの完了条件の承認は別であり、一覧の`verification`（検証手順の配列）と`execution_verification`（承認状態）も別項目である。
+
+承認bodyは`goal_id`、`expected_revision`、`expected_assignment_epoch`、`idempotency_key`。認証済みuser本人が作成したGoalで、現在の結果と完了条件が一致するときにだけ受理する。公開Goalを読める他のuserに承認権限は付与しない。新規受理は201、同一操作の再取得は200。応答不明時は`result/acceptance?goal_id=...&idempotency_key=...`をGETし、保存済みreceiptを回復する。未発見は404であり、無条件にPOSTを再送しない。画面は`can_accept_result`と実際に読み込んだ結果のrevision／assignment epoch／Artifact／digestを照合して承認を有効にする。
+
+種類ごとの`kind_input`はcapabilitiesが返すownerの`input_schema`に従う。実行可能なAgentの定義と、現在の実行機能の接続状態は別である。Agentの明示実行は、実際のnative Task／Runに結び付いた`tasks.execute`を利用し、claimだけでは実行しない。HTTPには実行開始の入口を設けない。
+
+`items?view=daily`はGoal一覧とは異なるDaily読取契約を使う。queryは`kind_id`、`cursor`、`limit`（既定50、最大100）で絞り、`assignee`を受け付けない。応答の`definitions`にはownerの定義と設定・実効・観測の各状態を返す。`availability`は`available`／`partial`／`unavailable`、`partial`と`issues`は部分取得の理由を表す。取得失敗を「タスクなし」と扱わない。
+
+Dailyの時間7項目・次回予定・件数は`state`、`source_ref`、`reason_code`、`value`で表し、`known`／`none`／`unknown`／`unsupported`を区別する。値が不明な場合の`value`はnullである。観測データありは実行中・成功を意味しない。参照はownerの型付きnative IDまたは安全な論理参照であり、Daily定義にGoal IDを発行しない。
+
+報告会の開催回は、ownerが保持している場合に`scheduled_at`と`meeting_progress`を返す。`scheduled_at`は元の開催予定枠であり、再試行時刻ではない。`meeting_progress.attendance`、`delivered_reports`、`answered_concerns`はそれぞれ`current`／`total`のDailyValueを持ち、`unresolved_concerns`もDailyValueで返す。回答の分母は、その時点で共有済みの報告に含まれる悩みの数であり、未報告者の悩みを推定しない。観測できない出席者数を0にせず、旧記録や他の種類では`meeting_progress`自体を省略できる。`minutes`は認可範囲内の正本議事録への参照だけを持ち、報告・悩み・回答の本文を一覧へ複製しない。進行checkpointの更新時刻を実行試行・成功時刻へ読み替えない。
+
+Dailyのnative参照は1定義あたり最大64件、実行回は最大50件で返す。`native_ref_count`／`occurrence_count`は権限内の総数であり、表示配列の長さへ置き換えない。総数が`unknown`／`unsupported`でも、取得上限により`*_truncated=true`となり得る。`known`の総数は返却件数以上で、切捨てなしなら返却件数と一致する。`none`は非空配列や切捨てありと併用しない。正常な表示上限とownerの取得失敗を区別し、query上限で網羅性を確認できない場合はownerのissueを返す。成果物ID・Schedule IDを実行回IDやcanonical Task／Run IDへ読み替えない。
+
+capabilitiesの`managed_available`／`daily_available`／`can_submit`を個別に確認する。managed ownerが未接続でも、Daily ownerが利用可能なら日常一覧を表示できる。この場合、追加・引受を成功扱いせず利用不能として返す。Daily読取はownerの設定・履歴を参照し、収集・修復・再試行・別schedulerを起動しない。

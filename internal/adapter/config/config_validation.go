@@ -162,6 +162,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("local_agent_ops.user_id must be a non-empty safe identifier when enabled=true")
 		}
 	}
+	if err := c.validateDailyReportMeetingsConfig(); err != nil {
+		return err
+	}
 
 	if c.Mio.Generation.MaxTokens < 0 {
 		return fmt.Errorf("mio.generation.max_tokens must be >= 0")

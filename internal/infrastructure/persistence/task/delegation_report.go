@@ -64,6 +64,12 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperationWithReport(
 	if err := taskID.Validate(); err != nil {
 		return nil, fmt.Errorf("delegation report task_id is invalid: %w", err)
 	}
+	if err := s.requirePublicTask(ctx, taskID); err != nil {
+		return nil, err
+	}
+	if err := s.requirePublicTask(ctx, taskID); err != nil {
+		return nil, err
+	}
 	if err := reportID.Validate(); err != nil {
 		return nil, fmt.Errorf("delegation report report_id is invalid: %w", err)
 	}
@@ -188,11 +194,12 @@ func (s *JSONLStore) ListPendingTaskDelegationReports(ctx context.Context) ([]do
 		return nil, errors.New("delegation report list context is nil")
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	if s.closed {
+		s.mu.RUnlock()
 		return nil, os.ErrClosed
 	}
 	if s.batch == nil {
+		s.mu.RUnlock()
 		return nil, errors.New("task store batch is unavailable")
 	}
 	var reports []domaintask.DelegationReport
@@ -201,12 +208,21 @@ func (s *JSONLStore) ListPendingTaskDelegationReports(ctx context.Context) ([]do
 		reports, err = s.foldTaskDelegationReports(ctx)
 		return err
 	})
+	s.mu.RUnlock()
 	if err != nil {
 		return nil, err
 	}
 	pending := make([]domaintask.DelegationReport, 0, len(reports))
 	for _, report := range reports {
 		if report.State == domaintask.DelegationReportPending {
+			// Pending reports are restart outputs. Treat their Task link as the
+			// visibility owner and fail closed when it is private or unavailable.
+			if _, err := s.GetTask(ctx, report.TaskID); err != nil {
+				if errors.Is(err, domaintask.ErrNotFound) {
+					continue
+				}
+				return nil, err
+			}
 			pending = append(pending, report)
 		}
 	}
@@ -240,6 +256,18 @@ func (s *JSONLStore) MarkTaskDelegationReportDelivered(ctx context.Context, repo
 	}
 	if target == nil {
 		return ErrTaskDelegationReportNotFound
+	}
+	if err := s.requirePublicTask(ctx, target.TaskID); err != nil {
+		if errors.Is(err, domaintask.ErrNotFound) || errors.Is(err, ErrTaskOperationNotFound) {
+			return ErrTaskDelegationReportNotFound
+		}
+		return err
+	}
+	if err := s.requirePublicTask(ctx, target.TaskID); err != nil {
+		if errors.Is(err, domaintask.ErrNotFound) || errors.Is(err, ErrTaskOperationNotFound) {
+			return ErrTaskDelegationReportNotFound
+		}
+		return err
 	}
 	if target.State == domaintask.DelegationReportDelivered {
 		return nil

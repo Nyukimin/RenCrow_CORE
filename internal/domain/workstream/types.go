@@ -20,6 +20,27 @@ const (
 	StatusArchived  = "archived"
 )
 
+// GoalStatusOpen reports whether a Goal has a known non-terminal status.
+func GoalStatusOpen(status string) bool {
+	switch status {
+	case StatusDraft, StatusActive, StatusPaused, StatusWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// GoalStatusClaimReady reports whether a persisted Goal is waiting for an
+// initial assignment. Open and claim-ready are separate state contracts.
+func GoalStatusClaimReady(status string) bool {
+	return status == StatusWaiting
+}
+
+// GoalStatusTerminal reports whether a Goal belongs in terminal history.
+func GoalStatusTerminal(status string) bool {
+	return status == StatusCompleted || status == StatusArchived
+}
+
 const (
 	VaultReviewPending  = "pending"
 	VaultReviewAdopted  = "adopted"
@@ -27,14 +48,15 @@ const (
 )
 
 type Workstream struct {
-	WorkstreamID string    `json:"workstream_id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description,omitempty"`
-	Status       string    `json:"status"`
-	PrimaryAgent string    `json:"primary_agent,omitempty"`
-	VaultPath    string    `json:"vault_path,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	WorkstreamID    string                     `json:"workstream_id"`
+	Name            string                     `json:"name"`
+	Description     string                     `json:"description,omitempty"`
+	Status          string                     `json:"status"`
+	PrimaryAgent    string                     `json:"primary_agent,omitempty"`
+	TaskCenterScope *TaskCenterWorkstreamScope `json:"task_center_scope,omitempty"`
+	VaultPath       string                     `json:"vault_path,omitempty"`
+	CreatedAt       time.Time                  `json:"created_at"`
+	UpdatedAt       time.Time                  `json:"updated_at,omitempty"`
 }
 
 type Goal struct {
@@ -48,6 +70,7 @@ type Goal struct {
 	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
 	CompletedAt     time.Time `json:"completed_at,omitempty"`
+	TaskPlan        *TaskPlan `json:"task_plan,omitempty"`
 }
 
 type Artifact struct {

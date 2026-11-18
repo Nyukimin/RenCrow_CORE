@@ -171,6 +171,12 @@ func (m *MioAgent) DecideActionWithChatDraft(ctx context.Context, t conversation
 // It never invokes the provider; invalid drafts fail closed instead of falling
 // back to another LLM generation.
 func (m *MioAgent) ChatWithDraft(ctx context.Context, t conversation.TurnInput, draft *MioChatDraft) (string, error) {
+	if response, handled, err := dispatchNativePlanning(ctx, m.nativePlanningPort, m.nativePlanningActor, t.MessageText()); handled || err != nil {
+		if handled && draft != nil {
+			m.ReleaseChatDraft(ctx, draft)
+		}
+		return response, err
+	}
 	if draft == nil {
 		return "", fmt.Errorf("%w: draft is nil", errMioChatDraftUnavailable)
 	}

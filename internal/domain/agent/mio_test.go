@@ -1494,6 +1494,8 @@ func TestParseExplicitCommand_AllRoutes(t *testing.T) {
 		message string
 		route   routing.Route
 	}{
+		{"/tasks {\"operation\":\"tasks.list_remaining\",\"input\":{\"limit\":1}}", routing.RouteCHAT},
+		{"/tasks", routing.RouteCHAT},
 		{"/chat hello", routing.RouteCHAT},
 		{"/plan create project", routing.RoutePLAN},
 		{"/analyze logs", routing.RouteANALYZE},

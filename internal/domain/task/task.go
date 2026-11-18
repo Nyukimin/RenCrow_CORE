@@ -359,61 +359,68 @@ func (p OriginPublicationProvenance) Validate(sessionID modulecore.SessionID) er
 // origin identities are kept separate from runtime trace, run, and transport
 // identities owned by their respective boundaries.
 type Task struct {
-	TaskID                   modulecore.TaskID            `json:"task_id"`
-	Title                    string                       `json:"title"`
-	ModuleID                 string                       `json:"module_id,omitempty"`
-	ModuleRoot               string                       `json:"module_root,omitempty"`
-	Route                    Route                        `json:"route"`
-	RoutingEventID           modulecore.EventID           `json:"routing_event_id,omitempty"`
-	OwnerID                  string                       `json:"owner_id,omitempty"`
-	Assignee                 string                       `json:"assignee,omitempty"`
-	AssignmentEventID        modulecore.EventID           `json:"assignment_event_id,omitempty"`
-	CoderRoles               []string                     `json:"coder_roles,omitempty"`
-	Status                   Status                       `json:"status"`
-	Priority                 Priority                     `json:"priority"`
-	ParentTaskID             modulecore.TaskID            `json:"parent_task_id,omitempty"`
-	DependencyTaskIDs        []modulecore.TaskID          `json:"dependency_task_ids,omitempty"`
-	OriginSessionID          modulecore.SessionID         `json:"origin_session_id,omitempty"`
-	OriginThreadID           modulecore.ThreadID          `json:"origin_thread_id,omitempty"`
-	OriginTurnID             modulecore.TurnID            `json:"origin_turn_id,omitempty"`
-	OriginMessageID          modulecore.MessageID         `json:"origin_message_id,omitempty"`
-	OriginPublication        *OriginPublicationProvenance `json:"origin_publication,omitempty"`
-	AcceptedOPSClaim         *AcceptedOPSClaim            `json:"accepted_ops_claim,omitempty"`
-	ExpectedCriteriaRevision string                       `json:"expected_criteria_revision,omitempty"`
-	NativeResumeClaims       []NativeOPSResumeClaim       `json:"native_resume_claims,omitempty"`
-	WorkstreamID             modulecore.WorkstreamID      `json:"workstream_id,omitempty"`
-	GoalID                   modulecore.GoalID            `json:"goal_id,omitempty"`
-	Production               *Production                  `json:"production,omitempty"`
-	Autonomous               *AutonomousTask              `json:"autonomous,omitempty"`
-	SupersedesTaskID         modulecore.TaskID            `json:"supersedes_task_id,omitempty"`
-	InterruptPolicy          InterruptPolicy              `json:"interrupt_policy"`
-	ReadOnly                 bool                         `json:"read_only"`
-	CreatedAt                time.Time                    `json:"created_at"`
-	UpdatedAt                time.Time                    `json:"updated_at"`
-	StartedAt                *time.Time                   `json:"started_at,omitempty"`
-	FinishedAt               *time.Time                   `json:"finished_at,omitempty"`
-	Summary                  string                       `json:"summary,omitempty"`
-	WaitingReason            string                       `json:"waiting_reason,omitempty"`
-	NextActions              []string                     `json:"next_actions,omitempty"`
-	Evidence                 []string                     `json:"evidence,omitempty"`
-	Artifacts                []string                     `json:"artifacts,omitempty"`
+	TaskID                   modulecore.TaskID                     `json:"task_id"`
+	Title                    string                                `json:"title"`
+	ModuleID                 string                                `json:"module_id,omitempty"`
+	ModuleRoot               string                                `json:"module_root,omitempty"`
+	Route                    Route                                 `json:"route"`
+	RoutingEventID           modulecore.EventID                    `json:"routing_event_id,omitempty"`
+	OwnerID                  string                                `json:"owner_id,omitempty"`
+	Assignee                 string                                `json:"assignee,omitempty"`
+	AssignmentEventID        modulecore.EventID                    `json:"assignment_event_id,omitempty"`
+	CoderRoles               []string                              `json:"coder_roles,omitempty"`
+	Status                   Status                                `json:"status"`
+	Priority                 Priority                              `json:"priority"`
+	ParentTaskID             modulecore.TaskID                     `json:"parent_task_id,omitempty"`
+	DependencyTaskIDs        []modulecore.TaskID                   `json:"dependency_task_ids,omitempty"`
+	OriginSessionID          modulecore.SessionID                  `json:"origin_session_id,omitempty"`
+	OriginThreadID           modulecore.ThreadID                   `json:"origin_thread_id,omitempty"`
+	OriginTurnID             modulecore.TurnID                     `json:"origin_turn_id,omitempty"`
+	OriginMessageID          modulecore.MessageID                  `json:"origin_message_id,omitempty"`
+	OriginPublication        *OriginPublicationProvenance          `json:"origin_publication,omitempty"`
+	AcceptedOPSClaim         *AcceptedOPSClaim                     `json:"accepted_ops_claim,omitempty"`
+	ExpectedCriteriaRevision string                                `json:"expected_criteria_revision,omitempty"`
+	NativeResumeClaims       []NativeOPSResumeClaim                `json:"native_resume_claims,omitempty"`
+	WorkstreamID             modulecore.WorkstreamID               `json:"workstream_id,omitempty"`
+	GoalID                   modulecore.GoalID                     `json:"goal_id,omitempty"`
+	Production               *Production                           `json:"production,omitempty"`
+	Autonomous               *AutonomousTask                       `json:"autonomous,omitempty"`
+	PrivateAccess            *TaskPrivateAccess                    `json:"private_access,omitempty"`
+	Timing                   *modulecore.TaskTiming                `json:"timing,omitempty"`
+	TaskCenterExecution      *TaskCenterExecution                  `json:"task_center_execution,omitempty"`
+	NativePlanningInvocation *NativePlanningInvocation             `json:"native_planning_invocation,omitempty"`
+	TaskMeetingInvocation    *TaskMeetingInvocation                `json:"task_meeting_invocation,omitempty"`
+	TaskMeetingResult        *TaskMeetingGenerationResultReference `json:"task_meeting_result,omitempty"`
+	SupersedesTaskID         modulecore.TaskID                     `json:"supersedes_task_id,omitempty"`
+	InterruptPolicy          InterruptPolicy                       `json:"interrupt_policy"`
+	ReadOnly                 bool                                  `json:"read_only"`
+	CreatedAt                time.Time                             `json:"created_at"`
+	UpdatedAt                time.Time                             `json:"updated_at"`
+	StartedAt                *time.Time                            `json:"started_at,omitempty"`
+	FinishedAt               *time.Time                            `json:"finished_at,omitempty"`
+	Summary                  string                                `json:"summary,omitempty"`
+	WaitingReason            string                                `json:"waiting_reason,omitempty"`
+	NextActions              []string                              `json:"next_actions,omitempty"`
+	Evidence                 []string                              `json:"evidence,omitempty"`
+	Artifacts                []string                              `json:"artifacts,omitempty"`
 }
 
 type SharedRoleContext struct {
-	TaskID             modulecore.TaskID      `json:"task_id"`
-	PrivateText        *PrivateTextCheckpoint `json:"private_text,omitempty"`
-	AutonomousDecision *AutonomousDecision    `json:"autonomous_decision,omitempty"`
-	UserIntent         string                 `json:"user_intent,omitempty"`
-	ModuleID           string                 `json:"module_id,omitempty"`
-	ModuleRoot         string                 `json:"module_root,omitempty"`
-	RelevantFiles      []string               `json:"relevant_files,omitempty"`
-	Decisions          []string               `json:"decisions,omitempty"`
-	Constraints        []string               `json:"constraints,omitempty"`
-	CurrentPlan        string                 `json:"current_plan,omitempty"`
-	LatestStatus       string                 `json:"latest_status,omitempty"`
-	Artifacts          []string               `json:"artifacts,omitempty"`
-	HandoffNotes       string                 `json:"handoff_notes,omitempty"`
-	UpdatedAt          time.Time              `json:"updated_at"`
+	TaskID                      modulecore.TaskID            `json:"task_id"`
+	PrivateText                 *PrivateTextCheckpoint       `json:"private_text,omitempty"`
+	AutonomousDecision          *AutonomousDecision          `json:"autonomous_decision,omitempty"`
+	UserIntent                  string                       `json:"user_intent,omitempty"`
+	ModuleID                    string                       `json:"module_id,omitempty"`
+	ModuleRoot                  string                       `json:"module_root,omitempty"`
+	RelevantFiles               []string                     `json:"relevant_files,omitempty"`
+	Decisions                   []string                     `json:"decisions,omitempty"`
+	Constraints                 []string                     `json:"constraints,omitempty"`
+	CurrentPlan                 string                       `json:"current_plan,omitempty"`
+	LatestStatus                string                       `json:"latest_status,omitempty"`
+	Artifacts                   []string                     `json:"artifacts,omitempty"`
+	HandoffNotes                string                       `json:"handoff_notes,omitempty"`
+	TaskMeetingConsumedMessages []TaskMeetingConsumedMessage `json:"task_meeting_consumed_messages,omitempty"`
+	UpdatedAt                   time.Time                    `json:"updated_at"`
 }
 
 type Notification struct {
@@ -558,6 +565,52 @@ func (t Task) Validate() error {
 	}
 	if err := validateOptionalID(t.GoalID); err != nil {
 		return fmt.Errorf("goal_id is invalid: %w", err)
+	}
+	if t.PrivateAccess != nil {
+		if err := t.PrivateAccess.Validate(); err != nil {
+			return fmt.Errorf("private_access is invalid: %w", err)
+		}
+		if t.WorkstreamID == "" || t.GoalID == "" {
+			return fmt.Errorf("private_access requires workstream_id and goal_id: %w", ErrPrivateTaskAccessInvalid)
+		}
+	}
+	if t.Timing != nil {
+		if err := t.Timing.Validate(); err != nil {
+			return fmt.Errorf("timing is invalid: %w", err)
+		}
+	}
+	if t.TaskCenterExecution != nil {
+		if err := t.TaskCenterExecution.Validate(t); err != nil {
+			return fmt.Errorf("task_center_execution is invalid: %w", err)
+		}
+	}
+	if t.TaskMeetingInvocation != nil {
+		if err := t.TaskMeetingInvocation.Validate(t); err != nil {
+			return fmt.Errorf("task_meeting_invocation is invalid: %w", err)
+		}
+	}
+	if t.TaskMeetingResult != nil {
+		if t.TaskMeetingInvocation == nil || t.TaskMeetingResult.ValidateTask(t) != nil ||
+			(t.TaskMeetingInvocation.Purpose != TaskMeetingPurposeReport && t.TaskMeetingInvocation.Purpose != TaskMeetingPurposeAnswer) ||
+			t.Status != StatusSucceeded {
+			return errors.New("task_meeting_result is not bound to the succeeded generation invocation")
+		}
+	} else if t.TaskMeetingInvocation != nil && (t.TaskMeetingInvocation.Purpose == TaskMeetingPurposeReport || t.TaskMeetingInvocation.Purpose == TaskMeetingPurposeAnswer) && t.Status == StatusSucceeded {
+		return errors.New("succeeded TaskMeeting generation requires its canonical message reference")
+	}
+	managed := 0
+	for _, present := range []bool{t.TaskCenterExecution != nil, t.NativePlanningInvocation != nil, t.TaskMeetingInvocation != nil} {
+		if present {
+			managed++
+		}
+	}
+	if managed > 1 {
+		return errors.New("Task may have only one native owner-managed provenance")
+	}
+	if t.NativePlanningInvocation != nil {
+		if err := t.NativePlanningInvocation.Validate(t); err != nil {
+			return fmt.Errorf("native_planning_invocation is invalid: %w", err)
+		}
 	}
 	if err := validateOptionalID(t.RoutingEventID); err != nil {
 		return fmt.Errorf("routing_event_id is invalid: %w", err)

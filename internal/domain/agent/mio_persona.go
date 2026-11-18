@@ -19,6 +19,7 @@ func (m *MioAgent) parseExplicitCommand(message string) routing.Route {
 		cmd   string
 		route routing.Route
 	}{
+		{"/tasks", routing.RouteCHAT},
 		{"/analyze", routing.RouteANALYZE},
 		{"/heavy", routing.RouteANALYZE},
 		{"/research", routing.RouteRESEARCH},

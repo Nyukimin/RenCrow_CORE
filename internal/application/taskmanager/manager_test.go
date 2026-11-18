@@ -60,6 +60,38 @@ func TestManagerLifecycleAndNotification(t *testing.T) {
 	}
 }
 
+func TestManagerGenericCreateRejectsTypedTaskCenterTask(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	draft := domaintask.Task{TaskCenterExecution: &domaintask.TaskCenterExecution{KindID: "movie.catalog.lookup"}}
+	if _, err := manager.Create(context.Background(), draft, domaintask.SharedRoleContext{}); !errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) {
+		t.Fatalf("generic Create error=%v, want ErrTypedTaskRequiresOwner", err)
+	}
+	if _, _, err := manager.CreateAndStartRun(context.Background(), draft, domaintask.SharedRoleContext{}); !errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) {
+		t.Fatalf("generic CreateAndStartRun error=%v, want ErrTypedTaskRequiresOwner", err)
+	}
+}
+
+func TestManagerGenericCreateRejectsNativePlanningTask(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	draft := domaintask.Task{NativePlanningInvocation: &domaintask.NativePlanningInvocation{}}
+	if _, err := manager.Create(context.Background(), draft, domaintask.SharedRoleContext{}); !errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) {
+		t.Fatalf("generic Create error=%v, want owner-only refusal", err)
+	}
+	if _, _, err := manager.CreateAndStartRun(context.Background(), draft, domaintask.SharedRoleContext{}); !errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) {
+		t.Fatalf("generic CreateAndStartRun error=%v, want owner-only refusal", err)
+	}
+}
+
 func TestManagerPinsNativeCapableTasksFromTrustedConfiguration(t *testing.T) {
 	store, err := taskpersistence.NewJSONLStore(t.TempDir())
 	if err != nil {

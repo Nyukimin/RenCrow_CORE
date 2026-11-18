@@ -54,6 +54,7 @@ type TaskOperationReceipt struct {
 	RequestHash      string             `json:"request_hash"`
 	Scope            TaskOperationScope `json:"scope,omitempty"`
 	TaskID           modulecore.TaskID  `json:"task_id,omitempty"`
+	OwnerOnly        bool               `json:"owner_only,omitempty"`
 	Result           json.RawMessage    `json:"result"`
 	WriterGeneration uint64             `json:"writer_generation"`
 }
@@ -165,6 +166,9 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 			if previous.TaskID != taskID || previous.RequestHash != requestHash {
 				return nil, ErrTaskOperationConflict
 			}
+			if previous.OwnerOnly {
+				return nil, ErrTaskOperationNotFound
+			}
 			result = append(json.RawMessage(nil), previous.Result...)
 			return nil, nil
 		}
@@ -178,9 +182,13 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 			return nil, err
 		}
 		callbackResult, callbackErr := fn(tx)
+		ownerOnly, ownerOnlyErr := taskTransactionTouchesOwnerOnlyTask(ctx, tx)
 		snapshot := tx.freezeAndSnapshot()
 		if callbackErr != nil {
 			return nil, callbackErr
+		}
+		if ownerOnlyErr != nil {
+			return nil, ownerOnlyErr
 		}
 		if err := validateTaskOperationResult(callbackResult); err != nil {
 			return nil, err
@@ -193,6 +201,7 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 			RequestHash:      requestHash,
 			Scope:            TaskOperationScopeTask,
 			TaskID:           taskID,
+			OwnerOnly:        ownerOnly,
 			Result:           append(json.RawMessage(nil), callbackResult...),
 			WriterGeneration: s.writerGeneration,
 		}
@@ -216,6 +225,92 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 // LookupTaskOperation returns a stored receipt by its globally stable operation ID.
 // It is intended for protocol-journal reconciliation after a storage-host restart.
 func (s *JSONLStore) LookupTaskOperation(ctx context.Context, operationID string) (TaskOperationReceipt, error) {
+	receipt, err := s.lookupTaskOperationRaw(ctx, operationID)
+	if err != nil {
+		return TaskOperationReceipt{}, err
+	}
+	if receipt.OwnerOnly {
+		return TaskOperationReceipt{}, ErrTaskOperationNotFound
+	}
+	if receipt.TaskID != "" {
+		if err := s.requirePublicTask(ctx, receipt.TaskID); err != nil {
+			if errors.Is(err, domaintask.ErrNotFound) {
+				// Scope-less receipts predate parent-scope pinning. Preserve their
+				// historical lookup contract when the referenced Task is absent;
+				// present private or owner-managed Tasks remain hidden by the checks
+				// above and below.
+				if receipt.Scope != "" {
+					return TaskOperationReceipt{}, ErrTaskOperationNotFound
+				}
+			} else {
+				return TaskOperationReceipt{}, err
+			}
+		}
+	} else if taskID, ok := operationResultTaskID(receipt.Result); ok {
+		if err := s.requirePublicTask(ctx, taskID); err != nil {
+			if errors.Is(err, domaintask.ErrNotFound) {
+				return TaskOperationReceipt{}, ErrTaskOperationNotFound
+			}
+			return TaskOperationReceipt{}, err
+		}
+	}
+	return receipt, nil
+}
+
+func operationResultTaskID(result json.RawMessage) (modulecore.TaskID, bool) {
+	var value struct {
+		TaskID modulecore.TaskID `json:"task_id"`
+	}
+	if json.Unmarshal(result, &value) != nil || value.TaskID == "" {
+		return "", false
+	}
+	return value.TaskID, true
+}
+
+func (s *JSONLStore) requirePublicTask(ctx context.Context, taskID modulecore.TaskID) error {
+	task, err := s.GetTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, domaintask.ErrNotFound) {
+			return domaintask.ErrNotFound
+		}
+		return err
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	return nil
+}
+
+// requireGenericFenceTaskIfPresent preserves the legacy fence API for a valid
+// TaskID whose Task has not been created yet, while refusing generic access
+// to private and owner-managed Tasks once their authoritative record exists.
+func (s *JSONLStore) requireGenericFenceTaskIfPresent(ctx context.Context, taskID modulecore.TaskID) error {
+	var task domaintask.Task
+	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+		rawStore, ok := store.(*transactionStore)
+		if !ok {
+			return errors.New("task fence owner check is unavailable")
+		}
+		var err error
+		task, err = rawStore.getTaskRaw(ctx, taskID)
+		return err
+	})
+	if errors.Is(err, domaintask.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if task.PrivateAccess != nil {
+		return domaintask.ErrNotFound
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	return nil
+}
+
+func (s *JSONLStore) lookupTaskOperationRaw(ctx context.Context, operationID string) (TaskOperationReceipt, error) {
 	if s == nil {
 		return TaskOperationReceipt{}, errors.New("task store is nil")
 	}
@@ -271,6 +366,9 @@ func (s *JSONLStore) AcquireTaskExecutionFence(ctx context.Context, taskID modul
 	if err := taskID.Validate(); err != nil {
 		return err
 	}
+	if err := s.requireGenericFenceTaskIfPresent(ctx, taskID); err != nil {
+		return err
+	}
 	if err := validateTaskExecutionFenceID(fenceID); err != nil {
 		return err
 	}
@@ -302,6 +400,9 @@ func (s *JSONLStore) ReleaseTaskExecutionFence(ctx context.Context, taskID modul
 	if err := taskID.Validate(); err != nil {
 		return err
 	}
+	if err := s.requireGenericFenceTaskIfPresent(ctx, taskID); err != nil {
+		return err
+	}
 	if err := validateTaskExecutionFenceID(fenceID); err != nil {
 		return err
 	}
@@ -331,6 +432,12 @@ func (s *JSONLStore) GetTaskExecutionFence(ctx context.Context, taskID modulecor
 		return TaskExecutionFenceStatus{}, errors.New("task execution fence lookup context is nil")
 	}
 	if err := taskID.Validate(); err != nil {
+		return TaskExecutionFenceStatus{}, err
+	}
+	// Fence metadata may predate its Task record. Preserve that recovery path,
+	// while refusing to expose metadata for a present private or owner-managed
+	// Task.
+	if err := s.requireGenericFenceTaskIfPresent(ctx, taskID); err != nil {
 		return TaskExecutionFenceStatus{}, err
 	}
 	releaseAdmission, err := s.lifecycle.admit(ctx)
@@ -370,6 +477,14 @@ func (s *JSONLStore) GetTaskExecutionFence(ctx context.Context, taskID modulecor
 }
 
 func (s *JSONLStore) withDurableTaskExecutionFence(ctx context.Context, taskID modulecore.TaskID, fn func() error) error {
+	return s.withDurableTaskExecutionFenceMode(ctx, taskID, fn, false)
+}
+
+func (s *JSONLStore) withGenericTaskExecutionFence(ctx context.Context, taskID modulecore.TaskID, fn func() error) error {
+	return s.withDurableTaskExecutionFenceMode(ctx, taskID, fn, true)
+}
+
+func (s *JSONLStore) withDurableTaskExecutionFenceMode(ctx context.Context, taskID modulecore.TaskID, fn func() error, requireGenericTask bool) error {
 	if s == nil {
 		return errors.New("task store is nil")
 	}
@@ -395,6 +510,16 @@ func (s *JSONLStore) withDurableTaskExecutionFence(ctx context.Context, taskID m
 		return err
 	}
 	defer lease.release()
+	if requireGenericTask {
+		if s.taskPersistence != nil {
+			if err := s.taskPersistence.drain(ctx); err != nil {
+				return err
+			}
+		}
+		if err := s.rejectOwnerManagedTaskForGenericFence(ctx, taskID); err != nil {
+			return err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -408,6 +533,52 @@ func (s *JSONLStore) withDurableTaskExecutionFence(ctx context.Context, taskID m
 	callbackErr := fn()
 	releaseErr := s.persistTaskExecutionFenceRelease(context.WithoutCancel(ctx), taskID, fenceID)
 	return errors.Join(callbackErr, releaseErr)
+}
+
+func (s *JSONLStore) rejectOwnerManagedTaskForGenericFence(ctx context.Context, taskID modulecore.TaskID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed || s.batch == nil {
+		return os.ErrClosed
+	}
+	paths := []string{filepath.Join(s.root, stateFilename)}
+	if s.idx != nil {
+		s.idx.mu.RLock()
+		paths = make([]string, 0, len(s.idx.segs))
+		for _, seg := range s.idx.segs {
+			paths = append(paths, filepath.Join(seg.dir, stateFilename))
+		}
+		s.idx.mu.RUnlock()
+	}
+	var task domaintask.Task
+	found := false
+	err := s.batch.Read(withTxLabel(ctx, "ValidateGenericTaskExecutionFence", taskID), func() error {
+		records, err := readSegmentedJSONLLines[domaintask.Task](ctx, paths)
+		if err != nil {
+			return err
+		}
+		latest, err := latestTransactionTasks(records)
+		if err != nil {
+			return err
+		}
+		for _, item := range latest {
+			if item.TaskID == taskID {
+				task, found = item, true
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if found && domaintask.IsOwnerManagedTask(task) {
+		return domaintask.ErrTypedTaskRequiresOwner
+	}
+	return ctx.Err()
 }
 
 func newLocalTaskExecutionFenceID() (string, error) {
@@ -528,7 +699,7 @@ func readTaskOperationReceipts(ctx context.Context, paths ...string) (map[string
 }
 
 func sameTaskOperationReceipt(left, right TaskOperationReceipt) bool {
-	return left.OperationID == right.OperationID && left.RequestHash == right.RequestHash && effectiveTaskOperationScope(left.Scope) == effectiveTaskOperationScope(right.Scope) && left.TaskID == right.TaskID && left.WriterGeneration == right.WriterGeneration && bytes.Equal(left.Result, right.Result)
+	return left.OperationID == right.OperationID && left.RequestHash == right.RequestHash && effectiveTaskOperationScope(left.Scope) == effectiveTaskOperationScope(right.Scope) && left.TaskID == right.TaskID && left.OwnerOnly == right.OwnerOnly && left.WriterGeneration == right.WriterGeneration && bytes.Equal(left.Result, right.Result)
 }
 
 func effectiveTaskOperationScope(scope TaskOperationScope) TaskOperationScope {

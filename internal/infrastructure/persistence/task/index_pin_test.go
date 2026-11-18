@@ -404,3 +404,26 @@ func TestPinRulesMatchFullFoldOnCraftedLogs(t *testing.T) {
 		})
 	}
 }
+
+func TestNativePlanningInvocationPinRejectsRewriteAndRemoval(t *testing.T) {
+	parent, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	first := domaintask.Task{NativePlanningInvocation: &domaintask.NativePlanningInvocation{
+		ParentTaskID: parent, ParentRunID: runID, ParentActorID: "shiro", ActorID: "aka", Purpose: "task_center_planning",
+		RequestKey: modulecore.NewRequestID(), EnvelopeSHA256: strings.Repeat("a", 64),
+	}}
+	if err := checkTaskPinTransition(pinOfTask(first), first); err != nil {
+		t.Fatalf("unchanged marker: %v", err)
+	}
+	changed := first
+	copyOfMarker := *first.NativePlanningInvocation
+	copyOfMarker.ActorID = "ao"
+	changed.NativePlanningInvocation = &copyOfMarker
+	if err := checkTaskPinTransition(pinOfTask(first), changed); !errors.Is(err, domaintask.ErrNativePlanningInvocationImmutable) {
+		t.Fatalf("rewritten marker error=%v", err)
+	}
+	removed := first
+	removed.NativePlanningInvocation = nil
+	if err := checkTaskPinTransition(pinOfTask(first), removed); !errors.Is(err, domaintask.ErrNativePlanningInvocationImmutable) {
+		t.Fatalf("removed marker error=%v", err)
+	}
+}

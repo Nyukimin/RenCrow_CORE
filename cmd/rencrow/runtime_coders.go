@@ -22,7 +22,23 @@ import (
 )
 
 type coderAdapter struct {
-	domainCoder *agent.CoderAgent
+	domainCoder   *agent.CoderAgent
+	planning      *nativeTaskPlanningDispatcher
+	planningActor string
+}
+
+func (a *coderAdapter) WithNativePlanningPort(port *nativeTaskPlanningDispatcher, actorID string) *coderAdapter {
+	if a != nil {
+		a.planning, a.planningActor = port, strings.TrimSpace(actorID)
+	}
+	return a
+}
+
+func (a *coderAdapter) DispatchTaskPlanning(ctx context.Context, message string) (string, bool, error) {
+	if a == nil {
+		return "", false, nil
+	}
+	return a.planning.Dispatch(ctx, a.planningActor, message)
 }
 
 func (a *coderAdapter) Generate(ctx context.Context, input conversation.TurnInput, systemPrompt string) (string, error) {

@@ -49,6 +49,7 @@ type SQLiteStore struct {
 	sessionProtocolPins            map[modulecore.SessionID]sessionProtocolPin
 	closeOnce                      sync.Once
 	closeErr                       error
+	taskMeetingClock               func() time.Time
 }
 
 // NewSQLiteStore opens a SQLite canonical event store at the configured path.
@@ -66,7 +67,23 @@ func NewSQLiteStoreWithWriteQueue(path string, queue WriteQueue) (*SQLiteStore, 
 	return newSQLiteStore(path, queue)
 }
 
-func newSQLiteStore(path string, queue WriteQueue) (*SQLiteStore, error) {
+// NewSQLiteStoreWithTaskMeetingClock is a construction-time clock seam for
+// isolated TaskMeeting owner verification. Other EventStore timestamps remain
+// on the existing real-time path.
+func NewSQLiteStoreWithTaskMeetingClock(path string, clock func() time.Time) (*SQLiteStore, error) {
+	return newSQLiteStore(path, nil, clock)
+}
+
+// NewSQLiteStoreWithWriteQueueAndTaskMeetingClock combines the existing queue
+// owner with the typed TaskMeeting clock seam used by isolated verification.
+func NewSQLiteStoreWithWriteQueueAndTaskMeetingClock(path string, queue WriteQueue, clock func() time.Time) (*SQLiteStore, error) {
+	if queue == nil {
+		return nil, errors.New("event store write queue is required")
+	}
+	return newSQLiteStore(path, queue, clock)
+}
+
+func newSQLiteStore(path string, queue WriteQueue, meetingClock ...func() time.Time) (*SQLiteStore, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("canonical event store path is required")
 	}
@@ -99,6 +116,9 @@ func newSQLiteStore(path string, queue WriteQueue) (*SQLiteStore, error) {
 		sequenceAdmissionMu: &pathState.sequenceAdmissionMu,
 		writeQueue:          queue,
 		releaseWriter:       releaseWriter,
+	}
+	if len(meetingClock) > 0 {
+		store.taskMeetingClock = meetingClock[0]
 	}
 	if err := store.enableForeignKeys(); err != nil {
 		_ = db.Close()
@@ -329,6 +349,9 @@ func (s *SQLiteStore) AppendSequenced(ctx context.Context, event modulecore.Even
 		if err := modulecore.ValidateEventEnvelope(event); err != nil {
 			return modulecore.EventEnvelope{}, fmt.Errorf("validate event envelope: %w", err)
 		}
+		if event.ComponentID == taskMeetingComponent {
+			return modulecore.EventEnvelope{}, ErrTaskMeetingForbidden
+		}
 		if event.EventSeq != 0 {
 			return modulecore.EventEnvelope{}, errors.New("event_seq must be zero for live append; positive sequences are reserved for AppendBatch")
 		}
@@ -357,6 +380,9 @@ func (s *SQLiteStore) appendSequencedInline(ctx context.Context, event modulecor
 	}
 	if err := modulecore.ValidateEventEnvelope(event); err != nil {
 		return modulecore.EventEnvelope{}, fmt.Errorf("validate event envelope: %w", err)
+	}
+	if event.ComponentID == taskMeetingComponent {
+		return modulecore.EventEnvelope{}, ErrTaskMeetingForbidden
 	}
 	if event.EventSeq != 0 && !s.isQueueWorkerContext(ctx) {
 		return modulecore.EventEnvelope{}, errors.New("event_seq must be zero for live append; positive sequences are reserved for AppendBatch")
@@ -447,6 +473,11 @@ func (s *SQLiteStore) AppendBatch(ctx context.Context, events []modulecore.Event
 	}
 	if err := modulecore.ValidateEventEnvelopeGraph(events); err != nil {
 		return fmt.Errorf("validate event envelope graph: %w", err)
+	}
+	for _, event := range events {
+		if event.ComponentID == taskMeetingComponent {
+			return ErrTaskMeetingForbidden
+		}
 	}
 	if s.shouldQueueWrite(ctx) {
 		queuedEvents := cloneQueuedValue(events)
@@ -582,7 +613,7 @@ func (s *SQLiteStore) GetByID(ctx context.Context, eventID modulecore.EventID) (
 	err := s.db.QueryRowContext(ctx, `
 		SELECT event_id, event_seq, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json
 		FROM event_envelope
-		WHERE event_id = ?`, string(eventID)).Scan(
+		WHERE event_id = ? AND component_id <> ?`, string(eventID), taskMeetingComponent).Scan(
 		&storedEventID, &eventSeq, &traceID, &schemaVersion, &eventType, &componentID, &occurredAt, &payload,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -607,6 +638,9 @@ func (s *SQLiteStore) ListByComponent(ctx context.Context, componentID string, l
 	}
 	if strings.TrimSpace(componentID) == "" {
 		return nil, fmt.Errorf("component_id is required")
+	}
+	if componentID == taskMeetingComponent {
+		return []modulecore.EventEnvelope{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT event_id, event_seq, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json
@@ -664,9 +698,9 @@ func (s *SQLiteStore) ListByTraceID(ctx context.Context, traceID modulecore.Trac
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT event_id, event_seq, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json
 		FROM event_envelope
-		WHERE trace_id = ?
+	WHERE trace_id = ? AND component_id <> ?
 		ORDER BY event_seq ASC
-		LIMIT ?`, string(traceID), max+1)
+		LIMIT ?`, string(traceID), taskMeetingComponent, max+1)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'">
+  <title>タスク管理 | RenCrow</title>
+  <link rel="stylesheet" href="/viewer/assets/css/tabs/task-center.css?v=20261117-task-center-v1">
+  <script src="/viewer/assets/js/tabs/task-center.js?v=20261117-task-center-v1" defer></script>
+</head>
+<body>
+  <div class="task-center">
+    <header class="task-center__header">
+      <a class="task-center__back" href="/viewer" aria-label="RenCrow Viewerへ戻る">← Viewer</a>
+      <div class="task-center__brand">
+        <span class="task-center__brand-mark" aria-hidden="true">R</span>
+        <span>RenCrow <span class="task-center__brand-muted">/ Task Center</span></span>
+      </div>
+      <span class="task-center__environment">CORE owner view</span>
+    </header>
+
+    <main class="task-center__main">
+      <section class="task-center__hero" aria-labelledby="taskCenterTitle">
+        <div class="task-center__hero-copy">
+          <p class="task-center__eyebrow">SHARED WORKBENCH</p>
+          <h1 id="taskCenterTitle">タスク管理</h1>
+          <p class="task-center__intro">COREの正本から残っている仕事を確認し、必要なタスクを依頼します。確認だけの操作で仕事は開始されません。</p>
+          <div class="task-center__live-state">
+            <span class="task-center__state-dot" aria-hidden="true"></span>
+            <span id="taskCenterPageState" role="status" aria-live="polite">認証が必要です</span>
+            <span class="task-center__state-separator" aria-hidden="true">·</span>
+            <span id="taskCenterUpdatedAt">未取得</span>
+          </div>
+        </div>
+        <aside class="task-center__companion" aria-label="タスク整理の案内役">
+          <div class="task-center__companion-portrait">
+            <img src="/viewer/assets/images/mio/mio_basic.png" alt="ミオ" width="512" height="512">
+          </div>
+          <div class="task-center__companion-copy">
+            <p class="task-center__companion-name">ミオ</p>
+            <p>タスクの整理を案内します</p>
+            <span id="taskCenterMioStatus" class="task-center__companion-state">画面準備中</span>
+          </div>
+        </aside>
+      </section>
+
+      <section class="task-center__summary" aria-label="取得状況">
+        <article class="task-center__summary-card">
+          <p>表示中の取得件数</p>
+          <strong id="taskCenterSummaryCount">—</strong>
+          <span id="taskCenterSummaryView">認証後に表示</span>
+        </article>
+        <article class="task-center__summary-card">
+          <p>次のページ</p>
+          <strong id="taskCenterSummaryNext">—</strong>
+          <span> owner cursor </span>
+        </article>
+        <article class="task-center__summary-card">
+          <p id="taskCenterSummaryKindsLabel">登録された種類</p>
+          <strong id="taskCenterSummaryKinds">—</strong>
+          <span id="taskCenterSummaryKindsSource">capabilitiesから取得</span>
+        </article>
+        <article class="task-center__summary-card task-center__summary-card--state">
+          <p>取得状態</p>
+          <strong id="taskCenterSummaryState">未確認</strong>
+          <span id="taskCenterSummaryRevision">policy revision 未確認</span>
+        </article>
+      </section>
+
+      <section class="task-center__connection" aria-labelledby="taskCenterConnectionTitle">
+        <div class="task-center__section-heading">
+          <div>
+            <p class="task-center__eyebrow">PRIVATE OWNER ACCESS</p>
+            <h2 id="taskCenterConnectionTitle">認証して接続</h2>
+          </div>
+          <span id="taskCenterCapabilityState" class="task-center__badge">認証が必要</span>
+        </div>
+        <p class="task-center__muted">Operator tokenはこのページのメモリ内だけで使います。保存やURLへの付加はしません。</p>
+        <form id="taskCenterConnectForm" class="task-center__connect-form">
+          <label class="task-center__field task-center__field--token" for="taskCenterToken">
+            <span>Operator token</span>
+            <input id="taskCenterToken" name="operator-token" type="password" autocomplete="off" spellcheck="false" inputmode="text" maxlength="4096" required>
+          </label>
+          <button id="taskCenterConnectButton" class="task-center__button task-center__button--primary" type="submit">接続して読み込む</button>
+          <button id="taskCenterDisconnectButton" class="task-center__button task-center__button--quiet" type="button" hidden>切断して消去</button>
+        </form>
+      </section>
+
+      <div id="taskCenterNotice" class="task-center__notice" role="status" aria-live="polite" hidden></div>
+      <div id="taskCenterError" class="task-center__notice task-center__notice--error" role="alert" hidden></div>
+
+      <section id="taskCenterWorkspace" class="task-center__workspace" hidden aria-label="タスク一覧と操作">
+        <section class="task-center__list-panel" aria-labelledby="taskCenterListTitle">
+          <div class="task-center__section-heading task-center__list-heading">
+            <div>
+              <p class="task-center__eyebrow">OWNER PROJECTION</p>
+              <h2 id="taskCenterListTitle">仕事を確認</h2>
+            </div>
+            <button id="taskCenterRefresh" class="task-center__button task-center__button--quiet" type="button">更新</button>
+          </div>
+
+          <nav class="task-center__views" role="tablist" aria-label="タスクの見方">
+            <button id="taskCenterViewRemaining" class="task-center__view is-active" type="button" role="tab" aria-selected="true" data-task-view="remaining">残タスク</button>
+            <button id="taskCenterViewClaimable" class="task-center__view" type="button" role="tab" aria-selected="false" data-task-view="claimable">引受待ち</button>
+            <button id="taskCenterViewDaily" class="task-center__view" type="button" role="tab" aria-selected="false" data-task-view="daily">日常タスク</button>
+            <button id="taskCenterViewHistory" class="task-center__view" type="button" role="tab" aria-selected="false" data-task-view="history">履歴</button>
+          </nav>
+
+          <p id="taskCenterModeNotice" class="task-center__notice" role="status" aria-live="polite" hidden></p>
+          <div class="task-center__filters">
+            <label class="task-center__field task-center__field--search" for="taskCenterSearch">
+              <span id="taskCenterSearchLabel">表示中のページを検索</span>
+              <input id="taskCenterSearch" type="search" autocomplete="off" maxlength="120" placeholder="タスク名・内容・状態">
+            </label>
+            <label id="taskCenterAssigneeField" class="task-center__field task-center__field--assignee" for="taskCenterAssignee">
+              <span>Agent担当</span>
+              <select id="taskCenterAssignee"><option value="all">認証scope内すべて</option></select>
+            </label>
+            <label id="taskCenterDailyKindField" class="task-center__field task-center__field--assignee" for="taskCenterDailyKind" hidden>
+              <span>日常タスクの定義種類</span>
+              <select id="taskCenterDailyKind"><option value="">すべての定義種類</option></select>
+            </label>
+          </div>
+          <p id="taskCenterListState" class="task-center__list-state" aria-live="polite">認証して接続すると、ownerの読み取り結果を表示します。</p>
+          <div id="taskCenterItems" class="task-center__items" aria-live="polite"></div>
+          <div id="taskCenterEmpty" class="task-center__empty" hidden>
+            <span class="task-center__empty-mark" aria-hidden="true">✓</span>
+            <h3>この範囲に表示できる項目はありません</h3>
+            <p>取得成功と部分取得の状態を確認してください。空の結果だけでowner全体に項目がないとは限りません。</p>
+          </div>
+          <button id="taskCenterMore" class="task-center__button task-center__button--more" type="button" hidden>次のページを読み込む</button>
+        </section>
+
+        <details id="taskCenterAddDetails" class="task-center__add-panel">
+          <summary>
+            <span>
+              <span class="task-center__eyebrow">NEW REQUEST</span>
+              <strong>タスクを追加</strong>
+            </span>
+            <span class="task-center__summary-hint">ownerが受理した状態と、実行開始を分けて確認できます</span>
+          </summary>
+          <form id="taskCenterAddForm" class="task-center__add-form" novalidate>
+            <div id="taskCenterFormError" class="task-center__notice task-center__notice--error" role="alert" hidden></div>
+            <div class="task-center__form-grid">
+              <label class="task-center__field" for="taskCenterKind">
+                <span>タスクの種類 <b aria-hidden="true">必須</b></span>
+                <select id="taskCenterKind" name="kind_id" required><option value="">種類を選択</option></select>
+                <small id="taskCenterKindSupport">登録された種類が表示されます。種類の登録だけでは実行開始を意味しません。</small>
+              </label>
+              <div id="taskCenterKindInputFields" class="task-center__form-grid task-center__kind-input-fields task-center__field--wide" hidden></div>
+              <label class="task-center__field" for="taskCenterAssigneeInput">
+                <span>担当</span>
+                <select id="taskCenterAssigneeInput" name="assignee"><option value="unassigned">未割当（Agentの引受待ち）</option></select>
+              </label>
+              <label class="task-center__field task-center__field--wide" for="taskCenterTitleInput">
+                <span>タスク名 <b aria-hidden="true">任意</b></span>
+                <input id="taskCenterTitleInput" name="title" maxlength="240" autocomplete="off" placeholder="未入力なら依頼内容から決まります">
+              </label>
+              <label class="task-center__field task-center__field--wide" for="taskCenterDescription">
+                <span>依頼内容 <b aria-hidden="true">必須</b></span>
+                <textarea id="taskCenterDescription" name="description" rows="5" maxlength="12000" required placeholder="何をするか、指示の正本になる内容を書いてください。"></textarea>
+              </label>
+              <label class="task-center__field task-center__field--wide" for="taskCenterCriteria">
+                <span>完了条件 <b aria-hidden="true">1行以上必須</b></span>
+                <textarea id="taskCenterCriteria" name="success_criteria" rows="3" maxlength="4000" required placeholder="1行に1つずつ記入"></textarea>
+                <small>送信時に空行を除き、1行ずつ配列にします。</small>
+              </label>
+              <label class="task-center__field task-center__field--wide" for="taskCenterVerification">
+                <span>確認方法 <b aria-hidden="true">1行以上必須</b></span>
+                <textarea id="taskCenterVerification" name="verification" rows="3" maxlength="4000" required placeholder="1行に1つずつ記入"></textarea>
+                <small>完了後に何を確かめるかを記入します。</small>
+              </label>
+            </div>
+
+            <details class="task-center__timing">
+              <summary>時間条件 <span>不要な条件は「指定なし」のままにします</span></summary>
+              <div class="task-center__form-grid">
+                <label class="task-center__field" for="taskCenterTimezone">
+                  <span>timezone</span>
+                  <select id="taskCenterTimezone" name="timezone"><option value="Asia/Tokyo">Asia/Tokyo（JST）</option></select>
+                  <small>時刻入力はJST固定です。ブラウザのlocal timezoneへ変換しません。</small>
+                </label>
+                <label class="task-center__field" for="taskCenterScheduled">
+                  <span>実行予定</span>
+                  <input id="taskCenterScheduled" type="datetime-local">
+                  <small>指定なしの場合は空欄。</small>
+                </label>
+                <label class="task-center__field" for="taskCenterNotBefore">
+                  <span>開始可能時刻</span>
+                  <input id="taskCenterNotBefore" type="datetime-local">
+                </label>
+                <label class="task-center__field" for="taskCenterDeadline">
+                  <span>期限</span>
+                  <input id="taskCenterDeadline" type="datetime-local">
+                </label>
+                <fieldset class="task-center__field task-center__field--wide task-center__windows">
+                  <legend>実行可能時間帯 <span>指定なしなら空欄</span></legend>
+                  <div id="taskCenterWindowRows" class="task-center__window-rows">
+                    <div class="task-center__window-row" data-window-row>
+                      <label>開始 <input type="time" data-window-start aria-label="実行可能時間帯の開始"></label>
+                      <label>終了 <input type="time" data-window-end aria-label="実行可能時間帯の終了"></label>
+                      <button class="task-center__remove-window" type="button" data-remove-window aria-label="この時間帯を削除" disabled>削除</button>
+                    </div>
+                  </div>
+                  <button id="taskCenterAddWindow" class="task-center__button task-center__button--small" type="button">時間帯を追加</button>
+                </fieldset>
+                <fieldset class="task-center__field task-center__field--wide task-center__recurrence">
+                  <legend>繰り返し</legend>
+                  <label class="task-center__field task-center__field--inline" for="taskCenterRecurrenceFrequency">
+                    <span>頻度</span>
+                    <select id="taskCenterRecurrenceFrequency">
+                      <option value="">なし</option>
+                      <option value="daily" disabled>毎日（追加未対応）</option>
+                      <option value="weekly" disabled>毎週（追加未対応）</option>
+                      <option value="interval" disabled>一定間隔（追加未対応）</option>
+                    </select>
+                    <small>繰り返しタスクの追加は現在未対応です。「なし」のみ選択できます。</small>
+                  </label>
+                  <div id="taskCenterRecurrenceFields" class="task-center__recurrence-fields" hidden>
+                    <label id="taskCenterRecurrenceTimesField" class="task-center__field" for="taskCenterRecurrenceTimes">
+                      <span>実行時刻（HH:MM、1行に1つ）</span>
+                      <textarea id="taskCenterRecurrenceTimes" rows="3" maxlength="500" placeholder="08:00&#10;12:00&#10;17:00"></textarea>
+                    </label>
+                    <fieldset id="taskCenterWeekdays" class="task-center__weekdays" hidden>
+                      <legend>曜日（毎週）</legend>
+                      <label><input type="checkbox" value="1">月</label>
+                      <label><input type="checkbox" value="2">火</label>
+                      <label><input type="checkbox" value="3">水</label>
+                      <label><input type="checkbox" value="4">木</label>
+                      <label><input type="checkbox" value="5">金</label>
+                      <label><input type="checkbox" value="6">土</label>
+                      <label><input type="checkbox" value="0">日</label>
+                    </fieldset>
+                    <label id="taskCenterIntervalField" class="task-center__field" for="taskCenterIntervalSeconds" hidden>
+                      <span>間隔（秒）</span>
+                      <input id="taskCenterIntervalSeconds" type="number" min="1" max="31536000" step="1">
+                    </label>
+                  </div>
+                </fieldset>
+                <label class="task-center__field" for="taskCenterDuration">
+                  <span>想定所要時間（秒）</span>
+                  <input id="taskCenterDuration" type="number" min="0" step="1" placeholder="指定なし">
+                </label>
+              </div>
+            </details>
+
+            <div class="task-center__submit-row">
+              <p>追加後も実行が始まったとは限りません。受理結果をownerから確認します。</p>
+              <button id="taskCenterSubmit" class="task-center__button task-center__button--primary" type="submit" disabled>タスクを追加</button>
+            </div>
+          </form>
+        </details>
+      </section>
+
+      <section id="taskCenterMutationPanel" class="task-center__mutation" aria-labelledby="taskCenterMutationTitle" hidden>
+        <div>
+          <p class="task-center__eyebrow">OWNER RECEIPT</p>
+          <h2 id="taskCenterMutationTitle">追加結果</h2>
+          <p id="taskCenterMutationMessage" aria-live="polite"></p>
+          <dl id="taskCenterMutationReceipt" class="task-center__receipt"></dl>
+        </div>
+        <div id="taskCenterRecovery" class="task-center__recovery" hidden>
+          <p>応答が届かず結果を確定できません。再追加や新しいキーでのclaimは行わず、同じ受付結果を照会してください。</p>
+          <button id="taskCenterRecoverButton" class="task-center__button task-center__button--primary" type="button">受付結果を照会</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="task-center__footer">
+      <p>表示・更新・詳細確認はownerの読み取りです。状態の開始、停止、再試行、設定変更は行いません。</p>
+      <a href="/viewer">RenCrow Viewer</a>
+    </footer>
+  </div>
+  <noscript><p class="task-center__noscript">タスク管理を利用するにはJavaScriptを有効にしてください。</p></noscript>
+</body>
+</html>

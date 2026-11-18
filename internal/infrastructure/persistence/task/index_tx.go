@@ -3,6 +3,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -200,6 +201,20 @@ func (s *transactionStore) idxCheckSaveTask(value domaintask.Task) error {
 }
 
 func (s *transactionStore) idxGetTask(taskID modulecore.TaskID) (domaintask.Task, error) {
+	task, err := s.idxGetTaskRaw(taskID)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	if task.PrivateAccess != nil {
+		return domaintask.Task{}, domaintask.ErrNotFound
+	}
+	if domaintask.IsOwnerManagedTask(task) {
+		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	return task, nil
+}
+
+func (s *transactionStore) idxGetTaskRaw(taskID modulecore.TaskID) (domaintask.Task, error) {
 	key, err := parseCanonicalKey(string(taskID), taskKeyPrefix)
 	if err != nil {
 		return domaintask.Task{}, domaintask.ErrNotFound
@@ -217,6 +232,14 @@ func (s *transactionStore) idxGetTask(taskID modulecore.TaskID) (domaintask.Task
 	return ix.readTaskAt(pos, key)
 }
 
+func (s *transactionStore) idxTaskIsHidden(taskID modulecore.TaskID) (bool, error) {
+	task, err := s.idxGetTaskRaw(taskID)
+	if err != nil {
+		return false, err
+	}
+	return task.PrivateAccess != nil || domaintask.IsOwnerManagedTask(task), nil
+}
+
 func (s *transactionStore) idxTaskKnown(key key16) bool {
 	if _, ok := s.overlayTask(key); ok {
 		return true
@@ -228,6 +251,17 @@ func (s *transactionStore) idxTaskKnown(key key16) bool {
 }
 
 func (s *transactionStore) idxGetRun(runID modulecore.RunID) (domaintask.Run, error) {
+	run, err := s.idxGetRunRaw(runID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	if private, err := s.idxTaskIsHidden(run.TaskID); err != nil || private {
+		return domaintask.Run{}, domaintask.ErrNotFound
+	}
+	return run, nil
+}
+
+func (s *transactionStore) idxGetRunRaw(runID modulecore.RunID) (domaintask.Run, error) {
 	key, err := parseCanonicalKey(string(runID), runKeyPrefix)
 	if err != nil {
 		return domaintask.Run{}, domaintask.ErrNotFound
@@ -240,6 +274,31 @@ func (s *transactionStore) idxGetRun(runID modulecore.RunID) (domaintask.Run, er
 		return domaintask.Run{}, domaintask.ErrNotFound
 	}
 	return run, nil
+}
+
+func (s *transactionStore) idxRunTaskID(runID modulecore.RunID) (modulecore.TaskID, error) {
+	key, err := parseCanonicalKey(string(runID), runKeyPrefix)
+	if err != nil {
+		return "", domaintask.ErrNotFound
+	}
+	if run, ok := s.overlayRun(key); ok {
+		return run.TaskID, nil
+	}
+	ix := s.parent.idx
+	unlock := s.indexLock()
+	slot, ok := ix.runMap[key]
+	if !ok {
+		unlock()
+		return "", domaintask.ErrNotFound
+	}
+	taskSlot := ix.runs[slot].taskSlot
+	if int(taskSlot) >= len(ix.tasks) {
+		unlock()
+		return "", domaintask.ErrNotFound
+	}
+	taskID := modulecore.TaskID(ix.tasks[taskSlot].key.id(taskKeyPrefix))
+	unlock()
+	return taskID, nil
 }
 
 // idxLatestRun returns the newest version of a Run: pending, else committed.
@@ -410,7 +469,9 @@ func (s *transactionStore) idxListRuns(ctx context.Context, filter domaintask.Ru
 	}
 	pending := s.overlaySnapshot().runs
 	unlock := s.indexLock()
-	best := newBestN(filter.Limit, runCandBefore)
+	// Filter private descendants before applying the public limit so hidden
+	// Runs neither appear nor displace public Runs from a bounded result.
+	best := newBestN(0, runCandBefore)
 	ix.collectRunsLocked(filter, taskKey, taskKeyValid, pending, best.add)
 	cands := best.result()
 	unlock()
@@ -420,6 +481,13 @@ func (s *transactionStore) idxListRuns(ctx context.Context, filter domaintask.Ru
 			return nil, err
 		}
 		if cand.value != nil {
+			private, err := s.idxTaskIsHidden(cand.value.TaskID)
+			if err != nil || private {
+				if err != nil && !errors.Is(err, domaintask.ErrNotFound) {
+					return nil, err
+				}
+				continue
+			}
 			result = append(result, cloneTransactionRun(*cand.value))
 			continue
 		}
@@ -427,12 +495,29 @@ func (s *transactionStore) idxListRuns(ctx context.Context, filter domaintask.Ru
 		if err != nil {
 			return nil, err
 		}
+		private, err := s.idxTaskIsHidden(value.TaskID)
+		if err != nil || private {
+			if err != nil && !errors.Is(err, domaintask.ErrNotFound) {
+				return nil, err
+			}
+			continue
+		}
 		result = append(result, value)
+	}
+	if filter.Limit > 0 && len(result) > filter.Limit {
+		result = result[:filter.Limit]
 	}
 	return result, nil
 }
 
 func (s *transactionStore) idxGetContext(taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
+	if _, err := s.idxGetTask(taskID); err != nil {
+		return domaintask.SharedRoleContext{}, domaintask.ErrNotFound
+	}
+	return s.idxGetContextRaw(taskID)
+}
+
+func (s *transactionStore) idxGetContextRaw(taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
 	key, err := parseCanonicalKey(string(taskID), taskKeyPrefix)
 	if err != nil {
 		return domaintask.SharedRoleContext{}, domaintask.ErrNotFound
@@ -454,7 +539,7 @@ func (s *transactionStore) idxListNotifications(ctx context.Context, limit int, 
 	ix := s.parent.idx
 	pending := s.overlaySnapshot().notifs
 	unlock := s.indexLock()
-	best := newBestN(limit, notifCandBefore)
+	best := newBestN(0, notifCandBefore)
 	ix.collectNotificationsLocked(interruptOnly, pending, best.add)
 	cands := best.result()
 	unlock()
@@ -464,6 +549,13 @@ func (s *transactionStore) idxListNotifications(ctx context.Context, limit int, 
 			return nil, err
 		}
 		if cand.value != nil {
+			private, err := s.idxTaskIsHidden(cand.value.TaskID)
+			if err != nil || private {
+				if err != nil && !errors.Is(err, domaintask.ErrNotFound) {
+					return nil, err
+				}
+				continue
+			}
 			result = append(result, *cand.value)
 			continue
 		}
@@ -471,7 +563,17 @@ func (s *transactionStore) idxListNotifications(ctx context.Context, limit int, 
 		if err != nil {
 			return nil, err
 		}
+		private, err := s.idxTaskIsHidden(value.TaskID)
+		if err != nil || private {
+			if err != nil && !errors.Is(err, domaintask.ErrNotFound) {
+				return nil, err
+			}
+			continue
+		}
 		result = append(result, value)
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }

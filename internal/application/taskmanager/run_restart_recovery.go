@@ -70,6 +70,9 @@ func (m *Manager) RecoverRunAfterProcessRestart(
 		if err := task.Validate(); err != nil {
 			return fmt.Errorf("%w: task record is invalid: %v", ErrRunConflict, err)
 		}
+		if domaintask.IsTaskMeetingTask(task) {
+			return domaintask.ErrTaskMeetingOwnerRequired
+		}
 		run, err := txManager.validateLatestRunInTransaction(ctx, taskID, runID)
 		if err != nil {
 			return err

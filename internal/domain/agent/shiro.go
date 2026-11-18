@@ -30,6 +30,16 @@ type ShiroAgent struct {
 	lightMemory            *LightMemory  // Optional: short-term memory
 	conversation           conversation.ConversationEngine
 	nativeCoding           NativeCodingDelegate // shiro_native_coding_v1 (see native_coding.go)
+	nativePlanningPort     NativePlanningPort
+	nativePlanningActor    string
+	taskMeetingActorID     string
+}
+
+func (s *ShiroAgent) WithNativePlanningPort(port NativePlanningPort, actorID string) *ShiroAgent {
+	if s != nil {
+		s.nativePlanningPort, s.nativePlanningActor = port, strings.TrimSpace(actorID)
+	}
+	return s
 }
 
 // NewShiroAgent は新しいShiroAgentを作成
@@ -122,6 +132,9 @@ func (s *ShiroAgent) ExecutePrivateWork(ctx context.Context, input conversation.
 // Execute はWorkerタスクを実行
 // v1.0: SubagentManager が設定されている場合は ReActLoop を使ってツールを自律的に選択・実行する
 func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (string, error) {
+	if response, handled, err := dispatchNativePlanning(ctx, s.nativePlanningPort, s.nativePlanningActor, t.MessageText()); handled || err != nil {
+		return response, err
+	}
 	ctx = llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
 		TaskID: t.RootTaskID(), TraceID: string(t.TraceID()),
 		Initiator: "shiro", Caller: "agent.shiro", Purpose: "execute_ops_task",

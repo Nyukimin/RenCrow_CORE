@@ -190,6 +190,27 @@ func saveWorkstreamRowWithStorageHostReceipt[T any](ctx context.Context, s *SQLi
 		}
 		return replay, nil
 	}
+	if err := lockTaskCenterOwnerRecord(ctx, tx, table, idColumn, id); err != nil {
+		return zero, err
+	}
+	if prior, found, err := lookupWorkstreamStorageHostReceiptJSON(ctx, tx, identity, table, idColumn, id); err != nil {
+		return zero, err
+	} else if found {
+		if !bytes.Equal(prior, resultJSON) {
+			return zero, errors.New("workstream storage-host operation id is bound to a different result")
+		}
+		var replay T
+		if err := json.Unmarshal(prior, &replay); err != nil {
+			return zero, errors.New("workstream storage-host receipt result is malformed")
+		}
+		if err := tx.Commit(); err != nil {
+			return zero, err
+		}
+		return replay, nil
+	}
+	if err := validateTaskCenterOwnerReplacement(ctx, tx, table, idColumn, id, item); err != nil {
+		return zero, err
+	}
 	var writeErr error
 	if parentColumn == "" {
 		query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, created_at, payload) VALUES (?, ?, ?)`, table, idColumn)
@@ -472,6 +493,16 @@ func (s *SQLiteStore) SaveArtifactForStorageHostOperation(ctx context.Context, i
 	if err := domainworkstream.ValidateArtifact(item); err != nil {
 		return domainworkstream.Artifact{}, err
 	}
+	if isTaskCenterInternalArtifactType(item.Type) {
+		return domainworkstream.Artifact{}, domainworkstream.ErrTaskPlanForbidden
+	}
+	reserved, err := isTaskCenterInternalArtifactID(ctx, s.db, item.ArtifactID)
+	if err != nil {
+		return domainworkstream.Artifact{}, err
+	}
+	if reserved {
+		return domainworkstream.Artifact{}, domainworkstream.ErrTaskPlanForbidden
+	}
 	return saveWorkstreamRowWithStorageHostReceipt(ctx, s, identity, item, "artifact", "artifact_id", item.ArtifactID, "workstream_id", item.WorkstreamID, item.CreatedAt.Format(timeFormatRFC3339Nano))
 }
 
@@ -481,6 +512,13 @@ func (s *SQLiteStore) SaveArtifactAnnotationForStorageHostOperation(ctx context.
 	}
 	if err := domainworkstream.ValidateArtifactAnnotation(item); err != nil {
 		return domainworkstream.ArtifactAnnotation{}, err
+	}
+	reserved, err := isTaskCenterInternalArtifactID(ctx, s.db, item.ArtifactID)
+	if err != nil {
+		return domainworkstream.ArtifactAnnotation{}, err
+	}
+	if reserved {
+		return domainworkstream.ArtifactAnnotation{}, domainworkstream.ErrTaskPlanForbidden
 	}
 	return saveWorkstreamRowWithStorageHostReceipt(ctx, s, identity, item, "artifact_annotation", "annotation_id", item.AnnotationID, "artifact_id", item.ArtifactID, item.CreatedAt.Format(timeFormatRFC3339Nano))
 }

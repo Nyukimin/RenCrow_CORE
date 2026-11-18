@@ -163,6 +163,7 @@ func (s *SQLiteStore) ClaimWork(ctx context.Context, input WorkClaimInput) ([]Le
 			    OR (w.state='leased' AND w.lease_expires_at IS NOT NULL AND julianday(w.lease_expires_at) <= julianday(?)))
 			  AND (? = '' OR w.kind = ?)
 			  AND w.kind <> 'board_publication'
+			  AND w.kind NOT LIKE 'taskmeeting.%'
 			  AND (w.kind <> 'conversation_projection' OR EXISTS (
 				SELECT 1 FROM live_conversation_projection_delivery p WHERE p.work_id=w.work_id
 			  ))
@@ -356,7 +357,7 @@ func (s *SQLiteStore) finishWork(ctx context.Context, input WorkLeaseInput, retr
 	if err != nil {
 		return err
 	}
-	if work.Kind == "board_publication" {
+	if work.Kind == "board_publication" || strings.HasPrefix(work.Kind, "taskmeeting.") {
 		return ErrWorkConflict
 	}
 	if state == "completed" {
@@ -722,6 +723,9 @@ func completedWorkHasOwnerResult(ctx context.Context, tx *sql.Tx, work LeasedWor
 		persisted, _, err := delegatedTaskReportResult(ctx, tx, work)
 		return err == nil && persisted
 	default:
+		if strings.HasPrefix(work.Kind, "taskmeeting.") {
+			return taskMeetingWorkHasConsumptionReceipt(ctx, tx, work)
+		}
 		return true
 	}
 }

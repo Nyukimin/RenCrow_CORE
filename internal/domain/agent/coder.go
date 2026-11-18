@@ -98,6 +98,16 @@ type CoderAgent struct {
 	lightMemory            *LightMemory  // Optional: v4.1 Short-term memory
 	runtimeContextProvider RuntimeContextProvider
 	stableRuntimeContext   string // Runtime capability awareness; does not grant execution
+	taskMeetingActorID     string
+}
+
+// WithTaskMeetingActorID binds this concrete, configured coder to the exact
+// runtime registration used for closed TaskMeeting operations.
+func (c *CoderAgent) WithTaskMeetingActorID(actorID string) *CoderAgent {
+	if c != nil {
+		c.taskMeetingActorID = strings.TrimSpace(actorID)
+	}
+	return c
 }
 
 // NewCoderAgent は新しいCoderAgentを作成

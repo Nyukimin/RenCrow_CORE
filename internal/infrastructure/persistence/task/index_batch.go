@@ -483,6 +483,9 @@ func (ix *taskIndex) merge(b *indexBatch) error {
 		if bt.facts.hasOriginPublication {
 			rec.flags |= flagOriginPublication
 		}
+		if bt.facts.hasPrivateAccess {
+			rec.flags |= flagPrivateAccess
+		}
 		if bt.facts.readOnly {
 			rec.flags |= flagReadOnly
 		}

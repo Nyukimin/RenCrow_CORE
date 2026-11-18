@@ -177,6 +177,10 @@ durable_store:
   enabled: false
   manifest_path: "config/durable-stores.json"
 
+# Optional absolute path to the per-kind task execution allowlist.
+# Leave empty to keep TaskCenter unavailable until a policy is configured.
+task_execution_policy_file: ""
+
 # canonical Task storeのID索引（メモリ上。ログが唯一の正本で、falseに戻せば従来の読み方になる）。
 # localではruntime、remote profileではTask storeを開く保存host側の設定が効く。既定はfalse。
 task_store:
@@ -472,6 +476,22 @@ heartbeat:
     command: "/absolute/path/to/rencrow-x-bookmarks"
     output_root: "/home/<user>/.local/share/rencrow/x_bookmarks/heartbeat_exports"
     max_scrolls: 100
+  routine:
+    daily_report_meetings:
+      enabled: false
+      revision: 1
+      # When enabled, set this to the registered local_agent_ops.user_id.
+      owner_user_id: ""
+      data_scope: "user"
+      coordinator_actor_id: ""
+      # Configure exactly eight actual CORE actors and their exact WORLD IDs.
+      actors: []
+      # Existing distinct room references; CORE never creates or guesses them.
+      living_room_ref: ""
+      dining_room_ref: ""
+      timezone: "Asia/Tokyo"
+      times: ["08:00", "12:00", "17:00"]
+      meeting_deadline_after_seconds: 3600
   routine:
     enabled: false
     # Optional authenticated WORLD read scope. Configure all fields together.

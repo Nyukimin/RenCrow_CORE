@@ -18,8 +18,16 @@ import (
 )
 
 type SQLiteStore struct {
-	db        *sql.DB
-	vaultRoot string
+	db               *sql.DB
+	vaultRoot        string
+	taskMeetingClock func() time.Time
+}
+
+func (s *SQLiteStore) taskMeetingNowUTC() time.Time {
+	if s != nil && s.taskMeetingClock != nil {
+		return s.taskMeetingClock().UTC()
+	}
+	return time.Now().UTC()
 }
 
 const sqliteBusyTimeoutMilliseconds = 5000
@@ -28,24 +36,55 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	return NewSQLiteStoreWithVault(path, "")
 }
 
-func NewSQLiteStoreWithVault(path, vaultRoot string) (*SQLiteStore, error) {
+// NewSQLiteStoreWithTaskMeetingClock is a construction-time clock seam for
+// isolated TaskMeeting minutes verification. Production callers use real UTC.
+func NewSQLiteStoreWithTaskMeetingClock(path string, clock func() time.Time) (*SQLiteStore, error) {
+	return NewSQLiteStoreWithVaultAndTaskMeetingClock(path, "", clock)
+}
+
+// openSQLiteDatabase transfers the opened handle to its caller.
+func openSQLiteDatabase(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout%%3d%d&_time_format=sqlite", path, sqliteBusyTimeoutMilliseconds))
+}
+
+// NewSQLiteStoreWithVault closes the database handle if construction fails.
+// On success, ownership transfers to the caller, which must call Close.
+func NewSQLiteStoreWithVault(path, vaultRoot string) (store *SQLiteStore, err error) {
+	return NewSQLiteStoreWithVaultAndTaskMeetingClock(path, vaultRoot, nil)
+}
+
+// NewSQLiteStoreWithVaultAndTaskMeetingClock preserves the normal vault owner
+// while supplying a typed TaskMeeting clock for isolated verification.
+func NewSQLiteStoreWithVaultAndTaskMeetingClock(path, vaultRoot string, clock func() time.Time) (store *SQLiteStore, err error) {
 	if path == "" {
 		path = "workspace/logs/workstream.db"
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout%%3d%d&_time_format=sqlite", path, sqliteBusyTimeoutMilliseconds))
+	db, err := openSQLiteDatabase(path)
 	if err != nil {
 		return nil, err
 	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			if closeErr := db.Close(); closeErr != nil {
+				if err == nil {
+					err = closeErr
+				} else {
+					err = errors.Join(err, closeErr)
+				}
+			}
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	store := &SQLiteStore{db: db, vaultRoot: vaultRoot}
+	store = &SQLiteStore{db: db, vaultRoot: vaultRoot, taskMeetingClock: clock}
 	if err := store.migrate(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
+	transferred = true
 	return store, nil
 }
 
@@ -621,7 +660,7 @@ func (s *SQLiteStore) SaveWorkstream(ctx context.Context, item domainworkstream.
 }
 
 func (s *SQLiteStore) ListWorkstreams(ctx context.Context, limit int) ([]domainworkstream.Workstream, error) {
-	return listSQLiteItems[domainworkstream.Workstream](ctx, s, "workstream", limit)
+	return listSQLiteUnmanaged[domainworkstream.Workstream](ctx, s, "workstream", "$.task_center_scope", "", nil, limit)
 }
 
 func (s *SQLiteStore) SaveGoal(ctx context.Context, item domainworkstream.Goal) error {
@@ -648,14 +687,20 @@ func (s *SQLiteStore) FindGoalByID(ctx context.Context, goalID string) (domainwo
 	if err := json.Unmarshal([]byte(payload), &item); err != nil {
 		return domainworkstream.Goal{}, false, err
 	}
+	if item.TaskPlan != nil {
+		return domainworkstream.Goal{}, false, nil
+	}
 	return item, true, nil
 }
 
 func (s *SQLiteStore) ListGoals(ctx context.Context, limit int) ([]domainworkstream.Goal, error) {
-	return listSQLiteItems[domainworkstream.Goal](ctx, s, "workstream_goal", limit)
+	return listSQLiteUnmanaged[domainworkstream.Goal](ctx, s, "workstream_goal", "$.task_plan", "", nil, limit)
 }
 
 func (s *SQLiteStore) SaveArtifact(ctx context.Context, item domainworkstream.Artifact) error {
+	if isTaskCenterInternalArtifactType(item.Type) {
+		return domainworkstream.ErrTaskPlanForbidden
+	}
 	if err := domainworkstream.ValidateArtifact(item); err != nil {
 		return err
 	}
@@ -663,18 +708,62 @@ func (s *SQLiteStore) SaveArtifact(ctx context.Context, item domainworkstream.Ar
 }
 
 func (s *SQLiteStore) ListArtifacts(ctx context.Context, limit int) ([]domainworkstream.Artifact, error) {
-	return listSQLiteItems[domainworkstream.Artifact](ctx, s, "artifact", limit)
+	where := `COALESCE(json_extract(payload, '$.artifact_type'), '') NOT IN (` + taskCenterInternalArtifactTypePlaceholders() + `)`
+	return listSQLiteUnmanaged[domainworkstream.Artifact](ctx, s, "artifact", "$.task_operation_receipt", where, taskCenterInternalArtifactTypeArgs(), limit)
 }
 
 func (s *SQLiteStore) SaveArtifactAnnotation(ctx context.Context, item domainworkstream.ArtifactAnnotation) error {
+	if s == nil || s.db == nil || ctx == nil {
+		return errors.New("workstream sqlite store is closed")
+	}
 	if err := domainworkstream.ValidateArtifactAnnotation(item); err != nil {
 		return err
+	}
+	reserved, err := isTaskCenterInternalArtifactID(ctx, s.db, item.ArtifactID)
+	if err != nil {
+		return err
+	}
+	if reserved {
+		return domainworkstream.ErrTaskPlanForbidden
 	}
 	return s.save(ctx, "artifact_annotation", "annotation_id", item.AnnotationID, "artifact_id", item.ArtifactID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListArtifactAnnotations(ctx context.Context, limit int) ([]domainworkstream.ArtifactAnnotation, error) {
-	return listSQLiteItems[domainworkstream.ArtifactAnnotation](ctx, s, "artifact_annotation", limit)
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("workstream sqlite store is closed")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `SELECT a.payload FROM artifact_annotation a
+		WHERE NOT EXISTS (
+			SELECT 1 FROM artifact protected
+			WHERE protected.artifact_id=a.artifact_id AND (
+				CASE WHEN json_valid(protected.payload) THEN COALESCE(json_extract(protected.payload, '$.artifact_type'), '') IN (` + taskCenterInternalArtifactTypePlaceholders() + `)
+				ELSE 1 END
+			)
+		) ORDER BY a.rowid DESC LIMIT ?`
+	args := taskCenterInternalArtifactTypeArgs()
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domainworkstream.ArtifactAnnotation, 0, limit)
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var item domainworkstream.ArtifactAnnotation
+		if err := json.Unmarshal([]byte(payload), &item); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *SQLiteStore) SaveSteeringItem(ctx context.Context, item domainworkstream.SteeringItem) error {
@@ -713,6 +802,9 @@ func (s *SQLiteStore) ListVaultUpdateLogs(ctx context.Context, limit int) ([]dom
 func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, secondaryColumn string, secondaryValue string, createdAt string, item any) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("workstream sqlite store is closed")
+	}
+	if table == "workstream" || table == "workstream_goal" || table == "artifact" {
+		return s.saveLegacyTaskCenterRecord(ctx, table, idColumn, id, secondaryColumn, secondaryValue, createdAt, item)
 	}
 	payload, err := json.Marshal(item)
 	if err != nil {
