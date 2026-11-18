@@ -413,6 +413,7 @@ type Dependencies struct {
 	agentHeartbeat               *agentheartbeat.Scheduler
 	agentRoutine                 *agentRoutineRuntime
 	gameBridgeStore              *viewer.GameBridgeStore
+	gameTaskAdmission            *gameTaskRuntimeAdmission
 	agentAdmission               conversationruntime.ActorAdmission
 	agentHeartbeatStarted        bool
 	agentHeartbeatCancel         context.CancelFunc
@@ -1350,7 +1351,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		conversationRuntime.Manager,
 		reportPath,
 		gamePlayProvider,
-		newGameAgentDecisionService(agents),
+		newGameAgentDecisionService(agents, llmRuntime.Primary.GameTurnProviders, cfg.Prompts.CharacterPrompts),
 	)
 	projectionRestoreContext, cancelProjectionRestore := context.WithTimeout(context.Background(), canonicalEventProjectionRestoreTimeout)
 	projectionRestoreErr := deps.eventRelay.RestoreCanonicalProjection(projectionRestoreContext)

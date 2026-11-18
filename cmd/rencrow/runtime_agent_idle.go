@@ -116,12 +116,13 @@ func newHeartbeatGameDecisionProvider(
 }
 
 func (p heartbeatGameDecisionProvider) DecideGameTurn(ctx context.Context, request viewer.GameAgentDecisionRequest) (viewer.GameBrainDecision, error) {
+	auth, taskAuthorized := gameTaskTurnAuthorizationFromContext(ctx)
 	var admission conversationruntime.ActorAdmission
 	if p.admission != nil {
 		admission = p.admission()
 	}
 	if admission == nil {
-		if p.admissionNeeded {
+		if p.admissionNeeded || taskAuthorized {
 			return viewer.GameBrainDecision{}, fmt.Errorf("heartbeat actor admission is required for game persona %q", request.Persona)
 		}
 		return p.provider.DecideGameTurn(ctx, request)
@@ -130,7 +131,15 @@ func (p heartbeatGameDecisionProvider) DecideGameTurn(ctx context.Context, reque
 	actor := strings.ToLower(strings.TrimSpace(request.Persona))
 	var release func()
 	var err error
-	if gameAdmission, ok := admission.(interface {
+	if taskAuthorized {
+		gameAdmission, ok := admission.(interface {
+			AcquireGameTaskTurn(context.Context, string, domaintask.Priority, string, string, string) (func(), error)
+		})
+		if !ok {
+			return viewer.GameBrainDecision{}, fmt.Errorf("GAME Task group admission is required for actor %q", actor)
+		}
+		release, err = gameAdmission.AcquireGameTaskTurn(ctx, actor, domaintask.PriorityLow, auth.GameID, auth.LaunchKey, auth.SessionID)
+	} else if gameAdmission, ok := admission.(interface {
 		AcquireGameTurn(context.Context, string, domaintask.Priority, string) (func(), error)
 	}); ok {
 		release, err = gameAdmission.AcquireGameTurn(ctx, actor, domaintask.PriorityLow, request.GameID)

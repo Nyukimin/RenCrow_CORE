@@ -40,12 +40,36 @@ func (p *idleGameDecisionProvider) DecideGameTurn(ctx context.Context, request v
 }
 
 type idleGameAdmission struct {
-	mu       sync.Mutex
-	actor    string
-	priority domaintask.Priority
-	acquires int
-	releases int
-	err      error
+	mu           sync.Mutex
+	actor        string
+	priority     domaintask.Priority
+	acquires     int
+	taskAcquires int
+	gameID       string
+	launchKey    string
+	sessionID    string
+	releases     int
+	err          error
+}
+
+func (a *idleGameAdmission) AcquireGameTaskTurn(_ context.Context, actor string, priority domaintask.Priority, gameID, launchKey, sessionID string) (func(), error) {
+	a.mu.Lock()
+	a.actor = actor
+	a.priority = priority
+	a.gameID = gameID
+	a.launchKey = launchKey
+	a.sessionID = sessionID
+	a.taskAcquires++
+	err := a.err
+	a.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return func() {
+		a.mu.Lock()
+		a.releases++
+		a.mu.Unlock()
+	}, nil
 }
 
 func (a *idleGameAdmission) Acquire(_ context.Context, actor string, priority domaintask.Priority) (func(), error) {
@@ -150,6 +174,23 @@ func TestHeartbeatGameDecisionProviderReservesTheRequestedTurnActor(t *testing.T
 	}
 	if next.calls != 1 || next.request.Persona != "Shiro" || next.request.GameID != "nethack" {
 		t.Fatalf("delegate calls=%d request=(persona %q game %q); want original request once", next.calls, next.request.Persona, next.request.GameID)
+	}
+}
+
+func TestHeartbeatGameDecisionProviderUsesBoundTaskGroupIdentity(t *testing.T) {
+	next := &idleGameDecisionProvider{decision: viewer.GameBrainDecision{AgentID: "aka", Persona: "aka", Intent: "search", Confidence: 0.9}}
+	admission := &idleGameAdmission{}
+	provider := newHeartbeatGameDecisionProvider(next, func() conversationruntime.ActorAdmission { return admission }, true)
+	ctx := withGameTaskTurnAuthorization(context.Background(), gameTaskTurnAuthorization{
+		LaunchKey: "task-key", GameID: "herzog_zwei", SessionID: "hz_session_1",
+	})
+	request := viewer.GameAgentDecisionRequest{Persona: "aka", GameID: "herzog_zwei", SessionID: "hz_session_1"}
+	if _, err := provider.DecideGameTurn(ctx, request); err != nil {
+		t.Fatalf("DecideGameTurn() error=%v", err)
+	}
+	if admission.taskAcquires != 1 || admission.acquires != 0 || admission.actor != "aka" || admission.gameID != "herzog_zwei" ||
+		admission.launchKey != "task-key" || admission.sessionID != "hz_session_1" || admission.priority != domaintask.PriorityLow || admission.releases != 1 {
+		t.Fatalf("group admission=%+v; want exact Task key/session and one released per-turn lease", admission)
 	}
 }
 

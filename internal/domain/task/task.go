@@ -68,6 +68,7 @@ const (
 	RouteCODE2      Route = "CODE2"
 	RouteCODE3      Route = "CODE3"
 	RouteCODE4      Route = "CODE4"
+	RouteGAME       Route = "GAME"
 )
 
 type ProductionStage string
@@ -409,6 +410,8 @@ type SharedRoleContext struct {
 	TaskID                      modulecore.TaskID            `json:"task_id"`
 	PrivateText                 *PrivateTextCheckpoint       `json:"private_text,omitempty"`
 	AutonomousDecision          *AutonomousDecision          `json:"autonomous_decision,omitempty"`
+	GameSpec                    *GameSpec                    `json:"game_spec,omitempty"`
+	GameProgress                *GameProgress                `json:"game_progress,omitempty"`
 	UserIntent                  string                       `json:"user_intent,omitempty"`
 	ModuleID                    string                       `json:"module_id,omitempty"`
 	ModuleRoot                  string                       `json:"module_root,omitempty"`
@@ -676,7 +679,7 @@ func ValidPriority(priority Priority) bool {
 func ValidRoute(route Route) bool {
 	switch route {
 	case RouteCode, RouteResearch, RouteOperations, RouteGeneral,
-		RouteCHAT, RoutePLAN, RouteANALYZE, RouteWILD, RouteCODE1, RouteCODE2, RouteCODE3, RouteCODE4:
+		RouteCHAT, RoutePLAN, RouteANALYZE, RouteWILD, RouteCODE1, RouteCODE2, RouteCODE3, RouteCODE4, RouteGAME:
 		return true
 	default:
 		return false

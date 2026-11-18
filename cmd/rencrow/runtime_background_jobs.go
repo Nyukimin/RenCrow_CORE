@@ -20,6 +20,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/sourcefetcher"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -607,7 +608,7 @@ type superAgentRunQueueTaskOwner interface {
 	superagentapp.InterruptedRunRecoveryTaskOwner
 }
 
-func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, taskOwner superAgentRunQueueTaskOwner, reporter backgroundJobFailureReporter, privateRunner ...*privateTaskRunQueueRunner) *superagentapp.RunQueueScheduler {
+func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, taskOwner superAgentRunQueueTaskOwner, reporter backgroundJobFailureReporter, gameAdmission *gameTaskRuntimeAdmission, privateRunner ...*privateTaskRunQueueRunner) *superagentapp.RunQueueScheduler {
 	if cfg == nil || (!cfg.SuperAgentHarness.RunQueueSchedulerEnabled && !cfg.Heartbeat.AgentSchedulerEnabled) {
 		return nil
 	}
@@ -646,17 +647,30 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 			if err != nil {
 				return nil, fmt.Errorf("list waiting Tasks for actor %s: %w", actor, err)
 			}
-			candidates := make([]domaintask.Task, 0, len(queued)+len(waiting))
+			running, err := listOwner.List(ctx, domaintask.Filter{Assignee: actor, Status: domaintask.StatusRunning, Route: domaintask.RouteGAME, Limit: limit})
+			if err != nil {
+				return nil, fmt.Errorf("list running GAME Tasks for actor %s: %w", actor, err)
+			}
+			candidates := make([]domaintask.Task, 0, len(queued)+len(waiting)+len(running))
 			candidates = append(candidates, queued...)
+			candidates = append(candidates, running...)
 			for _, task := range waiting {
-				if task.WaitingReason == domaintask.PrivateTextWaitingReason {
+				if task.WaitingReason == domaintask.PrivateTextWaitingReason || task.WaitingReason == domaintask.GameTaskWaitingReason {
 					candidates = append(candidates, task)
 				}
 			}
 			return candidates, nil
 		}
 	}
-	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter, cfg.Heartbeat.AgentSchedulerEnabled, privateRunner...), taskOwner, superagentapp.RunQueueSchedulerOptions{
+	var gameRunner *gameTaskRunQueueRunner
+	if manager, ok := taskOwner.(*taskmanager.Manager); ok {
+		gameRunner, err = newGameTaskRunQueueRunner(manager, cfg.Games.ObserverURL, gameAdmission)
+		if err != nil {
+			log.Printf("WARN: GAME Task queue controller unavailable: %v", err)
+			reporter.Failed("game_task_queue", err, "")
+		}
+	}
+	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessorWithGameRunner(processor, reporter, cfg.Heartbeat.AgentSchedulerEnabled, gameRunner, privateRunner...), taskOwner, superagentapp.RunQueueSchedulerOptions{
 		Interval: interval, ClaimLimit: claimLimit, ActorTaskLister: actorTaskLister,
 	})
 	if !cfg.Heartbeat.AgentSchedulerEnabled {
@@ -667,6 +681,10 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 }
 
 func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter, heartbeatSchedulerEnabled bool, privateRunner ...*privateTaskRunQueueRunner) superagentapp.RunQueueProcessorFunc {
+	return newSuperAgentRunQueueProcessorWithGameRunner(processor, reporter, heartbeatSchedulerEnabled, nil, privateRunner...)
+}
+
+func newSuperAgentRunQueueProcessorWithGameRunner(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter, heartbeatSchedulerEnabled bool, gameRunner *gameTaskRunQueueRunner, privateRunner ...*privateTaskRunQueueRunner) superagentapp.RunQueueProcessorFunc {
 	return superagentapp.RunQueueProcessorFunc(func(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		fail := func(err error) (string, error) {
 			detail := fmt.Sprintf("queue_item_id=%s task_id=%s run_id=%s workstream_id=%s action=%s", string(item.QueueItemID), item.TaskID, item.RunID, strings.TrimSpace(item.WorkstreamID), strings.TrimSpace(item.Action))
@@ -683,8 +701,20 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 			return fail(fmt.Errorf("run_id must be canonical: %w", err))
 		}
 		action := strings.TrimSpace(item.Action)
-		if action != "resume" && action != "process_message" && action != "chat" {
+		if action != "resume" && action != "process_message" && action != "chat" && action != "game" {
 			return fail(fmt.Errorf("unsupported run queue action: %s", action))
+		}
+		if action == "game" {
+			if !domainsuperagent.IsGameTaskQueueItem(item) {
+				return fail(errors.New("GAME run queue intent is malformed"))
+			}
+			if !heartbeatSchedulerEnabled {
+				return fail(errors.New("GAME Task execution requires the agent scheduler"))
+			}
+			if gameRunner == nil {
+				return fail(errors.New("GAME Task controller is unavailable"))
+			}
+			return gameRunner.process(ctx, item)
 		}
 		if strings.HasPrefix(item.IdempotencyKey, domainsuperagent.RunQueueIntentPrivateTextResumePrefix) && !domainsuperagent.IsPrivateTextResumeQueueItem(item) {
 			return fail(errors.New("private text checkpoint resume queue intent is malformed"))

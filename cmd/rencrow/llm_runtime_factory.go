@@ -24,6 +24,7 @@ type primaryLLMProviders struct {
 	Conversation            *llmmiddleware.ConversationProvider
 	BoardChats              map[string]*llmmiddleware.ConversationProvider
 	PrivateTextProviders    map[string]llm.LLMProvider
+	GameTurnProviders       map[string]llm.LLMProvider
 	Readback                map[string]*llmmiddleware.ConversationProvider
 	GatewayWriteDiagnostics map[string]modulellm.GatewayRequestWriteDiagnosticsProvider
 }
@@ -81,10 +82,16 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 	// providers available independently of BOARD configuration so the heartbeat
 	// scheduler can run private Tasks while BOARD is disabled or unavailable.
 	privateTextProviders := make(map[string]llm.LLMProvider, len(privateTextWorkerActorIDs))
+	gameTurnProviders := make(map[string]llm.LLMProvider, len(gameTurnActorIDs))
 	for _, actorID := range privateTextWorkerActorIDs {
 		provider := gatewayProvider("board-chat", actorID+"-board-chat", actorID, false)
 		budgeted := llmmiddleware.NewContextBudgetProvider(provider, "private-text-"+actorID, contextBudgetPolicyForConfig(cfg), recorder)
 		privateTextProviders[actorID] = privateTaskTextOnlyLLMProvider{inner: llmmiddleware.NewDateTimeProvider(budgeted)}
+	}
+	for _, actorID := range gameTurnActorIDs {
+		provider := gatewayProvider("board-chat", actorID+"-board-chat", actorID, false)
+		budgeted := llmmiddleware.NewContextBudgetProvider(provider, "game-turn-"+actorID, contextBudgetPolicyForConfig(cfg), recorder)
+		gameTurnProviders[actorID] = llmmiddleware.NewDateTimeProvider(budgeted)
 	}
 	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
 	return primaryLLMProviders{
@@ -97,6 +104,7 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 			gatewayProvider("chat", "mio", "mio", false), "mio-conversation", contextBudgetPolicyForConfig(cfg)),
 		BoardChats:           boardChats,
 		PrivateTextProviders: privateTextProviders,
+		GameTurnProviders:    gameTurnProviders,
 		Readback: map[string]*llmmiddleware.ConversationProvider{
 			"shiro":  conversationProvider("shiro", "chatworker", "shiro"),
 			"kuro":   conversationProvider("kuro", "heavy", "kuro"),

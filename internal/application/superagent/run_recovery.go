@@ -2,6 +2,7 @@ package superagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -39,6 +40,10 @@ type interruptedRunRecoveryCandidate struct {
 	projection domainsuperagent.AgentRun
 	task       domaintask.Task
 	run        domaintask.Run
+}
+
+type runQueueGameTaskRecoveryOwner interface {
+	GetGameTask(context.Context, modulecore.TaskID) (domaintask.Task, domaintask.GameSpec, domaintask.GameProgress, error)
 }
 
 // RecoverInterruptedAgentRuns rebuilds only a deterministic resume intent from
@@ -191,6 +196,36 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 			// and the projection agree that the exact execution was running.
 			continue
 		}
+		if candidate.task.Route == domaintask.RouteGAME {
+			gameOwner, ok := owner.(runQueueGameTaskRecoveryOwner)
+			if !ok {
+				return queued, blocked, errors.New("GAME Task restart recovery owner is unavailable")
+			}
+			task, spec, progress, gameErr := gameOwner.GetGameTask(ctx, candidate.task.TaskID)
+			if gameErr != nil {
+				return queued, blocked, fmt.Errorf("read GAME Task restart checkpoint %s: %w", candidate.task.TaskID, gameErr)
+			}
+			if task.TaskID != candidate.task.TaskID || task.Assignee != candidate.run.Assignee ||
+				(progress.Status != domaintask.GameExecutionPrepared && progress.Status != domaintask.GameExecutionLaunching && progress.Status != domaintask.GameExecutionRunning && progress.Status != domaintask.GameExecutionUnknown) ||
+				progress.ControllerRunID != candidate.run.RunID || progress.ControllerQueueItemID == "" || progress.SpecDigest != spec.Digest() {
+				return queued, blocked, fmt.Errorf("GAME Task %s has no exact restart-adoptable controller checkpoint", candidate.task.TaskID)
+			}
+			checkpointKey := domainsuperagent.GameResumeQueueKey(candidate.run.RunID)
+			if existing, ok := queueByCheckpointID[checkpointKey]; ok {
+				expected := gameProcessRestartResumeQueueItem(candidate, spec, existing.CreatedAt)
+				if !gameProcessRestartQueueIntentMatches(existing, expected) {
+					return queued, blocked, fmt.Errorf("GAME process-restart queue intent mismatch for Run %s", candidate.run.RunID)
+				}
+				continue
+			}
+			item := gameProcessRestartResumeQueueItem(candidate, spec, now)
+			if err := store.SaveRunQueueItem(ctx, item); err != nil {
+				return queued, blocked, fmt.Errorf("save GAME process-restart resume intent: %w", err)
+			}
+			queueByCheckpointID[checkpointKey] = item
+			queued++
+			continue
+		}
 		if !hasDurableCheckpoint(candidate.projection) {
 			blockedTask, blockErr := owner.Block(ctx, candidate.projection.TaskID, interruptedRunCheckpointUnavailable)
 			if blockErr != nil {
@@ -232,6 +267,25 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		queued++
 	}
 	return queued, blocked, nil
+}
+
+func gameProcessRestartResumeQueueItem(candidate interruptedRunRecoveryCandidate, spec domaintask.GameSpec, createdAt time.Time) domainsuperagent.RunQueueItem {
+	return domainsuperagent.RunQueueItem{
+		QueueItemID: modulecore.NewQueueItemID(), TaskID: candidate.task.TaskID,
+		PredecessorRunID: candidate.run.RunID, CheckpointDigest: spec.Digest(),
+		RunStartReason: domaintask.RunStartReasonProcessRestartResume,
+		WorkstreamID:   string(candidate.task.WorkstreamID), Goal: domainsuperagent.RunQueueGoalGameTask,
+		Action: "game", Status: "queued", Priority: taskPriorityRank(candidate.task.Priority),
+		IdempotencyKey: domainsuperagent.GameResumeQueueKey(candidate.run.RunID), CreatedAt: createdAt.UTC(),
+	}
+}
+
+func gameProcessRestartQueueIntentMatches(stored, expected domainsuperagent.RunQueueItem) bool {
+	return domainsuperagent.ValidateRunQueueItem(stored) == nil && domainsuperagent.IsGameTaskQueueItem(stored) &&
+		stored.TaskID == expected.TaskID && stored.PredecessorRunID == expected.PredecessorRunID &&
+		stored.CheckpointDigest == expected.CheckpointDigest && stored.RunStartReason == expected.RunStartReason &&
+		stored.WorkstreamID == expected.WorkstreamID && stored.Goal == expected.Goal && stored.Action == expected.Action &&
+		stored.Priority == expected.Priority && stored.IdempotencyKey == expected.IdempotencyKey && stored.CreatedAt.Equal(expected.CreatedAt)
 }
 
 func interruptedRunResumeCheckpointKey(projection domainsuperagent.AgentRun) string {

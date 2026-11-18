@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,8 +20,11 @@ const (
 )
 
 var (
-	ErrSchedulerClosed = errors.New("agent heartbeat scheduler is closed")
-	ErrUnknownActor    = errors.New("agent is not registered with the heartbeat scheduler")
+	ErrSchedulerClosed   = errors.New("agent heartbeat scheduler is closed")
+	ErrUnknownActor      = errors.New("agent is not registered with the heartbeat scheduler")
+	ErrGameActorReserved = errors.New("actor is reserved by an active GAME Task")
+	ErrGameGroupReleased = errors.New("GAME Task actor reservation was released")
+	ErrGameGroupMissing  = errors.New("GAME Task actor reservation is unavailable")
 )
 
 // Work describes a task discovered without claiming or executing it. Run owns
@@ -34,7 +38,20 @@ type Work struct {
 	// Participants adds actors to reserve with idle Work. It is ignored for
 	// BOARD and private work.
 	Participants []string
-	Run          func(context.Context, <-chan struct{}) error
+	// GameTaskControllerID marks a short, non-cognitive controller step. The
+	// controller may reconcile its own GAME Task without occupying its
+	// assignee's LLM/heartbeat actor slot.
+	GameTaskControllerID string
+	Run                  func(context.Context, <-chan struct{}) error
+}
+
+// GameGroupReservation is the durable Task-derived admission identity that
+// the heartbeat scheduler restores before it exposes actor work.
+type GameGroupReservation struct {
+	LaunchKey string
+	GameID    string
+	SessionID string
+	Actors    []string
 }
 
 // ActivityKind is a fixed, safe category for a live activity projection.
@@ -96,8 +113,11 @@ type Scheduler struct {
 }
 
 type agentState struct {
-	actor  string
-	active *reservation
+	actor                   string
+	active                  *reservation
+	gameGroup               *gameGroupReservation
+	gameController          *gameControllerReservation
+	pendingGameControllerID string
 
 	waiters []*waiter
 
@@ -130,11 +150,29 @@ type reservation struct {
 	source           workSource
 	activityKind     ActivityKind
 	gameID           string
+	gameLaunchKey    string
+	gameSessionID    string
+	gameTaskTurn     bool
 	visibilityTaskID modulecore.TaskID
 	workID           string
 	stop             chan struct{}
 	stopClosed       bool
 	cancel           context.CancelFunc
+}
+
+type gameGroupReservation struct {
+	launchKey string
+	gameID    string
+	sessionID string
+	actors    []string
+	closing   bool
+}
+
+type gameControllerReservation struct {
+	launchKey  string
+	stop       chan struct{}
+	stopClosed bool
+	cancel     context.CancelFunc
 }
 
 type workSource uint8
@@ -147,12 +185,16 @@ const (
 )
 
 type waiter struct {
-	priority     domaintask.Priority
-	order        uint64
-	activityKind ActivityKind
-	gameID       string
-	ready        chan struct{}
-	lease        *reservation
+	priority      domaintask.Priority
+	order         uint64
+	activityKind  ActivityKind
+	gameID        string
+	gameLaunchKey string
+	gameSessionID string
+	gameTaskTurn  bool
+	ready         chan struct{}
+	lease         *reservation
+	err           error
 }
 
 type reservationContextKey struct{}
@@ -451,17 +493,415 @@ func (s *Scheduler) Wait(ctx context.Context) error {
 // a cooperative stop of lower-priority background work, but owns the slot only
 // after that work has returned and finalized.
 func (s *Scheduler) Acquire(ctx context.Context, actor string, priority domaintask.Priority) (func(), error) {
-	return s.acquire(ctx, actor, priority, "", "")
+	return s.acquire(ctx, actor, priority, "", "", "", "", false)
 }
 
 // AcquireGameTurn acquires the actor's existing scheduler slot for one game
 // decision. Reentrant calls temporarily overlay the current reservation and
 // restore its previous activity when released.
 func (s *Scheduler) AcquireGameTurn(ctx context.Context, actor string, priority domaintask.Priority, gameID string) (func(), error) {
-	return s.acquire(ctx, actor, priority, ActivityKindGame, gameID)
+	return s.acquire(ctx, actor, priority, ActivityKindGame, gameID, "", "", false)
 }
 
-func (s *Scheduler) acquire(ctx context.Context, actor string, priority domaintask.Priority, activityKind ActivityKind, gameID string) (func(), error) {
+// AcquireGameTaskTurn admits a decision only for the exact group reservation
+// and GAMES session already bound to its durable Task launch receipt.
+func (s *Scheduler) AcquireGameTaskTurn(
+	ctx context.Context,
+	actor string,
+	priority domaintask.Priority,
+	gameID string,
+	launchKey string,
+	sessionID string,
+) (func(), error) {
+	return s.acquire(ctx, actor, priority, ActivityKindGame, gameID, launchKey, sessionID, true)
+}
+
+// TryReserveGameGroup atomically reserves every player actor for one GAME Task.
+// The group is a logical admission claim and does not occupy any actor's short
+// work slot. Prepared Tasks call this only after a fresh active-session check.
+func (s *Scheduler) TryReserveGameGroup(ctx context.Context, launchKey, gameID string, actors []string) (bool, error) {
+	if ctx == nil {
+		return false, errors.New("GAME group reservation context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	group, err := newGameGroupReservation(launchKey, gameID, "", actors)
+	if err != nil {
+		return false, err
+	}
+	if s == nil {
+		return false, ErrSchedulerClosed
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false, ErrSchedulerClosed
+	}
+	var wakeCtx context.Context
+	wakeTick := s.tickGeneration
+	allExisting := true
+	for _, actor := range group.actors {
+		state := s.agents[actor]
+		if state == nil {
+			s.mu.Unlock()
+			return false, fmt.Errorf("GAME group actor %q is not registered", actor)
+		}
+		if state.gameGroup != nil {
+			if sameGameGroup(*state.gameGroup, *group) {
+				continue
+			}
+			s.mu.Unlock()
+			return false, nil
+		}
+		allExisting = false
+		if state.active != nil || len(state.waiters) != 0 ||
+			(state.gameController != nil && state.gameController.launchKey != launchKey) {
+			s.mu.Unlock()
+			return false, nil
+		}
+	}
+	if allExisting {
+		s.mu.Unlock()
+		return true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return false, err
+	}
+	for _, actor := range group.actors {
+		if s.agents[actor].gameGroup != nil {
+			s.mu.Unlock()
+			return false, nil
+		}
+	}
+	for _, actor := range group.actors {
+		s.agents[actor].gameGroup = group
+		s.agents[actor].pendingGameControllerID = launchKey
+	}
+	if s.started && s.startCtx != nil {
+		wakeCtx = s.startCtx
+	} else {
+		for _, actor := range group.actors {
+			s.agents[actor].pendingWake = true
+		}
+	}
+	s.signalChangedLocked()
+	s.mu.Unlock()
+	if wakeCtx != nil {
+		for _, actor := range group.actors {
+			s.kickScanMode(wakeCtx, actor, wakeTick, false)
+		}
+	}
+	return true, nil
+}
+
+// RestoreGameGroups installs Task-derived launching/running/unknown groups
+// before scheduler Start or request admission. The restore is all-or-none.
+func (s *Scheduler) RestoreGameGroups(groups []GameGroupReservation) error {
+	if s == nil {
+		return ErrSchedulerClosed
+	}
+	prepared := make([]*gameGroupReservation, 0, len(groups))
+	claimed := make(map[string]string)
+	byKey := make(map[string]*gameGroupReservation, len(groups))
+	for _, value := range groups {
+		group, err := newGameGroupReservation(value.LaunchKey, value.GameID, value.SessionID, value.Actors)
+		if err != nil {
+			return err
+		}
+		if prior := byKey[group.launchKey]; prior != nil {
+			if !sameGameGroup(*prior, *group) || prior.sessionID != group.sessionID {
+				return fmt.Errorf("launch key %q has conflicting restored GAME groups", group.launchKey)
+			}
+			continue
+		}
+		byKey[group.launchKey] = group
+		for _, actor := range group.actors {
+			if prior, exists := claimed[actor]; exists && prior != group.launchKey {
+				return fmt.Errorf("actor %q has conflicting restored GAME groups", actor)
+			}
+			claimed[actor] = group.launchKey
+		}
+		prepared = append(prepared, group)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.started {
+		return errors.New("GAME groups must be restored before scheduler start")
+	}
+	for actor := range claimed {
+		state := s.agents[actor]
+		if state == nil {
+			return fmt.Errorf("restored GAME group actor %q is not registered", actor)
+		}
+		if state.active != nil || len(state.waiters) != 0 || state.scanning || state.gameGroup != nil || state.gameController != nil {
+			return fmt.Errorf("restored GAME group actor %q is already admitted", actor)
+		}
+	}
+	for _, group := range prepared {
+		for _, actor := range group.actors {
+			s.agents[actor].gameGroup = group
+			s.agents[actor].pendingGameControllerID = group.launchKey
+		}
+	}
+	s.signalChangedLocked()
+	return nil
+}
+
+// BindGameGroup fixes the receipt session ID after the first exact keyed GAMES
+// response. It is idempotent only for the same session.
+func (s *Scheduler) BindGameGroup(launchKey, sessionID string) error {
+	if strings.TrimSpace(launchKey) == "" || strings.TrimSpace(launchKey) != launchKey ||
+		strings.TrimSpace(sessionID) == "" || strings.TrimSpace(sessionID) != sessionID {
+		return errors.New("GAME group launch key and session ID are required")
+	}
+	if s == nil {
+		return ErrSchedulerClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrSchedulerClosed
+	}
+	var group *gameGroupReservation
+	for _, state := range s.agents {
+		if state.gameGroup != nil && state.gameGroup.launchKey == launchKey {
+			group = state.gameGroup
+			break
+		}
+	}
+	if group == nil {
+		return errors.New("GAME group reservation is unavailable")
+	}
+	if group.sessionID != "" && group.sessionID != sessionID {
+		return errors.New("GAME group is already bound to a different GAMES session")
+	}
+	group.sessionID = sessionID
+	for _, actor := range group.actors {
+		if state := s.agents[actor]; state != nil {
+			s.grantNextLocked(state)
+		}
+	}
+	s.signalChangedLocked()
+	return nil
+}
+
+// MarkGameGroupClosing fences new decisions after the durable receipt has
+// reached terminal state and before Task finalization. Existing leases retain
+// their ownership until their callers release them.
+func (s *Scheduler) MarkGameGroupClosing(launchKey, sessionID string) error {
+	if strings.TrimSpace(launchKey) == "" || strings.TrimSpace(launchKey) != launchKey ||
+		strings.TrimSpace(sessionID) == "" || strings.TrimSpace(sessionID) != sessionID {
+		return errors.New("GAME group launch key and session ID are required")
+	}
+	if s == nil {
+		return ErrSchedulerClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrSchedulerClosed
+	}
+	for _, state := range s.agents {
+		group := state.gameGroup
+		if group == nil || group.launchKey != launchKey {
+			continue
+		}
+		if group.sessionID != sessionID {
+			return errors.New("GAME group session does not match terminal receipt")
+		}
+		group.closing = true
+		s.signalChangedLocked()
+		return nil
+	}
+	return ErrGameGroupMissing
+}
+
+// CanLaunchLegacyGame leaves existing legacy multi-session behavior intact,
+// while refusing a new manual/autoplay launch that overlaps a Task-owned group.
+func (s *Scheduler) CanLaunchLegacyGame(actors []string) (bool, error) {
+	if _, err := canonicalGameActors(actors); err != nil {
+		return false, err
+	}
+	if s == nil {
+		return false, ErrSchedulerClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false, ErrSchedulerClosed
+	}
+	for _, actor := range actors {
+		state := s.agents[actor]
+		if state == nil {
+			return false, fmt.Errorf("GAME group actor %q is not registered", actor)
+		}
+		if state.gameGroup != nil {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// ReleaseGameGroup drops all player actors only after the canonical Task
+// terminal receipt has committed. Bound game-turn waiters are rejected; a
+// non-cognitive Task controller is allowed to finish its acknowledgement.
+func (s *Scheduler) ReleaseGameGroup(launchKey string) error {
+	if strings.TrimSpace(launchKey) == "" || strings.TrimSpace(launchKey) != launchKey {
+		return errors.New("GAME group launch key is invalid")
+	}
+	if s == nil {
+		return ErrSchedulerClosed
+	}
+	var scans []struct {
+		actor string
+		tick  uint64
+	}
+	s.mu.Lock()
+	var scanCtx context.Context
+	if s.started && s.startCtx != nil {
+		scanCtx = s.startCtx
+	}
+	found := false
+	for _, state := range s.agents {
+		if state.gameGroup == nil || state.gameGroup.launchKey != launchKey {
+			continue
+		}
+		found = true
+		state.gameGroup = nil
+		state.pendingGameControllerID = ""
+		remaining := state.waiters[:0]
+		for _, waiting := range state.waiters {
+			if waiting.gameTaskTurn && waiting.gameLaunchKey == launchKey {
+				waiting.err = ErrGameGroupReleased
+				close(waiting.ready)
+				continue
+			}
+			remaining = append(remaining, waiting)
+		}
+		state.waiters = remaining
+		s.grantNextLocked(state)
+		scans = append(scans, struct {
+			actor string
+			tick  uint64
+		}{actor: state.actor, tick: state.seriesTick})
+		if scanCtx == nil {
+			state.pendingWake = true
+		}
+	}
+	s.signalChangedLocked()
+	s.mu.Unlock()
+	if !found {
+		return nil
+	}
+	if scanCtx != nil {
+		for _, scan := range scans {
+			s.kickScanMode(scanCtx, scan.actor, scan.tick, true)
+		}
+	}
+	return nil
+}
+
+func newGameGroupReservation(launchKey, gameID, sessionID string, actors []string) (*gameGroupReservation, error) {
+	actors, err := canonicalGameActors(actors)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(launchKey) == "" || strings.TrimSpace(launchKey) != launchKey ||
+		strings.TrimSpace(gameID) == "" || strings.TrimSpace(gameID) != gameID ||
+		(sessionID != "" && (strings.TrimSpace(sessionID) != sessionID || len(sessionID) > 256)) {
+		return nil, errors.New("GAME group identity is invalid")
+	}
+	return &gameGroupReservation{launchKey: launchKey, gameID: gameID, sessionID: sessionID, actors: actors}, nil
+}
+
+func canonicalGameActors(actors []string) ([]string, error) {
+	if len(actors) == 0 || len(actors) > 4 {
+		return nil, errors.New("GAME group must have between one and four actors")
+	}
+	canonical := append([]string(nil), actors...)
+	seen := make(map[string]struct{}, len(canonical))
+	for _, actor := range canonical {
+		if strings.TrimSpace(actor) == "" || strings.TrimSpace(actor) != actor {
+			return nil, errors.New("GAME group actor identity is invalid")
+		}
+		if _, duplicate := seen[actor]; duplicate {
+			return nil, fmt.Errorf("GAME group actor %q is duplicated", actor)
+		}
+		seen[actor] = struct{}{}
+	}
+	return canonical, nil
+}
+
+func sameGameGroup(left, right gameGroupReservation) bool {
+	if left.launchKey != right.launchKey || left.gameID != right.gameID || len(left.actors) != len(right.actors) {
+		return false
+	}
+	for index := range left.actors {
+		if left.actors[index] != right.actors[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func groupContainsActor(group *gameGroupReservation, actor string) bool {
+	if group == nil {
+		return false
+	}
+	for _, member := range group.actors {
+		if member == actor {
+			return true
+		}
+	}
+	return false
+}
+
+func closeGameControllerStop(controller *gameControllerReservation) {
+	if controller != nil && !controller.stopClosed {
+		close(controller.stop)
+		controller.stopClosed = true
+	}
+}
+
+func (s *Scheduler) gameControllerRunningLocked(launchKey string) bool {
+	for _, state := range s.agents {
+		if state.gameController != nil && state.gameController.launchKey == launchKey {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scheduler) gameGroupAllowsLocked(state *agentState, gameID, launchKey, sessionID string, gameTaskTurn bool) bool {
+	if state == nil || state.gameGroup == nil {
+		return !gameTaskTurn
+	}
+	group := state.gameGroup
+	if !gameTaskTurn || gameID == "" || launchKey == "" || sessionID == "" ||
+		group.gameID != gameID || group.launchKey != launchKey ||
+		group.closing || (group.sessionID != "" && group.sessionID != sessionID) {
+		return false
+	}
+	for _, actor := range group.actors {
+		if actor == state.actor {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scheduler) acquire(
+	ctx context.Context,
+	actor string,
+	priority domaintask.Priority,
+	activityKind ActivityKind,
+	gameID string,
+	gameLaunchKey string,
+	gameSessionID string,
+	gameTaskTurn bool,
+) (func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -474,7 +914,11 @@ func (s *Scheduler) acquire(ctx context.Context, actor string, priority domainta
 	if current, ok := ctx.Value(reservationContextKey{}).(*reservation); ok && current.scheduler == s && current.owns(actor) {
 		s.mu.Lock()
 		state := s.agents[actor]
-		if state != nil && state.active == current {
+		if state != nil && state.active == current && state.gameGroup != nil && !gameTaskTurn {
+			s.mu.Unlock()
+			return nil, ErrGameActorReserved
+		}
+		if state != nil && state.active == current && s.gameGroupAllowsLocked(state, gameID, gameLaunchKey, gameSessionID, gameTaskTurn) {
 			previousKind, previousGameID := current.activityKind, current.gameID
 			if activityKind != "" {
 				current.activityKind = activityKind
@@ -511,12 +955,30 @@ func (s *Scheduler) acquire(ctx context.Context, actor string, priority domainta
 		s.mu.Unlock()
 		return nil, ErrSchedulerClosed
 	}
-	s.cancelScanLocked(state)
+	if gameTaskTurn && (state.gameGroup == nil || !s.gameGroupAllowsLocked(state, gameID, gameLaunchKey, gameSessionID, true)) {
+		s.mu.Unlock()
+		return nil, ErrGameGroupMissing
+	}
+	if (state.gameGroup != nil || state.gameController != nil) && !gameTaskTurn && activityKind == ActivityKindGame {
+		s.mu.Unlock()
+		return nil, ErrGameActorReserved
+	}
+	groupReserved := state.gameGroup != nil || state.gameController != nil
+	if !groupReserved {
+		s.cancelScanLocked(state)
+	}
 	s.nextOrder++
-	w := &waiter{priority: priority, order: s.nextOrder, activityKind: activityKind, gameID: gameID, ready: make(chan struct{})}
+	w := &waiter{
+		priority: priority, order: s.nextOrder, activityKind: activityKind, gameID: gameID,
+		gameLaunchKey: gameLaunchKey, gameSessionID: gameSessionID, gameTaskTurn: gameTaskTurn,
+		ready: make(chan struct{}),
+	}
 	state.waiters = append(state.waiters, w)
 	sortWaiters(state.waiters)
-	s.requestStopLocked(state, priority)
+	if !groupReserved {
+		s.requestStopLocked(state, priority)
+	}
+	s.signalChangedLocked()
 	s.grantNextLocked(state)
 	s.mu.Unlock()
 
@@ -526,6 +988,7 @@ func (s *Scheduler) acquire(ctx context.Context, actor string, priority domainta
 		closed := s.closed
 		ctxErr := ctx.Err()
 		lease := w.lease
+		waiterErr := w.err
 		granted := lease != nil && state.active == lease
 		var rescan *rescanRequest
 		if granted && (closed || ctxErr != nil) {
@@ -533,6 +996,9 @@ func (s *Scheduler) acquire(ctx context.Context, actor string, priority domainta
 			s.signalChangedLocked()
 		}
 		s.mu.Unlock()
+		if waiterErr != nil {
+			return nil, waiterErr
+		}
 		if closed {
 			if rescan != nil {
 				s.kickRescanRequest(rescan)
@@ -573,7 +1039,7 @@ func (s *Scheduler) TryAcquire(ctx context.Context, actor string, priority domai
 	if current, ok := ctx.Value(reservationContextKey{}).(*reservation); ok && current.scheduler == s && current.owns(actor) {
 		s.mu.Lock()
 		state := s.agents[actor]
-		if state != nil && state.active == current {
+		if state != nil && state.active == current && state.gameGroup == nil {
 			s.mu.Unlock()
 			return func() {}, true, nil
 		}
@@ -592,7 +1058,7 @@ func (s *Scheduler) TryAcquire(ctx context.Context, actor string, priority domai
 	}
 	// An in-progress scan may be about to discover BOARD work. Yield to it
 	// instead of canceling it for this legacy low-priority execution.
-	if state.scanning || state.active != nil || len(state.waiters) != 0 {
+	if state.gameGroup != nil || state.gameController != nil || state.scanning || state.active != nil || len(state.waiters) != 0 {
 		s.mu.Unlock()
 		return nil, false, nil
 	}
@@ -622,7 +1088,7 @@ func (s *Scheduler) CanStartIdle(actorID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := s.agents[actorID]
-	return !s.closed && state != nil && state.active == nil && len(state.waiters) == 0
+	return !s.closed && state != nil && state.gameGroup == nil && state.gameController == nil && state.active == nil && len(state.waiters) == 0
 }
 
 // Select returns the highest-priority work, then the oldest item, then the
@@ -652,6 +1118,7 @@ func (s *Scheduler) kickScanMode(parent context.Context, actor string, tickGener
 	}
 	s.mu.Lock()
 	state := s.agents[actor]
+	groupControllerOnly := state != nil && state.gameGroup != nil
 	activePrivate := state != nil && state.active != nil && state.active.background && state.active.source == workSourcePrivate && !state.active.idle
 	if state == nil || s.closed || parent.Err() != nil {
 		s.mu.Unlock()
@@ -665,7 +1132,12 @@ func (s *Scheduler) kickScanMode(parent context.Context, actor string, tickGener
 			state.seriesSeen[workKey(state.active.source, state.active.workID)] = struct{}{}
 		}
 	}
-	if len(state.waiters) != 0 || (state.active != nil && !state.active.idle && !activePrivate) {
+	if state.gameController != nil {
+		s.mergeRescanLocked(state, parent, tickGeneration, false)
+		s.mu.Unlock()
+		return
+	}
+	if (!groupControllerOnly && len(state.waiters) != 0) || (state.active != nil && !state.active.idle && !activePrivate) {
 		s.mergeRescanLocked(state, parent, tickGeneration, allowIdle)
 		s.mu.Unlock()
 		return
@@ -687,7 +1159,7 @@ func (s *Scheduler) kickScanMode(parent context.Context, actor string, tickGener
 	}
 	scanCtx, cancel := context.WithCancel(parent)
 	requestedIdle := allowIdle
-	allowIdle = allowIdle && state.active == nil
+	allowIdle = allowIdle && state.active == nil && !groupControllerOnly
 	if state.active != nil && requestedIdle {
 		s.mergeRescanLocked(state, parent, tickGeneration, true)
 	}
@@ -703,10 +1175,10 @@ func (s *Scheduler) kickScanMode(parent context.Context, actor string, tickGener
 	state.pendingWake = false
 	s.signalChangedLocked()
 	s.mu.Unlock()
-	go s.scanActor(parent, scanCtx, actor, allowIdle, expectedActive, generation, tickGeneration)
+	go s.scanActor(parent, scanCtx, actor, allowIdle, expectedActive, groupControllerOnly, generation, tickGeneration)
 }
 
-func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, allowIdle bool, expectedActive *reservation, generation, tickGeneration uint64) {
+func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, allowIdle bool, expectedActive *reservation, groupControllerOnly bool, generation, tickGeneration uint64) {
 	defer func() {
 		var next context.Context
 		var nextTick uint64
@@ -733,7 +1205,17 @@ func (s *Scheduler) scanActor(parent, scanCtx context.Context, actor string, all
 	}()
 
 	boardOnly := expectedActive != nil
-	work, source := s.discover(scanCtx, actor, allowIdle, boardOnly)
+	var work Work
+	var source workSource
+	if groupControllerOnly {
+		if candidate, found, err := s.ask(s.sources.Private, scanCtx, actor); err != nil {
+			s.reportError(actor, "private", err, scanCtx)
+		} else if found {
+			work, source = candidate, workSourcePrivate
+		}
+	} else {
+		work, source = s.discover(scanCtx, actor, allowIdle, boardOnly)
+	}
 	if source == workSourceNone || parent.Err() != nil || scanCtx.Err() != nil {
 		return
 	}
@@ -837,6 +1319,43 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, s
 		s.mu.Unlock()
 		return
 	}
+	if work.GameTaskControllerID != "" {
+		group := state.gameGroup
+		if source != workSourcePrivate ||
+			(group != nil && (group.launchKey != work.GameTaskControllerID ||
+				state.pendingGameControllerID != work.GameTaskControllerID || !groupContainsActor(group, actor))) {
+			s.mu.Unlock()
+			return
+		}
+		if state.active != nil || (group == nil && len(state.waiters) != 0) ||
+			state.gameController != nil || s.gameControllerRunningLocked(work.GameTaskControllerID) {
+			s.mergeRescanLocked(state, parent, tickGeneration, false)
+			s.mu.Unlock()
+			return
+		}
+		runCtx, cancel := context.WithCancel(parent)
+		controller := &gameControllerReservation{
+			launchKey: work.GameTaskControllerID,
+			stop:      make(chan struct{}),
+			cancel:    cancel,
+		}
+		state.gameController = controller
+		state.pendingGameControllerID = work.GameTaskControllerID
+		if state.seriesSeen == nil {
+			state.seriesSeen = make(map[string]struct{})
+		}
+		markSeriesWork(state, source, work.ID)
+		s.signalChangedLocked()
+		s.mu.Unlock()
+		go s.runGameController(runCtx, actor, controller, work)
+		return
+	}
+	if state.gameGroup != nil || state.gameController != nil {
+		// Task-owned controller work bypasses this path; ordinary
+		// BOARD/private/idle work remains queued until its reservation ends.
+		s.mu.Unlock()
+		return
+	}
 	if expectedActive != nil {
 		s.mergeRescanLocked(state, parent, tickGeneration, false)
 		if source == workSourceBoard && len(state.waiters) == 0 && expectedActive.background && expectedActive.source == workSourcePrivate &&
@@ -885,6 +1404,40 @@ func (s *Scheduler) startWork(parent context.Context, actor string, work Work, s
 	go s.runWork(runCtx, lease, work)
 }
 
+func (s *Scheduler) runGameController(ctx context.Context, actor string, controller *gameControllerReservation, work Work) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.reportError(actor, "game-controller", fmt.Errorf("work %q panicked: %v", work.ID, recovered), nil)
+		}
+		if controller.cancel != nil {
+			controller.cancel()
+		}
+		s.mu.Lock()
+		state := s.agents[actor]
+		if state != nil && state.gameController == controller {
+			state.gameController = nil
+			if state.gameGroup != nil && state.gameGroup.launchKey == controller.launchKey {
+				state.pendingGameControllerID = controller.launchKey
+			} else {
+				state.pendingGameControllerID = ""
+			}
+			if !s.closed {
+				s.mergeRescanLocked(state, s.rescanContextLocked(context.Background()), state.seriesTick, false)
+			}
+			s.grantNextLocked(state)
+		}
+		next := s.takeRescanLocked(state, nil)
+		s.signalChangedLocked()
+		s.mu.Unlock()
+		s.kickRescanRequest(next)
+	}()
+	if err := work.Run(ctx, controller.stop); err != nil {
+		if runErr := ctx.Err(); runErr == nil || !errors.Is(err, runErr) {
+			s.reportError(actor, "game-controller", err, nil)
+		}
+	}
+}
+
 func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Work, generation, tickGeneration uint64) {
 	actors := make([]string, 1, len(work.Participants)+1)
 	actors[0] = actor
@@ -906,13 +1459,13 @@ func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Wo
 	// commit because an Acquire or another scan may race the bounded probes.
 	s.mu.Lock()
 	primary := s.agents[actor]
-	if primary == nil || s.closed || parent.Err() != nil || primary.scanGeneration != generation || primary.scanTick != tickGeneration || primary.active != nil || len(primary.waiters) != 0 {
+	if primary == nil || s.closed || parent.Err() != nil || primary.scanGeneration != generation || primary.scanTick != tickGeneration || primary.active != nil || primary.gameGroup != nil || primary.gameController != nil || len(primary.waiters) != 0 {
 		s.mu.Unlock()
 		return
 	}
 	for _, participant := range actors[1:] {
 		state := s.agents[participant]
-		if state == nil || state.active != nil || len(state.waiters) != 0 {
+		if state == nil || state.active != nil || state.gameGroup != nil || state.gameController != nil || len(state.waiters) != 0 {
 			s.mu.Unlock()
 			return
 		}
@@ -944,13 +1497,13 @@ func (s *Scheduler) startIdleGroup(parent context.Context, actor string, work Wo
 
 	s.mu.Lock()
 	primary = s.agents[actor]
-	if primary == nil || s.closed || parent.Err() != nil || primary.scanGeneration != generation || primary.scanTick != tickGeneration || primary.active != nil || len(primary.waiters) != 0 {
+	if primary == nil || s.closed || parent.Err() != nil || primary.scanGeneration != generation || primary.scanTick != tickGeneration || primary.active != nil || primary.gameGroup != nil || primary.gameController != nil || len(primary.waiters) != 0 {
 		s.mu.Unlock()
 		return
 	}
 	for _, participant := range actors[1:] {
 		state := s.agents[participant]
-		if state == nil || state.active != nil || len(state.waiters) != 0 {
+		if state == nil || state.active != nil || state.gameGroup != nil || state.gameController != nil || len(state.waiters) != 0 {
 			s.mu.Unlock()
 			return
 		}
@@ -1179,20 +1732,53 @@ func (s *Scheduler) grantNextLocked(state *agentState) {
 		return
 	}
 	sortWaiters(state.waiters)
-	w := state.waiters[0]
-	state.waiters = state.waiters[1:]
+	waiterIndex := -1
+	for index, candidate := range state.waiters {
+		if s.waiterEligibleLocked(state, candidate) {
+			waiterIndex = index
+			break
+		}
+	}
+	if waiterIndex < 0 {
+		return
+	}
+	w := state.waiters[waiterIndex]
+	state.waiters = append(state.waiters[:waiterIndex], state.waiters[waiterIndex+1:]...)
 	lease := &reservation{
-		scheduler:    s,
-		actor:        state.actor,
-		priority:     w.priority,
-		activityKind: w.activityKind,
-		gameID:       w.gameID,
-		stop:         make(chan struct{}),
+		scheduler:     s,
+		actor:         state.actor,
+		priority:      w.priority,
+		activityKind:  w.activityKind,
+		gameID:        w.gameID,
+		gameLaunchKey: w.gameLaunchKey,
+		gameSessionID: w.gameSessionID,
+		gameTaskTurn:  w.gameTaskTurn,
+		stop:          make(chan struct{}),
 	}
 	state.active = lease
 	w.lease = lease
 	close(w.ready)
 	s.signalChangedLocked()
+}
+
+func (s *Scheduler) waiterEligibleLocked(state *agentState, candidate *waiter) bool {
+	if candidate == nil {
+		return false
+	}
+	group := state.gameGroup
+	if group == nil {
+		return state.gameController == nil && !candidate.gameTaskTurn
+	}
+	if !candidate.gameTaskTurn || group.closing || group.sessionID == "" ||
+		candidate.gameLaunchKey != group.launchKey || candidate.gameSessionID != group.sessionID || candidate.gameID != group.gameID {
+		return false
+	}
+	for _, actor := range group.actors {
+		if actor == state.actor {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scheduler) requestStopLocked(state *agentState, priority domaintask.Priority) {
@@ -1249,6 +1835,12 @@ func (s *Scheduler) shutdown() {
 				state.active.cancel()
 			}
 		}
+		if state.gameController != nil {
+			closeGameControllerStop(state.gameController)
+			if state.gameController.cancel != nil {
+				state.gameController.cancel()
+			}
+		}
 	}
 	s.signalChangedLocked()
 	s.mu.Unlock()
@@ -1267,7 +1859,7 @@ func (s *Scheduler) cancelScanLocked(state *agentState) {
 
 func (s *Scheduler) drainedLocked() bool {
 	for _, state := range s.agents {
-		if state.scanning || state.active != nil {
+		if state.scanning || state.active != nil || state.gameController != nil {
 			return false
 		}
 	}
