@@ -23,7 +23,7 @@ lock_28791_owned="false"
 lock_28792_owned="false"
 
 source_manifest() {
-  (cd "$repo_root" && python3 test/e2e/browser/task_center_source_manifest.py)
+  (cd "$repo_root" && python3 scripts/task_center_source_manifest.py)
 }
 
 port_is_free() {

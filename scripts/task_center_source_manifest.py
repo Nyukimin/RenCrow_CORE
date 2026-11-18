@@ -52,7 +52,7 @@ GATE_FILES = (
     "go.sum",
     "package.json",
     "package-lock.json",
-    "test/e2e/browser/task_center_source_manifest.py",
+    "scripts/task_center_source_manifest.py",
     "test/e2e/browser/run_task_center_e2e.sh",
     "test/e2e/browser/task_center_live_e2e.mjs",
     "internal/adapter/viewer/task_center_browser.test.mjs",
@@ -86,7 +86,7 @@ def path_within(path: Path, root: Path) -> bool:
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[1]
     go_environment = subprocess.run(
         ["go", "env", "GOMOD", "GOOS", "GOARCH", "CGO_ENABLED", "GOVERSION"],
         cwd=root,
