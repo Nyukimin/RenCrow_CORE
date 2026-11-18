@@ -27,3 +27,18 @@ func TestTaskAndContextSnapshotsDeepCloneAutonomousMetadata(t *testing.T) {
 		t.Fatal("cloned context mutated the original autonomous metadata or slice")
 	}
 }
+
+func TestTaskContextSnapshotDeepClonesGameSpecAndProgress(t *testing.T) {
+	resultOK := true
+	contextValue := domaintask.SharedRoleContext{
+		GameSpec:     &domaintask.GameSpec{GameID: "survival_garden", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 120, Mode: "auto"},
+		GameProgress: &domaintask.GameProgress{Status: domaintask.GameExecutionRunning, ResultOK: &resultOK},
+	}
+	cloned := cloneTransactionContext(contextValue)
+	cloned.GameSpec.Personas[0] = "changed"
+	*cloned.GameProgress.ResultOK = false
+	cloned.GameProgress.Status = domaintask.GameExecutionFailed
+	if contextValue.GameSpec.Personas[0] != "aka" || !*contextValue.GameProgress.ResultOK || contextValue.GameProgress.Status != domaintask.GameExecutionRunning {
+		t.Fatal("cloned context mutated the original game task state")
+	}
+}

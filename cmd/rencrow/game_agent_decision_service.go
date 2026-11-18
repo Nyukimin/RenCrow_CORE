@@ -8,16 +8,20 @@ import (
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 type gameAgentDecisionService struct {
-	agents agentRuntime
+	agents      agentRuntime
+	actorAgents map[string]*domainagent.MioAgent
 }
 
 const gameAgentDecisionAttempts = 3
 const structuredGameDecisionMaxBytes = 16 * 1024
 
 var agentPlayableGameTitles = [...]string{"nethack", "survival_garden", "territory_commander", "herzog_zwei"}
+var gameTurnActorIDs = [...]string{"aka", "ao", "kin", "gin"}
 
 func supportedAgentGameIDs() []string {
 	return append([]string(nil), agentPlayableGameTitles[:]...)
@@ -32,8 +36,18 @@ func isSupportedAgentGameID(gameID string) bool {
 	return false
 }
 
-func newGameAgentDecisionService(agents agentRuntime) viewer.GameAgentDecisionProvider {
-	return &gameAgentDecisionService{agents: agents}
+func newGameAgentDecisionService(agents agentRuntime, actorProviders map[string]llm.LLMProvider, characterPrompts map[string]string) viewer.GameAgentDecisionProvider {
+	actorAgents := make(map[string]*domainagent.MioAgent, len(gameTurnActorIDs))
+	for _, actorID := range gameTurnActorIDs {
+		provider := actorProviders[actorID]
+		characterPrompt := strings.TrimSpace(characterPrompts[actorID])
+		if provider == nil || characterPrompt == "" {
+			continue
+		}
+		actorAgents[actorID] = domainagent.NewMioAgent(provider, nil, nil, nil, nil, nil).
+			WithViewerRecipientPrompts(map[string]string{actorID: characterPrompt})
+	}
+	return &gameAgentDecisionService{agents: agents, actorAgents: actorAgents}
 }
 
 func (s *gameAgentDecisionService) DecideGameTurn(ctx context.Context, request viewer.GameAgentDecisionRequest) (viewer.GameBrainDecision, error) {
@@ -82,6 +96,17 @@ func (s *gameAgentDecisionService) DecideGameTurn(ctx context.Context, request v
 		generateToken = func() (string, error) { return s.agents.Wild.DecideGameTurn(ctx, prompt) }
 		generateStructured = func(feedback string) (string, error) {
 			return s.agents.Wild.DecideStructuredGameTurn(ctx, structuredPromptWithFeedback(structuredPrompt, feedback))
+		}
+	case "aka", "ao", "kin", "gin":
+		actor := s.actorAgents[persona]
+		if actor == nil {
+			return viewer.GameBrainDecision{}, fmt.Errorf("Agent %q game cognition is unavailable", persona)
+		}
+		generateToken = func() (string, error) {
+			return actor.DecideGameTurn(ctx, prompt, persona)
+		}
+		generateStructured = func(feedback string) (string, error) {
+			return actor.DecideStructuredGameTurn(ctx, structuredPromptWithFeedback(structuredPrompt, feedback), persona)
 		}
 	default:
 		return viewer.GameBrainDecision{}, fmt.Errorf("unknown Agent %q", request.Persona)

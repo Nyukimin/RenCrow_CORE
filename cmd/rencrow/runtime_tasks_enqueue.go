@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -41,6 +42,7 @@ type taskEnqueueHandler struct {
 	queue                 taskEnqueueRunQueueStore
 	waker                 taskEnqueueSchedulerWaker
 	agentSchedulerEnabled bool
+	gameTaskMu            sync.Mutex
 }
 
 type taskEnqueueRequest struct {
@@ -134,6 +136,10 @@ func (h *taskEnqueueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAgentOpsError(w, http.StatusNotFound, "task_not_found")
 		return
 	}
+	if task.Route == domaintask.RouteGAME {
+		h.enqueueGameTask(w, r, task)
+		return
+	}
 
 	// Retries resolve before lifecycle eligibility checks so a claimed or
 	// completed item still returns the exact original receipt.
@@ -191,6 +197,89 @@ func (h *taskEnqueueHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.wakeActor(task.Assignee)
 	writeTaskEnqueueReceipt(w, stored, inserted)
+}
+
+func (h *taskEnqueueHandler) enqueueGameTask(w http.ResponseWriter, r *http.Request, task domaintask.Task) {
+	h.gameTaskMu.Lock()
+	defer h.gameTaskMu.Unlock()
+	existing, found, err := h.queue.FindRunQueueItemByTaskIntent(r.Context(), task.TaskID, domainsuperagent.RunQueueIntentGameTask)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusServiceUnavailable, "run_queue_unavailable")
+		return
+	}
+	if found {
+		h.wakeActor(task.Assignee)
+		writeTaskEnqueueReceipt(w, existing, false)
+		return
+	}
+	if !h.agentSchedulerEnabled {
+		writeAgentOpsError(w, http.StatusServiceUnavailable, "heartbeat_scheduler_disabled")
+		return
+	}
+	state, err := h.tasks.GetGameTaskState(r.Context(), task.TaskID)
+	if err != nil || state.Task.TaskID != task.TaskID || state.Task.OwnerID != h.ownerID || state.Task.Route != domaintask.RouteGAME ||
+		state.Task.Status != domaintask.StatusQueued || state.Progress.Status != domaintask.GameExecutionPrepared {
+		writeAgentOpsError(w, http.StatusConflict, "task_not_eligible")
+		return
+	}
+	reservations, err := h.tasks.ListGameTaskStates(r.Context())
+	if err != nil {
+		writeAgentOpsError(w, http.StatusServiceUnavailable, "game_task_reservations_unavailable")
+		return
+	}
+	for _, reservation := range reservations {
+		if reservation.Task.TaskID == task.TaskID {
+			continue
+		}
+		if gameTaskPersonasOverlap(state.Spec.Personas, reservation.Spec.Personas) {
+			writeAgentOpsError(w, http.StatusConflict, "game_actor_reserved")
+			return
+		}
+	}
+	runs, err := h.tasks.ListRuns(r.Context(), domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		writeAgentOpsError(w, http.StatusServiceUnavailable, "task_owner_unavailable")
+		return
+	}
+	if len(runs) != 0 {
+		writeAgentOpsError(w, http.StatusConflict, "task_not_eligible")
+		return
+	}
+	item := domainsuperagent.RunQueueItem{
+		QueueItemID: modulecore.NewQueueItemID(), TaskID: task.TaskID,
+		RunStartReason: domaintask.RunStartReasonFirst,
+		WorkstreamID:   string(task.WorkstreamID), Goal: domainsuperagent.RunQueueGoalGameTask, Action: "game", Status: "queued",
+		Priority: taskEnqueuePriority(task.Priority), IdempotencyKey: domainsuperagent.RunQueueIntentGameTask,
+		CreatedAt: task.CreatedAt.UTC(),
+	}
+	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+		writeAgentOpsError(w, http.StatusConflict, "task_not_eligible")
+		return
+	}
+	stored, inserted, err := h.queue.InsertRunQueueItemIfAbsent(r.Context(), item)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusServiceUnavailable, "run_queue_write_failed")
+		return
+	}
+	if !domainsuperagent.IsGameTaskQueueItem(stored) || stored.TaskID != task.TaskID || stored.CreatedAt != item.CreatedAt {
+		writeAgentOpsError(w, http.StatusConflict, "run_queue_intent_conflict")
+		return
+	}
+	h.wakeActor(task.Assignee)
+	writeTaskEnqueueReceipt(w, stored, inserted)
+}
+
+func gameTaskPersonasOverlap(left, right []string) bool {
+	actors := make(map[string]struct{}, len(left))
+	for _, actor := range left {
+		actors[actor] = struct{}{}
+	}
+	for _, actor := range right {
+		if _, exists := actors[actor]; exists {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *taskEnqueueHandler) wakeActor(actor string) {

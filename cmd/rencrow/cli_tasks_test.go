@@ -61,6 +61,60 @@ func TestParseTasksCreateArgsRejectsMalformedCanonicalOption(t *testing.T) {
 	}
 }
 
+func TestParseTasksCreateArgsBuildsTypedGameTask(t *testing.T) {
+	for _, tc := range []struct {
+		gameID   string
+		personas string
+		turns    string
+		mode     string
+		want     domaintask.GameSpec
+	}{
+		{gameID: "nethack", want: domaintask.GameSpec{GameID: "nethack", Personas: []string{"mio"}, Turns: 60, Mode: "auto"}},
+		{gameID: "territory_commander", want: domaintask.GameSpec{GameID: "territory_commander", Personas: []string{"mio"}, Turns: 120, Mode: "auto"}},
+		{gameID: "survival_garden", want: domaintask.GameSpec{GameID: "survival_garden", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 120, Mode: "auto"}},
+		{gameID: "herzog_zwei", want: domaintask.GameSpec{GameID: "herzog_zwei", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 40, Mode: "realtime"}},
+		{gameID: "herzog_zwei", personas: "aka,ao,kin,gin", turns: "120", mode: "realtime", want: domaintask.GameSpec{GameID: "herzog_zwei", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 120, Mode: "realtime"}},
+	} {
+		args := []string{"--title", "game task", "--route", "GAME", "--game-id", tc.gameID}
+		if tc.personas != "" {
+			args = append(args, "--game-personas", tc.personas)
+		}
+		if tc.turns != "" {
+			args = append(args, "--game-turns", tc.turns)
+		}
+		if tc.mode != "" {
+			args = append(args, "--game-mode", tc.mode)
+		}
+		draft, shared, _, err := parseTasksCreateArgs(args)
+		if err != nil {
+			t.Fatalf("parse %s: %v", tc.gameID, err)
+		}
+		if draft.Route != domaintask.RouteGAME || draft.Assignee != "mio" || shared.GameSpec == nil {
+			t.Fatalf("game task routing/spec = route %q assignee %q spec %#v", draft.Route, draft.Assignee, shared.GameSpec)
+		}
+		if shared.GameSpec.Digest() != tc.want.Digest() {
+			t.Errorf("game spec = %+v, want %+v", *shared.GameSpec, tc.want)
+		}
+	}
+}
+
+func TestParseTasksCreateArgsRejectsInvalidGameOptionCombinations(t *testing.T) {
+	for _, args := range [][]string{
+		{"--title", "game", "--game-id", "nethack"},
+		{"--title", "game", "--route", "GAME"},
+		{"--title", "game", "--route", "CHAT", "--game-id", "nethack"},
+		{"--title", "game", "--route", "GAME", "--game-id", "nethack", "--game-personas", ""},
+		{"--title", "game", "--route", "GAME", "--game-id", "nethack", "--game-mode", ""},
+		{"--title", "game", "--route", "GAME", "--game-id", "survival_garden", "--game-personas", "mio"},
+		{"--title", "game", "--route", "GAME", "--game-id", "herzog_zwei", "--game-mode", "auto"},
+		{"--title", "game", "--route", "GAME", "--game-id", "nethack", "--game-turns", "1000001"},
+	} {
+		if _, _, _, err := parseTasksCreateArgs(args); err == nil {
+			t.Errorf("parseTasksCreateArgs(%q) succeeded", args)
+		}
+	}
+}
+
 func TestRunTasksCommandAcceptsCompactForCreate(t *testing.T) {
 	store, err := taskpersistence.NewJSONLStore(t.TempDir())
 	if err != nil {

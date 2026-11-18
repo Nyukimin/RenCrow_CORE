@@ -207,8 +207,14 @@ func ValidateRunQueueItem(item RunQueueItem) error {
 	if item.AttemptCount < 0 || item.CheckpointRevision < 0 {
 		return fmt.Errorf("attempt_count and checkpoint_revision must be >= 0")
 	}
-	if hasPrivateTextResumeMetadata(item) && !IsPrivateTextResumeQueueItem(item) {
+	gameTaskIntent := item.Action == "game" || item.Goal == RunQueueGoalGameTask || item.IdempotencyKey == RunQueueIntentGameTask || strings.HasPrefix(item.IdempotencyKey, RunQueueIntentGameResumePrefix)
+	if !gameTaskIntent && hasPrivateTextResumeMetadata(item) && !IsPrivateTextResumeQueueItem(item) {
 		return fmt.Errorf("private text checkpoint resume intent is invalid")
+	}
+	if gameTaskIntent {
+		if !IsGameTaskQueueItem(item) {
+			return fmt.Errorf("GAME Task queue intent is invalid")
+		}
 	}
 	if isCheckpointResumeQueueItem(item) {
 		if err := item.CheckpointID.Validate(); err != nil {

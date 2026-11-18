@@ -60,6 +60,13 @@ type RunQueuePrivateTextTaskOwner interface {
 	CompletePrivateTextRun(context.Context, modulecore.TaskID, modulecore.RunID, string, bool) error
 }
 
+type RunQueueGameTaskOwner interface {
+	RunQueueTaskOwner
+	GetGameTask(context.Context, modulecore.TaskID) (domaintask.Task, domaintask.GameSpec, domaintask.GameProgress, error)
+	StartGameTaskRun(context.Context, modulecore.TaskID, modulecore.QueueItemID, string, modulecore.RunID, string) (domaintask.Run, error)
+	PauseGameTaskRun(context.Context, modulecore.TaskID, modulecore.RunID, string) error
+}
+
 // RunQueuePrivateTextIntentStore provides insert-only idempotency for the
 // private checkpoint continuation. Existing receipts are validated and never
 // rewritten when a retry observes them.
@@ -227,6 +234,26 @@ func (s *RunQueueScheduler) runReservedItemWithStartFailure(ctx context.Context,
 
 	run, err := s.startRun(ctx, item)
 	if err != nil {
+		if domainsuperagent.IsGameTaskQueueItem(*item) {
+			if run.RunID != "" {
+				return errors.New("GAME controller Run was issued but queue start verification failed; exact Task Run binding must be recovered")
+			}
+			if onStartFailure != nil {
+				handled, handlerErr := onStartFailure(errors.New("GAME Task Run start failed"))
+				if handled {
+					return handlerErr
+				}
+			}
+			leaseStore, ok := s.store.(RunQueueExactLeaseStore)
+			if !ok {
+				return errors.New("GAME Task Run start failed and exact queue release is unavailable")
+			}
+			released, releaseErr := leaseStore.ReleaseRunQueueItem(ctx, item.QueueItemID, item.LeaseToken)
+			if releaseErr != nil || !released {
+				return errors.New("GAME Task Run start failed; exact queue lease changed before release")
+			}
+			return errors.New("GAME Task Run start failed; intent released for retry")
+		}
 		if isPrivateTextQueueItem(*item) {
 			if run.RunID != "" {
 				// The owner has already issued a cursor-bound Run. Keep that exact
@@ -285,6 +312,9 @@ func (s *RunQueueScheduler) runReservedItemWithStartFailure(ctx context.Context,
 			if isPrivateTextQueueItem(*item) {
 				return errors.New("private task Run was issued but exact queue attachment failed; startup recovery will reconcile its cursor")
 			}
+			if domainsuperagent.IsGameTaskQueueItem(*item) {
+				return errors.New("GAME controller Run was issued but exact queue attachment failed; startup recovery must reconcile its Task binding")
+			}
 			originalErr := fmt.Errorf("attach canonical run to run queue item: %w", attachErr)
 			if cleanupErr := s.interruptIssuedRun(ctx, *item, run, originalErr.Error()); cleanupErr != nil {
 				return errors.Join(originalErr, cleanupErr)
@@ -294,6 +324,9 @@ func (s *RunQueueScheduler) runReservedItemWithStartFailure(ctx context.Context,
 		if !attached {
 			if isPrivateTextQueueItem(*item) {
 				return errors.New("private task Run was issued but its exact queue lease changed; startup recovery will reconcile its cursor")
+			}
+			if domainsuperagent.IsGameTaskQueueItem(*item) {
+				return errors.New("GAME controller Run was issued but its exact queue lease changed; startup recovery must reconcile its Task binding")
 			}
 			// The Task owner has already issued the canonical Run, but the
 			// reservation is no longer ours. Do not process the Run or emit a
@@ -325,8 +358,11 @@ func (s *RunQueueScheduler) runReservedItemWithStartFailure(ctx context.Context,
 	summary, execErr := s.processWithHeartbeat(ctx, *item, traceID)
 	completedAt := s.options.Now().UTC()
 	if IsRunQueuePauseOutcome(execErr) {
+		if domainsuperagent.IsGameTaskQueueItem(*item) {
+			return s.completeGameTaskPause(ctx, *item, traceID, claimedEventID, completedAt)
+		}
 		if !isPrivateTextQueueItem(*item) {
-			return fmt.Errorf("non-private run queue processor returned a pause outcome")
+			return fmt.Errorf("unsupported run queue processor returned a pause outcome")
 		}
 		return s.completePrivateTextPause(ctx, *item, traceID, claimedEventID, completedAt)
 	}
@@ -513,6 +549,72 @@ func (s *RunQueueScheduler) completePrivateTextPause(ctx context.Context, item d
 	return nil
 }
 
+func (s *RunQueueScheduler) completeGameTaskPause(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID, claimedEventID modulecore.EventID, completedAt time.Time) error {
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	owner, ok := s.taskOwner.(RunQueueGameTaskOwner)
+	if !ok {
+		return errors.New("canonical Task owner does not support GAME Task checkpoints")
+	}
+	queue, ok := s.store.(RunQueuePrivateTextIntentStore)
+	if !ok {
+		return errors.New("run queue store does not support insert-only GAME resume intents")
+	}
+	task, spec, progress, err := owner.GetGameTask(persistCtx, item.TaskID)
+	if err != nil {
+		return fmt.Errorf("read GAME Task after controller pause: %w", err)
+	}
+	if task.TaskID != item.TaskID || task.Status != domaintask.StatusWaiting || task.WaitingReason != domaintask.GameTaskWaitingReason ||
+		progress.SpecDigest != spec.Digest() || progress.Status == domaintask.GameExecutionCompleted || progress.Status == domaintask.GameExecutionFailed {
+		return errors.New("GAME controller pause did not preserve a valid pending session checkpoint")
+	}
+	next := domainsuperagent.RunQueueItem{
+		QueueItemID: modulecore.NewQueueItemID(), TaskID: item.TaskID,
+		PredecessorRunID: item.RunID, CheckpointDigest: spec.Digest(),
+		RunStartReason: domaintask.RunStartReasonCheckpointResume, WorkstreamID: string(task.WorkstreamID),
+		Goal: domainsuperagent.RunQueueGoalGameTask, Action: "game", Status: "queued",
+		Priority: taskPriorityRank(task.Priority), IdempotencyKey: domainsuperagent.GameResumeQueueKey(item.RunID),
+		NotBefore: progress.UpdatedAt.Add(5 * time.Second), CreatedAt: task.CreatedAt,
+	}
+	if err := domainsuperagent.ValidateRunQueueItem(next); err != nil {
+		return fmt.Errorf("validate GAME controller successor intent: %w", err)
+	}
+	stored, inserted, err := queue.InsertRunQueueItemIfAbsent(persistCtx, next)
+	if err != nil {
+		return fmt.Errorf("insert GAME controller successor intent: %w", err)
+	}
+	if !gameTaskResumeIntentReceiptMatches(stored, next) {
+		return errors.New("stored GAME controller successor receipt does not match its exact checkpoint")
+	}
+	if stored.Status != "queued" && stored.Status != "reserved" && stored.Status != "claimed" {
+		return fmt.Errorf("GAME controller successor intent already has terminal status %q", stored.Status)
+	}
+	if inserted {
+		if _, err := s.saveTrace(persistCtx, stored, traceID, claimedEventID, "run_queue.game_resume_queued", "queued", "game session reconciliation queued"); err != nil {
+			return fmt.Errorf("record GAME controller successor intent: %w", err)
+		}
+	}
+	if err := s.complete(persistCtx, item, "cancelled", "game controller step paused", completedAt); err != nil {
+		return fmt.Errorf("complete paused GAME controller source receipt: %w", err)
+	}
+	if err := s.completeAgentRun(persistCtx, item, "cancelled", "game controller step paused", completedAt); err != nil {
+		return fmt.Errorf("complete paused GAME controller AgentRun: %w", err)
+	}
+	if _, err := s.saveTrace(persistCtx, item, traceID, claimedEventID, "run_queue.game_paused", "waiting", "game session reconciliation queued"); err != nil {
+		return fmt.Errorf("record GAME controller pause: %w", err)
+	}
+	return nil
+}
+
+func gameTaskResumeIntentReceiptMatches(stored, expected domainsuperagent.RunQueueItem) bool {
+	return domainsuperagent.ValidateRunQueueItem(stored) == nil && domainsuperagent.IsGameTaskQueueItem(stored) &&
+		stored.TaskID == expected.TaskID && stored.PredecessorRunID == expected.PredecessorRunID &&
+		stored.CheckpointDigest == expected.CheckpointDigest && stored.RunStartReason == expected.RunStartReason &&
+		stored.WorkstreamID == expected.WorkstreamID && stored.Goal == expected.Goal && stored.Action == expected.Action &&
+		stored.Priority == expected.Priority && stored.IdempotencyKey == expected.IdempotencyKey &&
+		stored.CreatedAt.Equal(expected.CreatedAt) && stored.NotBefore.Equal(expected.NotBefore)
+}
+
 func privateTextResumeIntentReceiptMatches(stored, expected domainsuperagent.RunQueueItem) bool {
 	return domainsuperagent.ValidateRunQueueItem(stored) == nil && domainsuperagent.IsPrivateTextResumeQueueItem(stored) &&
 		stored.TaskID == expected.TaskID && stored.PredecessorRunID == expected.PredecessorRunID &&
@@ -575,6 +677,40 @@ func (s *RunQueueScheduler) claimNext(ctx context.Context, now time.Time, token 
 func (s *RunQueueScheduler) startRun(ctx context.Context, item *domainsuperagent.RunQueueItem) (domaintask.Run, error) {
 	if item == nil {
 		return domaintask.Run{}, fmt.Errorf("run queue item is nil")
+	}
+	if domainsuperagent.IsGameTaskQueueItem(*item) {
+		owner, ok := s.taskOwner.(RunQueueGameTaskOwner)
+		if !ok {
+			return domaintask.Run{}, fmt.Errorf("canonical Task owner does not support GAME Task checkpoints")
+		}
+		task, spec, progress, err := owner.GetGameTask(ctx, item.TaskID)
+		if err != nil {
+			return domaintask.Run{}, fmt.Errorf("read GAME Task before controller Run: %w", err)
+		}
+		if task.TaskID != item.TaskID || task.Route != domaintask.RouteGAME || task.Assignee == "" || task.Validate() != nil {
+			return domaintask.Run{}, fmt.Errorf("GAME Task owner returned invalid Task identity")
+		}
+		var predecessor modulecore.RunID
+		var digest string
+		if item.RunStartReason == domaintask.RunStartReasonCheckpointResume {
+			predecessor, digest = item.PredecessorRunID, item.CheckpointDigest
+			if digest != spec.Digest() || progress.SpecDigest != digest {
+				return domaintask.Run{}, fmt.Errorf("GAME resume queue checkpoint does not match the canonical Task spec")
+			}
+		} else if progress.Status != domaintask.GameExecutionPrepared || task.Status != domaintask.StatusQueued {
+			return domaintask.Run{}, fmt.Errorf("GAME first-run Task is no longer prepared and queued")
+		}
+		run, err := owner.StartGameTaskRun(ctx, item.TaskID, item.QueueItemID, task.Assignee, predecessor, digest)
+		if err != nil {
+			return domaintask.Run{}, fmt.Errorf("start GAME controller Run for task %s: %w", item.TaskID, err)
+		}
+		if err := validateStartedQueueRun(run, *item, item.RunStartReason); err != nil {
+			return run, err
+		}
+		if run.Assignee != task.Assignee {
+			return run, fmt.Errorf("Task owner returned GAME controller Run for actor %q, want %q", run.Assignee, task.Assignee)
+		}
+		return run, nil
 	}
 	if isPrivateTextFirstChatQueueItem(*item) {
 		owner, ok := s.taskOwner.(RunQueuePrivateTextTaskOwner)

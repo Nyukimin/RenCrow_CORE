@@ -65,7 +65,7 @@ func (s *RunQueueScheduler) PlanForActorMatching(ctx context.Context, actor stri
 	tasksByID := make(map[modulecore.TaskID]domaintask.Task, len(tasks))
 	taskIDs := make([]modulecore.TaskID, 0, len(tasks))
 	for _, task := range tasks {
-		if task.Assignee != actor || (task.Status != domaintask.StatusQueued && !isPrivateTextWaitingTask(task)) {
+		if task.Assignee != actor || (task.Status != domaintask.StatusQueued && !isPrivateTextWaitingTask(task) && !isGameTaskWaitingTask(task) && !isGameTaskRunningTask(task)) {
 			continue
 		}
 		if err := task.Validate(); err != nil {
@@ -103,7 +103,22 @@ func (s *RunQueueScheduler) PlanForActorMatching(ctx context.Context, actor stri
 		if !ok || !actorPlannableRunQueueCandidate(item, now) || !actorPlannableTaskForQueueItem(task, item, item.TaskID, actor) {
 			continue
 		}
-		if task.Status == domaintask.StatusWaiting {
+		if (task.Status == domaintask.StatusWaiting || task.Status == domaintask.StatusRunning) && domainsuperagent.IsGameTaskQueueItem(item) {
+			owner, ok := s.taskOwner.(interface {
+				GetGameTask(context.Context, modulecore.TaskID) (domaintask.Task, domaintask.GameSpec, domaintask.GameProgress, error)
+			})
+			if !ok {
+				return nil, domaintask.Task{}, fmt.Errorf("canonical Task owner does not support GAME Task checkpoint reads")
+			}
+			_, _, progress, err := owner.GetGameTask(ctx, task.TaskID)
+			if err != nil {
+				return nil, domaintask.Task{}, fmt.Errorf("read GAME Task checkpoint while planning task %s: %w", task.TaskID, err)
+			}
+			if progress.SpecDigest != item.CheckpointDigest || progress.Status == domaintask.GameExecutionCompleted || progress.Status == domaintask.GameExecutionFailed ||
+				(item.RunStartReason == domaintask.RunStartReasonProcessRestartResume && (progress.ControllerRunID != item.PredecessorRunID || task.Status != domaintask.StatusRunning)) {
+				continue
+			}
+		} else if task.Status == domaintask.StatusWaiting {
 			owner, ok := s.taskOwner.(RunQueuePrivateTextTaskOwner)
 			if !ok {
 				return nil, domaintask.Task{}, fmt.Errorf("canonical Task owner does not support private text checkpoint reads")
@@ -283,6 +298,19 @@ func actorPlannableTask(task domaintask.Task, taskID modulecore.TaskID, actor st
 }
 
 func actorPlannableTaskForQueueItem(task domaintask.Task, item domainsuperagent.RunQueueItem, taskID modulecore.TaskID, actor string) bool {
+	if task.Route == domaintask.RouteGAME {
+		if !domainsuperagent.IsGameTaskQueueItem(item) || task.TaskID != taskID || task.Assignee != actor ||
+			!domaintask.ValidPriority(task.Priority) || task.CreatedAt.IsZero() || task.Validate() != nil {
+			return false
+		}
+		if task.Status == domaintask.StatusQueued {
+			return item.RunStartReason == domaintask.RunStartReasonFirst && item.IdempotencyKey == domainsuperagent.RunQueueIntentGameTask
+		}
+		if task.Status == domaintask.StatusWaiting && task.WaitingReason == domaintask.GameTaskWaitingReason {
+			return item.RunStartReason == domaintask.RunStartReasonCheckpointResume
+		}
+		return isGameTaskRunningTask(task) && item.RunStartReason == domaintask.RunStartReasonProcessRestartResume
+	}
 	if domainsuperagent.ValidateActorID(actor) != nil &&
 		(!domainsuperagent.IsPrivateChatQueueTask(task) || !isPrivateTextQueueItem(item)) {
 		return false
@@ -297,6 +325,14 @@ func actorPlannableTaskForQueueItem(task domaintask.Task, item domainsuperagent.
 
 func isPrivateTextWaitingTask(task domaintask.Task) bool {
 	return task.Status == domaintask.StatusWaiting && task.WaitingReason == domaintask.PrivateTextWaitingReason
+}
+
+func isGameTaskWaitingTask(task domaintask.Task) bool {
+	return task.Route == domaintask.RouteGAME && task.Status == domaintask.StatusWaiting && task.WaitingReason == domaintask.GameTaskWaitingReason
+}
+
+func isGameTaskRunningTask(task domaintask.Task) bool {
+	return task.Route == domaintask.RouteGAME && task.Status == domaintask.StatusRunning
 }
 
 func actorPlannableRunQueueCandidate(item domainsuperagent.RunQueueItem, now time.Time) bool {
@@ -321,6 +357,9 @@ func actorPlannableRunQueueItem(item domainsuperagent.RunQueueItem, status strin
 	case domaintask.RunStartReasonFirst, domaintask.RunStartReasonExplicitRerun:
 		return true
 	case domaintask.RunStartReasonCheckpointResume:
+		if domainsuperagent.IsGameTaskQueueItem(item) {
+			return true
+		}
 		if domainsuperagent.IsPrivateTextResumeQueueItem(item) {
 			return true
 		}
@@ -333,6 +372,8 @@ func actorPlannableRunQueueItem(item domainsuperagent.RunQueueItem, status strin
 			strings.TrimSpace(item.NextAction) != "" &&
 			item.CheckpointID.Validate() == nil &&
 			item.IdempotencyKey == string(item.CheckpointID)
+	case domaintask.RunStartReasonProcessRestartResume:
+		return domainsuperagent.IsGameTaskQueueItem(item)
 	default:
 		// In particular, process_restart_resume is not automatically replayed:
 		// queue summaries do not prove a durable execution cursor.

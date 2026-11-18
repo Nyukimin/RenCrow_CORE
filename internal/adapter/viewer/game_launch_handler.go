@@ -20,8 +20,16 @@ type GameLaunchOptions struct {
 	// observer URLはCORE Configから明示注入し、未指定時だけ既定値を使う。
 	ObserverBaseURL string
 	HTTPClient      *http.Client
+	Admission       GameLaunchAdmission
 	// Store があれば、起動成功時に動機 (reason) を candidate log へ記録する。
 	Store GameBridgeResultWriter
+}
+
+// GameLaunchAdmission serializes a legacy launch against durable Task game
+// reservations. The returned release function must cover the upstream launch
+// request and is called on every exit path.
+type GameLaunchAdmission interface {
+	BeginGameLaunch(context.Context, GameLaunchRequest) (release func(), status int, err error)
 }
 
 type GameLaunchRequest struct {
@@ -55,6 +63,19 @@ func PerformGameLaunch(ctx context.Context, opts GameLaunchOptions, request Game
 	client := opts.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: defaultGameLaunchTimeout}
+	}
+	if opts.Admission != nil {
+		release, status, err := opts.Admission.BeginGameLaunch(ctx, request)
+		if err != nil {
+			if status < 400 || status > 599 {
+				status = http.StatusServiceUnavailable
+			}
+			return GameLaunchResult{}, status, err
+		}
+		if release == nil {
+			return GameLaunchResult{}, http.StatusServiceUnavailable, fmt.Errorf("game launch admission did not provide a release function")
+		}
+		defer release()
 	}
 
 	payload, err := json.Marshal(map[string]any{

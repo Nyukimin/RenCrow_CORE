@@ -629,12 +629,59 @@ func (p *gameDecisionLLMProvider) Name() string {
 
 func newTestGameDecisionService(provider llm.LLMProvider) *gameAgentDecisionService {
 	mio := domainagent.NewMioAgent(provider, nil, nil, nil, nil, nil)
-	return &gameAgentDecisionService{agents: agentRuntime{
+	actorProviders := make(map[string]llm.LLMProvider, len(gameTurnActorIDs))
+	characterPrompts := make(map[string]string, len(gameTurnActorIDs))
+	for _, actorID := range gameTurnActorIDs {
+		actorProviders[actorID] = provider
+		characterPrompts[actorID] = "character prompt for " + actorID
+	}
+	service := newGameAgentDecisionService(agentRuntime{
 		Mio:       mio,
 		ShiroChat: mio,
 		Heavy:     domainagent.NewHeavyAgent(provider, "Kuro"),
 		Wild:      domainagent.NewWildAgent(provider, "Midori"),
-	}}
+	}, actorProviders, characterPrompts)
+	return service.(*gameAgentDecisionService)
+}
+
+func TestGameAgentDecisionServiceUsesEachAliasActorProviderAndIdentity(t *testing.T) {
+	providers := make(map[string]*gameDecisionLLMProvider, len(gameTurnActorIDs))
+	actorProviders := make(map[string]llm.LLMProvider, len(gameTurnActorIDs))
+	characterPrompts := make(map[string]string, len(gameTurnActorIDs))
+	for _, actorID := range gameTurnActorIDs {
+		provider := &gameDecisionLLMProvider{responses: []string{`{"action":"wait"}`}}
+		providers[actorID] = provider
+		actorProviders[actorID] = provider
+		characterPrompts[actorID] = "character prompt for " + actorID
+	}
+	service := newGameAgentDecisionService(agentRuntime{}, actorProviders, characterPrompts).(*gameAgentDecisionService)
+	for _, actorID := range gameTurnActorIDs {
+		decision, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{
+			GameID:           "survival_garden",
+			SessionID:        "sg_" + actorID,
+			Persona:          actorID,
+			Observation:      map[string]any{"action_contracts": map[string]any{"wait": map[string]any{}}, "legal_ids": map[string]any{}},
+			AvailableActions: []string{"wait"},
+			Request:          "choose_next_action",
+		})
+		if err != nil {
+			t.Fatalf("actor %q decision: %v", actorID, err)
+		}
+		if decision.AgentID != actorID || decision.Persona != actorID || len(decision.ActionPlan) != 1 || decision.ActionPlan[0].Action != "wait" {
+			t.Fatalf("actor %q decision identity/action = %+v", actorID, decision)
+		}
+		provider := providers[actorID]
+		if len(provider.requests) != 1 {
+			t.Fatalf("actor %q provider calls = %d, want 1", actorID, len(provider.requests))
+		}
+		request := provider.requests[0]
+		if request.ResponseFormat != llm.ResponseFormatJSONObject || request.MaxTokens != 256 || request.OnToken != nil || request.SystemPrompt != "" {
+			t.Fatalf("actor %q request contract = %+v", actorID, request)
+		}
+		if len(request.Messages) < 3 || request.Messages[0].Content != characterPrompts[actorID] || !strings.Contains(request.Messages[1].Content, "one JSON object") || request.Messages[1].Metadata["runtime_context_kind"] != "game_turn_boundary" || request.Messages[len(request.Messages)-1].Type != llm.PromptContextUser {
+			t.Fatalf("actor %q request messages = %+v", actorID, request.Messages)
+		}
+	}
 }
 
 func jsonValuesEqual(left, right map[string]any) bool {

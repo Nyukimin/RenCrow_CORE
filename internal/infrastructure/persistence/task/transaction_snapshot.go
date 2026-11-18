@@ -239,6 +239,19 @@ func cloneTransactionContext(value domaintask.SharedRoleContext) domaintask.Shar
 		privateText := *value.PrivateText
 		value.PrivateText = &privateText
 	}
+	if value.GameSpec != nil {
+		gameSpec := *value.GameSpec
+		gameSpec.Personas = append([]string(nil), value.GameSpec.Personas...)
+		value.GameSpec = &gameSpec
+	}
+	if value.GameProgress != nil {
+		gameProgress := *value.GameProgress
+		if value.GameProgress.ResultOK != nil {
+			resultOK := *value.GameProgress.ResultOK
+			gameProgress.ResultOK = &resultOK
+		}
+		value.GameProgress = &gameProgress
+	}
 	if value.AutonomousDecision != nil {
 		decision := *value.AutonomousDecision
 		value.AutonomousDecision = &decision

@@ -372,6 +372,23 @@ func (m *Manager) createValidatedInTransaction(ctx context.Context, draft domain
 	}
 	// A generic create caller cannot seed Task-owned private-text state.
 	shared.PrivateText = nil
+	if draft.Route == domaintask.RouteGAME {
+		if shared.GameSpec == nil {
+			return domaintask.Task{}, errors.New("GAME Task requires a typed game_spec")
+		}
+		spec, err := domaintask.NormalizeGameSpec(*shared.GameSpec)
+		if err != nil {
+			return domaintask.Task{}, fmt.Errorf("GAME Task spec is invalid: %w", err)
+		}
+		shared.GameSpec = &spec
+		progress, err := domaintask.NewGameProgress(draft.TaskID, spec, now)
+		if err != nil {
+			return domaintask.Task{}, err
+		}
+		shared.GameProgress = &progress
+	} else if shared.GameSpec != nil || shared.GameProgress != nil {
+		return domaintask.Task{}, errors.New("game task context requires the GAME route")
+	}
 	shared.UpdatedAt = now
 	if err := m.store.SaveContext(ctx, shared); err != nil {
 		return domaintask.Task{}, err
@@ -427,6 +444,9 @@ func (m *Manager) recordRoutingInTransaction(ctx context.Context, taskID modulec
 	if err != nil {
 		return domaintask.Task{}, err
 	}
+	if task.Route == domaintask.RouteGAME || route == domaintask.RouteGAME {
+		return domaintask.Task{}, fmt.Errorf("%w: GAME Task route is immutable after creation", ErrRunConflict)
+	}
 	if domaintask.IsOwnerManagedTask(task) {
 		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
 	}
@@ -470,6 +490,9 @@ func (m *Manager) recordAssignmentInTransaction(ctx context.Context, taskID modu
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		return domaintask.Task{}, err
+	}
+	if task.Route == domaintask.RouteGAME {
+		return domaintask.Task{}, fmt.Errorf("%w: GAME Task controller assignment is immutable", ErrRunConflict)
 	}
 	assigneeChanged := task.Assignee != assignee
 	task.Assignee = assignee
@@ -537,7 +560,13 @@ func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID,
 func (m *Manager) StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
 	var run domaintask.Run
 	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
-		var err error
+		task, err := txManager.store.GetTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		if task.Route == domaintask.RouteGAME {
+			return fmt.Errorf("%w: GAME Task Run must be started by the game queue owner", ErrRunConflict)
+		}
 		_, run, err = txManager.startWithReason(ctx, taskID, reason)
 		return err
 	})
@@ -579,6 +608,9 @@ func (m *Manager) startWithReasonAndCheckpointAndTrace(ctx context.Context, task
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	if task.Route == domaintask.RouteGAME && !isGameTaskOwnerTransition(ctx) {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("%w: GAME Task Run must be started by the game queue owner", ErrRunConflict)
 	}
 	if domaintask.IsOwnerManagedTask(task) {
 		return domaintask.Task{}, domaintask.Run{}, domaintask.ErrTypedTaskRequiresOwner
@@ -763,6 +795,26 @@ func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID moduleco
 	if err != nil {
 		return domaintask.Task{}, err
 	}
+	if task.Route == domaintask.RouteGAME && !isGameTaskOwnerTransition(ctx) {
+		allowedBeforeLaunch := false
+		if domaintask.IsTerminal(status) {
+			shared, contextErr := loadPrivateTextSharedContext(ctx, m.store, taskID)
+			if contextErr != nil {
+				return domaintask.Task{}, fmt.Errorf("read GAME Task transition authorization: %w", contextErr)
+			}
+			if shared.GameSpec == nil || shared.GameProgress == nil {
+				return domaintask.Task{}, fmt.Errorf("%w: GAME Task transition authorization is absent", ErrRunConflict)
+			}
+			if validateErr := shared.GameProgress.Validate(taskID, *shared.GameSpec); validateErr != nil {
+				return domaintask.Task{}, fmt.Errorf("%w: GAME Task transition authorization is invalid: %v", ErrRunConflict, validateErr)
+			}
+			allowedBeforeLaunch = shared.GameProgress.Status == domaintask.GameExecutionPrepared &&
+				(status == domaintask.StatusCancelled || status == domaintask.StatusFailed || status == domaintask.StatusSuperseded)
+		}
+		if !allowedBeforeLaunch {
+			return domaintask.Task{}, fmt.Errorf("%w: GAME Task transitions require its queue owner; cancellation is allowed only before launch", ErrRunConflict)
+		}
+	}
 	if domaintask.IsOwnerManagedTask(task) {
 		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
 	}
@@ -832,6 +884,8 @@ func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRol
 		if task.Autonomous != nil {
 			preserveAutonomousContextContent(&shared, persisted)
 		}
+		shared.GameSpec = persisted.GameSpec
+		shared.GameProgress = persisted.GameProgress
 		shared.UpdatedAt = txManager.now()
 		return txManager.store.SaveContext(ctx, shared)
 	})

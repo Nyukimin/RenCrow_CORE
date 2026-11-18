@@ -26,6 +26,14 @@ type gameObserverActiveAgentSession struct {
 	Status    string   `json:"status"`
 }
 
+type gameObserverSessionSummary struct {
+	GameID    string   `json:"game_id"`
+	SessionID string   `json:"session_id"`
+	Persona   string   `json:"persona"`
+	Personas  []string `json:"personas"`
+	Status    string   `json:"status"`
+}
+
 type gameObserverActiveSessionsReader interface {
 	ActiveAgentSessions(context.Context) ([]gameObserverActiveAgentSession, error)
 }
@@ -94,6 +102,76 @@ func (c *gameObserverSessionsHTTPClient) ActiveAgentSessions(ctx context.Context
 		return nil, fmt.Errorf("%w: %v", errGameObserverSessionsUnavailable, err)
 	}
 	return response.ActiveAgentSessions, nil
+}
+
+func (c *gameObserverSessionsHTTPClient) SessionSummary(ctx context.Context, sessionID string) (gameObserverSessionSummary, error) {
+	if c == nil || c.httpClient == nil || c.baseURL == "" || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(sessionID) != sessionID {
+		return gameObserverSessionSummary{}, errGameObserverSessionsUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/games/sessions/"+url.PathEscape(sessionID), nil)
+	if err != nil {
+		return gameObserverSessionSummary{}, errGameObserverSessionsUnavailable
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return gameObserverSessionSummary{}, fmt.Errorf("%w: source session request failed", errGameObserverSessionsUnavailable)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return gameObserverSessionSummary{}, fmt.Errorf("%w: source session HTTP status %d", errGameObserverSessionsUnavailable, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, gameObserverSessionsMaxBody+1))
+	if err != nil || len(body) > gameObserverSessionsMaxBody {
+		return gameObserverSessionSummary{}, fmt.Errorf("%w: source session body unavailable", errGameObserverSessionsUnavailable)
+	}
+	var response struct {
+		OK      bool                       `json:"ok"`
+		Session gameObserverSessionSummary `json:"session"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil || !response.OK || response.Session.SessionID != sessionID {
+		return gameObserverSessionSummary{}, fmt.Errorf("%w: source session response is malformed", errGameObserverSessionsUnavailable)
+	}
+	if err := validateGameObserverSessionSummary(response.Session); err != nil {
+		return gameObserverSessionSummary{}, fmt.Errorf("%w: %v", errGameObserverSessionsUnavailable, err)
+	}
+	return response.Session, nil
+}
+
+func validateGameObserverSessionSummary(session gameObserverSessionSummary) error {
+	knownGames := map[string]struct{}{
+		"nethack": {}, "herzog_zwei": {}, "territory_commander": {}, "survival_garden": {},
+	}
+	if _, ok := knownGames[session.GameID]; !ok || session.SessionID == "" || strings.TrimSpace(session.SessionID) != session.SessionID {
+		return errors.New("session identity is invalid")
+	}
+	if session.Status != "launching" && session.Status != "running" && session.Status != "completed" && session.Status != "failed" {
+		return errors.New("session status is invalid")
+	}
+	personas := session.Personas
+	if len(personas) == 0 && session.Persona != "" {
+		personas = []string{session.Persona}
+	}
+	if len(personas) == 0 || len(personas) > len(agentHeartbeatActorIDs) {
+		return errors.New("source session roster is unavailable")
+	}
+	seen := make(map[string]struct{}, len(personas))
+	for _, actor := range personas {
+		if actor == "" || strings.TrimSpace(actor) != actor || !isAgentHeartbeatActor(actor) {
+			return errors.New("source session roster contains an unknown actor")
+		}
+		if _, duplicate := seen[actor]; duplicate {
+			return errors.New("source session roster contains a duplicate actor")
+		}
+		seen[actor] = struct{}{}
+	}
+	if session.Persona != "" && len(session.Personas) > 0 && session.Persona != session.Personas[0] {
+		return errors.New("source session persona does not match its ordered roster")
+	}
+	return nil
 }
 
 func validateGameObserverActiveAgentSessions(sessions []gameObserverActiveAgentSession) error {

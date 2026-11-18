@@ -221,6 +221,26 @@
       "timeoutSeconds": 300
     },
     {
+      "name": "task-center-source-manifest-python",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": [
+        "-m",
+        "py_compile",
+        "scripts/task_center_source_manifest.py"
+      ],
+      "tier": "related",
+      "impact": {
+        "paths": [
+          "scripts/task_center_source_manifest.py"
+        ],
+        "packages": [],
+        "globalPaths": []
+      },
+      "resourceLocks": [],
+      "timeoutSeconds": 90
+    },
+    {
       "name": "routing-classifier-sdk-python",
       "workingDirectory": ".",
       "filePath": "python",

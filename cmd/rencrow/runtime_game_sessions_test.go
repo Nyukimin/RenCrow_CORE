@@ -37,6 +37,38 @@ func TestGameObserverSessionsHTTPClientReadsActiveAgentSessions(t *testing.T) {
 	}
 }
 
+func TestGameObserverSessionsHTTPClientReadsCanonicalSourceRosterForRetry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/games/sessions/sg_source" {
+			t.Errorf("GAMES request=%s %s, want GET /games/sessions/sg_source", r.Method, r.URL.String())
+		}
+		_, _ = fmt.Fprint(w, `{"ok":true,"session":{"game_id":"survival_garden","session_id":"sg_source","persona":"aka","personas":["aka","ao","kin","gin"],"status":"completed"}}`)
+	}))
+	defer server.Close()
+	client, err := newGameObserverSessionsHTTPClient(server.URL)
+	if err != nil {
+		t.Fatalf("create GAMES sessions client: %v", err)
+	}
+	session, err := client.SessionSummary(context.Background(), "sg_source")
+	if err != nil || session.SessionID != "sg_source" || session.Persona != "aka" || len(session.Personas) != 4 {
+		t.Fatalf("SessionSummary()=%+v err=%v", session, err)
+	}
+}
+
+func TestGameObserverSessionsHTTPClientRejectsMismatchedSourceRoster(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"ok":true,"session":{"game_id":"herzog_zwei","session_id":"hz_source","persona":"aka","personas":["ao","kin","gin","aka"],"status":"completed"}}`)
+	}))
+	defer server.Close()
+	client, err := newGameObserverSessionsHTTPClient(server.URL)
+	if err != nil {
+		t.Fatalf("create GAMES sessions client: %v", err)
+	}
+	if session, err := client.SessionSummary(context.Background(), "hz_source"); !errors.Is(err, errGameObserverSessionsUnavailable) || session.SessionID != "" {
+		t.Fatalf("SessionSummary()=(%+v,%v), want unavailable", session, err)
+	}
+}
+
 func TestAgentRoutineRuntimeConnectsConfiguredGameSessionsReader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()

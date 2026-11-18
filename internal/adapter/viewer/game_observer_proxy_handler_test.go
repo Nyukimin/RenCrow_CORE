@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,23 @@ import (
 	"strings"
 	"testing"
 )
+
+type testSessionActionAdmission struct {
+	sessionID string
+	action    string
+	status    int
+	err       error
+	released  int
+}
+
+func (admission *testSessionActionAdmission) BeginGameSessionAction(_ context.Context, sessionID, action string) (func(), int, error) {
+	admission.sessionID = sessionID
+	admission.action = action
+	if admission.err != nil {
+		return nil, admission.status, admission.err
+	}
+	return func() { admission.released++ }, 0, nil
+}
 
 func TestHandleGameObserverPageRewritesLiveEndpoint(t *testing.T) {
 	uiPath := filepath.Join(t.TempDir(), "index.html")
@@ -174,6 +192,38 @@ func TestHandleGameObserverProxyForwardsSessionActionPost(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"session_id":"sg_retry"`) {
 		t.Fatalf("body=%q", rec.Body.String())
+	}
+}
+
+func TestHandleGameObserverProxySessionActionUsesAdmissionBeforeForwarding(t *testing.T) {
+	var upstreamCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { upstreamCalls++ }))
+	t.Cleanup(upstream.Close)
+	admission := &testSessionActionAdmission{status: http.StatusConflict, err: io.ErrUnexpectedEOF}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/viewer/games/observer-api/games/sessions/sg_source/start_over", strings.NewReader(`{}`))
+	HandleGameObserverProxy(GameObserverProxyOptions{
+		ObserverBaseURL: upstream.URL, HTTPClient: upstream.Client(), SessionActionAdmission: admission,
+	}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || admission.sessionID != "sg_source" || admission.action != "start_over" || upstreamCalls != 0 {
+		t.Fatalf("status=%d admitted=(%q,%q) upstream=%d body=%s", rec.Code, admission.sessionID, admission.action, upstreamCalls, rec.Body.String())
+	}
+}
+
+func TestHandleGameObserverProxyReleasesSessionActionAdmissionAfterForwarding(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(upstream.Close)
+	admission := &testSessionActionAdmission{}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/viewer/games/observer-api/games/sessions/hz_source/retry", nil)
+	HandleGameObserverProxy(GameObserverProxyOptions{
+		ObserverBaseURL: upstream.URL, HTTPClient: upstream.Client(), SessionActionAdmission: admission,
+	}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || admission.sessionID != "hz_source" || admission.action != "retry" || admission.released != 1 {
+		t.Fatalf("status=%d admitted=(%q,%q) releases=%d body=%s", rec.Code, admission.sessionID, admission.action, admission.released, rec.Body.String())
 	}
 }
 

@@ -10,7 +10,10 @@ import (
 const (
 	RunQueueIntentPrivateFirstChat        = "rencrow:tasks.enqueue:first-chat-run:v1"
 	RunQueueIntentPrivateTextResumePrefix = "rencrow:tasks.enqueue:resume:v1:"
+	RunQueueIntentGameTask                = "rencrow:tasks.enqueue:game:v1"
+	RunQueueIntentGameResumePrefix        = "rencrow:tasks.enqueue:game-resume:v1:"
 	RunQueueGoalPrivateFirstChat          = "専用タスク"
+	RunQueueGoalGameTask                  = "ゲーム実行タスク"
 )
 
 type AgentRun struct {
@@ -29,6 +32,24 @@ type AgentRun struct {
 	CheckpointSummary  string                  `json:"checkpoint_summary,omitempty"`
 	NextAction         string                  `json:"next_action,omitempty"`
 	LastCheckpointAt   time.Time               `json:"last_checkpoint_at,omitempty"`
+}
+
+func GameResumeQueueKey(predecessor modulecore.RunID) string {
+	return RunQueueIntentGameResumePrefix + string(predecessor)
+}
+
+func IsGameTaskQueueItem(item RunQueueItem) bool {
+	if item.Goal != RunQueueGoalGameTask || item.Action != "game" {
+		return false
+	}
+	if item.RunStartReason == domaintask.RunStartReasonFirst {
+		return item.PredecessorRunID == "" && item.IdempotencyKey == RunQueueIntentGameTask
+	}
+	if item.PredecessorRunID == "" || !validCheckpointDigest(item.CheckpointDigest) || item.IdempotencyKey != GameResumeQueueKey(item.PredecessorRunID) || item.PredecessorRunID.Validate() != nil {
+		return false
+	}
+	return (item.RunStartReason == domaintask.RunStartReasonCheckpointResume || item.RunStartReason == domaintask.RunStartReasonProcessRestartResume) &&
+		item.PredecessorRunID != ""
 }
 
 type SubagentTask struct {

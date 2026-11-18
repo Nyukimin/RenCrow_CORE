@@ -17,6 +17,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	logginginfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/logging"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
@@ -134,7 +135,7 @@ func buildOrchestratorRuntime(
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
 		privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
-		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
+		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), deps.gameTaskAdmission, privateTaskRunner)
 		configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools, privateTaskRunner)
 		return
 	}
@@ -267,13 +268,20 @@ func buildOrchestratorRuntime(
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)
 	deps.voiceDirectHandler = orch
 	privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
-	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), privateTaskRunner)
+	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), deps.gameTaskAdmission, privateTaskRunner)
 	configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools, privateTaskRunner)
 }
 
 func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, routineWorkers map[string]privateTaskWorker, routineTools domainagent.ToolRunner, privateRunner ...*privateTaskRunQueueRunner) {
 	if cfg == nil || deps == nil || !cfg.Heartbeat.AgentSchedulerEnabled {
 		return
+	}
+	if deps.gameTaskAdmission == nil {
+		sessions, err := newGameObserverSessionsHTTPClient(cfg.Games.ObserverURL)
+		if err != nil {
+			log.Printf("WARN: active GAMES session checks unavailable for GAME Tasks: %v", err)
+		}
+		deps.gameTaskAdmission = newGameTaskRuntimeAdmission(sessions, deps.taskManager)
 	}
 	if cfg.Heartbeat.Routine.Enabled {
 		runtime, err := newAgentRoutineRuntime(cfg, deps, routineWorkers, routineTools)
@@ -340,6 +348,7 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 		}
 		return agentheartbeat.Work{
 			ID: string(item.QueueItemID), Priority: task.Priority, CreatedAt: task.CreatedAt.UTC(), VisibilityTaskID: task.TaskID,
+			GameTaskControllerID: gameTaskControllerID(item),
 			Run: func(runCtx context.Context, stop <-chan struct{}) error {
 				if boardWorkStopRequested(stop) {
 					return nil
@@ -347,8 +356,32 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 				if task.Autonomous != nil && (autonomous == nil || !autonomous.autonomousWindow(runCtx, actor, autonomous.now())) {
 					return nil
 				}
+				gameController := domainsuperagent.IsGameTaskQueueItem(*item)
+				if gameController {
+					if deps.taskManager == nil || deps.gameTaskAdmission == nil {
+						return fmt.Errorf("GAME Task admission is unavailable")
+					}
+					state, stateErr := deps.taskManager.GetGameTaskState(runCtx, item.TaskID)
+					if stateErr != nil {
+						return fmt.Errorf("load GAME Task before actor-group claim: %w", stateErr)
+					}
+					if state.Progress.Status == domaintask.GameExecutionPrepared {
+						reserved, reserveErr := deps.gameTaskAdmission.TryReserveTaskGroup(runCtx, state.Progress.LaunchKey, state.Spec)
+						if reserveErr != nil {
+							return reserveErr
+						}
+						if !reserved {
+							return nil
+						}
+					}
+				}
 				log.Printf("agent heartbeat work started actor=%s source=private work_id=%s", actor, item.QueueItemID)
 				ran, runErr := scheduler.RunPlannedWithStop(runCtx, item.QueueItemID, actor, stop)
+				if gameController && deps.taskManager != nil && deps.gameTaskAdmission != nil {
+					if latest, stateErr := deps.taskManager.GetGameTaskState(runCtx, item.TaskID); stateErr == nil && latest.Progress.Status == domaintask.GameExecutionPrepared {
+						_ = deps.gameTaskAdmission.ReleaseGameGroup(latest.Progress.LaunchKey)
+					}
+				}
 				outcome := "stale"
 				if ran {
 					outcome = "executed"
@@ -389,6 +422,34 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 		Board: boardSource, Private: privateSource, Idle: idleSource,
 		IdleRequiresBoard: cfg.Heartbeat.Routine.Enabled && cfg.BoardCommunication.Enabled,
 	}, report)
+	if deps.gameTaskAdmission != nil {
+		deps.gameTaskAdmission.setScheduler(func() gameTaskGroupScheduler { return deps.agentHeartbeat })
+		if deps.taskManager != nil {
+			states, err := deps.taskManager.ListGameTaskStates(context.Background())
+			if err != nil {
+				log.Printf("WARN: GAME Task scheduler groups could not be restored; actor admission remains closed: %v", err)
+				deps.agentHeartbeat = nil
+				deps.agentAdmission = nil
+				return
+			}
+			groups := make([]agentheartbeat.GameGroupReservation, 0, len(states))
+			for _, state := range states {
+				switch state.Progress.Status {
+				case domaintask.GameExecutionLaunching, domaintask.GameExecutionRunning, domaintask.GameExecutionUnknown:
+					groups = append(groups, agentheartbeat.GameGroupReservation{
+						LaunchKey: state.Progress.LaunchKey, GameID: state.Spec.GameID,
+						SessionID: state.Progress.SessionID, Actors: append([]string(nil), state.Spec.Personas...),
+					})
+				}
+			}
+			if err := deps.gameTaskAdmission.RestoreGameGroups(groups); err != nil {
+				log.Printf("WARN: GAME Task scheduler group restore failed; actor admission remains closed: %v", err)
+				deps.agentHeartbeat = nil
+				deps.agentAdmission = nil
+				return
+			}
+		}
+	}
 	if autonomous != nil {
 		autonomous.setWaker(deps.agentHeartbeat)
 	}

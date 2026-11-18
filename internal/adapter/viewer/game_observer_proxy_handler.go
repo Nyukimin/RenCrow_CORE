@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,9 +19,16 @@ const (
 // GameObserverProxyOptions configures the read-only RenCrow_GAMES live
 // observer passthrough served from the RenCrow Viewer origin.
 type GameObserverProxyOptions struct {
-	UIPath          string
-	ObserverBaseURL string
-	HTTPClient      *http.Client
+	UIPath                 string
+	ObserverBaseURL        string
+	HTTPClient             *http.Client
+	SessionActionAdmission GameObserverSessionActionAdmission
+}
+
+// GameObserverSessionActionAdmission guards retry/start_over, which create a
+// new session from a canonical source session.
+type GameObserverSessionActionAdmission interface {
+	BeginGameSessionAction(context.Context, string, string) (release func(), status int, err error)
 }
 
 // HandleGameObserverPage serves the RenCrow_GAMES browser observer UI through
@@ -101,6 +109,21 @@ func HandleGameObserverProxy(opts GameObserverProxyOptions) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		if sessionID, action, isAction := gameObserverSessionActionPath(upstreamPath); r.Method == http.MethodPost && isAction && opts.SessionActionAdmission != nil {
+			release, status, err := opts.SessionActionAdmission.BeginGameSessionAction(r.Context(), sessionID, action)
+			if err != nil {
+				if status < 400 || status > 599 {
+					status = http.StatusServiceUnavailable
+				}
+				http.Error(w, "game session action admission unavailable", status)
+				return
+			}
+			if release == nil {
+				http.Error(w, "game session action admission unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			defer release()
+		}
 		upstream := *baseURL
 		upstream.Path = joinURLPath(baseURL.Path, upstreamPath)
 		upstream.RawQuery = r.URL.RawQuery
@@ -128,6 +151,15 @@ func HandleGameObserverProxy(opts GameObserverProxyOptions) http.HandlerFunc {
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 	}
+}
+
+func gameObserverSessionActionPath(upstreamPath string) (sessionID, action string, ok bool) {
+	parts := strings.Split(strings.TrimPrefix(upstreamPath, "/"), "/")
+	if len(parts) != 4 || parts[0] != "games" || parts[1] != "sessions" || parts[2] == "" ||
+		(parts[3] != "retry" && parts[3] != "start_over") {
+		return "", "", false
+	}
+	return parts[2], parts[3], true
 }
 
 func isAllowedGameObserverProxyMethod(method string) bool {

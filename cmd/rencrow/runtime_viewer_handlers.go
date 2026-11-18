@@ -91,17 +91,40 @@ func buildViewerRuntimeHandlers(
 	deps.viewerGamesResult = viewer.HandleGameBridgeResult(gameBridgeStore)
 	deps.viewerGamesSessions = viewer.HandleGameBridgeSessions(gameBridgeStore, gameBridgeStatusOptions)
 	deps.viewerGamesEvents = viewer.HandleGameBridgeEvents(gameBridgeStore)
-	deps.viewerGamesDecision = viewer.HandleGameAgentDecision(newHeartbeatGameDecisionProvider(
+	if deps.gameTaskAdmission == nil {
+		sessions, err := newGameObserverSessionsHTTPClient(cfg.Games.ObserverURL)
+		if err != nil {
+			log.Printf("WARN: active GAMES session checks unavailable for GAME Tasks: %v", err)
+		}
+		deps.gameTaskAdmission = newGameTaskRuntimeAdmission(sessions, deps.taskManager)
+	}
+	heartbeatGameDecisionProvider := newHeartbeatGameDecisionProvider(
 		gameDecisionProvider,
 		func() conversationruntime.ActorAdmission { return deps.agentAdmission },
 		cfg != nil && cfg.Heartbeat.AgentSchedulerEnabled,
-	))
-	gameObserverProxyOptions := viewer.GameObserverProxyOptions{ObserverBaseURL: cfg.Games.ObserverURL}
+	)
+	var taskBoundGameDecisionProvider viewer.GameAgentDecisionProvider
+	if deps.taskManager != nil {
+		launchClient, err := newGameTaskLaunchClient(cfg.Games.ObserverURL)
+		if err != nil {
+			log.Printf("WARN: GAME Task decision admission unavailable: %v", err)
+		} else {
+			taskBoundGameDecisionProvider = newGameTaskDecisionAdmissionProvider(heartbeatGameDecisionProvider, deps.taskManager, launchClient, deps.gameTaskAdmission)
+		}
+	}
+	if deps.taskManager == nil {
+		taskBoundGameDecisionProvider = heartbeatGameDecisionProvider
+	}
+	deps.viewerGamesDecision = viewer.HandleGameAgentDecision(taskBoundGameDecisionProvider)
+	gameObserverProxyOptions := viewer.GameObserverProxyOptions{
+		ObserverBaseURL: cfg.Games.ObserverURL, SessionActionAdmission: deps.gameTaskAdmission,
+	}
 	deps.viewerGamesObserverPage = viewer.HandleGameObserverPage(gameObserverProxyOptions)
 	deps.viewerGamesObserverProxy = viewer.HandleGameObserverProxy(gameObserverProxyOptions)
 	deps.viewerGamesLaunch = viewer.HandleGameLaunch(viewer.GameLaunchOptions{
 		ObserverBaseURL: gameObserverProxyOptions.ObserverBaseURL,
 		Store:           gameBridgeStore,
+		Admission:       deps.gameTaskAdmission,
 	})
 	// ペルソナ自発プレイ (マルチペルソナ WP6)。LLM プロバイダが無ければ
 	// 起動しない（「遊びたい」は判断であり、ランダムでは代替しない）。
@@ -111,6 +134,7 @@ func buildViewerRuntimeHandlers(
 			Launch: viewer.GameLaunchOptions{
 				ObserverBaseURL: gameObserverProxyOptions.ObserverBaseURL,
 				Store:           gameBridgeStore,
+				Admission:       deps.gameTaskAdmission,
 			},
 			Personas:          cfg.Games.AutoPlay.Personas,
 			MaxSessionsPerDay: cfg.Games.AutoPlay.MaxSessionsPerDay,

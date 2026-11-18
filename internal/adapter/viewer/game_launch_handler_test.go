@@ -7,8 +7,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+type testGameLaunchAdmission struct {
+	status  int
+	err     error
+	begin   atomic.Int32
+	release atomic.Int32
+}
+
+func (admission *testGameLaunchAdmission) BeginGameLaunch(context.Context, GameLaunchRequest) (func(), int, error) {
+	admission.begin.Add(1)
+	if admission.err != nil {
+		return nil, admission.status, admission.err
+	}
+	return func() { admission.release.Add(1) }, 0, nil
+}
 
 type recordingResultWriter struct {
 	saved []GameResultRequest
@@ -158,5 +174,45 @@ func TestHandleGameLaunchRejectsGet(t *testing.T) {
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/viewer/games/launch", nil))
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status=%d want 405", recorder.Code)
+	}
+}
+
+func TestPerformGameLaunchAdmissionCoversUpstreamRequest(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "game_id": "nethack", "session_id": "nh_gate_1", "status": "launching"})
+	}))
+	defer upstream.Close()
+	admission := &testGameLaunchAdmission{}
+	result, status, err := PerformGameLaunch(context.Background(), GameLaunchOptions{ObserverBaseURL: upstream.URL, Admission: admission}, GameLaunchRequest{GameID: "nethack", Personas: []string{"mio"}})
+	if err != nil || status != http.StatusOK || result.SessionID != "nh_gate_1" {
+		t.Fatalf("launch result=%+v status=%d err=%v", result, status, err)
+	}
+	if admission.begin.Load() != 1 || admission.release.Load() != 1 || upstreamCalls.Load() != 1 {
+		t.Fatalf("admission begin=%d release=%d upstream=%d", admission.begin.Load(), admission.release.Load(), upstreamCalls.Load())
+	}
+}
+
+func TestPerformGameLaunchConflictDoesNotReachObserver(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { upstreamCalls.Add(1) }))
+	defer upstream.Close()
+	admission := &testGameLaunchAdmission{status: http.StatusConflict, err: context.Canceled}
+	_, status, err := PerformGameLaunch(context.Background(), GameLaunchOptions{ObserverBaseURL: upstream.URL, Admission: admission}, GameLaunchRequest{GameID: "herzog_zwei", Personas: []string{"aka", "ao", "kin", "gin"}})
+	if status != http.StatusConflict || err == nil || upstreamCalls.Load() != 0 || admission.release.Load() != 0 {
+		t.Fatalf("status=%d err=%v upstream=%d release=%d", status, err, upstreamCalls.Load(), admission.release.Load())
+	}
+}
+
+func TestPerformGameLaunchAdmissionReleasesAfterUpstreamFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "launch refused", http.StatusBadRequest)
+	}))
+	defer upstream.Close()
+	admission := &testGameLaunchAdmission{}
+	_, status, err := PerformGameLaunch(context.Background(), GameLaunchOptions{ObserverBaseURL: upstream.URL, Admission: admission}, GameLaunchRequest{GameID: "nethack", Personas: []string{"mio"}})
+	if status != http.StatusBadRequest || err == nil || admission.release.Load() != 1 {
+		t.Fatalf("status=%d err=%v release=%d", status, err, admission.release.Load())
 	}
 }

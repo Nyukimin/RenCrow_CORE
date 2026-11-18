@@ -19,6 +19,7 @@ type llmRuntimeProviders struct {
 	Primary            primaryLLMProviders
 	Conversation       *llmmiddleware.ConversationProvider
 	Readback           map[string]*llmmiddleware.ConversationProvider
+	GameTurnProviders  map[string]llm.LLMProvider
 	Chat               llm.LLMProvider
 	Worker             llm.LLMProvider
 	ChatWorker         llm.LLMProvider
@@ -54,6 +55,10 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		textOnly := privateTaskTextOnlyLLMProvider{inner: tracked}
 		privateTextProviders[actorID] = requireActionOwnedLLMProvider("private-text-"+actorID, textOnly, actions, tasks, transport)
 	}
+	gameTurnProviders := make(map[string]llm.LLMProvider, len(primaryProviders.GameTurnProviders))
+	for actorID, provider := range primaryProviders.GameTurnProviders {
+		gameTurnProviders[actorID] = trackLLMProvider("game-turn-"+actorID, provider, busyTracker)
+	}
 	primaryProviders = primaryLLMProviders{
 		Chat:                    trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
 		Worker:                  trackLLMProvider("worker", primaryProviders.Worker, busyTracker),
@@ -63,6 +68,7 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Conversation:            primaryProviders.Conversation,
 		BoardChats:              primaryProviders.BoardChats,
 		PrivateTextProviders:    privateTextProviders,
+		GameTurnProviders:       gameTurnProviders,
 		Readback:                primaryProviders.Readback,
 		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}
@@ -75,6 +81,7 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Conversation:            primaryProviders.Conversation,
 		BoardChats:              primaryProviders.BoardChats,
 		PrivateTextProviders:    primaryProviders.PrivateTextProviders,
+		GameTurnProviders:       primaryProviders.GameTurnProviders,
 		Readback:                primaryProviders.Readback,
 		GatewayWriteDiagnostics: primaryProviders.GatewayWriteDiagnostics,
 	}

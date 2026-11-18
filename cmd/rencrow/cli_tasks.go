@@ -293,6 +293,11 @@ func parseTasksCreateArgs(args []string) (domaintask.Task, domaintask.SharedRole
 	var draft domaintask.Task
 	var shared domaintask.SharedRoleContext
 	jsonOut := false
+	var gameID, gamePersonas, gameMode string
+	var gameTurns int
+	gameOptionSet := false
+	gamePersonasSet := false
+	gameModeSet := false
 	for i := 0; i < len(args); i++ {
 		value := strings.TrimSpace(args[i])
 		switch strings.ToLower(value) {
@@ -322,6 +327,40 @@ func parseTasksCreateArgs(args []string) (domaintask.Task, domaintask.SharedRole
 				return draft, shared, false, fmt.Errorf("--route requires a value")
 			}
 			draft.Route = domaintask.Route(strings.ToUpper(strings.TrimSpace(args[i+1])))
+			i++
+		case "--game-id":
+			if i+1 >= len(args) {
+				return draft, shared, false, fmt.Errorf("--game-id requires a value")
+			}
+			gameID = strings.TrimSpace(args[i+1])
+			gameOptionSet = true
+			i++
+		case "--game-personas":
+			if i+1 >= len(args) {
+				return draft, shared, false, fmt.Errorf("--game-personas requires a value")
+			}
+			gamePersonas = strings.TrimSpace(args[i+1])
+			gameOptionSet = true
+			gamePersonasSet = true
+			i++
+		case "--game-turns":
+			if i+1 >= len(args) {
+				return draft, shared, false, fmt.Errorf("--game-turns requires a value")
+			}
+			var err error
+			gameTurns, err = strconv.Atoi(strings.TrimSpace(args[i+1]))
+			if err != nil {
+				return draft, shared, false, fmt.Errorf("--game-turns must be an integer")
+			}
+			gameOptionSet = true
+			i++
+		case "--game-mode":
+			if i+1 >= len(args) {
+				return draft, shared, false, fmt.Errorf("--game-mode requires a value")
+			}
+			gameMode = strings.TrimSpace(args[i+1])
+			gameOptionSet = true
+			gameModeSet = true
 			i++
 		case "--assignee":
 			if i+1 >= len(args) {
@@ -409,6 +448,33 @@ func parseTasksCreateArgs(args []string) (domaintask.Task, domaintask.SharedRole
 	}
 	if strings.TrimSpace(draft.Title) == "" {
 		return draft, shared, false, fmt.Errorf("--title is required")
+	}
+	if gameOptionSet || draft.Route == domaintask.RouteGAME {
+		if draft.Route != domaintask.RouteGAME {
+			return draft, shared, false, fmt.Errorf("--game-* options require --route GAME")
+		}
+		var personas []string
+		if gamePersonasSet {
+			for _, persona := range strings.Split(gamePersonas, ",") {
+				personas = append(personas, strings.TrimSpace(persona))
+			}
+		}
+		if gamePersonasSet && gamePersonas == "" {
+			return draft, shared, false, fmt.Errorf("--game-personas must not be empty")
+		}
+		if gameModeSet && gameMode == "" {
+			return draft, shared, false, fmt.Errorf("--game-mode must not be empty")
+		}
+		spec, err := domaintask.NormalizeGameSpec(domaintask.GameSpec{
+			GameID: gameID, Personas: personas, Turns: gameTurns, Mode: gameMode,
+		})
+		if err != nil {
+			return draft, shared, false, fmt.Errorf("invalid GAME Task options: %w", err)
+		}
+		if draft.Assignee == "" {
+			draft.Assignee = "mio"
+		}
+		shared.GameSpec = &spec
 	}
 	return draft, shared, jsonOut, nil
 }
