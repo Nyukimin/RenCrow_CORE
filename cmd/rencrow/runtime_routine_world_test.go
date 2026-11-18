@@ -229,7 +229,7 @@ func TestRoutineTaskSummaryMatchesConfirmedRoutinePath(t *testing.T) {
 }
 
 func TestRoutineWorldWakePreparedOperationCanRecoverMissingReceipt(t *testing.T) {
-	state := agentroutine.State{Pending: &agentroutine.Intent{ID: "intent-1"}}
+	state := agentroutine.State{Pending: &agentroutine.Intent{ID: "intent-1", ActorID: "aka"}}
 	binding := &routineWorldSleepBinding{
 		ActorID: "aka", ActivityID: "sleep-aka-1", EventID: "evt-sleep-1", TransactionID: "txn-sleep-1", Seq: 2,
 	}
@@ -243,6 +243,11 @@ func TestRoutineWorldWakePreparedOperationCanRecoverMissingReceipt(t *testing.T)
 	if !routineWorldWakeOperationCanReplay(state, progress, "aka", operation) {
 		t.Fatal("matching prepared wake operation without a saved receipt was not eligible for idempotent recovery")
 	}
+	state.Pending.ActorID = "mio"
+	if routineWorldWakeOperationCanReplay(state, progress, "aka", operation) {
+		t.Fatal("wake recovery accepted a binding outside the current pending Actor")
+	}
+	state.Pending.ActorID = "aka"
 	operation.Key = "different-key"
 	if routineWorldWakeOperationCanReplay(state, progress, "aka", operation) {
 		t.Fatal("wake recovery accepted a key outside the current pending intent")
