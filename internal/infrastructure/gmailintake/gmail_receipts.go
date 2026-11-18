@@ -122,6 +122,56 @@ func (s *GmailReceiptStore) List(ctx context.Context, account string, limit int)
 	if limit <= 0 || limit > gmailReceiptListLimit {
 		limit = gmailReceiptListLimit
 	}
+	return s.listReceiptsLocked(account, false, limit, nil)
+}
+
+// ListDiaryReceipts returns every diary receipt for one exact account and
+// subject date. Unlike List, it has no newest-100 cap because a day's BOARD
+// payload is composed from the complete set of source receipts.
+func (s *GmailReceiptStore) ListDiaryReceipts(ctx context.Context, account, date string) ([]gmailapp.GmailReceipt, error) {
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, errors.New("Gmail receipt store is unavailable")
+	}
+	if strings.TrimSpace(account) != account || account == "" || !validDiaryReceiptDate(date) {
+		return nil, errors.New("Gmail diary receipt account or date is invalid")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureRoot(); err != nil {
+		return nil, err
+	}
+	return s.listReceiptsLocked(account, true, 0, func(receipt gmailapp.GmailReceipt) bool {
+		return receipt.PreparedDiary != nil && receipt.PreparedDiary.Diary.Date == date
+	})
+}
+
+// ListPendingDiaryPublicationIntents returns every unacknowledged intent for
+// the exact account so intake can reconcile uncertain BOARD writes before
+// processing another source.
+func (s *GmailReceiptStore) ListPendingDiaryPublicationIntents(ctx context.Context, account string) ([]gmailapp.GmailReceipt, error) {
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, errors.New("Gmail receipt store is unavailable")
+	}
+	if strings.TrimSpace(account) != account || account == "" {
+		return nil, errors.New("Gmail receipt account is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureRoot(); err != nil {
+		return nil, err
+	}
+	return s.listReceiptsLocked(account, true, 0, func(receipt gmailapp.GmailReceipt) bool {
+		return receipt.PreparedDiary != nil && receipt.PreparedDiary.PublicationIntent != nil && !receipt.DiarySaved
+	})
+}
+
+func (s *GmailReceiptStore) listReceiptsLocked(account string, exactAccount bool, limit int, include func(gmailapp.GmailReceipt) bool) ([]gmailapp.GmailReceipt, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return nil, fmt.Errorf("list Gmail receipt directory: %w", err)
@@ -131,8 +181,10 @@ func (s *GmailReceiptStore) List(ctx context.Context, account string, limit int)
 		name    string
 	}
 	capacity := len(entries)
-	if capacity > limit {
+	if limit > 0 && capacity > limit {
 		capacity = limit
+	} else if limit <= 0 {
+		capacity = 0
 	}
 	records := make([]record, 0, capacity)
 	for _, entry := range entries {
@@ -177,18 +229,24 @@ func (s *GmailReceiptStore) List(ctx context.Context, account string, limit int)
 		if s.receiptPath(receipt.Account, receipt.Message.ID) != path {
 			return nil, errors.New("Gmail receipt identity does not match its key")
 		}
-		if strings.EqualFold(receipt.Account, account) {
-			records = append(records, record{receipt: receipt, name: name})
-			sort.SliceStable(records, func(i, j int) bool {
-				left, _ := time.Parse(time.RFC3339Nano, records[i].receipt.UpdatedAt)
-				right, _ := time.Parse(time.RFC3339Nano, records[j].receipt.UpdatedAt)
-				if !left.Equal(right) {
-					return left.After(right)
+		accountMatches := strings.EqualFold(receipt.Account, account)
+		if exactAccount {
+			accountMatches = receipt.Account == account
+		}
+		if accountMatches {
+			if include == nil || include(receipt) {
+				records = append(records, record{receipt: receipt, name: name})
+				sort.SliceStable(records, func(i, j int) bool {
+					left, _ := time.Parse(time.RFC3339Nano, records[i].receipt.UpdatedAt)
+					right, _ := time.Parse(time.RFC3339Nano, records[j].receipt.UpdatedAt)
+					if !left.Equal(right) {
+						return left.After(right)
+					}
+					return records[i].name < records[j].name
+				})
+				if limit > 0 && len(records) > limit {
+					records = records[:limit]
 				}
-				return records[i].name < records[j].name
-			})
-			if len(records) > limit {
-				records = records[:limit]
 			}
 		}
 	}
@@ -197,6 +255,11 @@ func (s *GmailReceiptStore) List(ctx context.Context, account string, limit int)
 		result = append(result, item.receipt)
 	}
 	return result, nil
+}
+
+func validDiaryReceiptDate(value string) bool {
+	parsed, err := time.Parse("2006-01-02", value)
+	return err == nil && parsed.Format("2006-01-02") == value
 }
 
 func (s *GmailReceiptStore) Cursor(ctx context.Context, account, query string) (string, error) {

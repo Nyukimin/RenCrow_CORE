@@ -161,7 +161,7 @@ func TestGmailIntakeDefersWhenExecutionCapacityIsUnavailable(t *testing.T) {
 	saturated := taskmanagertest.NewSaturated(t)
 	listener := &recordingEventListener{}
 	called := false
-	intake := gmailIntakeFunc(func(context.Context) (gmailapp.GmailRunReport, error) {
+	intake := gmailRunOnlyFunc(func(context.Context) (gmailapp.GmailRunReport, error) {
 		called = true
 		return gmailapp.GmailRunReport{}, nil
 	})
