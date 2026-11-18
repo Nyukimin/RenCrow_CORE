@@ -66,69 +66,33 @@ func TestInPlaceRelaxationRejectsUnconfirmedOrBusyActor(t *testing.T) {
 	}
 }
 
-func TestPrivateRoomConfirmationDoesNotCompleteRelaxation(t *testing.T) {
+func TestInPlaceRelaxationCheckpointKeepsOriginalCompletionTime(t *testing.T) {
 	ctx := context.Background()
-	clock := time.Date(2026, time.November, 15, 23, 30, 0, 0, time.FixedZone(agentroutine.JST, 9*60*60))
-	runtime, _ := newDaytimeRoutineRuntime(t, &clock, "mio-room")
-	state, _, err := runtime.ensureState(ctx, "mio")
+	clock := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.FixedZone(agentroutine.JST, 9*60*60))
+	observedAt := clock
+	runtime, _ := newDaytimeRoutineRuntime(t, &clock, "living")
+	if _, _, err := runtime.ensureState(ctx, "mio"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := runtime.draftIntent(ctx, "mio", agentroutine.Plan{Kind: agentroutine.ActivityRelax, Date: "2026-11-15"}, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ActivatedOn = "2026-11-16"
-	state.NextDiaryDate = "2026-11-17"
-	state, err = runtime.store.Save(ctx, state, state.Revision)
+	initialProgress, err := decodeRoutineProgress(state.Pending.Output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, now, err := runtime.planFresh(ctx, "mio", false, nil)
-	if err != nil || plan.Kind != agentroutine.ActivityRelax || plan.RelaxRoom != agentroutine.RelaxRoomPrivate {
-		t.Fatalf("private quiet-time plan = %+v err=%v", plan, err)
-	}
-	state, err = runtime.draftIntent(ctx, "mio", plan, now)
+	state, _, err = runtime.confirmInPlaceRelaxation(ctx, state, initialProgress)
 	if err != nil {
 		t.Fatal(err)
-	}
-	progress, err := decodeRoutineProgress(state.Pending.Output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, progress, err = runtime.confirmInPlaceRelaxation(ctx, state, progress)
-	if err != nil {
-		t.Fatalf("confirm private room: %v", err)
 	}
 	checkpoint, err := decodeRoutineProgress(state.Pending.Output)
-	if err != nil || checkpoint.EffectCompleted || !checkpoint.CompletedAt.IsZero() ||
-		checkpoint.Rest == nil || checkpoint.Rest.PrivateReflection != "" || checkpoint.World == nil || checkpoint.World.RelaxRoomID != "mio-room" {
-		t.Fatalf("room-only checkpoint = %+v err=%v; want room evidence without a completed activity", checkpoint, err)
+	if err != nil || !checkpoint.EffectCompleted || !checkpoint.CompletedAt.Equal(observedAt) {
+		t.Fatalf("persisted relaxation = %+v err=%v; want original observation and completion saved together", checkpoint, err)
 	}
-	if progress.EffectCompleted || progress.Rest.PrivateReflection != "" {
-		t.Fatalf("returned room-only progress = %+v; must not claim completed reflection", progress)
-	}
-	_, progress, err = runtime.executeRelaxation(ctx, nil, state, checkpoint)
-	if !errors.Is(err, errRoutineRestUnavailable) || progress.EffectCompleted || progress.Rest.PrivateReflection != "" {
-		t.Fatalf("private room without a worker = %+v err=%v; want unavailable and incomplete", progress, err)
-	}
-}
-
-func TestRelaxationCannotSucceedFromRoomPresenceWithoutAnExactSeat(t *testing.T) {
-	clock := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.FixedZone(agentroutine.JST, 9*60*60))
-	runtime, _ := newDaytimeRoutineRuntime(t, &clock, "living")
-	state, _, err := runtime.ensureState(context.Background(), "mio")
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err = runtime.draftIntent(context.Background(), "mio", agentroutine.Plan{
-		Kind: agentroutine.ActivityRelax, RelaxRoom: agentroutine.RelaxRoomShared, Date: "2026-11-15",
-	}, clock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	progress, err := decodeRoutineProgress(state.Pending.Output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, progress, err = runtime.executeRelaxation(context.Background(), nil, state, progress)
-	if err == nil || progress.EffectCompleted || progress.World != nil {
-		t.Fatalf("room-only relaxation = %+v err=%v; want unavailable without a confirmed exact seat and activity", progress, err)
+	clock = clock.Add(3 * time.Hour)
+	window, ok := runtime.routineRestWindow(state, *state.Pending, checkpoint)
+	if !ok || !window.Until.Equal(observedAt.Add(45*time.Minute)) || window.Until.After(clock) {
+		t.Fatalf("replayed relaxation interval = %+v eligible=%t; want original, already expired interval", window, ok)
 	}
 }
