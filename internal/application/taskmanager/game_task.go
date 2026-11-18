@@ -230,6 +230,62 @@ func (m *Manager) ListGameTaskStates(ctx context.Context) ([]GameTaskState, erro
 	return states, nil
 }
 
+// HasTerminalGameTaskSession checks whether an exact actor/game/session tuple
+// belongs to a terminal GAME Task. It does not reserve the actor; it only
+// prevents a late callback for that finished session from falling through to
+// the legacy game-decision path. A different session for the same actor stays
+// eligible for legacy play.
+func (m *Manager) HasTerminalGameTaskSession(ctx context.Context, gameID, sessionID, actorID string) (bool, error) {
+	if m == nil || m.store == nil {
+		return false, errors.New("task manager store is unavailable")
+	}
+	if ctx == nil {
+		return false, errors.New("terminal GAME Task lookup context is nil")
+	}
+	if strings.TrimSpace(gameID) == "" || strings.TrimSpace(gameID) != gameID ||
+		strings.TrimSpace(sessionID) == "" || strings.TrimSpace(sessionID) != sessionID ||
+		strings.TrimSpace(actorID) == "" || strings.TrimSpace(actorID) != actorID {
+		return false, errors.New("terminal GAME Task lookup identity is invalid")
+	}
+	for _, status := range []domaintask.Status{
+		domaintask.StatusSucceeded, domaintask.StatusFailed, domaintask.StatusCancelled, domaintask.StatusSuperseded,
+	} {
+		var after modulecore.TaskID
+		for {
+			filter := domaintask.Filter{Route: domaintask.RouteGAME, Status: status, Limit: domaintask.MaxTaskListPageSize}
+			if after != "" {
+				filter.TaskIDAfter = &after
+			}
+			tasks, err := m.List(ctx, filter)
+			if err != nil {
+				return false, fmt.Errorf("list terminal GAME Tasks: %w", err)
+			}
+			for _, item := range tasks {
+				state, err := m.GetGameTaskState(ctx, item.TaskID)
+				if err != nil {
+					return false, fmt.Errorf("read terminal GAME Task %s: %w", item.TaskID, err)
+				}
+				actorOwnsSession := false
+				for _, persona := range state.Spec.Personas {
+					if persona == actorID {
+						actorOwnsSession = true
+						break
+					}
+				}
+				if state.Task.Status == status && state.Progress.SessionID == sessionID &&
+					state.Spec.GameID == gameID && actorOwnsSession {
+					return true, nil
+				}
+			}
+			if len(tasks) < domaintask.MaxTaskListPageSize {
+				break
+			}
+			after = tasks[len(tasks)-1].TaskID
+		}
+	}
+	return false, nil
+}
+
 // BeginGameLaunch durably records the stable TaskID launch key before the
 // controller performs the first network request. Retries never create a new
 // key or reset an existing launch checkpoint.

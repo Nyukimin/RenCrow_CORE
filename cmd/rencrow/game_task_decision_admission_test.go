@@ -101,17 +101,53 @@ func TestGameTaskDecisionBindsEarlyCallbackBeforeProviderAndRejectsWrongSession(
 	if delegate.calls != 1 {
 		t.Fatalf("provider calls after wrong-session callback=%d, want one", delegate.calls)
 	}
+
+	completedReceipt := domaintask.GameLaunchReceipt{
+		LaunchKey: string(task.TaskID), SessionID: sessionID, Status: domaintask.GameExecutionCompleted, Request: spec,
+		Result:         &domaintask.GameLaunchResult{OK: true, GameID: spec.GameID, SessionID: sessionID, Status: string(domaintask.GameExecutionCompleted)},
+		GameResultJSON: `{"winner":"aka","scores":{"aka":1}}`, CreatedAt: now, UpdatedAt: now.Add(2 * time.Second),
+	}
+	if err := scheduler.MarkGameGroupClosing(string(task.TaskID), sessionID); err != nil {
+		t.Fatalf("mark terminal game group closing: %v", err)
+	}
+	finalized, err := tasks.FinalizeGameTaskRun(ctx, task.TaskID, run.RunID, task.Assignee, completedReceipt, "verified title completion")
+	if err != nil || finalized.Status != domaintask.StatusSucceeded {
+		t.Fatalf("finalize GAME Task = (status %q, error %v), want succeeded", finalized.Status, err)
+	}
+	if err := scheduler.ReleaseGameGroup(string(task.TaskID)); err != nil {
+		t.Fatalf("release completed GAME actor group: %v", err)
+	}
+	if _, err := provider.DecideGameTurn(ctx, request); err == nil {
+		t.Fatal("callback for the exact terminal Task session unexpectedly reached the legacy provider")
+	}
+	if delegate.calls != 1 {
+		t.Fatalf("provider calls after terminal-session callback=%d, want one", delegate.calls)
+	}
+
+	delegate.allowLegacy = true
+	legacy := request
+	legacy.SessionID = "herzog_zwei_legacy_session"
+	if _, err := provider.DecideGameTurn(ctx, legacy); err != nil {
+		t.Fatalf("different legacy session for the same actor/game was rejected: %v", err)
+	}
+	if delegate.calls != 2 {
+		t.Fatalf("provider calls after different legacy session=%d, want two", delegate.calls)
+	}
 }
 
 type gameTaskDecisionAdmissionCapture struct {
-	calls int
-	auth  gameTaskTurnAuthorization
+	calls       int
+	auth        gameTaskTurnAuthorization
+	allowLegacy bool
 }
 
 func (capture *gameTaskDecisionAdmissionCapture) DecideGameTurn(ctx context.Context, _ viewer.GameAgentDecisionRequest) (viewer.GameBrainDecision, error) {
 	capture.calls++
 	auth, ok := gameTaskTurnAuthorizationFromContext(ctx)
 	if !ok {
+		if capture.allowLegacy {
+			return viewer.GameBrainDecision{AgentID: "aka", Persona: "aka", Intent: "hold", Confidence: 1}, nil
+		}
 		return viewer.GameBrainDecision{}, errors.New("Task turn authorization missing")
 	}
 	capture.auth = auth

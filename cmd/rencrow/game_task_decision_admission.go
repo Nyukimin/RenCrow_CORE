@@ -56,6 +56,13 @@ func (provider *gameTaskDecisionAdmissionProvider) DecideGameTurn(ctx context.Co
 		reserved = state
 	}
 	if reserved == nil {
+		terminalSession, err := provider.tasks.HasTerminalGameTaskSession(ctx, request.GameID, request.SessionID, actor)
+		if err != nil {
+			return viewer.GameBrainDecision{}, fmt.Errorf("resolve terminal GAME Task session identity: %w", err)
+		}
+		if terminalSession {
+			return viewer.GameBrainDecision{}, errors.New("GAMES session belongs to a terminal GAME Task")
+		}
 		return provider.delegate.DecideGameTurn(ctx, request)
 	}
 	if reserved.Spec.GameID != request.GameID {
