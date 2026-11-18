@@ -110,9 +110,18 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	if err := json.Unmarshal(layoutBytes, &layout); err != nil {
 		t.Fatalf("decode HOUSE layout: %v", err)
 	}
+	for _, expected := range []struct{ id, actor string }{{"mio-fashion", "mio"}, {"midori-reading", "midori"}} {
+		slot, ok := nativeRoutineSlot(layout, expected.id)
+		if !ok || slot.Actor != expected.actor || slot.RoomID != layout.PrivateRooms[expected.actor] {
+			t.Fatalf("HOUSE layout lacks %s's configured private hobby slot", expected.actor)
+		}
+	}
 	if len(layout.RoomAnchors) == 0 || len(layout.PrivateRooms) != len(nativeRoutineActors) || len(layout.SceneSHA256) != 64 {
 		t.Fatalf("HOUSE layout incomplete: rooms=%d private_rooms=%d scene_digest_bytes=%d", len(layout.RoomAnchors), len(layout.PrivateRooms), len(layout.SceneSHA256))
 	}
+	// The copied owner sample has measured anchors; shorten only the isolated test
+	// fixture's two hobby durations so this owner contract test stays bounded.
+	layoutBytes = nativeRoutineLayoutWithShortHobbyDurations(t, layoutBytes)
 
 	worldRoot, worldConfigPath, worldURL, readerToken, err := nativeRoutineWorldConfig(t, layoutBytes, layout)
 	if err != nil {
@@ -424,14 +433,63 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	}
 	t.Logf("native Kuro mirror receipt 2/2: pose=%s activity=%s start=%s finish=%s count=%d", allMirrorStarts[1].PoseID, allMirrorStarts[1].ActivityID, allMirrorStarts[1].EventID, allMirrorFinishes[1].EventID, kuroAfterTwo.MirrorPoseCompletions)
 
-	setScheduleNow(time.Date(testDate.Year(), testDate.Month(), testDate.Day(), 22, 45, 0, 0, loc))
+	// Fashion is now executable at night, so exercise the quiet-time fallback
+	// during the day instead of assuming the old unavailable-hobby condition.
+	setScheduleNow(time.Date(testDate.Year(), testDate.Month(), testDate.Day(), 10, 45, 0, 0, loc))
 	moveWork := runNativeRoutineScheduler(t, routine, "mio")
 	if !strings.HasSuffix(moveWork.id, ":relax") {
-		t.Fatalf("idleSource selected %q for Mio's isolated move", moveWork.id)
+		t.Fatalf("idleSource selected %q for Mio's isolated daytime relaxation", moveWork.id)
 	}
 	mio := readActor("mio")
+	restRoom := cfg.Heartbeat.Routine.SharedRooms[0]
+	if mio.RoomID != restRoom || mio.ActivityID != "" {
+		t.Fatalf("CORE relax Work.Run did not finish in the configured shared room: room=%q activity=%q", mio.RoomID, mio.ActivityID)
+	}
+	if state, loadErr := routine.store.Load(ctx, "mio"); loadErr != nil || state.Pending != nil || state.RestWindow == nil || state.RestWindow.RoomID != restRoom {
+		t.Fatalf("Mio's daytime rest was not durably confirmed: state=%+v err=%v", state, loadErr)
+	}
+	setRoutineWorldHobbyTime(t, routine, setScheduleNow, "mio", day, "fashion")
+	fashionWork := runNativeRoutineScheduler(t, routine, "mio")
+	if !strings.HasSuffix(fashionWork.id, ":hobby") {
+		t.Fatalf("idleSource selected %q for Mio's configured fashion show", fashionWork.id)
+	}
+	mio = readActor("mio")
 	if mio.RoomID != layout.PrivateRooms["mio"] || mio.ActivityID != "" {
-		t.Fatalf("CORE relax Work.Run did not finish in Mio private room: room=%q activity=%q", mio.RoomID, mio.ActivityID)
+		t.Fatalf("CORE fashion show Work.Run did not finish in Mio private room: room=%q activity=%q", mio.RoomID, mio.ActivityID)
+	}
+	mioEvents := nativeRoutineActorEvents(t, readClient, ctx, "mio")
+	fashionStarts, fashionFinishes := nativeRoutineEventsOfKind(mioEvents, worldread.HomeEventFashionShowStarted), nativeRoutineEventsOfKind(mioEvents, worldread.HomeEventFashionShowCompleted)
+	if len(fashionStarts) != 1 || len(fashionFinishes) != 1 || fashionStarts[0].ActivityID == "" ||
+		fashionStarts[0].ActivityID != fashionFinishes[0].ActivityID || fashionStarts[0].SlotID != "mio-fashion" ||
+		fashionStarts[0].ActivityKind != worldread.HomeActivityFashionShow || fashionStarts[0].DueAt.IsZero() ||
+		!fashionFinishes[0].EndedAt.Equal(fashionStarts[0].DueAt) && fashionFinishes[0].EndedAt.Before(fashionStarts[0].DueAt) ||
+		fashionStarts[0].EventID == "" || fashionStarts[0].TransactionID == "" || fashionFinishes[0].EventID == "" || fashionFinishes[0].TransactionID == "" {
+		t.Fatalf("Mio fashion show lacks one exact start/finish receipt pair: starts=%+v finishes=%+v", fashionStarts, fashionFinishes)
+	}
+	if state, loadErr := routine.store.Load(ctx, "mio"); loadErr != nil || state.Pending != nil {
+		t.Fatalf("Mio fashion intent did not settle after WORLD completion: state=%+v err=%v", state, loadErr)
+	}
+
+	setRoutineWorldHobbyTime(t, routine, setScheduleNow, "midori", day, "reading")
+	readingWork := runNativeRoutineScheduler(t, routine, "midori")
+	if !strings.HasSuffix(readingWork.id, ":hobby") {
+		t.Fatalf("idleSource selected %q for Midori's configured BL reading", readingWork.id)
+	}
+	midori := readActor("midori")
+	if midori.RoomID != layout.PrivateRooms["midori"] || midori.ActivityID != "" {
+		t.Fatalf("CORE reading Work.Run did not finish in Midori's private room: room=%q activity=%q", midori.RoomID, midori.ActivityID)
+	}
+	midoriEvents := nativeRoutineActorEvents(t, readClient, ctx, "midori")
+	readingStarts, readingFinishes := nativeRoutineEventsOfKind(midoriEvents, worldread.HomeEventReadingStarted), nativeRoutineEventsOfKind(midoriEvents, worldread.HomeEventReadingCompleted)
+	if len(readingStarts) != 1 || len(readingFinishes) != 1 || readingStarts[0].ActivityID == "" ||
+		readingStarts[0].ActivityID != readingFinishes[0].ActivityID || readingStarts[0].SlotID != "midori-reading" ||
+		readingStarts[0].ActivityKind != worldread.HomeActivityReading || readingStarts[0].DueAt.IsZero() ||
+		readingFinishes[0].EndedAt.Before(readingStarts[0].DueAt) || readingStarts[0].EventID == "" ||
+		readingStarts[0].TransactionID == "" || readingFinishes[0].EventID == "" || readingFinishes[0].TransactionID == "" {
+		t.Fatalf("Midori reading lacks one exact start/finish receipt pair: starts=%+v finishes=%+v", readingStarts, readingFinishes)
+	}
+	if state, loadErr := routine.store.Load(ctx, "midori"); loadErr != nil || state.Pending != nil {
+		t.Fatalf("Midori reading intent did not settle after WORLD completion: state=%+v err=%v", state, loadErr)
 	}
 
 	events, err := readClient.Events(ctx, 0)
@@ -442,6 +500,8 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 		"life.home.move.started": {"mio": false}, "life.home.move.arrived": {"mio": false},
 		"life.home.sleep.started": {"aka": false}, "life.home.sleep.woke": {"aka": false},
 		"life.home.exercise.started": {"shiro": false}, "life.home.exercise.completed": {"shiro": false},
+		worldread.HomeEventFashionShowStarted: {"mio": false}, worldread.HomeEventFashionShowCompleted: {"mio": false},
+		worldread.HomeEventReadingStarted: {"midori": false}, worldread.HomeEventReadingCompleted: {"midori": false},
 	}
 	for _, event := range events.Events {
 		var payload struct {
@@ -467,7 +527,7 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build Aka diary from actual WORLD owner events: %v", err)
 	}
-	for _, line := range []string{"WORLDでアカの部屋のベッドで就寝を確認しました。", "WORLDで起床を確認しました。"} {
+	for _, line := range []string{"ごろに就寝しました。", "ごろに起きました。"} {
 		if !strings.Contains(akaDiary, line) {
 			t.Errorf("Aka's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, akaDiary)
 		}
@@ -477,8 +537,8 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 		t.Fatalf("build Mio diary from actual WORLD owner events: %v", err)
 	}
 	for _, line := range []string{
-		"WORLDで自宅内のミオの部屋への移動を開始しました。",
-		"WORLDで自宅内のミオの部屋への移動完了を確認しました。",
+		"ファッションショーを始めました。",
+		"ファッションショーを終えました。",
 	} {
 		if !strings.Contains(mioDiary, line) {
 			t.Errorf("Mio's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, mioDiary)
@@ -488,7 +548,7 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build Shiro diary from actual WORLD owner events: %v", err)
 	}
-	for _, line := range []string{"WORLDで運動の開始を確認しました。", "WORLDで運動の完了を確認しました。"} {
+	for _, line := range []string{"運動を始めました。", "運動を終えました。"} {
 		if !strings.Contains(shiroDiary, line) {
 			t.Errorf("Shiro's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, shiroDiary)
 		}
@@ -498,19 +558,28 @@ func TestAgentRoutineNativeHomeAcceptance(t *testing.T) {
 		t.Fatalf("build Kuro diary from actual WORLD owner events: %v", err)
 	}
 	for _, line := range []string{
-		"WORLDで鏡のポーズ「挨拶」の練習開始を確認しました。",
-		"WORLDで鏡のポーズ「挨拶」の完了を確認しました。",
-		"WORLDで鏡のポーズ「ヒーロー」の練習開始を確認しました。",
-		"WORLDで鏡のポーズ「ヒーロー」の完了を確認しました。",
+		"鏡の前で「挨拶」の練習を始めました。",
+		"鏡の前で「挨拶」のポーズを終えました。",
+		"鏡の前で「ヒーロー」の練習を始めました。",
+		"鏡の前で「ヒーロー」のポーズを終えました。",
 	} {
 		if !strings.Contains(kuroDiary, line) {
 			t.Errorf("Kuro's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, kuroDiary)
 		}
 	}
-	t.Logf("native diary builder read actual authenticated WORLD owner events for JST %s: Aka sleep/wake, Mio move, Shiro exercise, Kuro greeting/hero mirror poses", worldEventDate)
+	midoriDiary, err := routine.buildDiaryBody(ctx, "midori", worldEventDate)
+	if err != nil {
+		t.Fatalf("build Midori diary from actual WORLD owner events: %v", err)
+	}
+	for _, line := range []string{"BL読書を始めました。", "BL読書を終えました。"} {
+		if !strings.Contains(midoriDiary, line) {
+			t.Errorf("Midori's actual WORLD diary for %s omitted %q: %s", worldEventDate, line, midoriDiary)
+		}
+	}
+	t.Logf("native diary builder read actual authenticated WORLD owner events for JST %s: Aka sleep/wake, Mio fashion show, Shiro exercise, Kuro greeting/hero mirror poses, Midori BL reading", worldEventDate)
 	storedTasks, err := tasks.List(ctx, domaintask.Filter{ModuleID: agentRoutineModuleID, Limit: 20})
-	if err != nil || len(storedTasks) != 6 {
-		t.Fatalf("canonical Task count=%d err=%v, want sleep, wake, exercise, two mirror poses, and move", len(storedTasks), err)
+	if err != nil || len(storedTasks) != 8 {
+		t.Fatalf("canonical Task count=%d err=%v, want sleep, wake, exercise, two mirror poses, Mio relaxation and fashion show, and Midori reading", len(storedTasks), err)
 	}
 	for _, task := range storedTasks {
 		if task.OwnerID != nativeRoutineOwner || task.Status != domaintask.StatusSucceeded {
@@ -637,6 +706,86 @@ func nativeRoutineWorldConfig(t *testing.T, layoutBytes []byte, layout nativeRou
 		return "", "", "", "", err
 	}
 	return root, configPath, worldURL, readerToken, nil
+}
+
+func nativeRoutineLayoutWithShortHobbyDurations(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatalf("decode owner HOUSE layout for test-only duration override: %v", err)
+	}
+	var slots []json.RawMessage
+	if err := json.Unmarshal(document["slots"], &slots); err != nil {
+		t.Fatalf("decode owner HOUSE slots: %v", err)
+	}
+	remaining := map[string]bool{"mio-fashion": true, "midori-reading": true}
+	for index, rawSlot := range slots {
+		var slot map[string]json.RawMessage
+		if err := json.Unmarshal(rawSlot, &slot); err != nil {
+			t.Fatalf("decode HOUSE slot %d: %v", index, err)
+		}
+		var id string
+		if err := json.Unmarshal(slot["id"], &id); err != nil {
+			t.Fatalf("decode HOUSE slot %d id: %v", index, err)
+		}
+		if !remaining[id] {
+			continue
+		}
+		duration, _ := json.Marshal(int64(50))
+		slot["duration_ms"] = duration
+		encoded, err := json.Marshal(slot)
+		if err != nil {
+			t.Fatalf("encode isolated HOUSE slot %s: %v", id, err)
+		}
+		slots[index] = encoded
+		delete(remaining, id)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("owner HOUSE layout lacks hobby slots for test duration override: %v", remaining)
+	}
+	encodedSlots, err := json.Marshal(slots)
+	if err != nil {
+		t.Fatalf("encode isolated HOUSE slots: %v", err)
+	}
+	document["slots"] = encodedSlots
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("encode isolated HOUSE layout: %v", err)
+	}
+	return encoded
+}
+
+func setRoutineWorldHobbyTime(t *testing.T, routine *agentRoutineRuntime, setNow func(time.Time), actorID, date, label string) {
+	t.Helper()
+	location := routine.location()
+	day, err := time.ParseInLocation("2006-01-02", date, location)
+	if err != nil {
+		t.Fatalf("parse WORLD hobby test day: %v", err)
+	}
+	state, err := routine.store.Load(context.Background(), actorID)
+	if err != nil {
+		t.Fatalf("load %s cooldown before WORLD hobby: %v", actorID, err)
+	}
+	first := day.Add(22 * time.Hour)
+	if state.CooldownUntil.After(first) {
+		first = state.CooldownUntil.In(location)
+	}
+	first = first.Truncate(30 * time.Minute)
+	if first.Before(day.Add(22 * time.Hour)) {
+		first = day.Add(22 * time.Hour)
+	}
+	if first.Before(state.CooldownUntil) {
+		first = first.Add(30 * time.Minute)
+	}
+	for candidate := first; candidate.Before(day.AddDate(0, 0, 1).Add(2 * time.Hour)); candidate = candidate.Add(30 * time.Minute) {
+		candidateDate := candidate.In(location).Format("2006-01-02")
+		slot := uint64(candidate.UnixNano() / int64(30*time.Minute))
+		if routine.availableRoutineHobbyLabel(actorID, candidateDate, slot) == label {
+			setNow(candidate)
+			return
+		}
+	}
+	t.Fatalf("no valid private-night time selects %s's %q hobby", actorID, label)
 }
 
 func nativeRoutineSlot(layout nativeRoutineHomeLayout, id string) (nativeRoutineHomeSlot, bool) {

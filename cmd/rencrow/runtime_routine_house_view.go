@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 )
 
@@ -156,7 +157,7 @@ func runtimeRoutineHouseViewProject(ctx context.Context, runtime *agentRoutineRu
 		}
 		if actor.ActivityID != "" {
 			switch actor.ActivityKind {
-			case "move", "sleep", "exercise", "mirror_pose":
+			case "move", "sleep", "exercise", "mirror_pose", worldread.HomeActivityFashionShow, worldread.HomeActivityReading:
 				dto.ActiveKind = actor.ActivityKind
 				if !actor.ActivityStartedAt.IsZero() {
 					dto.ActivityStartedAt = actor.ActivityStartedAt.UTC().Format(time.RFC3339Nano)

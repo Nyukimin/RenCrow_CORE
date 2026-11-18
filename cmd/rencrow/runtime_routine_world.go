@@ -26,6 +26,42 @@ var (
 var routineMirrorPoseIDs = [...]string{
 	"mirror-greeting", "mirror-hero", "mirror-side", "mirror-focus",
 	"mirror-hands-on-hips", "mirror-over-shoulder", "mirror-open-arms", "mirror-bow",
+	"mirror-crossed-arms", "mirror-hand-near-face",
+}
+
+type routineWorldHomeHobbySpec struct {
+	actorID         string
+	label           string
+	activityKind    string
+	startPurpose    string
+	startAction     string
+	startEvent      string
+	finishEvent     string
+	slotID          string
+	locationPurpose string
+}
+
+func routineWorldHomeHobbyFor(actorID, label string) (routineWorldHomeHobbySpec, bool) {
+	switch {
+	case actorID == "shiro" && label == "fitness_research":
+		return routineWorldHomeHobbySpec{actorID: actorID, label: label, activityKind: "exercise", startPurpose: "exercise-start",
+			startAction: worldread.HomeActionExercise, startEvent: "life.home.exercise.started", finishEvent: "life.home.exercise.completed",
+			slotID: "shiro-exercise", locationPurpose: "exercise-location"}, true
+	case actorID == "kuro" && label == "creative_mirror_ideas":
+		return routineWorldHomeHobbySpec{actorID: actorID, label: label, activityKind: "mirror_pose", startPurpose: "mirror-pose-start",
+			startAction: worldread.HomeActionMirror, startEvent: "life.home.mirror_pose.started", finishEvent: "life.home.mirror_pose.completed",
+			slotID: "kuro-mirror", locationPurpose: "mirror-location"}, true
+	case actorID == "mio" && label == "fashion":
+		return routineWorldHomeHobbySpec{actorID: actorID, label: label, activityKind: worldread.HomeActivityFashionShow, startPurpose: "fashion-show-start",
+			startAction: worldread.HomeActionFashionShow, startEvent: worldread.HomeEventFashionShowStarted, finishEvent: worldread.HomeEventFashionShowCompleted,
+			slotID: "mio-fashion", locationPurpose: "fashion-show-location"}, true
+	case actorID == "midori" && label == "reading":
+		return routineWorldHomeHobbySpec{actorID: actorID, label: label, activityKind: worldread.HomeActivityReading, startPurpose: "reading-start",
+			startAction: worldread.HomeActionReading, startEvent: worldread.HomeEventReadingStarted, finishEvent: worldread.HomeEventReadingCompleted,
+			slotID: "midori-reading", locationPurpose: "reading-location"}, true
+	default:
+		return routineWorldHomeHobbySpec{}, false
+	}
 }
 
 type routineWorldProgress struct {
@@ -96,8 +132,8 @@ func (r *agentRoutineRuntime) routineWorldActorID(actorID string) (string, bool)
 }
 
 func routineWorldHomeHobby(actorID, label string) bool {
-	return (actorID == "shiro" && label == "fitness_research") ||
-		(actorID == "kuro" && label == "creative_mirror_ideas")
+	_, ok := routineWorldHomeHobbyFor(actorID, label)
+	return ok
 }
 
 func (r *agentRoutineRuntime) routineWorldPreferredSharedRoom() string {
@@ -215,6 +251,9 @@ func (r *agentRoutineRuntime) performRoutineWorldAction(
 	eventKind string,
 	payload worldread.HomeActionPayload,
 ) (agentroutine.State, routineProgress, routineWorldOperation, error) {
+	if !routineWorldActionEventAllowed(action, eventKind) {
+		return state, progress, routineWorldOperation{}, errors.New("WORLD action and expected lifecycle event kind do not match")
+	}
 	if r == nil || r.world == nil || r.worldLife == nil || state.Pending == nil {
 		return state, progress, routineWorldOperation{}, errRoutineWorldUnavailable
 	}
@@ -943,10 +982,8 @@ func (r *agentRoutineRuntime) prepareRoutineWorldChoice(ctx context.Context, sto
 		}
 		slotID := ""
 		purpose := "choice-hobby:" + intent.ActorID
-		if intent.ActorID == "shiro" && intent.Label == "fitness_research" {
-			slotID, purpose = "shiro-exercise", "exercise-location"
-		} else if intent.ActorID == "kuro" && intent.Label == "creative_mirror_ideas" {
-			slotID, purpose = "kuro-mirror", "mirror-location"
+		if spec, ok := routineWorldHomeHobbyFor(intent.ActorID, intent.Label); ok {
+			slotID, purpose = spec.slotID, spec.locationPurpose
 		}
 		state, progress, _, err := r.ensureRoutineWorldArrival(ctx, stop, state, progress, intent.ActorID, roomID, slotID, purpose, routineWorldMoveWait)
 		return state, progress, err
@@ -1237,13 +1274,10 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 		progress.World.RelaxObservedAt = read.readAt.UTC()
 		progress.CompletedAt = read.readAt.UTC()
 	case agentroutine.ActivityHobby:
-		if intent.ActorID == "shiro" && intent.Label == "fitness_research" {
-			state, progress, err = r.executeRoutineWorldExercise(ctx, stop, state, progress)
-		} else if intent.ActorID == "kuro" && intent.Label == "creative_mirror_ideas" {
-			state, progress, err = r.executeRoutineWorldMirrorPose(ctx, stop, state, progress)
-		} else {
+		if !routineWorldHomeHobby(intent.ActorID, intent.Label) {
 			return state, progress, errors.New("routine hobby is not a WORLD home activity")
 		}
+		state, progress, err = r.executeRoutineWorldHomeHobby(ctx, stop, state, progress, intent.ActorID, intent.Label)
 		if err != nil {
 			return state, progress, err
 		}
@@ -1294,49 +1328,42 @@ func routineWorldWakeOperationCanReplay(state agentroutine.State, progress routi
 		operation.Payload.ActivityID == binding.ActivityID
 }
 
-func (r *agentRoutineRuntime) executeRoutineWorldExercise(ctx context.Context, stop <-chan struct{}, state agentroutine.State, progress routineProgress) (agentroutine.State, routineProgress, error) {
-	roomID := r.cfg.Heartbeat.Routine.PrivateRooms["shiro"]
+func (r *agentRoutineRuntime) executeRoutineWorldHomeHobby(ctx context.Context, stop <-chan struct{}, state agentroutine.State, progress routineProgress, actorID, label string) (agentroutine.State, routineProgress, error) {
+	spec, ok := routineWorldHomeHobbyFor(actorID, label)
+	if !ok || r == nil || r.cfg == nil {
+		return state, progress, errors.New("routine hobby has no configured WORLD home activity")
+	}
+	roomID := r.cfg.Heartbeat.Routine.PrivateRooms[actorID]
 	if roomID == "" {
-		return state, progress, errors.New("WORLD exercise requires Shiro's configured private room")
+		return state, progress, fmt.Errorf("WORLD %s requires the actor's configured private room", spec.activityKind)
 	}
 	var err error
-	state, progress, _, err = r.ensureRoutineWorldArrival(ctx, stop, state, progress, "shiro", roomID, "shiro-exercise", "exercise-location", routineWorldMoveWait)
+	state, progress, _, err = r.ensureRoutineWorldArrival(ctx, stop, state, progress, actorID, roomID, spec.slotID, spec.locationPurpose, routineWorldMoveWait)
 	if err != nil {
 		return state, progress, err
 	}
-	return r.executeRoutineWorldTimedActivity(ctx, stop, state, progress,
-		"exercise-start", worldread.HomeActionExercise, "life.home.exercise.started", "life.home.exercise.completed", "shiro", "exercise", roomID, "shiro-exercise", "")
-}
-
-func (r *agentRoutineRuntime) executeRoutineWorldMirrorPose(ctx context.Context, stop <-chan struct{}, state agentroutine.State, progress routineProgress) (agentroutine.State, routineProgress, error) {
-	roomID := r.cfg.Heartbeat.Routine.PrivateRooms["kuro"]
-	if roomID == "" {
-		return state, progress, errors.New("WORLD mirror pose requires Kuro's configured private room")
-	}
-	var err error
-	state, progress, _, err = r.ensureRoutineWorldArrival(ctx, stop, state, progress, "kuro", roomID, "kuro-mirror", "mirror-location", routineWorldMoveWait)
-	if err != nil {
-		return state, progress, err
-	}
-	if progress.World == nil {
-		progress.World = &routineWorldProgress{}
-	}
-	if !progress.World.MirrorCompletionBaseSet {
-		_, actor, readErr := r.routineWorldFreshActor(ctx, "kuro")
-		if readErr != nil {
-			return state, progress, readErr
+	poseID := ""
+	if spec.activityKind == "mirror_pose" {
+		if progress.World == nil {
+			progress.World = &routineWorldProgress{}
 		}
-		progress.World.MirrorCompletionBase = actor.MirrorPoseCompletions
-		progress.World.MirrorPoseID = routineMirrorPoseIDs[actor.MirrorPoseCompletions%uint64(len(routineMirrorPoseIDs))]
-		progress.World.MirrorCompletionBaseSet = true
-		state, progress, err = r.saveProgress(ctx, state, "mirror_pose_selection_saved", progress)
-		if err != nil {
-			return state, progress, err
+		if !progress.World.MirrorCompletionBaseSet {
+			_, actor, readErr := r.routineWorldFreshActor(ctx, actorID)
+			if readErr != nil {
+				return state, progress, readErr
+			}
+			progress.World.MirrorCompletionBase = actor.MirrorPoseCompletions
+			progress.World.MirrorPoseID = routineMirrorPoseIDs[actor.MirrorPoseCompletions%uint64(len(routineMirrorPoseIDs))]
+			progress.World.MirrorCompletionBaseSet = true
+			state, progress, err = r.saveProgress(ctx, state, "mirror_pose_selection_saved", progress)
+			if err != nil {
+				return state, progress, err
+			}
 		}
+		poseID = progress.World.MirrorPoseID
 	}
 	return r.executeRoutineWorldTimedActivity(ctx, stop, state, progress,
-		"mirror-pose-start", worldread.HomeActionMirror, "life.home.mirror_pose.started", "life.home.mirror_pose.completed",
-		"kuro", "mirror_pose", roomID, "kuro-mirror", progress.World.MirrorPoseID)
+		spec.startPurpose, spec.startAction, spec.startEvent, spec.finishEvent, actorID, spec.activityKind, roomID, spec.slotID, poseID)
 }
 
 func (r *agentRoutineRuntime) executeRoutineWorldTimedActivity(
@@ -1479,7 +1506,7 @@ func (r *agentRoutineRuntime) routineWorldStopActiveOperations(ctx context.Conte
 	var failures []error
 	for index, operation := range progress.World.Operations {
 		if operation.ActivityID == "" || operation.ReceiptStatus != "committed" || !operation.EventVerified ||
-			(operation.ActivityKind != "move" && operation.ActivityKind != "exercise" && operation.ActivityKind != "mirror_pose") {
+			!routineWorldSettlementActivityKind(operation.ActivityKind) {
 			continue
 		}
 		worldActorID, ok := r.routineWorldActorID(operation.ActorID)
@@ -1510,6 +1537,10 @@ func (r *agentRoutineRuntime) routineWorldStopActiveOperations(ctx context.Conte
 				eventKind = "life.home.exercise.completed"
 			case "mirror_pose":
 				eventKind = "life.home.mirror_pose.completed"
+			case worldread.HomeActivityFashionShow:
+				eventKind = worldread.HomeEventFashionShowCompleted
+			case worldread.HomeActivityReading:
+				eventKind = worldread.HomeEventReadingCompleted
 			}
 			purpose = "interrupt-finish:" + operation.ActivityID
 		}
@@ -1666,6 +1697,14 @@ func routineWorldEventSummary(event worldread.Event) (string, bool) {
 	case "life.home.mirror_pose.completed":
 		poseID, _ := routineWorldString(fields, "pose_id")
 		return "WORLDで鏡のポーズ「" + routineMirrorPoseLabel(poseID) + "」の完了を確認しました。", true
+	case worldread.HomeEventFashionShowStarted:
+		return "WORLDでファッションショーの開始を確認しました。", true
+	case worldread.HomeEventFashionShowCompleted:
+		return "WORLDでファッションショーの完了を確認しました。", true
+	case worldread.HomeEventReadingStarted:
+		return "WORLDでBL読書の開始を確認しました。", true
+	case worldread.HomeEventReadingCompleted:
+		return "WORLDでBL読書の完了を確認しました。", true
 	case "life.home.activity.stopped":
 		switch activityKind {
 		case "move":
@@ -1674,6 +1713,10 @@ func routineWorldEventSummary(event worldread.Event) (string, bool) {
 			return "WORLDで運動を途中で停止したことを確認しました。", true
 		case "mirror_pose":
 			return "WORLDで鏡のポーズ練習を途中で停止したことを確認しました。", true
+		case worldread.HomeActivityFashionShow:
+			return "WORLDでファッションショーを途中で停止したことを確認しました。", true
+		case worldread.HomeActivityReading:
+			return "WORLDでBL読書を途中で停止したことを確認しました。", true
 		}
 	}
 	return "", false
@@ -1683,7 +1726,8 @@ func routineMirrorPoseLabel(poseID string) string {
 	labels := map[string]string{
 		"mirror-greeting": "挨拶", "mirror-hero": "ヒーロー", "mirror-side": "横向き",
 		"mirror-focus": "集中", "mirror-hands-on-hips": "腰に手を当てる", "mirror-over-shoulder": "肩越し",
-		"mirror-open-arms": "両腕を開く", "mirror-bow": "お辞儀",
+		"mirror-open-arms": "両腕を開く", "mirror-bow": "お辞儀", "mirror-crossed-arms": "腕組み",
+		"mirror-hand-near-face": "顔に手を添える",
 	}
 	if label := labels[poseID]; label != "" {
 		return label

@@ -1041,7 +1041,7 @@ func routineProgressNeedsWorldSettlement(progress routineProgress) bool {
 	}
 	for _, operation := range progress.World.Operations {
 		if operation.ActivityID == "" || operation.ReceiptStatus != "committed" || !operation.EventVerified ||
-			(operation.ActivityKind != "move" && operation.ActivityKind != "exercise" && operation.ActivityKind != "mirror_pose") ||
+			(!routineWorldSettlementActivityKind(operation.ActivityKind)) ||
 			operation.Action == worldread.HomeActionFinish || operation.Action == worldread.HomeActionStop {
 			continue
 		}
@@ -1066,34 +1066,30 @@ func (r *agentRoutineRuntime) routineVerifiedBedtimeHobbyCompletion(intent *agen
 		!routineWorldHomeHobby(intent.ActorID, intent.Label) {
 		return time.Time{}, false
 	}
-	activityKind, startPurpose, startAction, startEvent, finishEvent := "", "", "", "", ""
-	if intent.ActorID == "shiro" {
-		activityKind, startPurpose, startAction = "exercise", "exercise-start", worldread.HomeActionExercise
-		startEvent, finishEvent = "life.home.exercise.started", "life.home.exercise.completed"
-	} else {
-		activityKind, startPurpose, startAction = "mirror_pose", "mirror-pose-start", worldread.HomeActionMirror
-		startEvent, finishEvent = "life.home.mirror_pose.started", "life.home.mirror_pose.completed"
+	spec, ok := routineWorldHomeHobbyFor(intent.ActorID, intent.Label)
+	if !ok {
+		return time.Time{}, false
 	}
 	var start routineWorldOperation
 	startFound := false
 	for index := len(progress.World.Operations) - 1; index >= 0; index-- {
 		candidate := progress.World.Operations[index]
-		if (candidate.Purpose == startPurpose || strings.HasPrefix(candidate.Purpose, startPurpose+":retry:")) &&
-			candidate.Action == startAction && candidate.EventKind == startEvent && candidate.ActorID == intent.ActorID {
+		if (candidate.Purpose == spec.startPurpose || strings.HasPrefix(candidate.Purpose, spec.startPurpose+":retry:")) &&
+			candidate.Action == spec.startAction && candidate.EventKind == spec.startEvent && candidate.ActorID == intent.ActorID {
 			start, startFound = candidate, true
 			break
 		}
 	}
-	if !startFound || start.Key != routineWorldOperationKey(intent.ID, intent.ActorID, start.Purpose) || start.Action != startAction ||
-		start.EventKind != startEvent || start.ActorID != intent.ActorID || start.Payload.ActorID != intent.ActorID ||
-		start.ActivityKind != activityKind || start.ActivityID == "" || start.ReceiptID == "" ||
+	if !startFound || start.Key != routineWorldOperationKey(intent.ID, intent.ActorID, start.Purpose) || start.Action != spec.startAction ||
+		start.EventKind != spec.startEvent || start.ActorID != intent.ActorID || start.Payload.ActorID != intent.ActorID ||
+		start.ActivityKind != spec.activityKind || start.ActivityID == "" || start.ReceiptID == "" ||
 		start.ReceiptStatus != "committed" || !start.EventVerified || start.StartedAt.IsZero() || start.DueAt.IsZero() {
 		return time.Time{}, false
 	}
 	terminal, ok := routineWorldActivityWasConfirmedFinished(progress, intent.ActorID, start.ActivityID)
-	if !ok || terminal.Action != worldread.HomeActionFinish || terminal.EventKind != finishEvent ||
+	if !ok || terminal.Action != worldread.HomeActionFinish || terminal.EventKind != spec.finishEvent ||
 		terminal.ActorID != intent.ActorID || terminal.Payload.ActorID != intent.ActorID ||
-		terminal.Payload.ActivityID != start.ActivityID || terminal.ActivityKind != activityKind ||
+		terminal.Payload.ActivityID != start.ActivityID || terminal.ActivityKind != spec.activityKind ||
 		terminal.ReceiptID == "" || terminal.ReceiptStatus != "committed" || !terminal.EventVerified || terminal.EndedAt.IsZero() {
 		return time.Time{}, false
 	}
@@ -1105,10 +1101,46 @@ func (r *agentRoutineRuntime) routineVerifiedBedtimeHobbyCompletion(intent *agen
 	if terminal.Key != routineWorldOperationKey(intent.ID, intent.ActorID, terminal.Purpose) {
 		return time.Time{}, false
 	}
-	if activityKind == "mirror_pose" && (!progress.World.MirrorCompletionBaseSet || terminal.MirrorCompletions != progress.World.MirrorCompletionBase+1) {
+	if spec.activityKind == "mirror_pose" && (!progress.World.MirrorCompletionBaseSet || terminal.MirrorCompletions != progress.World.MirrorCompletionBase+1) {
 		return time.Time{}, false
 	}
 	return terminal.EndedAt.UTC(), true
+}
+
+func routineWorldSettlementActivityKind(kind string) bool {
+	switch kind {
+	case "move", "exercise", "mirror_pose", worldread.HomeActivityFashionShow, worldread.HomeActivityReading:
+		return true
+	default:
+		return false
+	}
+}
+
+func routineWorldActionEventAllowed(action, eventKind string) bool {
+	switch action {
+	case worldread.HomeActionMove:
+		return eventKind == "life.home.move.started" || eventKind == "life.home.move.arrived"
+	case worldread.HomeActionSleep:
+		return eventKind == "life.home.sleep.started"
+	case worldread.HomeActionWake:
+		return eventKind == "life.home.sleep.woke"
+	case worldread.HomeActionExercise:
+		return eventKind == "life.home.exercise.started" || eventKind == "life.home.exercise.completed"
+	case worldread.HomeActionMirror:
+		return eventKind == "life.home.mirror_pose.started" || eventKind == "life.home.mirror_pose.completed"
+	case worldread.HomeActionFashionShow:
+		return eventKind == worldread.HomeEventFashionShowStarted || eventKind == worldread.HomeEventFashionShowCompleted
+	case worldread.HomeActionReading:
+		return eventKind == worldread.HomeEventReadingStarted || eventKind == worldread.HomeEventReadingCompleted
+	case worldread.HomeActionFinish:
+		return eventKind == "life.home.move.arrived" || eventKind == "life.home.exercise.completed" ||
+			eventKind == "life.home.mirror_pose.completed" || eventKind == worldread.HomeEventFashionShowCompleted ||
+			eventKind == worldread.HomeEventReadingCompleted
+	case worldread.HomeActionStop:
+		return eventKind == "life.home.activity.stopped"
+	default:
+		return false
+	}
 }
 
 func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, clearPending bool, reservedParticipants []string) (agentroutine.Plan, time.Time, error) {
@@ -1668,6 +1700,12 @@ func routineTaskSummary(kind agentroutine.ActivityKind, progress routineProgress
 		if routineWorldHasVerifiedEvent(progress, worldread.HomeActionFinish, "life.home.mirror_pose.completed") {
 			return "Completed a verified WORLD mirror pose activity."
 		}
+		if routineWorldHasVerifiedEvent(progress, worldread.HomeActionFinish, worldread.HomeEventFashionShowCompleted) {
+			return "Completed a verified WORLD fashion show activity."
+		}
+		if routineWorldHasVerifiedEvent(progress, worldread.HomeActionFinish, worldread.HomeEventReadingCompleted) {
+			return "Completed a verified WORLD reading activity."
+		}
 		if progress.SearchResult != "" && progress.HobbyText != "" {
 			return "Read bounded public WebGather results and saved a private generated note."
 		}
@@ -1966,7 +2004,7 @@ func routineHobbyQuery(actorID, label string) string {
 		"mio":    {"fashion": "ファッション コーディネート", "video_creativity": "動画編集 アイデア"},
 		"shiro":  {"film_research": "映画 映像表現", "fitness_research": "筋トレ 初心者"},
 		"kuro":   {"otaku_culture": "anime manga culture", "creative_mirror_ideas": "cosplay mirror pose photography"},
-		"midori": {"reading": "読書 書評", "manga_culture": "manga new releases", "music_culture": "音楽 新譜", "bl_story_ideas": "BL 小説"},
+		"midori": {"reading": "BL小説 読書 書評", "manga_culture": "manga new releases", "music_culture": "音楽 新譜", "bl_story_ideas": "BL 小説"},
 	}
 	if query := queries[actorID][label]; query != "" {
 		return query
@@ -2410,7 +2448,7 @@ func routineHobbyTopic(actorID, label string) string {
 		"mio":    {"fashion": "ファッション", "video_creativity": "ショート動画の表現"},
 		"shiro":  {"film_research": "映画の表現", "fitness_research": "運動科学"},
 		"kuro":   {"otaku_culture": "オタクカルチャー", "creative_mirror_ideas": "鏡を題材にした創作"},
-		"midori": {"reading": "読書と新刊情報", "manga_culture": "漫画文化", "music_culture": "音楽文化", "bl_story_ideas": "BL物語の創作"},
+		"midori": {"reading": "BL読書", "manga_culture": "漫画文化", "music_culture": "音楽文化", "bl_story_ideas": "BL物語の創作"},
 	}
 	if topic := topics[actorID][label]; topic != "" {
 		return topic

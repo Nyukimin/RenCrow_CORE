@@ -80,6 +80,10 @@ func TestLifeCommandRejectsOutOfScopeActorAndMismatchedPayloadBeforePost(t *test
 		{name: "move payload has activity", action: HomeActionMove, payload: HomeActionPayload{ActorID: "mio", RoomID: "living", ActivityID: "home:mio:1"}},
 		{name: "unknown action", action: "life.home.teleport", payload: HomeActionPayload{ActorID: "mio"}},
 		{name: "wake requires instance", action: HomeActionWake, payload: HomeActionPayload{ActorID: "mio"}},
+		{name: "fashion show is Mio only", action: HomeActionFashionShow, payload: HomeActionPayload{ActorID: "midori"}},
+		{name: "reading is Midori only", action: HomeActionReading, payload: HomeActionPayload{ActorID: "mio"}},
+		{name: "fashion show has actor only payload", action: HomeActionFashionShow, payload: HomeActionPayload{ActorID: "mio", SlotID: "mio-fashion"}},
+		{name: "reading has actor only payload", action: HomeActionReading, payload: HomeActionPayload{ActorID: "midori", ActivityID: "already-started"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := client.Command(context.Background(), "routine-world-key", test.action, test.payload); !errors.Is(err, ErrInvalidConfig) {
@@ -89,6 +93,59 @@ func TestLifeCommandRejectsOutOfScopeActorAndMismatchedPayloadBeforePost(t *test
 	}
 	if requests != 0 {
 		t.Fatalf("invalid commands sent %d HTTP requests", requests)
+	}
+}
+
+func TestLifeCommandAcceptsFashionShowAndReadingActorOnlyPayloads(t *testing.T) {
+	var got []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Action  string         `json:"action"`
+			Payload map[string]any `json:"payload"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		got = append(got, map[string]any{"action": request.Action, "payload": request.Payload})
+		writeJSON(w, http.StatusOK, map[string]any{"schema_version": 1, "receipt": map[string]any{
+			"receipt_id": "receipt-1", "status": "committed", "transaction_id": "txn-1",
+			"event_ids": []string{"event-1"}, "first_seq": 1, "last_seq": 1, "state_seq": 1,
+			"recorded_at": "2026-11-17T01:02:03Z",
+		}})
+	}))
+	defer server.Close()
+	client, err := NewLife(LifeConfig{
+		BaseURL: server.URL, Credential: "life-token", WorldID: "world", TimelineID: "timeline",
+		TimelineEpoch: "epoch-1", ActorIDs: []string{"mio", "midori"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		action  string
+		actorID string
+	}{
+		{HomeActionFashionShow, "mio"},
+		{HomeActionReading, "midori"},
+	} {
+		if _, err := client.Command(context.Background(), "routine-world-key-"+test.actorID, test.action, HomeActionPayload{ActorID: test.actorID}); err != nil {
+			t.Errorf("Command(%s): %v", test.action, err)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("request count = %d, want 2", len(got))
+	}
+	for index, test := range []struct{ action, actorID string }{
+		{HomeActionFashionShow, "mio"}, {HomeActionReading, "midori"},
+	} {
+		if got[index]["action"] != test.action {
+			t.Errorf("action[%d] = %v, want %q", index, got[index]["action"], test.action)
+		}
+		payload, ok := got[index]["payload"].(map[string]any)
+		if !ok || len(payload) != 1 || payload["actor_id"] != test.actorID {
+			t.Errorf("payload[%d] = %#v, want actor-only payload for %s", index, got[index]["payload"], test.actorID)
+		}
 	}
 }
 

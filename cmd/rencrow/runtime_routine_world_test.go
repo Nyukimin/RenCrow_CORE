@@ -11,6 +11,128 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentroutine"
 )
 
+func TestRoutineWorldFashionShowAndReadingMapToConfirmedHomeHobbies(t *testing.T) {
+	for _, test := range []struct {
+		actorID string
+		label   string
+		kind    string
+		event   string
+		want    string
+	}{
+		{"mio", "fashion", worldread.HomeActivityFashionShow, worldread.HomeEventFashionShowCompleted, "ファッションショー"},
+		{"midori", "reading", worldread.HomeActivityReading, worldread.HomeEventReadingCompleted, "BL読書"},
+	} {
+		t.Run(test.actorID, func(t *testing.T) {
+			if !routineWorldHomeHobby(test.actorID, test.label) {
+				t.Fatalf("routineWorldHomeHobby(%q, %q) = false", test.actorID, test.label)
+			}
+			payload, _ := json.Marshal(map[string]any{"actor_id": test.actorID, "activity_kind": test.kind})
+			summary, ok := routineWorldEventSummary(worldread.Event{Kind: test.event, Payload: payload})
+			if !ok || !strings.Contains(summary, test.want) {
+				t.Fatalf("event summary = %q, relevant=%v; want %q", summary, ok, test.want)
+			}
+		})
+	}
+	if routineWorldHomeHobby("mio", "video_creativity") || routineWorldHomeHobby("midori", "bl_story_ideas") {
+		t.Fatal("non-WORLD hobbies were changed into home actions")
+	}
+}
+
+func TestRoutineWorldHobbyLifecycleSpecCoversExistingAndNewActors(t *testing.T) {
+	for _, test := range []struct {
+		actorID, label, kind, action, startEvent, finishEvent, slot string
+	}{
+		{"shiro", "fitness_research", "exercise", worldread.HomeActionExercise, "life.home.exercise.started", "life.home.exercise.completed", "shiro-exercise"},
+		{"kuro", "creative_mirror_ideas", "mirror_pose", worldread.HomeActionMirror, "life.home.mirror_pose.started", "life.home.mirror_pose.completed", "kuro-mirror"},
+		{"mio", "fashion", worldread.HomeActivityFashionShow, worldread.HomeActionFashionShow, worldread.HomeEventFashionShowStarted, worldread.HomeEventFashionShowCompleted, "mio-fashion"},
+		{"midori", "reading", worldread.HomeActivityReading, worldread.HomeActionReading, worldread.HomeEventReadingStarted, worldread.HomeEventReadingCompleted, "midori-reading"},
+	} {
+		spec, ok := routineWorldHomeHobbyFor(test.actorID, test.label)
+		if !ok || spec.activityKind != test.kind || spec.startAction != test.action || spec.startEvent != test.startEvent ||
+			spec.finishEvent != test.finishEvent || spec.slotID != test.slot || !routineWorldSettlementActivityKind(spec.activityKind) {
+			t.Errorf("WORLD hobby spec (%s,%s) = %+v, ok=%v", test.actorID, test.label, spec, ok)
+		}
+	}
+	if routineWorldHomeHobby("midori", "bl_story_ideas") || routineWorldSettlementActivityKind("sleep") {
+		t.Fatal("non-home hobby or sleep entered the physical hobby settlement path")
+	}
+	for _, pair := range []struct{ action, event string }{
+		{worldread.HomeActionFashionShow, worldread.HomeEventFashionShowStarted},
+		{worldread.HomeActionFashionShow, worldread.HomeEventFashionShowCompleted},
+		{worldread.HomeActionReading, worldread.HomeEventReadingStarted},
+		{worldread.HomeActionReading, worldread.HomeEventReadingCompleted},
+		{worldread.HomeActionFinish, worldread.HomeEventFashionShowCompleted},
+		{worldread.HomeActionFinish, worldread.HomeEventReadingCompleted},
+	} {
+		if !routineWorldActionEventAllowed(pair.action, pair.event) {
+			t.Errorf("WORLD action/event pair (%q,%q) is not allowed", pair.action, pair.event)
+		}
+	}
+	if routineWorldActionEventAllowed(worldread.HomeActionFashionShow, worldread.HomeEventReadingStarted) ||
+		routineWorldActionEventAllowed(worldread.HomeActionReading, worldread.HomeEventFashionShowCompleted) {
+		t.Fatal("cross-kind lifecycle event was accepted for a WORLD action")
+	}
+}
+
+func TestRoutineWorldNewHobbiesRequireConfirmedFinishForRecoveryAndSettlement(t *testing.T) {
+	finishedAt := time.Date(2026, time.November, 17, 1, 4, 0, 0, time.UTC)
+	for _, test := range []struct{ actorID, label, activityID string }{
+		{"mio", "fashion", "home:mio:4"}, {"midori", "reading", "home:midori:3"},
+	} {
+		t.Run(test.actorID, func(t *testing.T) {
+			spec, ok := routineWorldHomeHobbyFor(test.actorID, test.label)
+			if !ok {
+				t.Fatal("missing hobby spec")
+			}
+			intent := &agentroutine.Intent{ID: "intent-" + test.actorID, ActorID: test.actorID, Kind: agentroutine.ActivityHobby, Label: test.label}
+			start := routineWorldOperation{
+				Purpose: spec.startPurpose, Action: spec.startAction, EventKind: spec.startEvent,
+				ActorID: test.actorID, Payload: worldread.HomeActionPayload{ActorID: test.actorID},
+				ActivityID: test.activityID, ActivityKind: spec.activityKind, ReceiptID: "start-receipt", ReceiptStatus: "committed",
+				EventVerified: true, StartedAt: finishedAt.Add(-time.Minute), DueAt: finishedAt.Add(-time.Second),
+			}
+			start.Key = routineWorldOperationKey(intent.ID, test.actorID, start.Purpose)
+			pending := routineProgress{World: &routineWorldProgress{Operations: []routineWorldOperation{start}}}
+			if !routineProgressNeedsWorldSettlement(pending) {
+				t.Fatal("confirmed start without terminal receipt was treated as settled")
+			}
+			terminal := routineWorldOperation{
+				Purpose: spec.startPurpose + ":finish:" + test.activityID, Action: worldread.HomeActionFinish, EventKind: spec.finishEvent,
+				ActorID: test.actorID, Payload: worldread.HomeActionPayload{ActorID: test.actorID, ActivityID: test.activityID},
+				ActivityID: test.activityID, ActivityKind: spec.activityKind, ReceiptID: "finish-receipt", ReceiptStatus: "committed",
+				EventVerified: true, EndedAt: finishedAt,
+			}
+			terminal.Key = routineWorldOperationKey(intent.ID, test.actorID, terminal.Purpose)
+			settled := routineProgress{World: &routineWorldProgress{Operations: []routineWorldOperation{start, terminal}}}
+			if routineProgressNeedsWorldSettlement(settled) {
+				t.Fatal("committed exact terminal receipt still requires WORLD settlement")
+			}
+			got, confirmed := (&agentRoutineRuntime{}).routineVerifiedBedtimeHobbyCompletion(intent, settled)
+			if !confirmed || !got.Equal(finishedAt) {
+				t.Fatalf("bedtime recovery completion = %s, confirmed=%v; want %s", got, confirmed, finishedAt)
+			}
+		})
+	}
+}
+
+func TestRoutineMirrorPoseIDsIncludeKITRepertoireWithoutDroppingExistingPoses(t *testing.T) {
+	want := []string{
+		"mirror-greeting", "mirror-hero", "mirror-side", "mirror-focus", "mirror-hands-on-hips",
+		"mirror-over-shoulder", "mirror-open-arms", "mirror-bow", "mirror-crossed-arms", "mirror-hand-near-face",
+	}
+	if len(routineMirrorPoseIDs) != len(want) {
+		t.Fatalf("pose count = %d, want %d", len(routineMirrorPoseIDs), len(want))
+	}
+	for index, poseID := range want {
+		if routineMirrorPoseIDs[index] != poseID || !routineMirrorPoseID(poseID) {
+			t.Errorf("pose[%d] = %q; want accepted %q", index, routineMirrorPoseIDs[index], poseID)
+		}
+	}
+	if routineMirrorPoseLabel("mirror-crossed-arms") != "腕組み" || routineMirrorPoseLabel("mirror-hand-near-face") != "顔に手を添える" {
+		t.Fatal("new KIT poses have no matched diary labels")
+	}
+}
+
 func TestRoutineWorldSleepWakeBindingRequiresExactAuthenticatedStartAndTerminal(t *testing.T) {
 	startedAt := time.Date(2026, time.November, 14, 1, 15, 0, 0, time.UTC)
 	endedAt := startedAt.Add(5 * time.Hour)

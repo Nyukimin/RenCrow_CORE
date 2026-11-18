@@ -246,6 +246,12 @@ func TestRoutineDiaryActivityUsesNaturalWorldGameAndMediaDescriptions(t *testing
 		want string
 	}{
 		{name: "exercise start", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDで運動の開始を確認しました。"}, want: "14:00ごろ、運動を始めました。"},
+		{name: "fashion show start", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDでファッションショーの開始を確認しました。"}, want: "14:00ごろ、ファッションショーを始めました。"},
+		{name: "fashion show finish", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDでファッションショーの完了を確認しました。"}, want: "14:00ごろ、ファッションショーを終えました。"},
+		{name: "BL reading start", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDでBL読書の開始を確認しました。"}, want: "14:00ごろ、BL読書を始めました。"},
+		{name: "BL reading finish", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDでBL読書の完了を確認しました。"}, want: "14:00ごろ、BL読書を終えました。"},
+		{name: "fashion show stop", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDでファッションショーを途中で停止したことを確認しました。"}, want: "14:00ごろ、ファッションショーを途中で止めました。"},
+		{name: "BL reading stop", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDでBL読書を途中で停止したことを確認しました。"}, want: "14:00ごろ、BL読書を途中で止めました。"},
 		{name: "pose start", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDで鏡のポーズ「横向き」の練習開始を確認しました。"}, want: "14:00ごろ、鏡の前で「横向き」の練習を始めました。"},
 		{name: "pose finish", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "world_life_event", Summary: "WORLDで鏡のポーズ「横向き」の完了を確認しました。"}, want: "14:00ごろ、鏡の前で「横向き」のポーズを終えました。"},
 		{name: "game session", fact: agentroutine.Activity{Kind: agentroutine.ActivityHobby, At: at, Source: "canonical_game_session", Summary: "GAMESでNetHackを2ターン遊んだ（初回 13:50、最終 14:00 JST）"}, want: "14:00ごろ、NetHackを2ターン（13:50〜14:00）遊びました"},
