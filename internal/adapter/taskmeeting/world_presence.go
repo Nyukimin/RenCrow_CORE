@@ -1,6 +1,5 @@
-// Package taskmeeting adapts CORE's authenticated WORLD snapshot client to the
-// frozen TaskMeeting observation owner. It reads only the exact registered
-// actor scope and never performs a WORLD write.
+// Package taskmeeting adapts authenticated WORLD snapshot and narrowly scoped
+// gather clients to the frozen TaskMeeting occurrence owner.
 package taskmeeting
 
 import (
@@ -139,13 +138,16 @@ func sameWorldReadScope(actual, expected worldread.ReadScope) bool {
 // TaskManager and EventStore owners. Credential bytes remain encapsulated in
 // the worldread.Client and never enter a TaskMeeting DTO or receipt.
 type WorldPresenceOwner struct {
-	SnapshotReader   TaskMeetingWorldSnapshotReader
-	EventStore       *eventstore.SQLiteStore
-	TaskReader       domaintask.TaskMeetingInvocationReader
-	AuthorizeRead    domaintask.TaskMeetingReadAuthorizationCheck
-	AuthorizeObserve eventstore.TaskMeetingWorldObservationAdmissionCheck
-	CredentialEnv    string
-	Now              func() time.Time
+	SnapshotReader      TaskMeetingWorldSnapshotReader
+	GatherRequired      bool
+	GatherClientFactory func() (TaskMeetingWorldGatherClient, error)
+	EventStore          *eventstore.SQLiteStore
+	TaskReader          domaintask.TaskMeetingInvocationReader
+	AuthorizeRead       domaintask.TaskMeetingReadAuthorizationCheck
+	AuthorizeObserve    eventstore.TaskMeetingWorldObservationAdmissionCheck
+	AuthorizeGather     domainmeeting.TaskMeetingWorldGatherAuthorizationCheck
+	CredentialEnv       string
+	Now                 func() time.Time
 }
 
 var _ appmeeting.WorldPresencePort = (*WorldPresenceOwner)(nil)
@@ -204,6 +206,7 @@ func (owner *WorldPresenceOwner) GatherAndRead(
 		Audience:      append([]string(nil), invocation.Audience...),
 		ActorBindings: append([]domainmeeting.WorldActorBinding(nil), declaration.WorldActorBindings...),
 		Rooms:         declaration.Rooms, RequestID: requestID,
+		ValidUntil: meeting.DeadlineAt.UTC(),
 	}
 	prior, found, err := owner.EventStore.FindTaskMeetingWorldObservation(ctx, request, owner.TaskReader, owner.AuthorizeRead)
 	if err != nil {
@@ -215,9 +218,21 @@ func (owner *WorldPresenceOwner) GatherAndRead(
 	if err := owner.AuthorizeObserve(ctx, task, run, shared, request); err != nil {
 		return domainmeeting.WorldScopeEvidence{}, nil, eventstore.ErrTaskMeetingForbidden
 	}
-	snapshot, err := owner.SnapshotReader.Snapshot(ctx)
-	if err != nil {
-		return domainmeeting.WorldScopeEvidence{}, nil, fmt.Errorf("%w: authenticated World snapshot unavailable", appmeeting.ErrUnavailable)
+	var gatheredSnapshot *worldread.Snapshot
+	if owner.GatherRequired && meeting.Status == domainmeeting.StatusGathering {
+		gatheredSnapshot = &worldread.Snapshot{}
+		if err := ensureTaskMeetingGather(ctx, owner, request, declaration, gatheredSnapshot); err != nil {
+			return domainmeeting.WorldScopeEvidence{}, nil, err
+		}
+	}
+	var snapshot worldread.Snapshot
+	if gatheredSnapshot != nil {
+		snapshot = *gatheredSnapshot
+	} else {
+		snapshot, err = owner.SnapshotReader.Snapshot(ctx)
+		if err != nil {
+			return domainmeeting.WorldScopeEvidence{}, nil, fmt.Errorf("%w: authenticated World snapshot unavailable", appmeeting.ErrUnavailable)
+		}
 	}
 	if snapshot.WorldID != meeting.WorldID || snapshot.TimelineID != meeting.TimelineID || snapshot.TimelineEpoch != meeting.TimelineEpoch ||
 		len(snapshot.Actors) != len(declaration.WorldActorBindings) {

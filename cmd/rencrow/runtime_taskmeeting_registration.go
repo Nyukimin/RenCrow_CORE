@@ -149,6 +149,14 @@ func taskMeetingWorldReadAvailabilityForDeclaration(cfg *config.Config, declarat
 	if err != nil || client == nil {
 		return "world_credential_unavailable"
 	}
+	gatherClient, err := worldmeeting.NewConfiguredWorldGatherClient(
+		declaration,
+		cfg.Heartbeat.Routine.WorldLifeTokenFile,
+		worldProjectionDuration(worldConfig.WorldProjection.TimeoutSeconds, defaultWorldProjectionTimeout),
+	)
+	if err != nil || gatherClient == nil {
+		return "world_life_credential_unavailable"
+	}
 	return ""
 }
 

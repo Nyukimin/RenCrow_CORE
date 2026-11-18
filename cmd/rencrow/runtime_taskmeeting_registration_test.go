@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -256,6 +258,11 @@ func (o *taskMeetingRegistrationTestOwner) EnsureTaskMeetingScheduleRegistration
 func setTaskMeetingWorldReadCredential(t *testing.T) {
 	t.Helper()
 	t.Setenv("WORLD_READ_TOKEN", "fixture-world-read-credential")
+	lifePath := filepath.Join(t.TempDir(), "world-life.token")
+	if err := os.WriteFile(lifePath, []byte("fixture-world-life-credential\n"), 0o600); err != nil {
+		t.Fatalf("write fixture WORLD life credential: %v", err)
+	}
+	t.Setenv("TASKMEETING_TEST_WORLD_LIFE_TOKEN_FILE", lifePath)
 }
 
 func (o *taskMeetingRegistrationTestOwner) FindTaskMeetingScheduleRegistration(

@@ -575,7 +575,11 @@ func taskMeetingDailyConfigAxes(cfg *config.Config, deps *Dependencies, sourceRe
 		return configured, runtimeDailyAxis(taskcenter.DailyEffectiveBlocked, "heartbeat.enabled", "parent_heartbeat_disabled")
 	}
 	if reason := taskMeetingWorldReadAvailabilityReason(cfg); reason != "" {
-		return configured, runtimeDailyAxis(taskcenter.DailyEffectiveUnavailable, "world_projection.credential", reason)
+		sourceRef := "world_projection.credential"
+		if reason == "world_life_credential_unavailable" {
+			sourceRef = "heartbeat.routine.world_life_token_file"
+		}
+		return configured, runtimeDailyAxis(taskcenter.DailyEffectiveUnavailable, sourceRef, reason)
 	}
 	if !deps.taskMeetingBindingsReady {
 		return configured, runtimeDailyAxis(taskcenter.DailyEffectiveUnavailable, "runtime.agent_registration", "configured_actor_registration_unavailable")

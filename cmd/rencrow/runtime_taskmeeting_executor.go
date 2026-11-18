@@ -30,13 +30,14 @@ import (
 const taskMeetingDrainLimit = 48
 
 type runtimeTaskMeetingOccurrenceExecutor struct {
-	cfg                 *config.Config
-	deps                *Dependencies
-	agents              map[string]domainagent.TaskMeetingActor
-	actors              agentRuntime
-	coders              []*coderAdapter
-	clock               func() time.Time
-	worldSnapshotReader worldmeeting.TaskMeetingWorldSnapshotReader
+	cfg                      *config.Config
+	deps                     *Dependencies
+	agents                   map[string]domainagent.TaskMeetingActor
+	actors                   agentRuntime
+	coders                   []*coderAdapter
+	clock                    func() time.Time
+	worldSnapshotReader      worldmeeting.TaskMeetingWorldSnapshotReader
+	worldGatherClientFactory func() (worldmeeting.TaskMeetingWorldGatherClient, error)
 }
 
 func newRuntimeTaskMeetingOccurrenceExecutor(cfg *config.Config, deps *Dependencies, actors agentRuntime, coders ...*coderAdapter) taskMeetingOccurrenceExecutor {
@@ -204,7 +205,7 @@ func (e *runtimeTaskMeetingOccurrenceExecutor) executePinnedOccurrence(ctx conte
 	}
 	participants := &runtimeTaskMeetingParticipants{executor: e, snapshot: snapshot, root: root, rootRun: run, rootProof: proof, authorizeReceipt: authorizeReceipt, authorizeState: authorizeState}
 	conversation := &runtimeTaskMeetingConversation{executor: e, snapshot: snapshot, root: root, rootRun: run, rootProof: proof, authorizeReceipt: authorizeReceipt, authorizeState: authorizeState}
-	world := e.worldPresence(snapshot, root, run, authorizeState)
+	world := e.worldPresence(snapshot, root, run, authorizeState, false)
 	coordinator := meetingapp.NewCoordinator(configPort, authority, store, participants, world, conversation, e.clock)
 	input := meetingapp.ScheduledInput{Schedule: schedule, Occurrence: occurrence, RootExecution: &meetingapp.NativeExecutionProof{
 		TaskID: root.TaskID, RunID: run.RunID, Assignee: root.Assignee,
@@ -1376,10 +1377,10 @@ func containsStringExact(values []string, expected string) bool {
 	return false
 }
 
-func (e *runtimeTaskMeetingOccurrenceExecutor) worldPresence(snapshot runtimeTaskMeetingOccurrenceSnapshot, root domaintask.Task, run domaintask.Run, authorize domaintask.TaskMeetingReadAuthorizationCheck) meetingapp.WorldPresencePort {
+func (e *runtimeTaskMeetingOccurrenceExecutor) worldPresence(snapshot runtimeTaskMeetingOccurrenceSnapshot, root domaintask.Task, run domaintask.Run, authorize domaintask.TaskMeetingReadAuthorizationCheck, allowMissingReader bool) meetingapp.WorldPresencePort {
 	declaration := snapshot.Declaration
 	var snapshotReader worldmeeting.TaskMeetingWorldSnapshotReader = e.worldSnapshotReader
-	if snapshotReader == nil {
+	if snapshotReader == nil && !allowMissingReader {
 		reader, err := newRuntimeTaskMeetingPinnedWorldReader(e.cfg, declaration)
 		if err != nil {
 			return unavailableTaskMeetingWorld{cause: err}
@@ -1394,8 +1395,31 @@ func (e *runtimeTaskMeetingOccurrenceExecutor) worldPresence(snapshot runtimeTas
 	if !readerOK || taskReader == nil {
 		return unavailableTaskMeetingWorld{cause: meetingapp.ErrUnavailable}
 	}
-	return &worldmeeting.WorldPresenceOwner{SnapshotReader: snapshotReader, EventStore: store, TaskReader: taskReader,
+	gatherClientFactory := e.worldGatherClientFactory
+	if gatherClientFactory == nil {
+		gatherClientFactory = func() (worldmeeting.TaskMeetingWorldGatherClient, error) {
+			if e.cfg == nil {
+				return nil, meetingapp.ErrUnavailable
+			}
+			return worldmeeting.NewConfiguredWorldGatherClient(declaration, e.cfg.Heartbeat.Routine.WorldLifeTokenFile,
+				worldProjectionDuration(e.cfg.WorldProjection.TimeoutSeconds, defaultWorldProjectionTimeout))
+		}
+	}
+	return &worldmeeting.WorldPresenceOwner{SnapshotReader: snapshotReader, GatherRequired: true,
+		GatherClientFactory: gatherClientFactory,
+		EventStore:          store, TaskReader: taskReader,
 		AuthorizeRead: authorize, CredentialEnv: declaration.WorldCredentialEnv, Now: e.clock,
+		AuthorizeGather: func(ctx context.Context, task domaintask.Task, actualRun domaintask.Run, _ domaintask.SharedRoleContext, intent domainmeeting.WorldGatherCommandIntent) error {
+			if err := e.authorizeCurrentTaskMeetingEffect(snapshot); err != nil {
+				return err
+			}
+			if task.TaskID != root.TaskID || actualRun.RunID != run.RunID || actualRun.Status != domaintask.RunStatusRunning ||
+				intent.Scope.TaskID != root.TaskID || intent.Scope.RunID != run.RunID || intent.Scope.OwnerUserID != declaration.OwnerUserID ||
+				intent.Scope.ConfigSHA256 != snapshot.Registration.ConfigSHA256 || intent.Scope.RegistrationEvidenceID != snapshot.Registration.RegistrationEvidenceID {
+				return eventstore.ErrTaskMeetingForbidden
+			}
+			return nil
+		},
 		AuthorizeObserve: func(ctx context.Context, task domaintask.Task, actualRun domaintask.Run, _ domaintask.SharedRoleContext, request domainmeeting.WorldObservationRequest) error {
 			if err := e.authorizeCurrentTaskMeetingEffect(snapshot); err != nil {
 				return err
@@ -1436,6 +1460,11 @@ func (e *runtimeTaskMeetingOccurrenceExecutor) closeTaskMeetingControls(ctx cont
 	if meeting.Status == domainmeeting.StatusCompleted && meeting.FinishEvidence == nil || meeting.Status != domainmeeting.StatusCompleted && (meeting.PartialEvidence == nil || meeting.PartialMinutes == nil) {
 		return domaintask.ErrTaskMeetingConflict
 	}
+	if meeting.Status == domainmeeting.StatusPartial || meeting.Status == domainmeeting.StatusMissed {
+		if err := e.settleTaskMeetingGatherBeforeClose(ctx, snapshot, meeting, proof, authorize); err != nil {
+			return err
+		}
+	}
 	verify := func(_ context.Context, task domaintask.Task, run domaintask.Run, _ domaintask.SharedRoleContext, outcome domaintask.Status) error {
 		inv := task.TaskMeetingInvocation
 		if inv == nil || inv.OccurrenceKey != snapshot.Key.String() || inv.ConfigSHA256 != snapshot.Registration.ConfigSHA256 ||
@@ -1466,6 +1495,50 @@ func (e *runtimeTaskMeetingOccurrenceExecutor) closeTaskMeetingControls(ctx cont
 		return e.deps.taskManager.CompleteTaskMeetingRootInvocation(ctx, proof.TaskID, proof.RunID, authorize, verify)
 	}
 	return e.deps.taskManager.FailTaskMeetingRootInvocation(ctx, proof.TaskID, proof.RunID, authorize, verify)
+}
+
+func (e *runtimeTaskMeetingOccurrenceExecutor) settleTaskMeetingGatherBeforeClose(
+	ctx context.Context,
+	snapshot runtimeTaskMeetingOccurrenceSnapshot,
+	meeting domainmeeting.Meeting,
+	proof domaintask.TaskMeetingRootProof,
+	authorize domaintask.TaskMeetingReadAuthorizationCheck,
+) error {
+	reader, ok := e.deps.taskStore.(domaintask.TaskMeetingInvocationReader)
+	if !ok || reader == nil {
+		return meetingapp.ErrUnavailable
+	}
+	root, rootRun, _, err := reader.GetTaskMeetingInvocationState(ctx, proof.TaskID, proof.RunID, authorize)
+	if err != nil {
+		return err
+	}
+	store, ok := e.deps.canonicalEventStore.(*eventstore.SQLiteStore)
+	if !ok || store == nil {
+		return meetingapp.ErrUnavailable
+	}
+	session, found, err := store.FindTaskMeetingGroupSessionForRoot(ctx, snapshot.Key.String(), root.TaskID, rootRun.RunID, reader, authorize)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if session.ConfigSHA256 != snapshot.Registration.ConfigSHA256 || session.RegistrationEvidence != snapshot.Registration.RegistrationEvidenceID {
+		return eventstore.ErrTaskMeetingUnavailable
+	}
+	owner, ok := e.worldPresence(snapshot, root, rootRun, authorize, true).(*worldmeeting.WorldPresenceOwner)
+	if !ok {
+		return meetingapp.ErrUnavailable
+	}
+	request := domainmeeting.WorldObservationRequest{
+		Key: meeting.Key, TaskID: root.TaskID, RunID: rootRun.RunID, ConfigRevision: meeting.ScheduleRevision,
+		ConfigSHA256: snapshot.Registration.ConfigSHA256, OwnerUserID: snapshot.Declaration.OwnerUserID,
+		RegistrationEvidenceID: snapshot.Registration.RegistrationEvidenceID, CoordinatorActorID: snapshot.Declaration.CoordinatorActorID,
+		Session: session.SessionID, Thread: session.ThreadID, Generation: meeting.Generation, Epoch: meeting.Epoch,
+		Audience:      append([]string(nil), snapshot.Declaration.Audience...),
+		ActorBindings: append([]domainmeeting.WorldActorBinding(nil), snapshot.Declaration.WorldActorBindings...), Rooms: snapshot.Declaration.Rooms,
+	}
+	return owner.SettlePendingGather(ctx, request, snapshot.Declaration)
 }
 
 type unavailableTaskMeetingWorld struct{ cause error }

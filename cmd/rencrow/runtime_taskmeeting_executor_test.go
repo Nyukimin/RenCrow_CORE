@@ -217,6 +217,7 @@ func TestRuntimeTaskMeetingOccurrenceRunsEightActorsThroughNativeOwners(t *testi
 		t.Fatalf("executor did not bind native owners/actor roster: native_owners=%t bindings=%t registered=%d", runtimeTaskMeetingOwnersReady(deps), taskMeetingRuntimeBindingsReady(cfg, actors, coders...), len(registeredTaskMeetingActors(cfg, actors, coders...)))
 	}
 	executor.worldSnapshotReader = runtimeTaskMeetingFakeWorld{declaration: resolved.Declaration}
+	setRuntimeTaskMeetingFakeGather(executor, resolved.Declaration)
 	statuses, err := executor.taskMeetingShareableStatuses(ctx, statusActor)
 	if err != nil || len(statuses) != 1 || statuses[0].ActorID != statusActor || statuses[0].TaskRef != publicTask.TaskID || statuses[0].Status != domaintask.StatusRunning {
 		t.Fatalf("public self status projection = %+v err=%v, want only the exact public self Task", statuses, err)
@@ -364,6 +365,7 @@ func TestRuntimeTaskMeetingOccurrenceRunsEightActorsThroughNativeOwners(t *testi
 		t.Fatalf("executor did not recover native owners after restart: %T", executorValue)
 	}
 	executor.worldSnapshotReader = runtimeTaskMeetingFakeWorld{declaration: resolved.Declaration}
+	setRuntimeTaskMeetingFakeGather(executor, resolved.Declaration)
 	if result, err := executor.ExecuteScheduledOccurrence(ctx, schedule, due); err != nil || result != taskMeetingSchedulerSafeSummary {
 		t.Fatalf("replay completed occurrence after owner restart: result=%q err=%v", result, err)
 	}
@@ -449,6 +451,7 @@ func TestRuntimeTaskMeetingOccurrenceRunsEightActorsThroughNativeOwners(t *testi
 	}
 	t.Setenv("WORLD_READ_TOKEN", "fixture-world-read-credential")
 	executor.worldSnapshotReader = runtimeTaskMeetingFakeWorld{declaration: missedResolved.Declaration}
+	setRuntimeTaskMeetingFakeGather(executor, missedResolved.Declaration)
 
 	unknownDueAt := due.ScheduledAt.AddDate(0, 0, 2)
 	unknownSchedule := schedule
@@ -705,6 +708,27 @@ func (p *runtimeTaskMeetingFakeProvider) Generate(ctx context.Context, request l
 
 type runtimeTaskMeetingFakeWorld struct {
 	declaration domainmeeting.TaskMeetingDeclaration
+}
+
+type runtimeTaskMeetingFakeGatherClient struct{ world runtimeTaskMeetingFakeWorld }
+
+func (c runtimeTaskMeetingFakeGatherClient) ReadScope() worldread.ReadScope {
+	return c.world.ReadScope()
+}
+func (c runtimeTaskMeetingFakeGatherClient) Snapshot(ctx context.Context) (worldread.Snapshot, error) {
+	return c.world.Snapshot(ctx)
+}
+func (runtimeTaskMeetingFakeGatherClient) Events(context.Context, uint64) (worldread.EventBatch, error) {
+	return worldread.EventBatch{}, nil
+}
+func (runtimeTaskMeetingFakeGatherClient) Command(context.Context, string, string, worldread.HomeActionPayload) (worldread.CommandResult, error) {
+	return worldread.CommandResult{}, errors.New("unexpected WORLD life command in all actors already gathered fixture")
+}
+
+func setRuntimeTaskMeetingFakeGather(executor *runtimeTaskMeetingOccurrenceExecutor, declaration domainmeeting.TaskMeetingDeclaration) {
+	executor.worldGatherClientFactory = func() (worldmeeting.TaskMeetingWorldGatherClient, error) {
+		return runtimeTaskMeetingFakeGatherClient{world: runtimeTaskMeetingFakeWorld{declaration: declaration}}, nil
+	}
 }
 
 func (w runtimeTaskMeetingFakeWorld) ReadScope() worldread.ReadScope {
