@@ -22,8 +22,8 @@ import (
 // that a read-only handle stays silent.
 
 // labeledStoreHarness opens a real writer store whose observer treats every
-// transaction as slow, so each store entry point leaves one labelled line. It
-// opens the store without the index: an indexed store answers reads without the
+// transaction as slow, so each batch, including ownership reads, leaves one
+// labelled line. It opens the store without the index: an indexed store answers reads without the
 // OS lock, so a read is not a batch transaction and leaves no line.
 func labeledStoreHarness(t *testing.T) (*JSONLStore, func() []string) {
 	t.Helper()
@@ -67,26 +67,39 @@ func TestJSONLStoreLabelsEveryBatchEntryPoint(t *testing.T) {
 	task.DependencyTaskIDs = nil
 	drain()
 
-	expectOne := func(name, op string, wantTaskID modulecore.TaskID, wantKind string, run func() error) {
+	type expectedLabel struct {
+		op     string
+		taskID modulecore.TaskID
+		kind   string
+	}
+	expectLabels := func(name string, expected []expectedLabel, run func() error) {
 		t.Helper()
 		if err := run(); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		lines := drain()
-		if len(lines) != 1 {
-			t.Fatalf("%s: lines = %v, want exactly one", name, lines)
+		if len(lines) != len(expected) {
+			t.Fatalf("%s: lines = %v, want exactly %d in order", name, lines, len(expected))
 		}
-		if !strings.Contains(lines[0], " kind="+wantKind+" ") || !strings.Contains(lines[0], " op="+op+" ") {
-			t.Fatalf("%s: line = %q, want kind=%s op=%s", name, lines[0], wantKind, op)
-		}
-		hasTaskID := strings.Contains(lines[0], " task_id=")
-		if wantTaskID != "" && !strings.Contains(lines[0], " task_id="+string(wantTaskID)+" ") {
-			t.Fatalf("%s: line = %q, want task_id=%s", name, lines[0], wantTaskID)
-		}
-		if wantTaskID == "" && hasTaskID {
-			t.Fatalf("%s: line = %q, want no task_id", name, lines[0])
+		for index, want := range expected {
+			line := lines[index]
+			if !strings.Contains(line, " kind="+want.kind+" ") || !strings.Contains(line, " op="+want.op+" ") {
+				t.Fatalf("%s: line[%d] = %q, want kind=%s op=%s", name, index, line, want.kind, want.op)
+			}
+			hasTaskID := strings.Contains(line, " task_id=")
+			if want.taskID != "" && !strings.Contains(line, " task_id="+string(want.taskID)+" ") {
+				t.Fatalf("%s: line[%d] = %q, want task_id=%s", name, index, line, want.taskID)
+			}
+			if want.taskID == "" && hasTaskID {
+				t.Fatalf("%s: line[%d] = %q, want no task_id", name, index, line)
+			}
 		}
 	}
+	expectOne := func(name, op string, wantTaskID modulecore.TaskID, wantKind string, run func() error) {
+		t.Helper()
+		expectLabels(name, []expectedLabel{{op: op, taskID: wantTaskID, kind: wantKind}}, run)
+	}
+	ownershipRead := expectedLabel{op: "ReadTransaction", kind: "read"}
 
 	expectOne("SaveTask", "TaskTransaction", task.TaskID, "write", func() error { return store.SaveTask(ctx, task) })
 	expectOne("GetTask", "ReadTransaction", "", "read", func() error { _, err := store.GetTask(ctx, task.TaskID); return err })
@@ -105,18 +118,18 @@ func TestJSONLStoreLabelsEveryBatchEntryPoint(t *testing.T) {
 		})
 		return err
 	})
-	expectOne("LookupTaskOperation", "LookupTaskOperation", "", "read", func() error {
+	expectLabels("LookupTaskOperation", []expectedLabel{{op: "LookupTaskOperation", kind: "read"}, ownershipRead}, func() error {
 		_, err := store.LookupTaskOperation(ctx, "op:label-1")
 		return err
 	})
-	expectOne("AcquireTaskExecutionFence", "AcquireTaskExecutionFence", task.TaskID, "write", func() error {
+	expectLabels("AcquireTaskExecutionFence", []expectedLabel{ownershipRead, {op: "AcquireTaskExecutionFence", taskID: task.TaskID, kind: "write"}}, func() error {
 		return store.AcquireTaskExecutionFence(ctx, task.TaskID, "capability:label-1")
 	})
-	expectOne("GetTaskExecutionFence", "GetTaskExecutionFence", task.TaskID, "read", func() error {
+	expectLabels("GetTaskExecutionFence", []expectedLabel{ownershipRead, {op: "GetTaskExecutionFence", taskID: task.TaskID, kind: "read"}}, func() error {
 		_, err := store.GetTaskExecutionFence(ctx, task.TaskID)
 		return err
 	})
-	expectOne("ReleaseTaskExecutionFence", "ReleaseTaskExecutionFence", task.TaskID, "write", func() error {
+	expectLabels("ReleaseTaskExecutionFence", []expectedLabel{ownershipRead, {op: "ReleaseTaskExecutionFence", taskID: task.TaskID, kind: "write"}}, func() error {
 		return store.ReleaseTaskExecutionFence(ctx, task.TaskID, "capability:label-1")
 	})
 }
