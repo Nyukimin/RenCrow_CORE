@@ -1255,7 +1255,7 @@ func TestStep16QueueCheckpointReceiptLegacyFieldsAreBanned(t *testing.T) {
 		// request. This is not the retired queue checkpoint receipt identity.
 		if relative == "internal/infrastructure/persistence/workstream/task_meeting_minutes.go" &&
 			token == "RequestID" && strings.TrimSpace(lineAt(repoRoot, relative, lineNumber)) ==
-				"proof.RequestID != transcript.TranscriptRequestID || proof.RegistrationEvidenceID != ref.RegistrationEvidenceID || proof.ConfigRevision != ref.ConfigRevision ||" {
+			"proof.RequestID != transcript.TranscriptRequestID || proof.RegistrationEvidenceID != ref.RegistrationEvidenceID || proof.ConfigRevision != ref.ConfigRevision ||" {
 			return true
 		}
 		return false
