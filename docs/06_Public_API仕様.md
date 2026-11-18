@@ -2219,8 +2219,8 @@ TaskCenter page／API clientは`X-RenCrow-Client: RenCrow_Viewer`と`X-RenCrow-I
 | `POST /api/v1/task-center/claims` | 認証selfによる未割当仕事の原子的引受 |
 | `GET /api/v1/task-center/request`、`GET /api/v1/task-center/claim` | 同じownerとidempotency keyによる受理結果の回復 |
 | `GET /api/v1/task-center/result` | 認可済みGoalの保存済み実行結果を取得 |
-| `POST /api/v1/task-center/result/accept` | 作成したuserが、確認した結果を明示的に承認 |
-| `GET /api/v1/task-center/result/acceptance` | 同じGoalとidempotency keyによる承認結果の回復 |
+| `POST /api/v1/task-center/result/accept` | 作成したuserが、確認した結果を明示的に受理 |
+| `GET /api/v1/task-center/result/acceptance` | 同じGoalとidempotency keyによる結果受理の回復 |
 
 Actor／user scopeは認証contextから決定し、bodyやqueryによる偽装を許さない。userの全体表示も認可範囲内、Agentのself表示は有効割当を参照する。GETは実行・LLM・設定変更を起動しない。全項目に共通時間情報とsource revisionを返し、取得不能・未知を空一覧へ丸めない。
 
@@ -2228,9 +2228,9 @@ claimはexpected revision／policy revision／idempotency keyを用い、競合�
 
 現在のHTTP入口は認証済みuser用であり、Agentになりすますbody／headerを受け付けない。userによるclaims POSTは403となる。Agentの追加・引受・自己残件確認は、trusted scopeを持つWorkerの`tasks.add`／`tasks.claim`／`tasks.list_remaining`／`tasks.list_claimable`を利用する。`tasks.capabilities`も同じ認証・実行許可境界に従う。`tasks.get`はChat／Workerの読取入口であり、trusted scope内のGoalの本文・成功条件・検証条件を返す。一覧の本文は240文字以内の要約とし、詳細条件は認可済みの詳細取得で確認する。
 
-結果取得は`goal_id`を指定し、`goal_id`、`revision`、`assignment_epoch`、`result_artifact_id`、`result_sha256`、`execution_verification`、`result`を返す。本文はWorkstreamの正本Artifactから取得し、native Task／Runの完了証跡とdigestを照合する。任意のArtifact IDやファイルパスを受け取らず、実行機能の現在の稼働状態にかかわらず保存済みの結果を読める。実行成功とGoalの完了条件の承認は別であり、一覧の`verification`（検証手順の配列）と`execution_verification`（承認状態）も別項目である。
+結果取得は`goal_id`を指定し、`goal_id`、`revision`、`assignment_epoch`、`result_artifact_id`、`result_sha256`、`execution_verification`、`result`を返す。本文はWorkstreamの正本Artifactから取得し、native Task／Runの完了証跡とdigestを照合する。任意のArtifact IDやファイルパスを受け取らず、実行機能の現在の稼働状態にかかわらず保存済みの結果を読める。実行成功とGoalの完了条件の受理は別であり、一覧の`verification`（検証手順の配列）と`execution_verification`（受理状態）も別項目である。
 
-承認bodyは`goal_id`、`expected_revision`、`expected_assignment_epoch`、`idempotency_key`。認証済みuser本人が作成したGoalで、現在の結果と完了条件が一致するときにだけ受理する。公開Goalを読める他のuserに承認権限は付与しない。新規受理は201、同一操作の再取得は200。応答不明時は`result/acceptance?goal_id=...&idempotency_key=...`をGETし、保存済みreceiptを回復する。未発見は404であり、無条件にPOSTを再送しない。画面は`can_accept_result`と実際に読み込んだ結果のrevision／assignment epoch／Artifact／digestを照合して承認を有効にする。
+結果受理bodyは`goal_id`、`expected_revision`、`expected_assignment_epoch`、`idempotency_key`。認証済みuser本人が作成したGoalで、現在の結果と完了条件が一致するときにだけ受理する。公開Goalを読める他のuserには結果受理権限を付与しない。新規受理は201、同一操作の再取得は200。応答不明時は`result/acceptance?goal_id=...&idempotency_key=...`をGETし、保存済みreceiptを回復する。未発見は404であり、無条件にPOSTを再送しない。画面は`can_accept_result`と実際に読み込んだ結果のrevision／assignment epoch／Artifact／digestを照合して結果受理操作を有効にする。
 
 種類ごとの`kind_input`はcapabilitiesが返すownerの`input_schema`に従う。実行可能なAgentの定義と、現在の実行機能の接続状態は別である。Agentの明示実行は、実際のnative Task／Runに結び付いた`tasks.execute`を利用し、claimだけでは実行しない。HTTPには実行開始の入口を設けない。
 

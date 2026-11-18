@@ -1251,6 +1251,13 @@ func TestStep16QueueCheckpointReceiptLegacyFieldsAreBanned(t *testing.T) {
 			token == "queue_id" && strings.Contains(lineAt(repoRoot, relative, lineNumber), "RENAME COLUMN") {
 			return true
 		}
+		// Meeting minutes references correlate the artifact to the transcript
+		// request. This is not the retired queue checkpoint receipt identity.
+		if relative == "internal/infrastructure/persistence/workstream/task_meeting_minutes.go" &&
+			token == "RequestID" && strings.TrimSpace(lineAt(repoRoot, relative, lineNumber)) ==
+				"proof.RequestID != transcript.TranscriptRequestID || proof.RegistrationEvidenceID != ref.RegistrationEvidenceID || proof.ConfigRevision != ref.ConfigRevision ||" {
+			return true
+		}
 		return false
 	}
 	checkContent := func(relative string, content []byte, tokens []string) {
