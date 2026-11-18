@@ -38,6 +38,7 @@ type runtimeTaskMeetingOccurrenceExecutor struct {
 	clock                    func() time.Time
 	worldSnapshotReader      worldmeeting.TaskMeetingWorldSnapshotReader
 	worldGatherClientFactory func() (worldmeeting.TaskMeetingWorldGatherClient, error)
+	minutesPublisher         runtimeTaskMeetingMinutesPublisher
 }
 
 func newRuntimeTaskMeetingOccurrenceExecutor(cfg *config.Config, deps *Dependencies, actors agentRuntime, coders ...*coderAdapter) taskMeetingOccurrenceExecutor {
@@ -218,6 +219,9 @@ func (e *runtimeTaskMeetingOccurrenceExecutor) executePinnedOccurrence(ctx conte
 		}
 		switch opened.Meeting.Status {
 		case domainmeeting.StatusCompleted:
+			if err := e.publishTaskMeetingMinutes(ctx, snapshot, opened.Meeting); err != nil {
+				return "", err
+			}
 			if err := e.closeTaskMeetingControls(ctx, snapshot, opened.Meeting, proof, authorizeReceipt, authorizeState); err != nil {
 				return "", err
 			}
@@ -229,6 +233,9 @@ func (e *runtimeTaskMeetingOccurrenceExecutor) executePinnedOccurrence(ctx conte
 			// closing native controls or returning scheduler success.
 			if opened.Meeting.PartialMinutes == nil {
 				continue
+			}
+			if err := e.publishTaskMeetingMinutes(ctx, snapshot, opened.Meeting); err != nil {
+				return "", err
 			}
 			if err := e.closeTaskMeetingControls(ctx, snapshot, opened.Meeting, proof, authorizeReceipt, authorizeState); err != nil {
 				return "", err

@@ -37,11 +37,53 @@ type TaskMeetingDeclaration struct {
 	Rooms                    RoomRefs              `json:"rooms"`
 	Timing                   modulecore.TaskTiming `json:"timing"`
 	MeetingDeadlineAfterSecs int64                 `json:"meeting_deadline_after_seconds"`
+	BoardPublication         *BoardPublication     `json:"board_publication,omitempty"`
+}
+
+// BoardPublication freezes the non-secret destination of one occurrence's
+// derived minutes. A nil pointer preserves declarations issued before BOARD
+// publication was introduced, including their canonical byte representation.
+type BoardPublication struct {
+	ChannelID         string   `json:"channel_id" yaml:"channel_id"`
+	SenderPrincipalID string   `json:"sender_principal_id" yaml:"sender_principal_id"`
+	Recipients        []string `json:"recipients" yaml:"recipients"`
+}
+
+func (publication BoardPublication) Validate() error {
+	if !canonicalBoardPublicationID(publication.ChannelID) || !canonicalBoardPublicationID(publication.SenderPrincipalID) || publication.Recipients == nil || len(publication.Recipients) > 32 {
+		return errors.New("TaskMeeting BOARD publication requires an explicit channel, sender and recipients")
+	}
+	previous := ""
+	for _, recipient := range publication.Recipients {
+		if !canonicalBoardPublicationID(recipient) || recipient == publication.SenderPrincipalID || recipient <= previous {
+			return errors.New("TaskMeeting BOARD recipients must be sorted, unique and exclude the sender")
+		}
+		previous = recipient
+	}
+	return nil
+}
+
+func canonicalBoardPublicationID(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for index, char := range value {
+		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || index > 0 && (char == '_' || char == '-') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // Validate checks the declaration's canonical identity and exact ordered
 // roster before it is admitted to the durable registration owner.
 func (declaration TaskMeetingDeclaration) Validate() error {
+	if declaration.BoardPublication != nil {
+		if err := declaration.BoardPublication.Validate(); err != nil {
+			return err
+		}
+	}
 	if declaration.RegistrationKey != TaskMeetingRegistrationKey ||
 		!canonicalOwnerValue(declaration.OwnerUserID) || declaration.Revision == 0 || declaration.DataScope != "user" ||
 		!canonicalOwnerValue(declaration.CoordinatorActorID) || len(declaration.Audience) != 8 ||

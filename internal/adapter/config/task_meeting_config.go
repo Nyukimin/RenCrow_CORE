@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmeeting "github.com/Nyukimin/RenCrow_CORE/internal/domain/taskmeeting"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -19,17 +20,18 @@ const (
 // DailyReportMeetingsConfig is the single editable source for the meeting
 // roster, schedule, rooms, owner scope, and bounded completion window.
 type DailyReportMeetingsConfig struct {
-	Enabled                  bool                      `yaml:"enabled"`
-	Revision                 uint64                    `yaml:"revision"`
-	OwnerUserID              string                    `yaml:"owner_user_id"`
-	DataScope                string                    `yaml:"data_scope"`
-	CoordinatorActorID       string                    `yaml:"coordinator_actor_id"`
-	Actors                   []DailyReportMeetingActor `yaml:"actors"`
-	LivingRoomRef            string                    `yaml:"living_room_ref"`
-	DiningRoomRef            string                    `yaml:"dining_room_ref"`
-	Timezone                 string                    `yaml:"timezone"`
-	Times                    []string                  `yaml:"times"`
-	MeetingDeadlineAfterSecs int64                     `yaml:"meeting_deadline_after_seconds"`
+	Enabled                  bool                            `yaml:"enabled"`
+	Revision                 uint64                          `yaml:"revision"`
+	OwnerUserID              string                          `yaml:"owner_user_id"`
+	DataScope                string                          `yaml:"data_scope"`
+	CoordinatorActorID       string                          `yaml:"coordinator_actor_id"`
+	Actors                   []DailyReportMeetingActor       `yaml:"actors"`
+	LivingRoomRef            string                          `yaml:"living_room_ref"`
+	DiningRoomRef            string                          `yaml:"dining_room_ref"`
+	Timezone                 string                          `yaml:"timezone"`
+	Times                    []string                        `yaml:"times"`
+	MeetingDeadlineAfterSecs int64                           `yaml:"meeting_deadline_after_seconds"`
+	BoardPublication         *domainmeeting.BoardPublication `yaml:"board_publication"`
 }
 
 type DailyReportMeetingActor struct {
@@ -57,6 +59,28 @@ func (c *Config) validateDailyReportMeetingsConfig() error {
 		return nil
 	}
 	const path = "heartbeat.routine.daily_report_meetings"
+	if meeting.BoardPublication != nil {
+		publication := meeting.BoardPublication
+		if err := publication.Validate(); err != nil {
+			return fmt.Errorf("%s.board_publication: %w", path, err)
+		}
+		if !c.BoardCommunication.Enabled {
+			return fmt.Errorf("%s.board_publication requires board_communication.enabled", path)
+		}
+		matched := false
+		if publication.SenderPrincipalID == c.BoardCommunication.PrincipalID {
+			actorID, internal := domainconversation.BoardCommunicationMeetingInternalActorID(publication.SenderPrincipalID)
+			matched = internal && actorID == meeting.CoordinatorActorID && containsMeetingBoardChannel(c.BoardCommunication.ChannelIDs, publication.ChannelID)
+		}
+		for _, responder := range c.BoardCommunication.Responders {
+			if responder.ActorID == meeting.CoordinatorActorID && responder.ActorID == publication.SenderPrincipalID && containsMeetingBoardChannel(responder.ChannelIDs, publication.ChannelID) {
+				matched = true
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%s.board_publication must use the coordinator's configured BOARD principal and channel", path)
+		}
+	}
 	if meeting.Revision == 0 {
 		return fmt.Errorf("%s.revision must be positive when enabled", path)
 	}
@@ -112,6 +136,15 @@ func (c *Config) validateDailyReportMeetingsConfig() error {
 		return fmt.Errorf("%s requires an explicit world_projection read scope", path)
 	}
 	return nil
+}
+
+func containsMeetingBoardChannel(channels []string, requested string) bool {
+	for _, channel := range channels {
+		if channel == requested {
+			return true
+		}
+	}
+	return false
 }
 
 func isCanonicalMeetingActorID(value string) bool {

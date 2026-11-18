@@ -18,6 +18,44 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+func TestRuntimeTaskMeetingBoardPublicationFreezesRouteAndPreservesOldDeclarations(t *testing.T) {
+	cfg := validRuntimeTaskMeetingConfig()
+	old, err := taskMeetingDeclarationFromRuntimeConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldBytes, oldHash, err := domainmeeting.CanonicalTaskMeetingDeclarationJSON(old)
+	if err != nil || bytes.Contains(oldBytes, []byte("board_publication")) {
+		t.Fatalf("old declaration must retain previous canonical shape: %v", err)
+	}
+	decodedOld, decodedHash, err := domainmeeting.DecodeCanonicalTaskMeetingDeclaration(oldBytes)
+	if err != nil || decodedHash != oldHash || decodedOld.BoardPublication != nil {
+		t.Fatalf("old canonical declaration cannot be replayed: %v", err)
+	}
+	cfg.Heartbeat.Routine.DailyReportMeetings.BoardPublication = &domainmeeting.BoardPublication{ChannelID: "rencrow", SenderPrincipalID: "rencrow-comm", Recipients: []string{"ren-browser"}}
+	declaration, err := taskMeetingDeclarationFromRuntimeConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, digest, err := domainmeeting.CanonicalTaskMeetingDeclarationJSON(declaration)
+	if err != nil || digest == oldHash {
+		t.Fatalf("publication route must be part of frozen registration hash: %v", err)
+	}
+	cfg.Heartbeat.Routine.DailyReportMeetings.BoardPublication.ChannelID = "elsewhere"
+	cfg.Heartbeat.Routine.DailyReportMeetings.BoardPublication.Recipients[0] = "outsider"
+	if declaration.BoardPublication.ChannelID != "rencrow" || declaration.BoardPublication.Recipients[0] != "ren-browser" {
+		t.Fatal("runtime config mutation changed frozen route")
+	}
+	decoded, actualDigest, err := domainmeeting.DecodeCanonicalTaskMeetingDeclaration(encoded)
+	if err != nil || actualDigest != digest || decoded.BoardPublication.ChannelID != "rencrow" || decoded.BoardPublication.Recipients[0] != "ren-browser" {
+		t.Fatalf("canonical publication route lost on recovery: %v", err)
+	}
+	cfg.Heartbeat.Routine.DailyReportMeetings.BoardPublication.Recipients = nil
+	if _, err := taskMeetingDeclarationFromRuntimeConfig(cfg); err == nil {
+		t.Fatal("declaration constructor normalized missing recipients into explicit empty recipients")
+	}
+}
+
 func TestRuntimeTaskMeetingRegistrationPersistsCanonicalOwnerDeclaration(t *testing.T) {
 	setTaskMeetingWorldReadCredential(t)
 	cfg := validRuntimeTaskMeetingConfig()

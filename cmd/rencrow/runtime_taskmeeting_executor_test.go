@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
 	worldmeeting "github.com/Nyukimin/RenCrow_CORE/internal/adapter/taskmeeting"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
@@ -151,6 +152,10 @@ func TestRuntimeTaskMeetingOccurrenceRunsEightActorsThroughNativeOwners(t *testi
 		t.Fatalf("wrap deterministic provider with native Action/Transport owners: %v", err)
 	}
 	cfg := validRuntimeTaskMeetingConfig()
+	cfg.Heartbeat.Routine.DailyReportMeetings.BoardPublication = &domainmeeting.BoardPublication{
+		ChannelID: "rencrow", SenderPrincipalID: "rencrow-comm", Recipients: []string{},
+	}
+	boardClient := &meetingBoardTestClient{lostAt: 1}
 	deps := &Dependencies{
 		taskStore: taskStore, taskManager: manager, canonicalEventStore: eventStore, workstreamStore: workstreamStore,
 		taskCenterUserID: "owner-1", taskCenterUserToken: []byte("fixture-owner-token"),
@@ -218,9 +223,17 @@ func TestRuntimeTaskMeetingOccurrenceRunsEightActorsThroughNativeOwners(t *testi
 	}
 	executor.worldSnapshotReader = runtimeTaskMeetingFakeWorld{declaration: resolved.Declaration}
 	setRuntimeTaskMeetingFakeGather(executor, resolved.Declaration)
+	executor.minutesPublisher = runtimeTaskMeetingBoardPublisher{client: boardClient}
 	statuses, err := executor.taskMeetingShareableStatuses(ctx, statusActor)
 	if err != nil || len(statuses) != 1 || statuses[0].ActorID != statusActor || statuses[0].TaskRef != publicTask.TaskID || statuses[0].Status != domaintask.StatusRunning {
 		t.Fatalf("public self status projection = %+v err=%v, want only the exact public self Task", statuses, err)
+	}
+	if _, err := executor.ExecuteScheduledOccurrence(ctx, schedule, due); !errors.Is(err, boardcommunication.ErrUnknownOutcome) {
+		t.Fatalf("lost BOARD publication response must remain pending: %v", err)
+	}
+	pendingTask, pendingRun, _, err := manager.FindTaskMeetingRootByOccurrence(ctx, resolved.Key.String(), resolved.Declaration.CoordinatorActorID, func(context.Context) error { return nil }, executor.authorizeTaskState(resolved))
+	if err != nil || pendingTask.Status != domaintask.StatusRunning || pendingRun.Status != domaintask.RunStatusRunning || provider.calls != domaintask.TaskMeetingAudienceSize+1 {
+		t.Fatalf("pending BOARD publication closed native root or repeated models: task=%s run=%s calls=%d err=%v", pendingTask.Status, pendingRun.Status, provider.calls, err)
 	}
 	if result, err := executor.ExecuteScheduledOccurrence(ctx, schedule, due); err != nil || result != taskMeetingSchedulerSafeSummary {
 		t.Fatalf("execute native eight-actor occurrence: result=%q err=%v provider_calls=%d report_calls=%d", result, err, provider.calls, provider.reportCalls)
@@ -239,6 +252,25 @@ func TestRuntimeTaskMeetingOccurrenceRunsEightActorsThroughNativeOwners(t *testi
 	}
 	if meeting.Status != domainmeeting.StatusCompleted || meeting.FinishEvidence == nil || meeting.FinishEvidence.TranscriptArtifactID.Validate() != nil || len(meeting.Reports) != domaintask.TaskMeetingAudienceSize || len(meeting.Answers) != 1 {
 		t.Fatalf("meeting terminal projection status=%s reports=%d answers=%d finish=%+v", meeting.Status, len(meeting.Reports), len(meeting.Answers), meeting.FinishEvidence)
+	}
+	var published strings.Builder
+	for index, row := range boardClient.rows {
+		if row.receipt.ThreadID != boardClient.rows[0].receipt.ThreadID {
+			t.Fatal("native completed occurrence created multiple BOARD pages")
+		}
+		if index == 0 {
+			continue
+		}
+		_, content, _ := strings.Cut(row.request.Body, "\n")
+		published.WriteString(content)
+	}
+	for _, report := range meeting.Reports {
+		if !strings.Contains(published.String(), report.Utterance.Body) {
+			t.Fatalf("native BOARD minutes omitted actor %s's full canonical report", report.Utterance.ActorID)
+		}
+	}
+	if !strings.Contains(published.String(), meeting.Answers[0].Utterance.Body) {
+		t.Fatal("native BOARD minutes omitted canonical concern answer")
 	}
 	var selfReport *domainmeeting.Report
 	for index := range meeting.Reports {
@@ -366,6 +398,7 @@ func TestRuntimeTaskMeetingOccurrenceRunsEightActorsThroughNativeOwners(t *testi
 	}
 	executor.worldSnapshotReader = runtimeTaskMeetingFakeWorld{declaration: resolved.Declaration}
 	setRuntimeTaskMeetingFakeGather(executor, resolved.Declaration)
+	executor.minutesPublisher = runtimeTaskMeetingBoardPublisher{client: boardClient}
 	if result, err := executor.ExecuteScheduledOccurrence(ctx, schedule, due); err != nil || result != taskMeetingSchedulerSafeSummary {
 		t.Fatalf("replay completed occurrence after owner restart: result=%q err=%v", result, err)
 	}

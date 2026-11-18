@@ -492,7 +492,13 @@ heartbeat:
       timezone: "Asia/Tokyo"
       times: ["08:00", "12:00", "17:00"]
       meeting_deadline_after_seconds: 3600
-  routine:
+      # Optional: one BOARD topic per occurrence, compiled from canonical minutes.
+      # Use the coordinator's configured BOARD principal and an allowed channel.
+      # Empty recipients publishes for the BOARD administrator without waking peers.
+      # board_publication:
+      #   channel_id: "rencrow"
+      #   sender_principal_id: "rencrow-comm"
+      #   recipients: []
     enabled: false
     # Optional authenticated WORLD read scope. Configure all fields together.
     # Values below are examples only; add real values by uncommenting and replacing them.

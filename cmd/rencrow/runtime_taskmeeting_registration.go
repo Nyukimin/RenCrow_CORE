@@ -224,6 +224,14 @@ func taskMeetingDeclarationFromRuntimeConfig(cfg *config.Config) (domainmeeting.
 		Timing:                   meeting.TaskTiming(),
 		MeetingDeadlineAfterSecs: meeting.MeetingDeadlineAfterSecs,
 	}
+	if meeting.BoardPublication != nil {
+		if err := meeting.BoardPublication.Validate(); err != nil {
+			return domainmeeting.TaskMeetingDeclaration{}, fmt.Errorf("TaskMeeting BOARD publication is invalid: %w", err)
+		}
+		publication := *meeting.BoardPublication
+		publication.Recipients = append([]string{}, meeting.BoardPublication.Recipients...)
+		declaration.BoardPublication = &publication
+	}
 	if err := declaration.Validate(); err != nil {
 		return domainmeeting.TaskMeetingDeclaration{}, fmt.Errorf("TaskMeeting owner declaration is invalid: %w", err)
 	}

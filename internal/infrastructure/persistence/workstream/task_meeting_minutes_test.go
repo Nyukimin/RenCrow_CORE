@@ -171,6 +171,12 @@ func TestTaskMeetingMissedMinutesPersistReadbackAndReplayUseRealArtifact(t *test
 		}); !errors.Is(err, domainworkstream.ErrTaskPlanUnavailable) {
 		t.Fatalf("artifact without aggregate proof was reported as terminal success: %v", err)
 	}
+	allowTerminal := func(context.Context, string, domainmeeting.OccurrenceKey, string, domainmeeting.Guard, *TaskMeetingMinutesReference) error {
+		return nil
+	}
+	if _, _, err := store.FindTerminalTaskMeetingMinutes(ctx, access.OwnerUserID, key, requestID, stored.Meeting.Guard(), allowTerminal); !errors.Is(err, domainworkstream.ErrTaskPlanUnavailable) {
+		t.Fatalf("terminal publication accepted minutes before the aggregate pinned its proof: %v", err)
+	}
 	partialMinutes := domainmeeting.PartialMinutesEvidence{EvidenceID: modulecore.NewEvidenceID(), Reference: domainmeeting.MinutesArtifactReference{
 		RequestID: reference.OccurrenceKey + "|partial-minutes|" + string(missed.PartialEvidence.EvidenceID), ArtifactID: reference.ArtifactID,
 		WorkstreamID: reference.WorkstreamID, OwnerUserID: reference.OwnerUserID, CoordinatorActorID: reference.CoordinatorActorID, Key: key,
@@ -183,6 +189,23 @@ func TestTaskMeetingMissedMinutesPersistReadbackAndReplayUseRealArtifact(t *test
 	_, err = store.SaveMeetingOccurrence(ctx, access, key, stored.Meeting.Guard(), stored.PayloadHash, missedWithMinutes)
 	if err != nil {
 		t.Fatal(err)
+	}
+	terminalRef, terminalFound, err := store.FindTerminalTaskMeetingMinutes(ctx, access.OwnerUserID, key, requestID, missedWithMinutes.Guard(), allowTerminal)
+	if err != nil || !terminalFound || !sameTaskMeetingMinutesReference(terminalRef, reference) {
+		t.Fatalf("terminal lookup must reuse the exact pinned earlier-guard minutes: found=%t err=%v", terminalFound, err)
+	}
+	if _, _, err := store.FindTerminalTaskMeetingMinutes(ctx, access.OwnerUserID, key, requestID, stored.Meeting.Guard(), allowTerminal); !errors.Is(err, domainworkstream.ErrTaskPlanNotFound) {
+		t.Fatalf("terminal lookup accepted stale caller guard: %v", err)
+	}
+	if _, found, err := store.FindTerminalTaskMeetingMinutes(ctx, "another-owner", key, requestID, missedWithMinutes.Guard(), allowTerminal); err == nil || found {
+		t.Fatalf("terminal lookup exposed another owner's minutes: found=%t err=%v", found, err)
+	}
+	deniedCalls := 0
+	if _, _, err := store.FindTerminalTaskMeetingMinutes(ctx, access.OwnerUserID, key, requestID, missedWithMinutes.Guard(), func(context.Context, string, domainmeeting.OccurrenceKey, string, domainmeeting.Guard, *TaskMeetingMinutesReference) error {
+		deniedCalls++
+		return domainworkstream.ErrTaskPlanForbidden
+	}); !errors.Is(err, domainworkstream.ErrTaskPlanForbidden) || deniedCalls != 1 {
+		t.Fatalf("terminal authorization must reject before private body lookup: calls=%d err=%v", deniedCalls, err)
 	}
 	list, err := store.ListTaskMeetingOccurrenceSummaries(ctx, reference.WorkstreamID, access.OwnerUserID, key.ScheduleID, 10,
 		func(context.Context, modulecore.WorkstreamID, string, modulecore.ScheduleID, *TaskMeetingOccurrenceSummary) error {

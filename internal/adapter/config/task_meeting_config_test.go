@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	domainmeeting "github.com/Nyukimin/RenCrow_CORE/internal/domain/taskmeeting"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -14,6 +15,45 @@ func TestDailyReportMeetingsConfigDisabledByDefault(t *testing.T) {
 	}
 	if err := cfg.validateDailyReportMeetingsConfig(); err != nil {
 		t.Fatalf("disabled meeting config validation: %v", err)
+	}
+}
+
+func TestDailyReportMeetingsBoardPublicationRequiresCoordinatorScope(t *testing.T) {
+	cfg := validMeetingConfig()
+	cfg.Heartbeat.Routine.DailyReportMeetings.CoordinatorActorID = "mio"
+	cfg.BoardCommunication.Enabled = true
+	cfg.BoardCommunication.PrincipalID = "rencrow-comm"
+	cfg.BoardCommunication.ChannelIDs = []string{"rencrow"}
+	cfg.Heartbeat.Routine.DailyReportMeetings.BoardPublication = &domainmeeting.BoardPublication{ChannelID: "rencrow", SenderPrincipalID: "rencrow-comm", Recipients: []string{}}
+	if err := cfg.validateDailyReportMeetingsConfig(); err != nil {
+		t.Fatalf("explicit coordinator publication route rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name string
+		edit func(*Config)
+	}{
+		{"disabled BOARD", func(c *Config) { c.BoardCommunication.Enabled = false }},
+		{"foreign channel", func(c *Config) { c.Heartbeat.Routine.DailyReportMeetings.BoardPublication.ChannelID = "elsewhere" }},
+		{"foreign sender", func(c *Config) {
+			c.Heartbeat.Routine.DailyReportMeetings.BoardPublication.SenderPrincipalID = "outsider"
+		}},
+		{"implicit recipients", func(c *Config) { c.Heartbeat.Routine.DailyReportMeetings.BoardPublication.Recipients = nil }},
+		{"sender recipient", func(c *Config) {
+			c.Heartbeat.Routine.DailyReportMeetings.BoardPublication.Recipients = []string{"rencrow-comm"}
+		}},
+		{"unsorted recipients", func(c *Config) {
+			c.Heartbeat.Routine.DailyReportMeetings.BoardPublication.Recipients = []string{"z", "a"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			copyConfig := *cfg
+			publication := *cfg.Heartbeat.Routine.DailyReportMeetings.BoardPublication
+			copyConfig.Heartbeat.Routine.DailyReportMeetings.BoardPublication = &publication
+			test.edit(&copyConfig)
+			if err := copyConfig.validateDailyReportMeetingsConfig(); err == nil {
+				t.Fatal("invalid publication route accepted")
+			}
+		})
 	}
 }
 
