@@ -5,12 +5,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
 
 type gameObserverSessionsReaderFunc func(context.Context) ([]gameObserverActiveAgentSession, error)
@@ -62,6 +66,7 @@ func TestRunningGameLeaseTargetsOwnDeskAndProjectsTyping(t *testing.T) {
 		t.Fatalf("create GAMES sessions client: %v", err)
 	}
 	deps.agentRoutine.gameSessions = gameSessions
+	deps.taskManager = newEmptyLivingTaskManager(t)
 	scheduler := startLivingSeatTestScheduler(t)
 	deps.agentHeartbeat = scheduler
 	runtime := deps.agentRoutine
@@ -187,6 +192,7 @@ func TestActiveGameSessionTargetsDeskBeforeFirstTurnLease(t *testing.T) {
 		t.Fatalf("create GAMES sessions client: %v", err)
 	}
 	deps.agentRoutine.gameSessions = gameSessions
+	deps.taskManager = newEmptyLivingTaskManager(t)
 	scheduler := startLivingSeatTestScheduler(t)
 	deps.agentHeartbeat = scheduler
 	runtime := deps.agentRoutine
@@ -235,7 +241,7 @@ func TestGameSessionSeatsYieldToWorkAndConversationSeats(t *testing.T) {
 		{ActorID: "shiro", State: "running", ActivityKind: "routine"},
 	}
 	conversations := map[string]livingSeatActivity{"shiro": {room: "dining", slot: "dining-guest", pose: "talk"}}
-	seats := buildLivingSeatTargets(sessions, activities, conversations)
+	seats := buildLivingSeatTargets(sessions, activities, conversations, nil)
 	want := map[string]livingSeatActivity{
 		"mio":    {room: "living", slot: "desk-mio", pose: "review"},
 		"midori": {room: "living", slot: "desk-midori", pose: "notes"},
@@ -247,6 +253,135 @@ func TestGameSessionSeatsYieldToWorkAndConversationSeats(t *testing.T) {
 			t.Errorf("seat for %s = %+v, want %+v", actorID, got, expected)
 		}
 	}
+}
+
+func TestRunningTaskOnlyTargetsDeskBelowGameAndConversation(t *testing.T) {
+	running := boardAgentWorkTestTask("private task title", "mio", domaintask.StatusRunning, domaintask.PriorityHigh, time.Now().UTC())
+	sessions := []gameObserverActiveAgentSession{{GameID: "nethack", SessionID: "session", Personas: []string{"mio"}, Status: "running"}}
+	conversation := map[string]livingSeatActivity{"mio": {room: "dining", slot: "dining", pose: "talk"}}
+	routineLease := []agentheartbeat.LivingActivity{{ActorID: "mio", State: "running", ActivityKind: string(agentheartbeat.ActivityKindRoutine)}}
+
+	seat := buildLivingSeatTargets(nil, nil, nil, []domaintask.Task{running})
+	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
+		t.Fatalf("running task seat = %+v, want %+v", got, want)
+	}
+	seat = buildLivingSeatTargets(sessions, nil, nil, []domaintask.Task{running})
+	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
+		t.Fatalf("running task overrode active game session: got %+v, want %+v", got, want)
+	}
+	seat = buildLivingSeatTargets(nil, routineLease, conversation, []domaintask.Task{running})
+	if got, want := seat["mio"], conversation["mio"]; got != want {
+		t.Fatalf("running task overrode explicit conversation: got %+v, want %+v", got, want)
+	}
+	seat = buildLivingSeatTargets(nil, routineLease, nil, []domaintask.Task{running})
+	if _, exists := seat["mio"]; exists {
+		t.Fatalf("running task replaced routine activity with no conversation seat: %+v", seat["mio"])
+	}
+	seat = buildLivingSeatTargets(nil, routineLease, conversation, []domaintask.Task{running})
+	if got, want := seat["mio"], conversation["mio"]; got != want {
+		t.Fatalf("running task overrode routine conversation seat: got %+v, want %+v", got, want)
+	}
+	for _, status := range []domaintask.Status{domaintask.StatusQueued, domaintask.StatusWaiting, domaintask.StatusBlocked} {
+		nonRunning := boardAgentWorkTestTask(string(status), "mio", status, domaintask.PriorityNormal, time.Now().UTC())
+		seat = buildLivingSeatTargets(nil, nil, nil, []domaintask.Task{nonRunning})
+		if _, exists := seat["mio"]; exists {
+			t.Errorf("%s Task created a seat: %+v", status, seat["mio"])
+		}
+	}
+}
+
+func TestLivingSeatsRechecksLeaseAfterTaskProjection(t *testing.T) {
+	scheduler := startLivingSeatTestScheduler(t)
+	root, err := os.MkdirTemp(".", ".living-seat-task-projection-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove Task store fixture: %v", err)
+		}
+	})
+	store, err := taskpersistence.NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close Task store: %v", err)
+		}
+	})
+	task := boardAgentWorkTestTask("running midori task", "midori", domaintask.StatusRunning, domaintask.PriorityNormal, time.Now().UTC())
+	if err := store.SaveTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	var release func()
+	owner := livingSeatLeaseOnTaskListStore{Store: store, acquire: func() error {
+		var acquireErr error
+		release, acquireErr = scheduler.Acquire(context.Background(), "midori", domaintask.PriorityCritical)
+		return acquireErr
+	}}
+	deps := &Dependencies{agentHeartbeat: scheduler, taskManager: taskmanager.New(&owner, taskmanager.DefaultParallelLimits())}
+	runtime := &agentRoutineRuntime{
+		deps: deps,
+		gameSessions: gameObserverSessionsReaderFunc(func(context.Context) ([]gameObserverActiveAgentSession, error) {
+			return nil, nil
+		}),
+	}
+	seats, ready, err := runtime.livingSeats(context.Background())
+	if release != nil {
+		release()
+	}
+	if err != nil || !ready {
+		t.Fatalf("livingSeats() = (%+v, %t, %v), want ready after lease acquisition", seats, ready, err)
+	}
+	if _, exists := seats["midori"]; exists {
+		t.Fatalf("canonical Task desk fallback replaced lease acquired during Task read: %+v", seats["midori"])
+	}
+}
+
+type livingSeatLeaseOnTaskListStore struct {
+	domaintask.Store
+	mu       sync.Mutex
+	acquired bool
+	acquire  func() error
+}
+
+func newEmptyLivingTaskManager(t *testing.T) *taskmanager.Manager {
+	t.Helper()
+	root, err := os.MkdirTemp(".", ".living-seat-empty-tasks-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove empty Task store fixture: %v", err)
+		}
+	})
+	store, err := taskpersistence.NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close empty Task store fixture: %v", err)
+		}
+	})
+	return taskmanager.New(store, taskmanager.DefaultParallelLimits())
+}
+
+func (s *livingSeatLeaseOnTaskListStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	s.mu.Lock()
+	shouldAcquire := !s.acquired && filter.Assignee == "mio"
+	if shouldAcquire {
+		s.acquired = true
+	}
+	s.mu.Unlock()
+	if shouldAcquire {
+		if err := s.acquire(); err != nil {
+			return nil, err
+		}
+	}
+	return s.Store.ListTasks(ctx, filter)
 }
 
 func startLivingSeatTestScheduler(t *testing.T) *agentheartbeat.Scheduler {

@@ -70,6 +70,21 @@ func (m *Manager) AdmitRunCompletion(
 	summary string,
 	waitingReason string,
 ) (uint64, error) {
+	return m.admitRunCompletionForActor(ctx, taskID, runID, "", status, summary, waitingReason)
+}
+
+// admitRunCompletionForActor binds the owner used by the completion CAS to the
+// caller's expected actor when one is supplied. The public method retains its
+// existing contract by deriving that actor from the Run read before admission.
+func (m *Manager) admitRunCompletionForActor(
+	ctx context.Context,
+	taskID modulecore.TaskID,
+	runID modulecore.RunID,
+	expectedActor string,
+	status domaintask.Status,
+	summary string,
+	waitingReason string,
+) (uint64, error) {
 	if ctx == nil {
 		return 0, errors.New("run completion admission context is nil")
 	}
@@ -99,11 +114,21 @@ func (m *Manager) AdmitRunCompletion(
 	if run.TaskID != taskID || run.RunID != runID {
 		return 0, fmt.Errorf("task and run ownership do not match")
 	}
-	if run.Status != domaintask.RunStatusRunning {
-		return 0, m.VerifyRunCompletion(ctx, taskID, runID, run.Assignee, status)
+	actorID := run.Assignee
+	if expectedActor != "" {
+		if strings.TrimSpace(expectedActor) == "" {
+			return 0, errors.New("actor_id is required")
+		}
+		actorID = expectedActor
 	}
-	if strings.TrimSpace(run.Assignee) == "" {
+	if strings.TrimSpace(actorID) == "" {
 		return 0, errors.New("actor_id is required")
+	}
+	if run.Assignee != actorID {
+		return 0, fmt.Errorf("%w: task, run, and actor ownership do not match", ErrRunConflict)
+	}
+	if run.Status != domaintask.RunStatusRunning {
+		return 0, m.VerifyRunCompletion(ctx, taskID, runID, actorID, status)
 	}
 	admission, err := persistencequeue.Admit(queue, 1, taskRunCompletionAdmissionBytes)
 	if err != nil {
@@ -112,7 +137,7 @@ func (m *Manager) AdmitRunCompletion(
 	defer func() { _ = admission.Release() }()
 	admittedContext := persistencequeue.WithAdmission(ctx, admission)
 	return m.taskTransactionWithTicket(admittedContext, taskID, func(txManager *Manager) error {
-		if err := txManager.validateRunExecutionInTransaction(admittedContext, taskID, runID, run.Assignee); err != nil {
+		if err := txManager.validateRunExecutionInTransaction(admittedContext, taskID, runID, actorID); err != nil {
 			return err
 		}
 		if _, err := txManager.validateLatestRunInTransaction(admittedContext, taskID, runID); err != nil {

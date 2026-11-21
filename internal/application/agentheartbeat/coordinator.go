@@ -63,6 +63,7 @@ const (
 	ActivityKindGame       ActivityKind = "game"
 	ActivityKindRoutine    ActivityKind = "routine"
 	ActivityKindForeground ActivityKind = "foreground"
+	ActivityKindTask       ActivityKind = "task"
 )
 
 func activityKindFor(source workSource, requested ActivityKind) ActivityKind {

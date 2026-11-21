@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -126,6 +128,123 @@ func TestCloseStartedRunClosesWithTheClassifiedOutcome(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCloseStartedRunUsesIndependentAdmission(t *testing.T) {
+	for _, admissionState := range []string{"consumed", "released"} {
+		t.Run(admissionState, func(t *testing.T) {
+			manager, queue, task, run := startQueueBackedRunForClosure(t)
+			admission, err := persistencequeue.Admit(queue, 1, 2<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = admission.Release() })
+			ctx := persistencequeue.WithAdmission(context.Background(), admission)
+			if admissionState == "consumed" {
+				ticket, err := admission.Enqueue(persistencequeue.PersistenceCommand{
+					Owner: persistencequeue.OwnerTask, Kind: "test.caller_write", SizeBytes: 1,
+					Apply: func(context.Context) error { return nil },
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := queue.Wait(context.Background(), uint64(ticket)); err != nil {
+					t.Fatalf("wait for caller's consumed admission: %v", err)
+				}
+			} else if err := admission.Release(); err != nil {
+				t.Fatalf("release caller admission: %v", err)
+			}
+
+			err = manager.CloseStartedRun(ctx, task.TaskID, run.RunID, "shiro", RunOutcome{Status: domaintask.StatusSucceeded, Summary: "done"}, nil)
+			if err != nil {
+				t.Fatalf("CloseStartedRun with %s caller admission: %v", admissionState, err)
+			}
+			gotTask, err := manager.Get(context.Background(), task.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotRun, err := manager.GetRun(context.Background(), run.RunID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotTask.Status != domaintask.StatusSucceeded || gotRun.Status != domaintask.RunStatusSucceeded {
+				t.Fatalf("Task/Run = %s/%s, want succeeded/succeeded", gotTask.Status, gotRun.Status)
+			}
+		})
+	}
+}
+
+func TestCloseStartedRunPreservesActorOwnershipAndIsIdempotent(t *testing.T) {
+	manager, _, task, run := startQueueBackedRunForClosure(t)
+	for _, actorID := range []string{"mio", "", "   "} {
+		wrongActorErr := manager.CloseStartedRun(context.Background(), task.TaskID, run.RunID, actorID, RunOutcome{Status: domaintask.StatusSucceeded, Summary: "done"}, nil)
+		if !errors.Is(wrongActorErr, ErrStartedRunNotClosed) {
+			t.Fatalf("CloseStartedRun with actor %q = %v, want a marked ownership error", actorID, wrongActorErr)
+		}
+		if actorID == "mio" && !errors.Is(wrongActorErr, ErrRunConflict) {
+			t.Fatalf("CloseStartedRun with wrong actor = %v, want an ownership conflict", wrongActorErr)
+		}
+		activeTask, err := manager.Get(context.Background(), task.TaskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		activeRun, err := manager.GetRun(context.Background(), run.RunID)
+		if err != nil || activeTask.Status != domaintask.StatusRunning || activeRun.Status != domaintask.RunStatusRunning {
+			t.Fatalf("Task/Run after actor %q attempt = %s/%s err=%v, want both running", actorID, activeTask.Status, activeRun.Status, err)
+		}
+	}
+
+	outcome := RunOutcome{Status: domaintask.StatusSucceeded, Summary: "done"}
+	if err := manager.CloseStartedRun(context.Background(), task.TaskID, run.RunID, "shiro", outcome, nil); err != nil {
+		t.Fatalf("CloseStartedRun with owner: %v", err)
+	}
+	if err := manager.CloseStartedRun(context.Background(), task.TaskID, run.RunID, "shiro", outcome, nil); err != nil {
+		t.Fatalf("repeat CloseStartedRun with the same terminal outcome: %v", err)
+	}
+}
+
+func startQueueBackedRunForClosure(t *testing.T) (*Manager, *persistencequeue.Queue[persistencequeue.PersistenceCommand], domaintask.Task, domaintask.Run) {
+	t.Helper()
+	root, err := os.MkdirTemp(".", ".started-run-closure-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove queue-backed Task store: %v", err)
+		}
+	})
+	store, err := taskpersistence.NewJSONLStoreWithOptions(root, taskpersistence.OpenOptions{Index: true, Persist: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close queue-backed Task store: %v", err)
+		}
+	})
+	queue, err := persistencequeue.NewPersistenceQueue(8, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := queue.Shutdown(ctx); err != nil {
+			t.Errorf("shutdown queue-backed Task store queue: %v", err)
+		}
+	})
+	manager := New(store, DefaultParallelLimits(), WithIDIndex())
+	if err := manager.SetPersistenceQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	task, run, err := manager.CreateAndStartRun(context.Background(), domaintask.Task{
+		Title: "close", Route: domaintask.RouteGeneral, Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager, queue, task, run
 }
 
 // The caller's context has ended, as when a cancelled or expired tick fails the

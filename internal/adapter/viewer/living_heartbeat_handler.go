@@ -20,6 +20,12 @@ type LivingHeartbeatTaskReader interface {
 	GetTask(context.Context, modulecore.TaskID) (domaintask.Task, error)
 }
 
+// LivingHeartbeatCurrentTaskReader provides canonical running Task identity
+// for the internal activity merge. IDs are never serialized by this handler.
+type LivingHeartbeatCurrentTaskReader interface {
+	CurrentRunningTaskIDs(context.Context) (map[string][]modulecore.TaskID, error)
+}
+
 type RoutineActivityReader interface {
 	CurrentRoutineActivity(context.Context, string) (RoutineActivity, error)
 }
@@ -53,6 +59,14 @@ type livingHeartbeatAgent struct {
 // content. A canonical Task title is included only after the existing public
 // Task visibility policy authorizes its current publication binding.
 func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility, routineReaders ...RoutineActivityReader) http.HandlerFunc {
+	return handleLivingHeartbeat(scheduler, tasks, visibility, nil, routineReaders...)
+}
+
+func HandleLivingHeartbeatWithCurrentTasks(scheduler *agentheartbeat.Scheduler, tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility, currentTasks LivingHeartbeatCurrentTaskReader, routineReaders ...RoutineActivityReader) http.HandlerFunc {
+	return handleLivingHeartbeat(scheduler, tasks, visibility, currentTasks, routineReaders...)
+}
+
+func handleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility, currentTasks LivingHeartbeatCurrentTaskReader, routineReaders ...RoutineActivityReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !security.IsDirectLoopbackRequest(r) {
 			http.NotFound(w, r)
@@ -130,12 +144,24 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 				}
 			}
 		}
-		// Routine reads may block on WORLD. Re-snapshot afterward so a newly
-		// acquired or actively running lease always wins over idle activity.
+		var currentByActor map[string][]modulecore.TaskID
+		if currentTasks != nil {
+			var taskErr error
+			currentByActor, taskErr = currentTasks.CurrentRunningTaskIDs(readCtx)
+			if taskErr != nil {
+				http.Error(w, "agent task projection unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		// Routine/WORLD and Task reads may block. Re-snapshot after both so a
+		// newly acquired or actively running lease always wins over idle activity.
 		activities, ready = scheduler.LivingSnapshot(readCtx, titleLookup)
 		if !ready {
 			http.Error(w, "agent heartbeat scheduler unavailable", http.StatusServiceUnavailable)
 			return
+		}
+		if currentTasks != nil {
+			mergeCurrentRunningTaskActivities(activities, currentByActor)
 		}
 		agents := make([]livingHeartbeatAgent, 0, len(activities))
 		for _, activity := range activities {
@@ -169,6 +195,18 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 			ObservedAt: observedAt.Format(time.RFC3339Nano),
 			Agents:     agents,
 		})
+	}
+}
+
+func mergeCurrentRunningTaskActivities(activities []agentheartbeat.LivingActivity, currentByActor map[string][]modulecore.TaskID) {
+	for index := range activities {
+		if len(currentByActor[activities[index].ActorID]) == 0 || activities[index].State == "running" || activities[index].State == "stopping" {
+			continue
+		}
+		activities[index].State = "running"
+		activities[index].ActivityKind = string(agentheartbeat.ActivityKindTask)
+		activities[index].GameID = ""
+		activities[index].Title = ""
 	}
 }
 

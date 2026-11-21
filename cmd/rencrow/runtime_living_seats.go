@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type livingSeatActivity struct{ room, slot, pose string }
@@ -41,13 +42,40 @@ func (r *agentRoutineRuntime) livingSeats(ctx context.Context) (map[string]livin
 			return nil, false, err
 		}
 	}
+	if r.deps.taskManager == nil {
+		return nil, false, nil
+	}
+	runningTasks := make([]domaintask.Task, 0)
+	for _, actorID := range agentHeartbeatActorIDs {
+		projection, err := readActorTaskProjection(ctx, r.deps.taskManager, actorID, domaintask.StatusRunning)
+		if err != nil {
+			return nil, false, fmt.Errorf("read living Task projection for %s: %w", actorID, err)
+		}
+		runningTasks = append(runningTasks, projection.Current...)
+	}
+	activities, ready = r.deps.agentHeartbeat.LivingSnapshot(ctx, nil)
+	if !ready {
+		return nil, false, nil
+	}
 	r.livingConversationMu.Lock()
 	defer r.livingConversationMu.Unlock()
-	return buildLivingSeatTargets(sessions, activities, r.livingConversation), true, nil
+	return buildLivingSeatTargets(sessions, activities, r.livingConversation, runningTasks), true, nil
 }
 
-func buildLivingSeatTargets(sessions []gameObserverActiveAgentSession, activities []agentheartbeat.LivingActivity, conversations map[string]livingSeatActivity) map[string]livingSeatActivity {
+func buildLivingSeatTargets(sessions []gameObserverActiveAgentSession, activities []agentheartbeat.LivingActivity, conversations map[string]livingSeatActivity, runningTasks []domaintask.Task) map[string]livingSeatActivity {
 	desired := make(map[string]livingSeatActivity)
+	activeLeases := make(map[string]struct{}, len(activities))
+	for _, activity := range activities {
+		if activity.State == "running" || activity.State == "stopping" {
+			activeLeases[activity.ActorID] = struct{}{}
+		}
+	}
+	for _, task := range runningTasks {
+		_, hasLease := activeLeases[task.Assignee]
+		if task.Status == domaintask.StatusRunning && isAgentHeartbeatActor(task.Assignee) && !hasLease {
+			desired[task.Assignee] = livingSeatActivity{"living", "desk-" + task.Assignee, "type"}
+		}
+	}
 	for _, session := range sessions {
 		for _, persona := range session.Personas {
 			desired[persona] = livingSeatActivity{"living", "desk-" + persona, "type"}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
@@ -130,12 +131,28 @@ func (p *actionProvider) begin(ctx context.Context, operation string) (context.C
 	finish := func(callErr error) error {
 		completed := "LLM " + operation + " completed"
 		if closed, err := p.actions.CloseAttempt(ctx, action.ActionID, attempt.AttemptID, actionmanager.AttemptOutcomeOf(callErr, completed), callErr); !closed {
+			// Keep the failed persistence boundary observable even when an
+			// upstream caller intentionally ignores a provider error. Do not
+			// log a provider failure body or its private request content.
+			if callErr == nil {
+				log.Printf("[LLM][settlement] attempt_close_failed task_id=%s run_id=%s action_id=%s attempt_id=%s error=%q", identity.TaskID, identity.RunID, action.ActionID, attempt.AttemptID, err)
+			} else {
+				log.Printf("[LLM][settlement] attempt_close_failed task_id=%s run_id=%s action_id=%s attempt_id=%s provider_error_redacted=true", identity.TaskID, identity.RunID, action.ActionID, attempt.AttemptID)
+			}
 			return err
 		}
 		if !ownsRun {
 			return callErr
 		}
-		return p.tasks.CloseStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, taskmanager.RunOutcomeOf(callErr, completed), callErr)
+		err := p.tasks.CloseStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, taskmanager.RunOutcomeOf(callErr, completed), callErr)
+		if errors.Is(err, taskmanager.ErrStartedRunNotClosed) && !errors.Is(callErr, taskmanager.ErrStartedRunNotClosed) {
+			if callErr == nil {
+				log.Printf("[LLM][settlement] run_close_failed task_id=%s run_id=%s action_id=%s error=%q", identity.TaskID, identity.RunID, action.ActionID, err)
+			} else {
+				log.Printf("[LLM][settlement] run_close_failed task_id=%s run_id=%s action_id=%s provider_error_redacted=true", identity.TaskID, identity.RunID, action.ActionID)
+			}
+		}
+		return err
 	}
 	ownedCtx, err := domainexecution.WithChildBoundActionAttempt(ctx, action.ActionID, attempt.AttemptID)
 	if err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -107,6 +108,48 @@ func TestBoardAgentWorkRuntimeReaderDistinguishesNoWorkFromUnavailableStores(t *
 	}
 	if unavailable.Actors[0].Availability.Tasks != "unavailable" || unavailable.Actors[0].CurrentTasks != nil || unavailable.Actors[0].WaitingQueue != nil {
 		t.Fatalf("unavailable snapshot = %+v, want explicit unavailable/null arrays", unavailable.Actors[0])
+	}
+}
+
+func TestBoardAndLivingUseTheSameCanonicalRunningTaskIDs(t *testing.T) {
+	now := time.Date(2026, time.November, 21, 12, 0, 0, 0, time.UTC)
+	first := boardAgentWorkTestTask("first private title", "mio", domaintask.StatusRunning, domaintask.PriorityLow, now)
+	second := boardAgentWorkTestTask("second private title", "mio", domaintask.StatusRunning, domaintask.PriorityCritical, now)
+	queued := boardAgentWorkTestTask("queued private title", "mio", domaintask.StatusQueued, domaintask.PriorityHigh, now)
+	owner := boardAgentWorkTaskOwnerStub{tasks: []domaintask.Task{second, queued, first}}
+	projection, err := readActorTaskProjection(context.Background(), owner, "mio")
+	if err != nil {
+		t.Fatalf("read shared actor Task projection: %v", err)
+	}
+	if len(projection.Current) != 2 || len(projection.Waiting) != 1 || projection.Waiting[0].TaskID != queued.TaskID {
+		t.Fatalf("shared Task projection = %+v, want two running and one queued Task", projection)
+	}
+
+	board := &boardAgentWorkRuntimeReader{tasks: owner, queue: boardAgentWorkQueueStoreStub{}}
+	boardSnapshot, err := board.ReadBoardAgentWork(context.Background())
+	if err != nil {
+		t.Fatalf("read BOARD Task projection: %v", err)
+	}
+	boardIDs := make([]modulecore.TaskID, 0, len(boardSnapshot.Actors[0].CurrentTasks))
+	for _, row := range boardSnapshot.Actors[0].CurrentTasks {
+		boardIDs = append(boardIDs, modulecore.TaskID(row.TaskID))
+	}
+	livingIDsByActor, err := (runtimeLivingTaskProjectionReader{tasks: owner}).CurrentRunningTaskIDs(context.Background())
+	if err != nil {
+		t.Fatalf("read LIVING Task projection: %v", err)
+	}
+	if !reflect.DeepEqual(boardIDs, livingIDsByActor["mio"]) {
+		t.Fatalf("BOARD running Task IDs=%v, LIVING running Task IDs=%v", boardIDs, livingIDsByActor["mio"])
+	}
+	if len(livingIDsByActor["mio"]) != 2 || livingIDsByActor["shiro"] == nil || len(livingIDsByActor["shiro"]) != 0 {
+		t.Fatalf("LIVING Task snapshot lost multiplicity or known-empty state: %+v", livingIDsByActor)
+	}
+}
+
+func TestLivingTaskProjectionPreservesUnavailableOwnerState(t *testing.T) {
+	reader := runtimeLivingTaskProjectionReader{tasks: boardAgentWorkTaskOwnerStub{listErr: errors.New("task store unavailable")}}
+	if ids, err := reader.CurrentRunningTaskIDs(context.Background()); err == nil || ids != nil {
+		t.Fatalf("running Task projection = (%v, %v), want unavailable without empty fallback", ids, err)
 	}
 }
 

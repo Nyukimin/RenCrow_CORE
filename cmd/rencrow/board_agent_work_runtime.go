@@ -161,7 +161,7 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 			continue
 		}
 
-		tasks, err := listBoardAgentWorkTasks(ctx, r.tasks, actorID)
+		taskProjection, err := readActorTaskProjection(ctx, r.tasks, actorID)
 		if err != nil {
 			if ctx.Err() != nil {
 				return viewer.BoardAgentWorkSnapshot{}, ctx.Err()
@@ -175,8 +175,8 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 		queueItems := map[modulecore.TaskID]domainsuperagent.RunQueueItem{}
 		queueAvailable := r.queue != nil
 		if queueAvailable {
-			taskIDs := make([]modulecore.TaskID, 0, len(tasks))
-			for _, task := range tasks {
+			taskIDs := make([]modulecore.TaskID, 0, len(taskProjection.All))
+			for _, task := range taskProjection.All {
 				taskIDs = append(taskIDs, task.TaskID)
 			}
 			items, queueErr := r.queue.ListRunQueueCandidatesForTasks(ctx, taskIDs)
@@ -199,18 +199,17 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 			actor.Availability.RunQueue = "available"
 		}
 
-		current := make([]boardAgentWorkTaskWithQueue, 0)
-		waiting := make([]boardAgentWorkTaskWithQueue, 0)
-		for _, task := range tasks {
+		current := make([]boardAgentWorkTaskWithQueue, 0, len(taskProjection.Current))
+		for _, task := range taskProjection.Current {
 			item, hasQueueItem := queueItems[task.TaskID]
 			row := boardAgentWorkTaskRow(task, item, hasQueueItem, queueAvailable)
-			entry := boardAgentWorkTaskWithQueue{task: task, item: item, row: row}
-			switch task.Status {
-			case domaintask.StatusRunning:
-				current = append(current, entry)
-			case domaintask.StatusQueued, domaintask.StatusWaiting, domaintask.StatusBlocked:
-				waiting = append(waiting, entry)
-			}
+			current = append(current, boardAgentWorkTaskWithQueue{task: task, item: item, row: row})
+		}
+		waiting := make([]boardAgentWorkTaskWithQueue, 0, len(taskProjection.Waiting))
+		for _, task := range taskProjection.Waiting {
+			item, hasQueueItem := queueItems[task.TaskID]
+			row := boardAgentWorkTaskRow(task, item, hasQueueItem, queueAvailable)
+			waiting = append(waiting, boardAgentWorkTaskWithQueue{task: task, item: item, row: row})
 		}
 		sortBoardAgentWorkTasks(current)
 		sortBoardAgentWorkTasks(waiting)
@@ -242,8 +241,44 @@ type boardAgentWorkTaskWithQueue struct {
 	row  viewer.BoardAgentWorkTask
 }
 
-func listBoardAgentWorkTasks(ctx context.Context, owner boardAgentWorkTaskOwner, actorID string) ([]domaintask.Task, error) {
-	statuses := []domaintask.Status{domaintask.StatusRunning, domaintask.StatusQueued, domaintask.StatusWaiting, domaintask.StatusBlocked}
+type actorTaskProjection struct {
+	All     []domaintask.Task
+	Current []domaintask.Task
+	Waiting []domaintask.Task
+}
+
+func readActorTaskProjection(ctx context.Context, owner boardAgentWorkTaskOwner, actorID string, statuses ...domaintask.Status) (actorTaskProjection, error) {
+	tasks, err := listBoardAgentWorkTasks(ctx, owner, actorID, statuses...)
+	if err != nil {
+		return actorTaskProjection{}, err
+	}
+	projection := actorTaskProjection{
+		All:     tasks,
+		Current: make([]domaintask.Task, 0),
+		Waiting: make([]domaintask.Task, 0),
+	}
+	for _, task := range tasks {
+		switch task.Status {
+		case domaintask.StatusRunning:
+			projection.Current = append(projection.Current, task)
+		case domaintask.StatusQueued, domaintask.StatusWaiting, domaintask.StatusBlocked:
+			projection.Waiting = append(projection.Waiting, task)
+		}
+	}
+	order := func(tasks []domaintask.Task) {
+		sort.Slice(tasks, func(i, j int) bool {
+			return appsuperagent.ActorQueueTaskLess(tasks[i], domainsuperagent.RunQueueItem{}, tasks[j], domainsuperagent.RunQueueItem{})
+		})
+	}
+	order(projection.Current)
+	order(projection.Waiting)
+	return projection, nil
+}
+
+func listBoardAgentWorkTasks(ctx context.Context, owner boardAgentWorkTaskOwner, actorID string, statuses ...domaintask.Status) ([]domaintask.Task, error) {
+	if len(statuses) == 0 {
+		statuses = []domaintask.Status{domaintask.StatusRunning, domaintask.StatusQueued, domaintask.StatusWaiting, domaintask.StatusBlocked}
+	}
 	result := make([]domaintask.Task, 0)
 	seen := make(map[modulecore.TaskID]struct{})
 	for _, status := range statuses {

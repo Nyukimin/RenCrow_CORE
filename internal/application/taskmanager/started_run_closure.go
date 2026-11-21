@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -21,10 +23,12 @@ import (
 //
 //  1. The write is detached from the caller's cancellation, because a
 //     cancelled or expired caller must still record how the run ended.
-//  2. The write has a finite budget of its own (StartedRunTerminalWriteTimeout).
-//  3. How the run ended is classified by RunOutcomeOf: a cancellation is
+//  2. A queue-backed Task owner uses an independent persistence admission for
+//     the terminal write, never a caller's exhausted admission.
+//  3. The write has a finite budget of its own (StartedRunTerminalWriteTimeout).
+//  4. How the run ended is classified by RunOutcomeOf: a cancellation is
 //     cancelled; an expired deadline and any other error are failed.
-//  4. A write that fails is returned together with the cause and marked with
+//  5. A write that fails is returned together with the cause and marked with
 //     ErrStartedRunNotClosed. It is never dropped.
 
 // StartedRunTerminalWriteTimeout is the budget of one terminal write of a Run
@@ -69,7 +73,10 @@ func RunOutcomeOf(operationErr error, successSummary string) RunOutcome {
 
 // CloseStartedRun closes a Run the caller started with CreateAndStartRun, and
 // its Task, with the given outcome. actorID is the actor the Run was started
-// for. It returns cause when the Run was closed, so a caller can write
+// for. A queue-backed owner reserves a separate terminal-write admission and
+// binds the completion CAS to actorID. An unqueued owner uses the synchronous
+// path without any caller admission. A matching terminal Run is verified
+// idempotently. It returns cause when the Run was closed, so a caller can write
 // `return tasks.CloseStartedRun(ctx, ..., RunOutcomeOf(err, ""), err)`: that
 // returns err and nil for a nil err. When the write fails it returns the failure
 // joined with cause and marked with ErrStartedRunNotClosed; with a nil cause
@@ -83,6 +90,9 @@ func (m *Manager) CloseStartedRun(ctx context.Context, taskID modulecore.TaskID,
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if strings.TrimSpace(actorID) == "" {
+		return errors.Join(cause, fmt.Errorf("%w: actor_id is required", ErrStartedRunNotClosed))
+	}
 	switch outcome.Status {
 	case domaintask.StatusSucceeded, domaintask.StatusFailed, domaintask.StatusCancelled:
 	default:
@@ -90,7 +100,30 @@ func (m *Manager) CloseStartedRun(ctx context.Context, taskID modulecore.TaskID,
 	}
 	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), StartedRunTerminalWriteTimeout)
 	defer cancel()
-	if _, err := m.CompleteRun(closeCtx, taskID, runID, actorID, outcome.Status, outcome.Summary, ""); err != nil {
+	var err error
+	if m.RunCompletionAdmissionAvailable() {
+		ticket, admitErr := m.admitRunCompletionForActor(closeCtx, taskID, runID, actorID, outcome.Status, outcome.Summary, "")
+		if admitErr != nil {
+			err = admitErr
+		} else {
+			err = m.WaitRunCompletion(closeCtx, ticket, taskID, runID, outcome.Status)
+			if err == nil {
+				err = m.VerifyRunCompletion(closeCtx, taskID, runID, actorID, outcome.Status)
+			}
+		}
+	} else {
+		run, loadErr := m.GetRun(closeCtx, runID)
+		if loadErr != nil {
+			err = fmt.Errorf("load run for completion: %w", loadErr)
+		} else if run.TaskID != taskID {
+			err = fmt.Errorf("%w: task and run ownership do not match", ErrRunConflict)
+		} else if run.Status != domaintask.RunStatusRunning {
+			err = m.VerifyRunCompletion(persistencequeue.WithAdmission(closeCtx, nil), taskID, runID, actorID, outcome.Status)
+		} else {
+			_, err = m.CompleteRun(persistencequeue.WithAdmission(closeCtx, nil), taskID, runID, actorID, outcome.Status, outcome.Summary, "")
+		}
+	}
+	if err != nil {
 		return errors.Join(cause, fmt.Errorf("%w: complete run: %w", ErrStartedRunNotClosed, err))
 	}
 	return cause
