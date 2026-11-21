@@ -826,9 +826,13 @@ func TestBoardStudioReadOnlyProfileOnlyAllowsAuthenticatedProjectionPath(t *test
 		want    int
 	}{
 		{name: "board studio read", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/agent-work", want: http.StatusNoContent},
+		{name: "board Task activities read", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-activities", want: http.StatusNoContent},
 		{name: "board profile cannot read public heartbeat", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/living/heartbeat", want: http.StatusForbidden},
 		{name: "board profile cannot write", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodPost, path: "/viewer/board/agent-work", want: http.StatusForbidden},
+		{name: "board profile cannot write Task activities", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodPost, path: "/viewer/board/task-activities", want: http.StatusForbidden},
+		{name: "board profile cannot claim another path", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-activities/extra", want: http.StatusForbidden},
 		{name: "other client cannot claim board profile", client: "RenCrow_CMD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/agent-work", want: http.StatusForbidden},
+		{name: "other client cannot read Task activities", client: "RenCrow_CMD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-activities", want: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
