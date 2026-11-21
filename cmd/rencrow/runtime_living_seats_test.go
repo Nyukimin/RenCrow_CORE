@@ -260,10 +260,28 @@ func TestRunningTaskOnlyTargetsDeskBelowGameAndConversation(t *testing.T) {
 	sessions := []gameObserverActiveAgentSession{{GameID: "nethack", SessionID: "session", Personas: []string{"mio"}, Status: "running"}}
 	conversation := map[string]livingSeatActivity{"mio": {room: "dining", slot: "dining", pose: "talk"}}
 	routineLease := []agentheartbeat.LivingActivity{{ActorID: "mio", State: "running", ActivityKind: string(agentheartbeat.ActivityKindRoutine)}}
+	foregroundLease := []agentheartbeat.LivingActivity{{ActorID: "mio", State: "running", ActivityKind: string(agentheartbeat.ActivityKindForeground)}}
 
 	seat := buildLivingSeatTargets(nil, nil, nil, []domaintask.Task{running})
 	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
 		t.Fatalf("running task seat = %+v, want %+v", got, want)
+	}
+	seat = buildLivingSeatTargets(nil, foregroundLease, nil, []domaintask.Task{running})
+	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
+		t.Fatalf("running Task with foreground lease seat = %+v, want %+v", got, want)
+	}
+	seat = buildLivingSeatTargets(nil, foregroundLease, nil, nil)
+	if _, exists := seat["mio"]; exists {
+		t.Fatalf("foreground lease without canonical running Task created a desk: %+v", seat["mio"])
+	}
+	seat = buildLivingSeatTargets(nil, foregroundLease, conversation, nil)
+	if _, exists := seat["mio"]; exists {
+		t.Fatalf("stale conversation seat overrode a generic foreground lease: %+v", seat["mio"])
+	}
+	stoppingLease := []agentheartbeat.LivingActivity{{ActorID: "mio", State: "stopping", ActivityKind: string(agentheartbeat.ActivityKindForeground)}}
+	seat = buildLivingSeatTargets(nil, stoppingLease, nil, []domaintask.Task{running})
+	if _, exists := seat["mio"]; exists {
+		t.Fatalf("stopping lease did not suppress Task desk fallback: %+v", seat["mio"])
 	}
 	seat = buildLivingSeatTargets(sessions, nil, nil, []domaintask.Task{running})
 	if got, want := seat["mio"], (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}); got != want {
@@ -334,8 +352,8 @@ func TestLivingSeatsRechecksLeaseAfterTaskProjection(t *testing.T) {
 	if err != nil || !ready {
 		t.Fatalf("livingSeats() = (%+v, %t, %v), want ready after lease acquisition", seats, ready, err)
 	}
-	if _, exists := seats["midori"]; exists {
-		t.Fatalf("canonical Task desk fallback replaced lease acquired during Task read: %+v", seats["midori"])
+	if got, want := seats["midori"], (livingSeatActivity{room: "living", slot: "desk-midori", pose: "type"}); got != want {
+		t.Fatalf("running Task with foreground acquired during Task read seat = %+v, want %+v", got, want)
 	}
 }
 

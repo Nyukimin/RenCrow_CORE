@@ -64,15 +64,15 @@ func (r *agentRoutineRuntime) livingSeats(ctx context.Context) (map[string]livin
 
 func buildLivingSeatTargets(sessions []gameObserverActiveAgentSession, activities []agentheartbeat.LivingActivity, conversations map[string]livingSeatActivity, runningTasks []domaintask.Task) map[string]livingSeatActivity {
 	desired := make(map[string]livingSeatActivity)
-	activeLeases := make(map[string]struct{}, len(activities))
+	seatFallbackSuppressed := make(map[string]struct{}, len(activities))
 	for _, activity := range activities {
-		if activity.State == "running" || activity.State == "stopping" {
-			activeLeases[activity.ActorID] = struct{}{}
+		if activity.State == "stopping" || activity.State == "running" && activity.ActivityKind == string(agentheartbeat.ActivityKindRoutine) {
+			seatFallbackSuppressed[activity.ActorID] = struct{}{}
 		}
 	}
 	for _, task := range runningTasks {
-		_, hasLease := activeLeases[task.Assignee]
-		if task.Status == domaintask.StatusRunning && isAgentHeartbeatActor(task.Assignee) && !hasLease {
+		_, suppressFallback := seatFallbackSuppressed[task.Assignee]
+		if task.Status == domaintask.StatusRunning && isAgentHeartbeatActor(task.Assignee) && !suppressFallback {
 			desired[task.Assignee] = livingSeatActivity{"living", "desk-" + task.Assignee, "type"}
 		}
 	}
