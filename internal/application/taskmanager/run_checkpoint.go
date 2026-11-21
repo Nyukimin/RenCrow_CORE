@@ -30,6 +30,9 @@ func (m *Manager) StartRunFromCheckpoint(
 	if err := ctx.Err(); err != nil {
 		return domaintask.Run{}, err
 	}
+	if m == nil || m.store == nil {
+		return domaintask.Run{}, errors.New("Task owner is unavailable")
+	}
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Run{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
@@ -49,17 +52,53 @@ func (m *Manager) StartRunFromCheckpoint(
 		return domaintask.Run{}, err
 	}
 
-	var issued domaintask.Run
-	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
+	candidate, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	activity, eligible := activityForRootTask(candidate)
+	if !eligible {
+		if candidate.Route == domaintask.RouteGAME || candidate.Activity != nil && candidate.Activity.Passive {
+			return domaintask.Run{}, fmt.Errorf("%w: checkpoint Task cannot own an active activity", ErrRunConflict)
+		}
+		var issued domaintask.Run
+		err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
+			predecessor, err := validateCheckpointPredecessor(ctx, txManager, taskID, expectedRunID, actorID, reason)
+			if err != nil {
+				return err
+			}
+			_, issued, err = txManager.startWithReasonAndCheckpoint(ctx, taskID, reason, checkpointSHA256)
+			if err != nil {
+				return err
+			}
+			return validateCheckpointSuccessorTimestamp(predecessor, issued)
+		})
+		if err != nil {
+			return domaintask.Run{}, err
+		}
+		return issued, nil
+	}
+	_, issued, err := m.startExistingActivityMutation(ctx, taskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, bool, error) {
 		predecessor, err := validateCheckpointPredecessor(ctx, txManager, taskID, expectedRunID, actorID, reason)
 		if err != nil {
-			return err
+			return domaintask.Task{}, domaintask.Run{}, false, err
 		}
-		_, issued, err = txManager.startWithReasonAndCheckpoint(ctx, taskID, reason, checkpointSHA256)
+		task, err := txManager.store.GetTask(ctx, taskID)
 		if err != nil {
-			return err
+			return domaintask.Task{}, domaintask.Run{}, false, err
 		}
-		return validateCheckpointSuccessorTimestamp(predecessor, issued)
+		preserveParent, err := txManager.childSharesCurrentAncestor(ctx, task)
+		if err != nil {
+			return domaintask.Task{}, domaintask.Run{}, false, err
+		}
+		started, issued, err := txManager.startWithReasonAndCheckpoint(ctx, taskID, reason, checkpointSHA256)
+		if err != nil {
+			return domaintask.Task{}, domaintask.Run{}, false, err
+		}
+		if err := validateCheckpointSuccessorTimestamp(predecessor, issued); err != nil {
+			return domaintask.Task{}, domaintask.Run{}, false, err
+		}
+		return started, issued, !preserveParent, nil
 	})
 	if err != nil {
 		return domaintask.Run{}, err

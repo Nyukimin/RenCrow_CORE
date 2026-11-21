@@ -96,6 +96,11 @@ func TestManagerAdmitAcceptedOPSCreatesCanonicalTaskAndFirstRun(t *testing.T) {
 		claimed.Task.AcceptedOPSClaim.BackendSelection != domainconversation.BackendShiroNativeCodingV1 {
 		t.Fatalf("persisted accepted OPS claim reference = %+v", claimed.Task.AcceptedOPSClaim)
 	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{domaintask.AcceptedOPSAgentAssignee})
+	if err != nil || current[domaintask.AcceptedOPSAgentAssignee].Task.TaskID != receipt.TaskID || current[domaintask.AcceptedOPSAgentAssignee].Task.Activity.Kind != domaintask.ActivityKindWork {
+		t.Fatalf("accepted OPS first Run current=%#v err=%v", current, err)
+	}
+	currentRevision := current[domaintask.AcceptedOPSAgentAssignee].Participant.Revision
 	shared, err := manager.Context(ctx, receipt.TaskID)
 	if err != nil || shared.UserIntent != "Accepted OPS request" {
 		t.Fatalf("SharedRoleContext = %+v err=%v, want fixed non-raw description", shared, err)
@@ -109,6 +114,10 @@ func TestManagerAdmitAcceptedOPSCreatesCanonicalTaskAndFirstRun(t *testing.T) {
 	}
 	if replay.Status != AcceptedOPSAlreadyRunning || replay.MayExecute || replay.Task.TaskID != claimed.Task.TaskID || replay.Run.RunID != claimed.Run.RunID {
 		t.Fatalf("same-writer replay = %+v, want original Task/Run with no execution right", replay)
+	}
+	afterReplay, err := manager.SnapshotCurrentActivities(ctx, []string{domaintask.AcceptedOPSAgentAssignee})
+	if err != nil || afterReplay[domaintask.AcceptedOPSAgentAssignee].Task.TaskID != receipt.TaskID || afterReplay[domaintask.AcceptedOPSAgentAssignee].Participant.Revision != currentRevision {
+		t.Fatalf("read-only accepted OPS replay changed current binding: before revision=%d after=%#v err=%v", currentRevision, afterReplay, err)
 	}
 	tasks, err := manager.List(ctx, domaintask.Filter{})
 	if err != nil || len(tasks) != 1 {
@@ -721,6 +730,10 @@ func TestManagerAdmitNativeOPSResumeAtomicallyAddsSameTaskRunTraceAndClaim(t *te
 		result.Claim.NewCoreRunID != result.Run.RunID || result.Claim.Source != source {
 		t.Fatalf("resume Task claim does not bind authenticated request, old Run, new Run, and source: %+v", result.Claim)
 	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{domaintask.AcceptedOPSAgentAssignee})
+	if err != nil || current[domaintask.AcceptedOPSAgentAssignee].Task.TaskID != task.TaskID || current[domaintask.AcceptedOPSAgentAssignee].Task.Activity.Kind != domaintask.ActivityKindWork {
+		t.Fatalf("native OPS Resume current=%#v err=%v", current, err)
+	}
 	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
 	if err != nil || len(runs) != 2 || runs[1].RunID != result.Run.RunID {
 		t.Fatalf("same-Task Run history=%+v err=%v, want original and one explicit resume", runs, err)
@@ -735,9 +748,18 @@ func TestManagerAdmitNativeOPSResumeSameRequestReturnsOneUnknownClaimAndDifferen
 	if err != nil || !first.MayExecute {
 		t.Fatalf("first resume admission=%+v err=%v", first, err)
 	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{domaintask.AcceptedOPSAgentAssignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentRevision := current[domaintask.AcceptedOPSAgentAssignee].Participant.Revision
 	replay, err := manager.AdmitNativeOPSResume(ctx, input)
 	if err != nil || replay.MayExecute || replay.Status != NativeOPSResumeOutcomeUnknown || replay.Run.RunID != first.Run.RunID || replay.Claim != first.Claim {
 		t.Fatalf("same-request replay=%+v err=%v, want original claim as unknown without execution", replay, err)
+	}
+	afterReplay, err := manager.SnapshotCurrentActivities(ctx, []string{domaintask.AcceptedOPSAgentAssignee})
+	if err != nil || afterReplay[domaintask.AcceptedOPSAgentAssignee].Participant.Revision != currentRevision {
+		t.Fatalf("native OPS unknown replay changed current binding: before revision=%d after=%#v err=%v", currentRevision, afterReplay, err)
 	}
 	different := input
 	different.ExpectedCoreRunID = modulecore.NewRunID()
@@ -833,9 +855,16 @@ func TestManagerAdmitAcceptedOPSTerminalTaskWithRunningFirstRunIsUnknown(t *test
 	manager, store := newAcceptedOPSManager(t, DefaultParallelLimits())
 	receipt := acceptedOPSReceipt()
 	ctx := acceptedOPSUserContext(t, receipt.RequestID, receipt.OwnerID)
-	claimed, err := manager.AdmitAcceptedOPS(ctx, receipt, domainconversation.BackendShiroNativeCodingV1)
+	reference, err := validateAcceptedOPSAdmission(ctx, receipt, domainconversation.BackendShiroNativeCodingV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claimed AcceptedOPSClaimResult
+	err = manager.taskTransaction(ctx, receipt.TaskID, func(txManager *Manager) error {
+		return txManager.createAcceptedOPSClaim(ctx, receipt, reference, domainconversation.BackendShiroNativeCodingV1, &claimed)
+	})
 	if err != nil || claimed.Status != AcceptedOPSClaimed {
-		t.Fatalf("first claim = %+v err=%v", claimed, err)
+		t.Fatalf("legacy fixture first claim = %+v err=%v", claimed, err)
 	}
 	terminalTask := claimed.Task
 	terminalTask.Status = domaintask.StatusSucceeded

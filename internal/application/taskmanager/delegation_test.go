@@ -45,6 +45,10 @@ func TestEnsureTaskForDelegationCreatesOneTaskRunAndContext(t *testing.T) {
 	if checks != 2 {
 		t.Fatalf("admission checks=%d, want preflight and pre-commit checks", checks)
 	}
+	current, err := manager.SnapshotCurrentActivities(context.Background(), []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID != task.TaskID || current["shiro"].Task.Activity.Kind != domaintask.ActivityKindWork {
+		t.Fatalf("delegated Task current activity=%#v err=%v", current, err)
+	}
 	storedContext, err := manager.Context(context.Background(), task.TaskID)
 	if err != nil || storedContext.TaskID != task.TaskID || storedContext.UserIntent != shared.UserIntent || storedContext.CurrentPlan != shared.CurrentPlan {
 		t.Fatalf("context=%#v err=%v", storedContext, err)

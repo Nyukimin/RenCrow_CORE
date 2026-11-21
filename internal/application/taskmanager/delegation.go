@@ -165,6 +165,11 @@ func (m *Manager) EnsureTaskForDelegation(
 		if err != nil {
 			return nil, err
 		}
+		if activity, eligible := activityForRootTask(task); eligible {
+			if err := txManager.activateStartedActivityInTransaction(ctx, task, activity); err != nil {
+				return nil, fmt.Errorf("bind delegated Task activity before commit: %w", err)
+			}
+		}
 		// Revalidate after staging all Task-owner records and directly before
 		// returning the transaction payload to its commit boundary.
 		if err := check(ctx, request.DelegationID, request.Revision); err != nil {

@@ -560,6 +560,9 @@ func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domainta
 		if readErr != nil {
 			return domaintask.Task{}, readErr
 		}
+		if candidate.Activity != nil && candidate.Activity.Passive {
+			return domaintask.Task{}, fmt.Errorf("passive activity Tasks do not issue Runs: %w", domaintask.ErrCurrentActivityInvalid)
+		}
 		_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
 		if activity, eligible := activityForRootTask(candidate); eligible && activityOwnerAvailable {
 			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
@@ -623,6 +626,9 @@ func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID,
 		if readErr != nil {
 			return domaintask.Task{}, readErr
 		}
+		if candidate.Activity != nil && candidate.Activity.Passive {
+			return domaintask.Task{}, fmt.Errorf("passive activity Tasks do not issue Runs: %w", domaintask.ErrCurrentActivityInvalid)
+		}
 		_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
 		if activity, eligible := activityForRootTask(candidate); eligible && activityOwnerAvailable {
 			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
@@ -668,6 +674,9 @@ func (m *Manager) StartRunWithReason(ctx context.Context, taskID modulecore.Task
 		candidate, readErr := m.store.GetTask(ctx, taskID)
 		if readErr != nil {
 			return domaintask.Run{}, readErr
+		}
+		if candidate.Activity != nil && candidate.Activity.Passive {
+			return domaintask.Run{}, fmt.Errorf("passive activity Tasks do not issue Runs: %w", domaintask.ErrCurrentActivityInvalid)
 		}
 		_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
 		if activity, eligible := activityForRootTask(candidate); eligible && activityOwnerAvailable {

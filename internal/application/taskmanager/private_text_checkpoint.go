@@ -29,6 +29,9 @@ func (m *Manager) StartPrivateTextRun(
 	if err := ctx.Err(); err != nil {
 		return domaintask.Run{}, err
 	}
+	if m == nil || m.store == nil {
+		return domaintask.Run{}, errors.New("private text Task owner is unavailable")
+	}
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Run{}, errors.New("private text task_id is invalid")
 	}
@@ -51,30 +54,37 @@ func (m *Manager) StartPrivateTextRun(
 		}
 	}
 
-	var issued domaintask.Run
-	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
+	candidate, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	activity, eligible := activityForStartedTask(candidate, domaintask.ActivityKindWork)
+	if !eligible || candidate.Assignee != actorID {
+		return domaintask.Run{}, fmt.Errorf("%w: private text Task cannot own an active Work activity", ErrRunConflict)
+	}
+	_, issued, err := m.startExistingActivityMutation(ctx, taskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, bool, error) {
 		task, err := txManager.store.GetTask(ctx, taskID)
 		if err != nil {
-			return err
+			return domaintask.Task{}, domaintask.Run{}, false, err
 		}
 		if task.TaskID != taskID || task.Validate() != nil {
-			return fmt.Errorf("%w: private text Task is invalid", ErrRunConflict)
+			return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text Task is invalid", ErrRunConflict)
 		}
 		if task.Assignee != actorID {
-			return fmt.Errorf("%w: private text Task and actor ownership do not match", ErrRunConflict)
+			return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text Task and actor ownership do not match", ErrRunConflict)
 		}
 		shared, err := loadPrivateTextSharedContext(ctx, txManager.store, taskID)
 		if err != nil {
-			return err
+			return domaintask.Task{}, domaintask.Run{}, false, err
 		}
 
 		if firstRun {
 			if task.Status != domaintask.StatusQueued || shared.PrivateText != nil {
-				return fmt.Errorf("%w: private text first Run requires a fresh queued Task", ErrRunConflict)
+				return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text first Run requires a fresh queued Task", ErrRunConflict)
 			}
-			_, issued, err = txManager.startWithReason(ctx, taskID, domaintask.RunStartReasonFirst)
+			started, issued, err := txManager.startWithReason(ctx, taskID, domaintask.RunStartReasonFirst)
 			if err != nil {
-				return err
+				return domaintask.Task{}, domaintask.Run{}, false, err
 			}
 			checkpoint := domaintask.PrivateTextCheckpoint{
 				TaskID:      taskID,
@@ -84,10 +94,13 @@ func (m *Manager) StartPrivateTextRun(
 				InputSHA256: privateTextInputSHA256(task.Title),
 			}
 			if err := checkpoint.Validate(); err != nil {
-				return fmt.Errorf("%w: private text checkpoint is invalid", ErrRunConflict)
+				return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text checkpoint is invalid", ErrRunConflict)
 			}
 			shared.PrivateText = &checkpoint
-			return txManager.savePrivateTextSharedContext(ctx, shared)
+			if err := txManager.savePrivateTextSharedContext(ctx, shared); err != nil {
+				return domaintask.Task{}, domaintask.Run{}, false, err
+			}
+			return started, issued, true, nil
 		}
 
 		predecessor, err := validateCheckpointPredecessor(
@@ -99,30 +112,33 @@ func (m *Manager) StartPrivateTextRun(
 			domaintask.RunStartReasonCheckpointResume,
 		)
 		if err != nil {
-			return err
+			return domaintask.Task{}, domaintask.Run{}, false, err
 		}
 		if predecessor.Status != domaintask.RunStatusWaiting || task.Status != domaintask.StatusWaiting || task.WaitingReason != domaintask.PrivateTextWaitingReason {
-			return fmt.Errorf("%w: private text predecessor is not paused at its checkpoint", ErrRunConflict)
+			return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text predecessor is not paused at its checkpoint", ErrRunConflict)
 		}
 		if shared.PrivateText == nil {
-			return fmt.Errorf("%w: private text checkpoint is absent", ErrRunConflict)
+			return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text checkpoint is absent", ErrRunConflict)
 		}
 		checkpoint := *shared.PrivateText
 		if err := validatePrivateTextCheckpointOwner(task, checkpoint); err != nil || checkpoint.RunID != predecessorRunID || checkpoint.ActorID != actorID {
-			return fmt.Errorf("%w: private text checkpoint ownership does not match", ErrRunConflict)
+			return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text checkpoint ownership does not match", ErrRunConflict)
 		}
 		if checkpoint.Digest() != digest {
-			return fmt.Errorf("%w: private text checkpoint digest does not match", ErrRunConflict)
+			return domaintask.Task{}, domaintask.Run{}, false, fmt.Errorf("%w: private text checkpoint digest does not match", ErrRunConflict)
 		}
 
-		_, issued, err = txManager.startWithReasonAndCheckpoint(ctx, taskID, domaintask.RunStartReasonCheckpointResume, digest)
+		started, issued, err := txManager.startWithReasonAndCheckpoint(ctx, taskID, domaintask.RunStartReasonCheckpointResume, digest)
 		if err != nil {
-			return err
+			return domaintask.Task{}, domaintask.Run{}, false, err
 		}
 		checkpoint.RunID = issued.RunID
 		checkpoint.QueueItemID = queueItemID
 		shared.PrivateText = &checkpoint
-		return txManager.savePrivateTextSharedContext(ctx, shared)
+		if err := txManager.savePrivateTextSharedContext(ctx, shared); err != nil {
+			return domaintask.Task{}, domaintask.Run{}, false, err
+		}
+		return started, issued, true, nil
 	})
 	if err != nil {
 		return domaintask.Run{}, err

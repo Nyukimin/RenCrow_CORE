@@ -275,17 +275,46 @@ func cloneExternalGameMetadata(activity domaintask.ActivityMetadata) *domaintask
 }
 
 func activityForRootTask(task domaintask.Task) (domaintask.ActivityMetadata, bool) {
+	fallbackKind := domaintask.ActivityKindWork
+	if task.Route == domaintask.RouteCHAT {
+		fallbackKind = domaintask.ActivityKindChat
+	}
+	return activityForStartedTask(task, fallbackKind)
+}
+
+func activityForStartedTask(task domaintask.Task, fallbackKind domaintask.ActivityKind) (domaintask.ActivityMetadata, bool) {
 	if task.Route == domaintask.RouteGAME || !canonicalActivityActor(task.Assignee) || strings.TrimSpace(task.Title) == "" {
 		return domaintask.ActivityMetadata{}, false
 	}
-	kind := domaintask.ActivityKindWork
+	if task.Activity != nil {
+		if task.Activity.Passive {
+			return domaintask.ActivityMetadata{}, false
+		}
+		activity := *task.Activity
+		activity.Participants = append([]domaintask.ActivityParticipant(nil), task.Activity.Participants...)
+		if task.Activity.Game != nil {
+			game := *task.Activity.Game
+			activity.Game = &game
+		}
+		foundAssignee := false
+		for i := range activity.Participants {
+			activity.Participants[i].IsCurrent = false
+			activity.Participants[i].Revision = 0
+			foundAssignee = foundAssignee || activity.Participants[i].ActorID == task.Assignee
+		}
+		if !foundAssignee {
+			activity.Participants = append(activity.Participants, domaintask.ActivityParticipant{ActorID: task.Assignee})
+		}
+		return activity, true
+	}
 	label := "Working"
-	if task.Route == domaintask.RouteCHAT {
-		kind = domaintask.ActivityKindChat
+	if fallbackKind == domaintask.ActivityKindChat {
 		label = "Chatting"
+	} else if fallbackKind != domaintask.ActivityKindWork {
+		return domaintask.ActivityMetadata{}, false
 	}
 	return domaintask.ActivityMetadata{
-		Kind: kind, Label: label, Phase: "active",
+		Kind: fallbackKind, Label: label, Phase: "active",
 		Participants: []domaintask.ActivityParticipant{{ActorID: task.Assignee}},
 	}, true
 }
@@ -339,6 +368,45 @@ func (m *Manager) startExistingActivityTask(ctx context.Context, taskID moduleco
 	if start == nil {
 		return domaintask.Task{}, domaintask.Run{}, errors.New("activity start callback is required")
 	}
+	return m.startExistingActivityMutation(ctx, taskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, bool, error) {
+		task, run, err := start(txManager)
+		return task, run, true, err
+	})
+}
+
+func (m *Manager) startExistingActivityMutation(
+	ctx context.Context,
+	taskID modulecore.TaskID,
+	activity domaintask.ActivityMetadata,
+	mutate func(*Manager) (domaintask.Task, domaintask.Run, bool, error),
+) (domaintask.Task, domaintask.Run, error) {
+	if mutate == nil {
+		return domaintask.Task{}, domaintask.Run{}, errors.New("activity mutation callback is required")
+	}
+	if _, supported := m.store.(domaintask.ActivityTaskTransaction); !supported {
+		var started domaintask.Task
+		var run domaintask.Run
+		err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
+			var shouldBind bool
+			var err error
+			started, run, shouldBind, err = mutate(txManager)
+			if err != nil || !shouldBind {
+				return err
+			}
+			if started.Activity != nil {
+				return domaintask.ErrActivityTaskWriterUnsupported
+			}
+			current, err := txManager.currentTasksForActors(ctx, activityActorIDs(activity))
+			if err != nil {
+				return err
+			}
+			if len(current) != 0 {
+				return domaintask.ErrActivityTaskWriterUnsupported
+			}
+			return nil
+		})
+		return started, run, err
+	}
 	priorTasks, err := m.currentTasksForActors(ctx, activityActorIDs(activity))
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
@@ -359,9 +427,17 @@ func (m *Manager) startExistingActivityTask(ctx context.Context, taskID moduleco
 			return domaintask.ErrCurrentActivityConflict
 		}
 		txManager := m.withStore(store)
-		started, run, err = start(txManager)
+		var shouldBind bool
+		started, run, shouldBind, err = mutate(txManager)
 		if err != nil {
 			return err
+		}
+		if !shouldBind {
+			return nil
+		}
+		currentActivity, eligible := activityForStartedTask(started, activity.Kind)
+		if !eligible || !sameActivityIntent(currentActivity, activity) {
+			return domaintask.ErrCurrentActivityConflict
 		}
 		started, err = txManager.setCurrentActivityInTransaction(ctx, taskID, activity)
 		if err != nil {
@@ -392,6 +468,66 @@ func (m *Manager) startExistingActivityTask(ctx context.Context, taskID moduleco
 		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	return started, run, nil
+}
+
+func sameActivityIntent(left, right domaintask.ActivityMetadata) bool {
+	if left.Kind != right.Kind || left.Label != right.Label || left.Phase != right.Phase || left.Passive != right.Passive || len(left.Participants) != len(right.Participants) {
+		return false
+	}
+	if (left.Game == nil) != (right.Game == nil) || left.Game != nil && *left.Game != *right.Game {
+		return false
+	}
+	leftParticipants := append([]domaintask.ActivityParticipant(nil), left.Participants...)
+	rightParticipants := append([]domaintask.ActivityParticipant(nil), right.Participants...)
+	sort.Slice(leftParticipants, func(i, j int) bool { return leftParticipants[i].ActorID < leftParticipants[j].ActorID })
+	sort.Slice(rightParticipants, func(i, j int) bool { return rightParticipants[i].ActorID < rightParticipants[j].ActorID })
+	for i := range leftParticipants {
+		if leftParticipants[i].ActorID != rightParticipants[i].ActorID || leftParticipants[i].Role != rightParticipants[i].Role {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Manager) activateStartedActivityInTransaction(ctx context.Context, task domaintask.Task, activity domaintask.ActivityMetadata) error {
+	if m == nil || m.store == nil || task.TaskID == "" || len(activity.Participants) == 0 {
+		return domaintask.ErrCurrentActivityInvalid
+	}
+	actors := activityActorIDs(activity)
+	priorTasks, err := readCurrentActivityTasks(ctx, m.store, actors)
+	if err != nil {
+		return err
+	}
+	preserveParent, err := m.childSharesCurrentAncestor(ctx, task)
+	if err != nil {
+		return err
+	}
+	if preserveParent {
+		return nil
+	}
+	if _, err := m.setCurrentActivityInTransaction(ctx, task.TaskID, activity); err != nil {
+		return err
+	}
+	writer, ok := m.store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	for _, prior := range priorTasks {
+		if prior.Activity == nil || !prior.Activity.Passive || prior.Activity.Kind == domaintask.ActivityKindGame || prior.TaskID == task.TaskID {
+			continue
+		}
+		updatedPrior, getErr := writer.GetTaskActivity(ctx, prior.TaskID)
+		if getErr != nil {
+			return getErr
+		}
+		if activityHasCurrentParticipant(updatedPrior) {
+			continue
+		}
+		if _, err := m.updateStatusInTransaction(ctx, prior.TaskID, domaintask.StatusCancelled, "passive activity interrupted by a new active Task", "", nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CreateCurrentActivity atomically creates a passive, no-Run Task and assigns

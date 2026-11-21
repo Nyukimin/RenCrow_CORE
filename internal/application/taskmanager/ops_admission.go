@@ -71,114 +71,128 @@ func (m *Manager) AdmitNativeOPSResume(ctx context.Context, input NativeOPSResum
 	}
 	requestID := scope.RequestID
 	payloadHash := domaintask.NativeOPSResumePayloadSHA256(input.TaskID, input.ExpectedCoreRunID)
+	candidate, err := m.store.GetTask(ctx, input.TaskID)
+	if err != nil {
+		if errors.Is(err, domaintask.ErrNotFound) {
+			return NativeOPSResumeResult{}, rejectNativeOPSResume("canonical Task is unavailable")
+		}
+		return NativeOPSResumeResult{}, err
+	}
+	activity, eligible := activityForStartedTask(candidate, domaintask.ActivityKindWork)
+	if !eligible {
+		return NativeOPSResumeResult{}, rejectNativeOPSResume("canonical Task cannot own an active Work activity")
+	}
 
 	var result NativeOPSResumeResult
-	err := m.taskTransaction(ctx, input.TaskID, func(txManager *Manager) error {
-		task, err := txManager.store.GetTask(ctx, input.TaskID)
-		if err != nil {
-			if errors.Is(err, domaintask.ErrNotFound) {
-				return rejectNativeOPSResume("canonical Task is unavailable")
+	_, _, err = m.startExistingActivityMutation(ctx, input.TaskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, bool, error) {
+		mutationErr := func() error {
+			task, err := txManager.store.GetTask(ctx, input.TaskID)
+			if err != nil {
+				if errors.Is(err, domaintask.ErrNotFound) {
+					return rejectNativeOPSResume("canonical Task is unavailable")
+				}
+				return err
 			}
-			return err
-		}
-		if err := task.Validate(); err != nil {
-			return rejectNativeOPSResume("canonical Task is invalid")
-		}
-		if task.TaskID != input.TaskID || task.AcceptedOPSClaim == nil ||
-			task.AcceptedOPSClaim.BackendSelection != domainconversation.BackendShiroNativeCodingV1 ||
-			task.AcceptedOPSClaim.ReceiptRef.OwnerID != scope.AuthenticatedUserID ||
-			task.OwnerID != domaintask.AcceptedOPSAgentAssignee || task.Assignee != domaintask.AcceptedOPSAgentAssignee ||
-			task.Route != domaintask.RouteOperations {
-			return rejectNativeOPSResume("authenticated user or Shiro OPS ownership does not match")
-		}
-		if !domaintask.ValidCriteriaRevision(task.ExpectedCriteriaRevision) {
-			return rejectNativeOPSResume("Task has no frozen criteria revision")
-		}
+			if err := task.Validate(); err != nil {
+				return rejectNativeOPSResume("canonical Task is invalid")
+			}
+			if task.TaskID != input.TaskID || task.AcceptedOPSClaim == nil ||
+				task.AcceptedOPSClaim.BackendSelection != domainconversation.BackendShiroNativeCodingV1 ||
+				task.AcceptedOPSClaim.ReceiptRef.OwnerID != scope.AuthenticatedUserID ||
+				task.OwnerID != domaintask.AcceptedOPSAgentAssignee || task.Assignee != domaintask.AcceptedOPSAgentAssignee ||
+				task.Route != domaintask.RouteOperations {
+				return rejectNativeOPSResume("authenticated user or Shiro OPS ownership does not match")
+			}
+			if !domaintask.ValidCriteriaRevision(task.ExpectedCriteriaRevision) {
+				return rejectNativeOPSResume("Task has no frozen criteria revision")
+			}
 
-		// A repeat of a committed idempotency key returns its original new Run
-		// without granting another caller the right to execute or resend.
-		for _, previous := range task.NativeResumeClaims {
-			if previous.RequestID != requestID {
-				continue
+			// A repeat of a committed idempotency key returns its original new Run
+			// without granting another caller the right to execute or resend.
+			for _, previous := range task.NativeResumeClaims {
+				if previous.RequestID != requestID {
+					continue
+				}
+				if previous.OwnerUserID != scope.AuthenticatedUserID || previous.PayloadSHA256 != payloadHash {
+					return rejectNativeOPSResume("request ID was already used with a different Resume payload")
+				}
+				run, err := txManager.store.GetRun(ctx, previous.NewCoreRunID)
+				if err != nil || run.TaskID != task.TaskID || run.TraceID != previous.TraceID || run.StartReason != domaintask.RunStartReasonExplicitRerun {
+					return rejectNativeOPSResume("stored Resume Run does not match its Task claim")
+				}
+				runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+				if err != nil {
+					return err
+				}
+				if len(runs) == 0 || runs[len(runs)-1].RunID != previous.NewCoreRunID || runs[len(runs)-1].TaskID != task.TaskID {
+					return rejectNativeOPSResume("stored Resume Run is no longer the current Task Run")
+				}
+				result = NativeOPSResumeResult{Status: NativeOPSResumeOutcomeUnknown, Task: task, Run: run, Claim: previous}
+				return nil
 			}
-			if previous.OwnerUserID != scope.AuthenticatedUserID || previous.PayloadSHA256 != payloadHash {
-				return rejectNativeOPSResume("request ID was already used with a different Resume payload")
+
+			if task.Status != domaintask.StatusFailed && task.Status != domaintask.StatusCancelled {
+				return rejectNativeOPSResume("only a failed or cancelled OPS Task can be resumed")
 			}
-			run, err := txManager.store.GetRun(ctx, previous.NewCoreRunID)
-			if err != nil || run.TaskID != task.TaskID || run.TraceID != previous.TraceID || run.StartReason != domaintask.RunStartReasonExplicitRerun {
-				return rejectNativeOPSResume("stored Resume Run does not match its Task claim")
-			}
-			runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+			runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: input.TaskID})
 			if err != nil {
 				return err
 			}
-			if len(runs) == 0 || runs[len(runs)-1].RunID != previous.NewCoreRunID || runs[len(runs)-1].TaskID != task.TaskID {
-				return rejectNativeOPSResume("stored Resume Run is no longer the current Task Run")
+			if len(runs) == 0 {
+				return rejectNativeOPSResume("canonical Task has no prior Run")
 			}
-			result = NativeOPSResumeResult{Status: NativeOPSResumeOutcomeUnknown, Task: task, Run: run, Claim: previous}
+			last := runs[len(runs)-1]
+			if last.RunID != input.ExpectedCoreRunID || last.TaskID != input.TaskID || last.Status == domaintask.RunStatusRunning ||
+				last.Assignee != domaintask.AcceptedOPSAgentAssignee {
+				return rejectNativeOPSResume("expected CORE Run is not the current terminal Shiro Run")
+			}
+			wantRunStatus := domaintask.RunStatusFailed
+			if task.Status == domaintask.StatusCancelled {
+				wantRunStatus = domaintask.RunStatusCancelled
+			}
+			if last.Status != wantRunStatus {
+				return rejectNativeOPSResume("Task and latest CORE Run terminal states do not match")
+			}
+			generation, err := txManager.store.WriterGeneration()
+			if err != nil {
+				return err
+			}
+			if generation == 0 {
+				return rejectNativeOPSResume("Task writer generation is unavailable")
+			}
+
+			traceID := modulecore.NewTraceID()
+			started, run, err := txManager.startWithReasonAndCheckpointAndTrace(
+				ctx, input.TaskID, domaintask.RunStartReasonExplicitRerun, "", traceID,
+			)
+			if err != nil {
+				if errors.Is(err, ErrParallelLimit) {
+					return rejectNativeOPSResume("Task execution capacity is unavailable")
+				}
+				return err
+			}
+			if run.WriterGeneration != generation || run.TraceID != traceID {
+				return rejectNativeOPSResume("new CORE Run writer or Trace identity is invalid")
+			}
+			claim := domaintask.NativeOPSResumeClaim{
+				RequestID: requestID, OwnerUserID: scope.AuthenticatedUserID, PayloadSHA256: payloadHash,
+				ExpectedCoreRunID: input.ExpectedCoreRunID, NewCoreRunID: run.RunID, TraceID: traceID,
+				Source: cloneNativeOPSResumeSource(input.Source), WriterGeneration: generation, CreatedAt: txManager.now().UTC(),
+			}
+			if err := claim.Validate(started); err != nil {
+				return rejectNativeOPSResume("new Task Resume claim is invalid")
+			}
+			started.NativeResumeClaims = append(started.NativeResumeClaims, claim)
+			if err := started.Validate(); err != nil {
+				return rejectNativeOPSResume("updated Task Resume claim is invalid")
+			}
+			if err := txManager.store.SaveTask(ctx, started); err != nil {
+				return err
+			}
+			result = NativeOPSResumeResult{Status: NativeOPSResumeClaimed, Task: started, Run: run, Claim: claim, MayExecute: true}
 			return nil
-		}
-
-		if task.Status != domaintask.StatusFailed && task.Status != domaintask.StatusCancelled {
-			return rejectNativeOPSResume("only a failed or cancelled OPS Task can be resumed")
-		}
-		runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: input.TaskID})
-		if err != nil {
-			return err
-		}
-		if len(runs) == 0 {
-			return rejectNativeOPSResume("canonical Task has no prior Run")
-		}
-		last := runs[len(runs)-1]
-		if last.RunID != input.ExpectedCoreRunID || last.TaskID != input.TaskID || last.Status == domaintask.RunStatusRunning ||
-			last.Assignee != domaintask.AcceptedOPSAgentAssignee {
-			return rejectNativeOPSResume("expected CORE Run is not the current terminal Shiro Run")
-		}
-		wantRunStatus := domaintask.RunStatusFailed
-		if task.Status == domaintask.StatusCancelled {
-			wantRunStatus = domaintask.RunStatusCancelled
-		}
-		if last.Status != wantRunStatus {
-			return rejectNativeOPSResume("Task and latest CORE Run terminal states do not match")
-		}
-		generation, err := txManager.store.WriterGeneration()
-		if err != nil {
-			return err
-		}
-		if generation == 0 {
-			return rejectNativeOPSResume("Task writer generation is unavailable")
-		}
-
-		traceID := modulecore.NewTraceID()
-		started, run, err := txManager.startWithReasonAndCheckpointAndTrace(
-			ctx, input.TaskID, domaintask.RunStartReasonExplicitRerun, "", traceID,
-		)
-		if err != nil {
-			if errors.Is(err, ErrParallelLimit) {
-				return rejectNativeOPSResume("Task execution capacity is unavailable")
-			}
-			return err
-		}
-		if run.WriterGeneration != generation || run.TraceID != traceID {
-			return rejectNativeOPSResume("new CORE Run writer or Trace identity is invalid")
-		}
-		claim := domaintask.NativeOPSResumeClaim{
-			RequestID: requestID, OwnerUserID: scope.AuthenticatedUserID, PayloadSHA256: payloadHash,
-			ExpectedCoreRunID: input.ExpectedCoreRunID, NewCoreRunID: run.RunID, TraceID: traceID,
-			Source: cloneNativeOPSResumeSource(input.Source), WriterGeneration: generation, CreatedAt: txManager.now().UTC(),
-		}
-		if err := claim.Validate(started); err != nil {
-			return rejectNativeOPSResume("new Task Resume claim is invalid")
-		}
-		started.NativeResumeClaims = append(started.NativeResumeClaims, claim)
-		if err := started.Validate(); err != nil {
-			return rejectNativeOPSResume("updated Task Resume claim is invalid")
-		}
-		if err := txManager.store.SaveTask(ctx, started); err != nil {
-			return err
-		}
-		result = NativeOPSResumeResult{Status: NativeOPSResumeClaimed, Task: started, Run: run, Claim: claim, MayExecute: true}
-		return nil
+		}()
+		return result.Task, result.Run, result.MayExecute, mutationErr
 	})
 	if err != nil {
 		return NativeOPSResumeResult{}, err
@@ -493,58 +507,65 @@ func (m *Manager) AdmitAcceptedOPS(
 	}
 
 	var result AcceptedOPSClaimResult
-	err = m.taskTransaction(ctx, receipt.TaskID, func(txManager *Manager) error {
-		task, getErr := txManager.store.GetTask(ctx, receipt.TaskID)
-		if errors.Is(getErr, domaintask.ErrNotFound) {
-			return txManager.createAcceptedOPSClaim(ctx, receipt, reference, backendSelection, &result)
-		}
-		if getErr != nil {
-			return getErr
-		}
-		if !acceptedOPSClaimMatches(task, receipt, reference, backendSelection, txManager.expectedCriteriaRevision) {
-			return rejectAcceptedOPSClaim("stored Task does not match the accepted receipt")
-		}
-		if err := task.Validate(); err != nil {
-			return rejectAcceptedOPSClaim("stored Task is invalid")
-		}
-
-		runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: receipt.TaskID})
-		if err != nil {
-			return err
-		}
-		firstRun, found := acceptedOPSFirstRun(runs, receipt.TaskID)
-		if !found {
-			result = AcceptedOPSClaimResult{
-				Status: AcceptedOPSOutcomeUnknown,
-				Task:   task,
-				Reason: "canonical first Run is unavailable",
+	activity := domaintask.ActivityMetadata{
+		Kind: domaintask.ActivityKindWork, Label: "Working", Phase: "active",
+		Participants: []domaintask.ActivityParticipant{{ActorID: domaintask.AcceptedOPSAgentAssignee}},
+	}
+	_, _, err = m.startExistingActivityMutation(ctx, receipt.TaskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, bool, error) {
+		mutationErr := func() error {
+			task, getErr := txManager.store.GetTask(ctx, receipt.TaskID)
+			if errors.Is(getErr, domaintask.ErrNotFound) {
+				return txManager.createAcceptedOPSClaim(ctx, receipt, reference, backendSelection, &result)
 			}
-			return nil
-		}
-		result = AcceptedOPSClaimResult{Task: task, Run: firstRun}
-		if len(runs) != 1 {
-			result.Status = AcceptedOPSOutcomeUnknown
-			result.Reason = "canonical Task does not have exactly one first Run"
-			return nil
-		}
-		if task.Status == domaintask.StatusRunning && firstRun.Status == domaintask.RunStatusRunning {
-			generation, generationErr := txManager.store.WriterGeneration()
-			if generationErr != nil || generation == 0 || firstRun.WriterGeneration != generation {
-				result.Status = AcceptedOPSOutcomeUnknown
-				result.Reason = "first Run belongs to an unknown writer generation"
+			if getErr != nil {
+				return getErr
+			}
+			if !acceptedOPSClaimMatches(task, receipt, reference, backendSelection, txManager.expectedCriteriaRevision) {
+				return rejectAcceptedOPSClaim("stored Task does not match the accepted receipt")
+			}
+			if err := task.Validate(); err != nil {
+				return rejectAcceptedOPSClaim("stored Task is invalid")
+			}
+
+			runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: receipt.TaskID})
+			if err != nil {
+				return err
+			}
+			firstRun, found := acceptedOPSFirstRun(runs, receipt.TaskID)
+			if !found {
+				result = AcceptedOPSClaimResult{
+					Status: AcceptedOPSOutcomeUnknown,
+					Task:   task,
+					Reason: "canonical first Run is unavailable",
+				}
 				return nil
 			}
-			result.Status = AcceptedOPSAlreadyRunning
+			result = AcceptedOPSClaimResult{Task: task, Run: firstRun}
+			if len(runs) != 1 {
+				result.Status = AcceptedOPSOutcomeUnknown
+				result.Reason = "canonical Task does not have exactly one first Run"
+				return nil
+			}
+			if task.Status == domaintask.StatusRunning && firstRun.Status == domaintask.RunStatusRunning {
+				generation, generationErr := txManager.store.WriterGeneration()
+				if generationErr != nil || generation == 0 || firstRun.WriterGeneration != generation {
+					result.Status = AcceptedOPSOutcomeUnknown
+					result.Reason = "first Run belongs to an unknown writer generation"
+					return nil
+				}
+				result.Status = AcceptedOPSAlreadyRunning
+				return nil
+			}
+			expectedRunStatus, hasCanonicalRunStatus := runStatusForTaskStatus(task.Status)
+			if !domaintask.IsTerminal(task.Status) || !hasCanonicalRunStatus || firstRun.Status != expectedRunStatus {
+				result.Status = AcceptedOPSOutcomeUnknown
+				result.Reason = "stored Task and first Run do not form a canonical lifecycle pair"
+				return nil
+			}
+			result.Status = AcceptedOPSTerminal
 			return nil
-		}
-		expectedRunStatus, hasCanonicalRunStatus := runStatusForTaskStatus(task.Status)
-		if !domaintask.IsTerminal(task.Status) || !hasCanonicalRunStatus || firstRun.Status != expectedRunStatus {
-			result.Status = AcceptedOPSOutcomeUnknown
-			result.Reason = "stored Task and first Run do not form a canonical lifecycle pair"
-			return nil
-		}
-		result.Status = AcceptedOPSTerminal
-		return nil
+		}()
+		return result.Task, result.Run, result.MayExecute, mutationErr
 	})
 	if errors.Is(err, ErrParallelLimit) {
 		return AcceptedOPSClaimResult{

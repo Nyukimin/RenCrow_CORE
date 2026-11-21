@@ -377,3 +377,94 @@ func TestPrivateTextCheckpointSurvivesTaskStoreReopen(t *testing.T) {
 		t.Fatalf("complete after Task store reopen: %v", err)
 	}
 }
+
+func TestPrivateTextFirstRunAndCheckpointResumeBindWorkAcrossChatInterruption(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	rest, err := manager.CreateCurrentActivity(ctx, domaintask.Task{Title: "rest", Route: domaintask.RouteGeneral, Assignee: "mio"}, domaintask.ActivityMetadata{
+		Kind: domaintask.ActivityKindRest, Label: "Resting", Phase: "resting", Passive: true,
+		Participants: []domaintask.ActivityParticipant{{ActorID: "mio"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateTask, err := manager.Create(ctx, domaintask.Task{Title: "private writing", Route: domaintask.RouteGeneral, Assignee: "mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRun, err := manager.StartPrivateTextRun(ctx, privateTask.TaskID, modulecore.NewQueueItemID(), "mio", "", "")
+	if err != nil {
+		t.Fatalf("first private-text Run: %v", err)
+	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || current["mio"].Task.TaskID != privateTask.TaskID || current["mio"].Task.Activity.Kind != domaintask.ActivityKindWork {
+		t.Fatalf("private first Run current=%#v err=%v", current, err)
+	}
+	closedRest, err := manager.Get(ctx, rest.TaskID)
+	if err != nil || closedRest.Status != domaintask.StatusCancelled {
+		t.Fatalf("interrupted rest Task=%#v err=%v", closedRest, err)
+	}
+	if err := manager.SavePrivateTextOutput(ctx, privateTask.TaskID, firstRun.RunID, "mio", "saved checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.CompletePrivateTextRun(ctx, privateTask.TaskID, firstRun.RunID, "mio", true); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, found, err := manager.GetPrivateTextCheckpoint(ctx, privateTask.TaskID)
+	if err != nil || !found {
+		t.Fatalf("private-text checkpoint=%#v found=%v err=%v", checkpoint, found, err)
+	}
+	chatTask, chatRun, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "chat interruption", Route: domaintask.RouteCHAT, Assignee: "mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CompleteRun(ctx, chatTask.TaskID, chatRun.RunID, "mio", domaintask.StatusWaiting, "chat paused", "chat interruption"); err != nil {
+		t.Fatal(err)
+	}
+	resumedRun, err := manager.StartPrivateTextRun(ctx, privateTask.TaskID, modulecore.NewQueueItemID(), "mio", firstRun.RunID, checkpoint.Digest())
+	if err != nil {
+		t.Fatalf("resume private-text checkpoint: %v", err)
+	}
+	current, err = manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || current["mio"].Task.TaskID != privateTask.TaskID || current["mio"].Task.Activity.Kind != domaintask.ActivityKindWork || current["mio"].Task.Activity.Label != "Working" || current["mio"].Task.Activity.Phase != "active" {
+		t.Fatalf("private resumed Run current=%#v err=%v", current, err)
+	}
+	if resumedRun.TaskID != privateTask.TaskID || resumedRun.RunID == firstRun.RunID || resumedRun.StartReason != domaintask.RunStartReasonCheckpointResume {
+		t.Fatalf("resumed Run=%#v", resumedRun)
+	}
+}
+
+func TestPrivateTextActivityBindingFailureRollsBackRunAndCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	baseManager := New(store, DefaultParallelLimits())
+	task, err := baseManager.Create(ctx, domaintask.Task{Title: "private writing", Route: domaintask.RouteGeneral, Assignee: "mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("activity metadata save failed")
+	failingManager := New(&faultTaskStore{Store: store, failOperation: "activity", failErr: injected}, DefaultParallelLimits())
+	if _, err := failingManager.StartPrivateTextRun(ctx, task.TaskID, modulecore.NewQueueItemID(), "mio", "", ""); !errors.Is(err, injected) {
+		t.Fatalf("StartPrivateTextRun failure=%v, want metadata save error", err)
+	}
+	persisted, err := baseManager.Get(ctx, task.TaskID)
+	if err != nil || persisted.Status != domaintask.StatusQueued || persisted.Activity != nil {
+		t.Fatalf("Task after failed start=%#v err=%v", persisted, err)
+	}
+	runs, err := baseManager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("Runs after failed start=%#v err=%v", runs, err)
+	}
+	if _, found, err := baseManager.GetPrivateTextCheckpoint(ctx, task.TaskID); err != nil || found {
+		t.Fatalf("checkpoint after failed start found=%v err=%v", found, err)
+	}
+}

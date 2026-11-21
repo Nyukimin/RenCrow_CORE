@@ -49,6 +49,40 @@ func TestManagerStartRunFromCheckpointPersistsExactDigest(t *testing.T) {
 	}
 }
 
+func TestManagerCheckpointResumePreservesPersistedHobbyActivity(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, firstRun, err := manager.CreateAndStartActivityRun(ctx,
+		domaintask.Task{Title: "read a book", Route: domaintask.RouteGeneral, Assignee: "mio"},
+		domaintask.ActivityMetadata{
+			Kind: domaintask.ActivityKindHobby, Label: "Reading", Phase: "quiet reading",
+			Participants: []domaintask.ActivityParticipant{{ActorID: "mio"}},
+		}, domaintask.SharedRoleContext{},
+	)
+	if err != nil {
+		t.Fatalf("create Hobby Task: %v", err)
+	}
+	if _, err := manager.CompleteRun(ctx, task.TaskID, firstRun.RunID, "mio", domaintask.StatusWaiting, "paused", "checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := manager.StartRunFromCheckpoint(ctx, task.TaskID, firstRun.RunID, "mio", domaintask.RunStartReasonCheckpointResume, checkpointTestDigest)
+	if err != nil {
+		t.Fatalf("checkpoint resume: %v", err)
+	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || current["mio"].Task.TaskID != task.TaskID || current["mio"].Task.Activity.Kind != domaintask.ActivityKindHobby || current["mio"].Task.Activity.Label != "Reading" || current["mio"].Task.Activity.Phase != "quiet reading" {
+		t.Fatalf("resumed Hobby activity=%#v err=%v", current, err)
+	}
+	if resumed.StartReason != domaintask.RunStartReasonCheckpointResume || resumed.TaskID != task.TaskID {
+		t.Fatalf("resumed Run=%#v", resumed)
+	}
+}
+
 func TestManagerStartRunFromCheckpointSupportsExplicitRerunOnlyForTerminalPredecessor(t *testing.T) {
 	ctx := context.Background()
 	manager, _, task, predecessor := newCheckpointFixture(t, domaintask.StatusSucceeded)
