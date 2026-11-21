@@ -150,6 +150,56 @@ func (m *Manager) CreateAndStartActivityRun(ctx context.Context, draft domaintas
 	return started, run, nil
 }
 
+// CreateAndStartCurrentGameTurnRun creates a per-turn execution Task beneath
+// an observer-confirmed Game activity while preserving that Game Task as the
+// actor's current activity. The expected participant revision fences late
+// callbacks and the parent/current check is repeated inside the same owner
+// transaction that creates the child Task and Run.
+func (m *Manager) CreateAndStartCurrentGameTurnRun(
+	ctx context.Context,
+	parentTaskID modulecore.TaskID,
+	actorID string,
+	expectedParticipantRevision uint64,
+	gameID, sessionID string,
+	draft domaintask.Task,
+	shared domaintask.SharedRoleContext,
+) (domaintask.Task, domaintask.Run, error) {
+	if m == nil || m.store == nil || ctx == nil || parentTaskID.Validate() != nil ||
+		!canonicalActivityActor(actorID) || expectedParticipantRevision == 0 ||
+		strings.TrimSpace(gameID) == "" || strings.TrimSpace(gameID) != gameID ||
+		strings.TrimSpace(sessionID) == "" || strings.TrimSpace(sessionID) != sessionID ||
+		draft.Activity != nil || draft.Autonomous != nil || shared.AutonomousDecision != nil ||
+		draft.ParentTaskID != parentTaskID || draft.Assignee != actorID || draft.Route == domaintask.RouteGAME {
+		return domaintask.Task{}, domaintask.Run{}, domaintask.ErrCurrentActivityInvalid
+	}
+	if draft.TaskID == "" {
+		draft.TaskID = modulecore.NewTaskID()
+	}
+	var started domaintask.Task
+	var run domaintask.Run
+	err := m.activityTransaction(ctx, []modulecore.TaskID{parentTaskID, draft.TaskID}, func(store Store) error {
+		current, err := readCurrentActivityTasks(ctx, store, []string{actorID})
+		if err != nil {
+			return err
+		}
+		parent, found := current[actorID]
+		participant, participantFound := currentParticipant(parent, actorID)
+		if !found || parent.TaskID != parentTaskID || !participantFound ||
+			participant.Revision != expectedParticipantRevision || domaintask.IsTerminal(parent.Status) ||
+			parent.Activity == nil || parent.Activity.Kind != domaintask.ActivityKindGame || parent.Activity.Game == nil ||
+			parent.Activity.Game.GameID != gameID || parent.Activity.Game.SessionID != sessionID {
+			return domaintask.ErrCurrentActivityConflict
+		}
+		txManager := m.withStore(store)
+		started, run, err = txManager.createAndStartRunInTransaction(ctx, draft, shared)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	return started, run, nil
+}
+
 // EnsureExternalGameActivity adopts an observer-confirmed legacy game session
 // as a real passive CORE Task. It never launches a game or creates a Run. The
 // operation identity is stable for owner/game/session and its request hash

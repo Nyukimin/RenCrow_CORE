@@ -14,6 +14,69 @@ import (
 
 type activityTransactionHiddenStore struct{ Store }
 
+func TestCurrentGameTurnRunUsesChildIdentityAndPreservesGameActivity(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStoreWithOptions(t.TempDir(), taskpersistence.OpenOptions{Index: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	game, err := manager.EnsureExternalGameActivity(ctx, "configured-user", "nethack", "session-turn-1", "playing", []domaintask.ActivityParticipant{{ActorID: "mio", Role: "player"}})
+	if err != nil {
+		t.Fatalf("adopt external game: %v", err)
+	}
+	snapshot, err := manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gameRevision := snapshot["mio"].Participant.Revision
+	child, run, err := manager.CreateAndStartCurrentGameTurnRun(ctx, game.TaskID, "mio", gameRevision, "nethack", "session-turn-1", domaintask.Task{
+		Title: "Game turn", OwnerID: "mio", Assignee: "mio", ParentTaskID: game.TaskID, Route: domaintask.RouteGeneral, ReadOnly: true,
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("create current game child Run: %v", err)
+	}
+	if child.ParentTaskID != game.TaskID || child.Status != domaintask.StatusRunning || run.TaskID != child.TaskID {
+		t.Fatalf("child Task/Run = (%+v, %+v), want active child of Game Task %s", child, run, game.TaskID)
+	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || current["mio"].Task.TaskID != game.TaskID || current["mio"].Task.Activity.Kind != domaintask.ActivityKindGame {
+		t.Fatalf("game activity changed during turn execution: current=%+v err=%v", current, err)
+	}
+	if _, err := manager.CompleteRun(ctx, child.TaskID, run.RunID, "mio", domaintask.StatusSucceeded, "turn completed", ""); err != nil {
+		t.Fatalf("complete game turn Run: %v", err)
+	}
+	current, err = manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || current["mio"].Task.TaskID != game.TaskID {
+		t.Fatalf("game activity changed after turn completion: current=%+v err=%v", current, err)
+	}
+
+	chat, _, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "foreground chat", Route: domaintask.RouteCHAT, Assignee: "mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatSnapshot, err := manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || chatSnapshot["mio"].Task.TaskID != chat.TaskID {
+		t.Fatalf("foreground chat did not become current: current=%+v err=%v", chatSnapshot, err)
+	}
+	if _, err := manager.BindCurrentActivity(ctx, "mio", chat.TaskID, chatSnapshot["mio"].Participant.Revision, game.TaskID, domaintask.ActivityMetadata{
+		Kind: domaintask.ActivityKindGame, Label: game.Activity.Label, Phase: game.Activity.Phase, Passive: true,
+		Game: game.Activity.Game, Participants: []domaintask.ActivityParticipant{{ActorID: "mio", Role: "player"}},
+	}); err != nil {
+		t.Fatalf("restore same Game Task after chat: %v", err)
+	}
+	if _, _, err := manager.CreateAndStartCurrentGameTurnRun(ctx, game.TaskID, "mio", gameRevision, "nethack", "session-turn-1", domaintask.Task{
+		Title: "stale Game turn", OwnerID: "mio", Assignee: "mio", ParentTaskID: game.TaskID, Route: domaintask.RouteGeneral,
+	}, domaintask.SharedRoleContext{}); !errors.Is(err, domaintask.ErrCurrentActivityConflict) {
+		t.Fatalf("stale participant revision error=%v, want current-activity conflict", err)
+	}
+	current, err = manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || current["mio"].Task.TaskID != game.TaskID {
+		t.Fatalf("stale turn changed current Game: current=%+v err=%v", current, err)
+	}
+}
+
 func TestCreateAndStartRunBindsCanonicalRootTaskAndPreservesNestedChild(t *testing.T) {
 	storeRoot, err := os.MkdirTemp(os.TempDir(), "task-activity-test-")
 	if err != nil {

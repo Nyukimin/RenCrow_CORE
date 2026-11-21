@@ -98,8 +98,9 @@ func buildViewerRuntimeHandlers(
 		}
 		deps.gameTaskAdmission = newGameTaskRuntimeAdmission(sessions, deps.taskManager)
 	}
+	gameTurnDecisionProvider := newGameTurnExecutionProvider(gameDecisionProvider, deps.taskManager)
 	heartbeatGameDecisionProvider := newHeartbeatGameDecisionProvider(
-		gameDecisionProvider,
+		gameTurnDecisionProvider,
 		func() conversationruntime.ActorAdmission { return deps.agentAdmission },
 		cfg != nil && cfg.Heartbeat.AgentSchedulerEnabled,
 	)
@@ -109,7 +110,7 @@ func buildViewerRuntimeHandlers(
 		if err != nil {
 			log.Printf("WARN: GAME Task decision admission unavailable: %v", err)
 		} else {
-			taskBoundGameDecisionProvider = newGameTaskDecisionAdmissionProvider(heartbeatGameDecisionProvider, deps.taskManager, launchClient, deps.gameTaskAdmission)
+			taskBoundGameDecisionProvider = newGameTaskDecisionAdmissionProvider(heartbeatGameDecisionProvider, deps.taskManager, launchClient, deps.gameTaskAdmission, cfg.LocalAgentOps.UserID)
 		}
 	}
 	if deps.taskManager == nil {
