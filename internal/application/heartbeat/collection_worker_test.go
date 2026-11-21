@@ -58,12 +58,16 @@ func collectionTaskOwner(t *testing.T, svc *HeartbeatService) interface {
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	GetRun(context.Context, modulecore.RunID) (domaintask.Run, error)
 	List(context.Context, domaintask.Filter) ([]domaintask.Task, error)
+	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
+	SnapshotCurrentActivities(context.Context, []string) (map[string]domaintask.CurrentActivitySnapshot, error)
 } {
 	t.Helper()
 	owner, ok := svc.taskOwner.(interface {
 		Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
 		GetRun(context.Context, modulecore.RunID) (domaintask.Run, error)
 		List(context.Context, domaintask.Filter) ([]domaintask.Task, error)
+		ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
+		SnapshotCurrentActivities(context.Context, []string) (map[string]domaintask.CurrentActivitySnapshot, error)
 	})
 	if !ok {
 		t.Fatalf("test Task owner does not expose inspection methods")
@@ -352,7 +356,7 @@ func TestHeartbeatStopCancelsBothCollectionWaitersBeforeWaiting(t *testing.T) {
 		if xCalls.Load() != 0 {
 			t.Fatalf("waiting X collector calls=%d, want 0", xCalls.Load())
 		}
-		assertSingleCanceledCollectionTask(t, svc)
+		assertCancelledCollectionAndEvaluation(t, svc)
 	})
 
 	t.Run("x_holder_gmail_waiter", func(t *testing.T) {
@@ -404,22 +408,57 @@ func TestHeartbeatStopCancelsBothCollectionWaitersBeforeWaiting(t *testing.T) {
 		if gmailCalls.Load() != 0 {
 			t.Fatalf("waiting Gmail collector calls=%d, want 0", gmailCalls.Load())
 		}
-		assertSingleCanceledCollectionTask(t, svc)
+		assertCancelledCollectionAndEvaluation(t, svc)
 	})
 }
 
-func assertSingleCanceledCollectionTask(t *testing.T, svc *HeartbeatService) {
+func assertCancelledCollectionAndEvaluation(t *testing.T, svc *HeartbeatService) {
 	t.Helper()
 	owner := collectionTaskOwner(t, svc)
 	tasks, err := owner.List(context.Background(), domaintask.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) != 1 {
-		t.Fatalf("collection stop created unexpected Tasks: %+v", tasks)
+	if len(tasks) != 2 {
+		t.Fatalf("collection stop Tasks=%+v, want exactly the cancelled worker and its canonical evaluating successor", tasks)
 	}
-	if tasks[0].Status != domaintask.StatusCancelled || tasks[0].Assignee != "shiro" || tasks[0].Route != domaintask.RouteOperations {
-		t.Fatalf("unexpected terminal collection Task=%+v", tasks[0])
+	var workerTask, evaluatingTask *domaintask.Task
+	for i := range tasks {
+		task := &tasks[i]
+		switch {
+		case task.Status == domaintask.StatusCancelled && task.Assignee == "shiro" && task.Route == domaintask.RouteOperations:
+			if workerTask != nil {
+				t.Fatalf("multiple cancelled heartbeat worker Tasks: %+v", tasks)
+			}
+			workerTask = task
+		case task.Status == domaintask.StatusRunning && task.Assignee == "shiro" && task.Route == domaintask.RouteGeneral &&
+			task.Activity != nil && task.Activity.Kind == domaintask.ActivityKindEvaluating && task.Activity.Passive:
+			if evaluatingTask != nil {
+				t.Fatalf("multiple evaluating successor Tasks: %+v", tasks)
+			}
+			evaluatingTask = task
+		default:
+			t.Fatalf("unexpected Task after collection stop: %+v", *task)
+		}
+	}
+	if workerTask == nil || evaluatingTask == nil {
+		t.Fatalf("collection stop Tasks=%+v, want one cancelled heartbeat worker and one passive evaluating successor", tasks)
+	}
+	workerRuns, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: workerTask.TaskID})
+	if err != nil {
+		t.Fatalf("list cancelled heartbeat worker Runs: %v", err)
+	}
+	if len(workerRuns) != 1 || workerRuns[0].TaskID != workerTask.TaskID || workerRuns[0].Assignee != "shiro" || workerRuns[0].Status != domaintask.RunStatusCancelled {
+		t.Fatalf("cancelled heartbeat worker Runs=%+v, want exactly one cancelled Run for its Task", workerRuns)
+	}
+	evaluatingRuns, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: evaluatingTask.TaskID})
+	if err != nil || len(evaluatingRuns) != 0 {
+		t.Fatalf("passive evaluating successor Runs=%+v err=%v, want no Run", evaluatingRuns, err)
+	}
+	current, err := owner.SnapshotCurrentActivities(context.Background(), []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID != evaluatingTask.TaskID || current["shiro"].Task.Activity == nil ||
+		current["shiro"].Task.Activity.Kind != domaintask.ActivityKindEvaluating || !current["shiro"].Participant.IsCurrent {
+		t.Fatalf("current activity after collection stop=%+v err=%v, want the passive evaluating successor", current["shiro"], err)
 	}
 }
 
@@ -496,5 +535,5 @@ func TestCollectionWorkerRejectsAdmissionAfterStopSignalWithReleasedSlot(t *test
 	if xCalls.Load() != 0 {
 		t.Fatalf("stopped X waiter collector calls=%d, want 0", xCalls.Load())
 	}
-	assertSingleCanceledCollectionTask(t, svc)
+	assertCancelledCollectionAndEvaluation(t, svc)
 }

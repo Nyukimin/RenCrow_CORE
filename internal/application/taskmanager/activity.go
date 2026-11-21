@@ -457,6 +457,20 @@ func (m *Manager) startExistingActivityMutation(
 		})
 		return started, run, err
 	}
+	for attempt := 0; ; attempt++ {
+		started, run, err := m.startExistingActivityMutationAttempt(ctx, taskID, activity, mutate)
+		if !errors.Is(err, errActivityAssignmentSnapshotChanged) || attempt >= activityAdmissionConflictRetries {
+			return started, run, err
+		}
+	}
+}
+
+func (m *Manager) startExistingActivityMutationAttempt(
+	ctx context.Context,
+	taskID modulecore.TaskID,
+	activity domaintask.ActivityMetadata,
+	mutate func(*Manager) (domaintask.Task, domaintask.Run, bool, error),
+) (domaintask.Task, domaintask.Run, error) {
 	priorTasks, err := m.currentTasksForActors(ctx, activityActorIDs(activity))
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
@@ -474,7 +488,7 @@ func (m *Manager) startExistingActivityMutation(
 			return err
 		}
 		if !sameActivityTaskAssignments(priorTasks, current) {
-			return domaintask.ErrCurrentActivityConflict
+			return errActivityAssignmentSnapshotChanged
 		}
 		txManager := m.withStore(store)
 		var shouldBind bool

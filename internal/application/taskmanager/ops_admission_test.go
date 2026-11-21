@@ -130,7 +130,13 @@ func TestManagerAdmitAcceptedOPSCreatesCanonicalTaskAndFirstRun(t *testing.T) {
 }
 
 func TestManagerAdmitAcceptedOPSConcurrentClaimsHaveOneCreator(t *testing.T) {
-	manager, _ := newAcceptedOPSManager(t, DefaultParallelLimits())
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewJSONLStore: %v", err)
+	}
+	registerTaskStoreCleanup(t, store)
+	wrapped := &activityStartBarrierStore{Store: store, transaction: store, release: make(chan struct{})}
+	manager := New(wrapped, DefaultParallelLimits())
 	receipt := acceptedOPSReceipt()
 	ctx := acceptedOPSUserContext(t, receipt.RequestID, receipt.OwnerID)
 	const callers = 12
@@ -769,6 +775,67 @@ func TestManagerAdmitNativeOPSResumeSameRequestReturnsOneUnknownClaimAndDifferen
 	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
 	if err != nil || len(runs) != 2 {
 		t.Fatalf("same-request replay created extra Runs: %d err=%v", len(runs), err)
+	}
+}
+
+func TestManagerAdmitNativeOPSResumeConcurrentSameRequestReplaysOneClaim(t *testing.T) {
+	manager, receipt, task, sourceRun, source := newResumeEligibleAcceptedOPS(t)
+	store := manager.store
+	transaction, ok := store.(domaintask.ActivityTaskTransaction)
+	if !ok {
+		t.Fatal("Task store does not support activity transactions")
+	}
+	manager.store = &activityStartBarrierStore{Store: store, transaction: transaction, release: make(chan struct{})}
+	ctx := acceptedOPSUserContext(t, "req-native-resume-concurrent", receipt.OwnerID)
+	input := NativeOPSResumeInput{TaskID: task.TaskID, ExpectedCoreRunID: sourceRun.RunID, Source: source}
+	type response struct {
+		result NativeOPSResumeResult
+		err    error
+	}
+	const callers = 2
+	results := make(chan response, callers)
+	var wait sync.WaitGroup
+	for range callers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			result, err := manager.AdmitNativeOPSResume(ctx, input)
+			results <- response{result: result, err: err}
+		}()
+	}
+	wait.Wait()
+	close(results)
+	claimedCount := 0
+	var claim domaintask.NativeOPSResumeClaim
+	var runID modulecore.RunID
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent same-request Resume admission: %v", result.err)
+		}
+		if result.result.Task.TaskID != task.TaskID || result.result.Run.RunID == "" || result.result.Claim.RequestID != "req-native-resume-concurrent" {
+			t.Fatalf("Resume result does not identify the canonical claim: %+v", result.result)
+		}
+		if result.result.MayExecute {
+			claimedCount++
+			if result.result.Status != NativeOPSResumeClaimed {
+				t.Fatalf("creator status=%q, want claimed", result.result.Status)
+			}
+		} else if result.result.Status != NativeOPSResumeOutcomeUnknown {
+			t.Fatalf("replay status=%q, want outcome_unknown without execution", result.result.Status)
+		}
+		if claim.RequestID == "" {
+			claim = result.result.Claim
+			runID = result.result.Run.RunID
+		} else if result.result.Claim != claim || result.result.Run.RunID != runID {
+			t.Fatalf("same request returned multiple claim/Run identities: first=%+v/%s next=%+v/%s", claim, runID, result.result.Claim, result.result.Run.RunID)
+		}
+	}
+	if claimedCount != 1 {
+		t.Fatalf("MayExecute creator count=%d, want exactly one", claimedCount)
+	}
+	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(runs) != 2 || runs[1].RunID != runID {
+		t.Fatalf("Runs after same-request concurrent Resume=%+v err=%v, want one explicit Resume Run", runs, err)
 	}
 }
 
