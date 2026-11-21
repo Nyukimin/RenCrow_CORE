@@ -246,6 +246,9 @@ func (m *Manager) readTransaction(ctx context.Context, fn func(*Manager) error) 
 }
 
 func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if draft.Activity != nil {
+		return domaintask.Task{}, domaintask.ErrActivityTaskRequiresOwner
+	}
 	if draft.Autonomous != nil || shared.AutonomousDecision != nil {
 		return domaintask.Task{}, errors.New("autonomous Task metadata requires the autonomous Task owner API")
 	}
@@ -276,8 +279,43 @@ func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared doma
 // refusal. A caller that has the Task but must decide later whether to run it
 // (for example after routing) keeps using Create followed by Start.
 func (m *Manager) CreateAndStartRun(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	if draft.Activity != nil {
+		return domaintask.Task{}, domaintask.Run{}, domaintask.ErrActivityTaskRequiresOwner
+	}
 	if draft.Autonomous != nil || shared.AutonomousDecision != nil {
 		return domaintask.Task{}, domaintask.Run{}, errors.New("autonomous Task metadata requires the autonomous Task owner API")
+	}
+	_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
+	if activityOwnerAvailable && draft.ParentTaskID == "" && draft.Route != domaintask.RouteGAME && canonicalActivityActor(draft.Assignee) {
+		activity, eligible := activityForRootTask(draft)
+		if eligible {
+			return m.CreateAndStartActivityRun(ctx, draft, activity, shared)
+		}
+	}
+	if activityOwnerAvailable && draft.ParentTaskID != "" && draft.Route != domaintask.RouteGAME && canonicalActivityActor(draft.Assignee) {
+		preserveParent, err := m.childSharesCurrentAncestor(ctx, draft)
+		if err != nil {
+			return domaintask.Task{}, domaintask.Run{}, err
+		}
+		if !preserveParent {
+			activity, _ := activityForRootTask(draft)
+			return m.CreateAndStartActivityRun(ctx, draft, activity, shared)
+		}
+	}
+	if !activityOwnerAvailable && draft.Route != domaintask.RouteGAME && canonicalActivityActor(draft.Assignee) {
+		preserveParent := false
+		if draft.ParentTaskID != "" {
+			var err error
+			preserveParent, err = m.childSharesCurrentAncestor(ctx, draft)
+			if err != nil {
+				return domaintask.Task{}, domaintask.Run{}, err
+			}
+		}
+		if !preserveParent {
+			if err := m.requireDormantActivityFeature(ctx, draft.Assignee, draft); err != nil {
+				return domaintask.Task{}, domaintask.Run{}, err
+			}
+		}
 	}
 	if draft.TaskID == "" {
 		draft.TaskID = modulecore.NewTaskID()
@@ -517,6 +555,44 @@ func (m *Manager) Queue(ctx context.Context, taskID modulecore.TaskID) (domainta
 }
 
 func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	if m != nil && m.store != nil {
+		candidate, readErr := m.store.GetTask(ctx, taskID)
+		if readErr != nil {
+			return domaintask.Task{}, readErr
+		}
+		_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
+		if activity, eligible := activityForRootTask(candidate); eligible && activityOwnerAvailable {
+			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
+			if parentErr != nil {
+				return domaintask.Task{}, parentErr
+			}
+			if !preserveParent {
+				started, _, err := m.startExistingActivityTask(ctx, taskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, error) {
+					runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+					if err != nil {
+						return domaintask.Task{}, domaintask.Run{}, err
+					}
+					reason := domaintask.RunStartReasonFirst
+					if len(runs) > 0 {
+						reason = domaintask.RunStartReasonExplicitRerun
+					}
+					return txManager.startWithReason(ctx, taskID, reason)
+				})
+				return started, err
+			}
+		}
+		if _, eligible := activityForRootTask(candidate); eligible && !activityOwnerAvailable {
+			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
+			if parentErr != nil {
+				return domaintask.Task{}, parentErr
+			}
+			if !preserveParent {
+				if err := m.requireDormantActivityFeature(ctx, candidate.Assignee, candidate); err != nil {
+					return domaintask.Task{}, err
+				}
+			}
+		}
+	}
 	var started domaintask.Task
 	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		if err := taskID.Validate(); err != nil {
@@ -542,6 +618,36 @@ func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domainta
 // StartWithReason starts a fresh Run for an existing Task using an explicit
 // canonical Step10 reason. The first reason is valid only before any Run exists.
 func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, error) {
+	if m != nil && m.store != nil {
+		candidate, readErr := m.store.GetTask(ctx, taskID)
+		if readErr != nil {
+			return domaintask.Task{}, readErr
+		}
+		_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
+		if activity, eligible := activityForRootTask(candidate); eligible && activityOwnerAvailable {
+			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
+			if parentErr != nil {
+				return domaintask.Task{}, parentErr
+			}
+			if !preserveParent {
+				started, _, err := m.startExistingActivityTask(ctx, taskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, error) {
+					return txManager.startWithReason(ctx, taskID, reason)
+				})
+				return started, err
+			}
+		}
+		if _, eligible := activityForRootTask(candidate); eligible && !activityOwnerAvailable {
+			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
+			if parentErr != nil {
+				return domaintask.Task{}, parentErr
+			}
+			if !preserveParent {
+				if err := m.requireDormantActivityFeature(ctx, candidate.Assignee, candidate); err != nil {
+					return domaintask.Task{}, err
+				}
+			}
+		}
+	}
 	var started domaintask.Task
 	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
@@ -558,6 +664,36 @@ func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID,
 // persisted for the Task. Callers that need to hand the newly issued Run to a
 // queue or orchestrator must use this method rather than listing runs again.
 func (m *Manager) StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
+	if m != nil && m.store != nil {
+		candidate, readErr := m.store.GetTask(ctx, taskID)
+		if readErr != nil {
+			return domaintask.Run{}, readErr
+		}
+		_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
+		if activity, eligible := activityForRootTask(candidate); eligible && activityOwnerAvailable {
+			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
+			if parentErr != nil {
+				return domaintask.Run{}, parentErr
+			}
+			if !preserveParent {
+				_, run, err := m.startExistingActivityTask(ctx, taskID, activity, func(txManager *Manager) (domaintask.Task, domaintask.Run, error) {
+					return txManager.startWithReason(ctx, taskID, reason)
+				})
+				return run, err
+			}
+		}
+		if _, eligible := activityForRootTask(candidate); eligible && !activityOwnerAvailable {
+			preserveParent, parentErr := m.childSharesCurrentAncestor(ctx, candidate)
+			if parentErr != nil {
+				return domaintask.Run{}, parentErr
+			}
+			if !preserveParent {
+				if err := m.requireDormantActivityFeature(ctx, candidate.Assignee, candidate); err != nil {
+					return domaintask.Run{}, err
+				}
+			}
+		}
+	}
 	var run domaintask.Run
 	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		task, err := txManager.store.GetTask(ctx, taskID)
@@ -614,6 +750,9 @@ func (m *Manager) startWithReasonAndCheckpointAndTrace(ctx context.Context, task
 	}
 	if domaintask.IsOwnerManagedTask(task) {
 		return domaintask.Task{}, domaintask.Run{}, domaintask.ErrTypedTaskRequiresOwner
+	}
+	if task.Activity != nil && task.Activity.Passive {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("passive current activity Tasks do not execute Runs: %w", domaintask.ErrCurrentActivityInvalid)
 	}
 	if err := task.ValidateStartTiming(m.now()); err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
@@ -824,6 +963,12 @@ func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID moduleco
 	if status == domaintask.StatusWaiting && strings.TrimSpace(waitingReason) == "" {
 		return domaintask.Task{}, fmt.Errorf("waiting reason is required")
 	}
+	if domaintask.IsTerminal(status) && task.Activity != nil {
+		task, err = m.transitionTerminalCurrentActivity(ctx, task)
+		if err != nil {
+			return domaintask.Task{}, err
+		}
+	}
 	now := m.now()
 	task.Status = status
 	task.WaitingReason = strings.TrimSpace(waitingReason)
@@ -859,6 +1004,68 @@ func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID moduleco
 		}
 	}
 	return task, nil
+}
+
+func (m *Manager) transitionTerminalCurrentActivity(ctx context.Context, task domaintask.Task) (domaintask.Task, error) {
+	if task.Activity == nil {
+		return task, nil
+	}
+	current := make([]domaintask.ActivityParticipant, 0, len(task.Activity.Participants))
+	for _, participant := range task.Activity.Participants {
+		if participant.IsCurrent {
+			current = append(current, participant)
+		}
+	}
+	if len(current) == 0 {
+		return task, nil
+	}
+	writer, ok := m.store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrActivityTaskWriterUnsupported
+	}
+	if task.Activity.Revision == ^uint64(0) {
+		return domaintask.Task{}, errors.New("activity revision overflow")
+	}
+	updated := task
+	activity := *task.Activity
+	activity.Participants = append([]domaintask.ActivityParticipant(nil), task.Activity.Participants...)
+	for _, prior := range current {
+		if prior.Revision > ^uint64(0)-2 {
+			return domaintask.Task{}, errors.New("activity participant revision overflow")
+		}
+		for index := range activity.Participants {
+			if activity.Participants[index].ActorID == prior.ActorID {
+				activity.Participants[index].IsCurrent = false
+				activity.Participants[index].Revision++
+				break
+			}
+		}
+	}
+	activity.Revision++
+	updated.Activity = &activity
+	now := m.now()
+	updated.UpdatedAt = now
+	if err := writer.SaveTaskActivity(ctx, updated); err != nil {
+		return domaintask.Task{}, err
+	}
+	for _, prior := range current {
+		started := now
+		fallback := domaintask.Task{
+			TaskID: modulecore.NewTaskID(), Title: "Evaluating next activity", Assignee: prior.ActorID,
+			Route:  domaintask.RouteGeneral,
+			Status: domaintask.StatusRunning, Priority: domaintask.PriorityNormal,
+			InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true, CreatedAt: now, UpdatedAt: now, StartedAt: &started,
+			Activity: &domaintask.ActivityMetadata{
+				Kind: domaintask.ActivityKindEvaluating, Label: "Evaluating next activity", Phase: "evaluating",
+				Passive: true, Revision: 1,
+				Participants: []domaintask.ActivityParticipant{{ActorID: prior.ActorID, IsCurrent: true, Revision: prior.Revision + 2}},
+			},
+		}
+		if err := writer.SaveNewPassiveActivityTask(ctx, fallback); err != nil {
+			return domaintask.Task{}, err
+		}
+	}
+	return updated, nil
 }
 
 func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRoleContext) error {
@@ -1174,6 +1381,9 @@ func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintas
 	if domaintask.IsOwnerManagedTask(candidate) {
 		return false, "", domaintask.ErrTypedTaskRequiresOwner
 	}
+	if candidate.Activity != nil && candidate.Activity.Passive {
+		return false, "", fmt.Errorf("passive current activity Tasks do not execute Runs: %w", domaintask.ErrCurrentActivityInvalid)
+	}
 	if err := candidate.ValidateStartTiming(m.now()); err != nil {
 		return false, "", err
 	}
@@ -1193,12 +1403,25 @@ func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintas
 	if len(running) >= taskAdmissionRunningScanLimit {
 		return false, "", fmt.Errorf("running Task scan reached admission limit %d", taskAdmissionRunningScanLimit)
 	}
-	coordinationParents, err := runningTaskCoordinationParents(running, candidate)
+	activeRunning := make([]domaintask.Task, 0, len(running))
+	for _, item := range running {
+		if item.Activity != nil && item.Activity.Passive {
+			runs, runErr := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: item.TaskID})
+			if runErr != nil {
+				return false, "", runErr
+			}
+			if len(runs) == 0 {
+				continue
+			}
+		}
+		activeRunning = append(activeRunning, item)
+	}
+	coordinationParents, err := runningTaskCoordinationParents(activeRunning, candidate)
 	if err != nil {
 		return false, "", err
 	}
 	global, sameModule, coding, research, operations := 0, 0, 0, 0, 0
-	for _, item := range running {
+	for _, item := range activeRunning {
 		if _, coordinationOnly := coordinationParents[item.TaskID]; coordinationOnly {
 			continue
 		}

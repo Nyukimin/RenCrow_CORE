@@ -2,6 +2,7 @@ package taskmanager
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -79,5 +80,48 @@ func TestManagerRejectsCallerProofThatDoesNotMatchValidatedBinding(t *testing.T)
 		OriginSessionID: sessionID, OriginPublication: &proof,
 	}, domaintask.SharedRoleContext{}); err == nil {
 		t.Fatal("Create accepted caller-supplied origin proof that differs from the resolved SessionBinding")
+	}
+}
+
+func TestAuthorizedCurrentActivityCarriesOriginPublicationProof(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	sessionID := modulecore.NewSessionID()
+	address, err := domainconversation.NewChannelAddress("viewer", "cmd:owner-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := domainconversation.NewSessionBindingWithPublicationIncarnation(
+		sessionID, address, domainconversation.SessionAudiencePrivate, "owner-user", 1,
+		strings.Repeat("a", 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := domainconversation.WithSessionBinding(context.Background(), binding)
+	created, _, err := manager.CreateAndStartRun(ctx, domaintask.Task{
+		Title: "private current Task", Route: domaintask.RouteGeneral, Assignee: "mio", OriginSessionID: sessionID,
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("CreateAndStartRun: %v", err)
+	}
+	want, err := domaintask.NewOriginPublicationProvenance(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := 0
+	rows, err := manager.SnapshotCurrentActivitiesAuthorized(context.Background(), []string{"mio"}, func(_ context.Context, input domaintask.TaskReadAuthorizationInput) error {
+		checks++
+		if input.TaskID != created.TaskID || input.OriginSessionID != sessionID || input.OriginPublication == nil || *input.OriginPublication != want {
+			t.Fatalf("current authorization input omitted publication proof: %#v", input)
+		}
+		return nil
+	})
+	if err != nil || checks < 2 || rows["mio"].TaskID != created.TaskID {
+		t.Fatalf("current rows=%#v checks=%d err=%v", rows, checks, err)
 	}
 }

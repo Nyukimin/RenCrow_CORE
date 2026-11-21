@@ -74,18 +74,19 @@ func (p responseFirstConversationProvider) Name() string {
 }
 
 type responseFirstConversationRuntime struct {
-	store          responseFirstJournalStore
-	reservations   responseFirstReservationReader
-	runtime        *conversationruntime.Runtime
-	ownerID        string
-	publisher      responseFirstEventPublisher
-	processing     *responseFirstV2Processing
-	dispatcher     responseFirstReadbackDispatcher
-	taskAdmissions []*conversationruntime.DelegationTaskAdmission
-	executor       *conversationruntime.DelegatedTaskExecutor
-	reportDelivery *conversationruntime.ReportDeliveryService
-	dispatchWake   chan struct{}
-	projection     *responseFirstConversationProjection
+	store                  responseFirstJournalStore
+	reservations           responseFirstReservationReader
+	runtime                *conversationruntime.Runtime
+	ownerID                string
+	publisher              responseFirstEventPublisher
+	processing             *responseFirstV2Processing
+	dispatcher             responseFirstReadbackDispatcher
+	taskAdmissions         []*conversationruntime.DelegationTaskAdmission
+	executor               *conversationruntime.DelegatedTaskExecutor
+	reportDelivery         *conversationruntime.ReportDeliveryService
+	dispatchWake           chan struct{}
+	projection             *responseFirstConversationProjection
+	reconcileActorActivity func(context.Context, string) error
 }
 
 func newResponseFirstConversationRuntime(
@@ -439,6 +440,11 @@ func (r *responseFirstConversationRuntime) Process(ctx context.Context, accepted
 			Accepted: toConversationAcceptedTurn(item), Legacy: toConversationLegacyProjection(legacy),
 		}})
 		if result.Status == conversationruntime.TurnStatusDelivered {
+			if r.reconcileActorActivity != nil {
+				if reconcileErr := r.reconcileActorActivity(ctx, item.ActorID); reconcileErr != nil {
+					log.Printf("response-first post-turn activity reconciliation failed actor=%s: %v", item.ActorID, reconcileErr)
+				}
+			}
 			r.signalReadbackDrain()
 			return nil
 		}

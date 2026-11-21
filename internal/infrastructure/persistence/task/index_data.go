@@ -230,14 +230,18 @@ type taskIndex struct {
 	// created it); an absent file is an empty one.
 	allowMissing bool
 
-	tasks     []taskRec
-	taskMap   map[key16]uint32
-	runs      []runRec
-	runMap    map[key16]uint32
-	lt        lineTable
-	notifs    []notifRec
-	receipts  map[string]receiptRec
-	relations map[uint32]taskRelations
+	tasks                       []taskRec
+	taskMap                     map[key16]uint32
+	currentActivityByActor      map[string]key16
+	currentActivityActorsByTask map[key16][]string
+	activeExternalGameTaskByID  map[key16]struct{}
+	currentActivityReady        atomic.Bool
+	runs                        []runRec
+	runMap                      map[key16]uint32
+	lt                          lineTable
+	notifs                      []notifRec
+	receipts                    map[string]receiptRec
+	relations                   map[uint32]taskRelations
 
 	titles    internTable
 	assignees internTable
@@ -285,13 +289,16 @@ const (
 
 func newTaskIndex(root string) *taskIndex {
 	ix := &taskIndex{
-		root:      root,
-		fc:        newSegFileCache(),
-		segs:      []segInfo{{name: segmentLegacyName, dir: root}},
-		taskMap:   make(map[key16]uint32),
-		runMap:    make(map[key16]uint32),
-		receipts:  make(map[string]receiptRec),
-		relations: make(map[uint32]taskRelations),
+		root:                        root,
+		fc:                          newSegFileCache(),
+		segs:                        []segInfo{{name: segmentLegacyName, dir: root}},
+		taskMap:                     make(map[key16]uint32),
+		currentActivityByActor:      make(map[string]key16),
+		currentActivityActorsByTask: make(map[key16][]string),
+		activeExternalGameTaskByID:  make(map[key16]struct{}),
+		runMap:                      make(map[key16]uint32),
+		receipts:                    make(map[string]receiptRec),
+		relations:                   make(map[uint32]taskRelations),
 	}
 	ix.fc.setDir(0, root)
 	return ix

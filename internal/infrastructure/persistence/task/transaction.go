@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -74,6 +75,55 @@ func (s *JSONLStore) TaskTransaction(ctx context.Context, taskID modulecore.Task
 	return s.transactionWithScope(ctx, taskID, lease, fn)
 }
 
+func (s *JSONLStore) ActivityTransaction(ctx context.Context, taskIDs []modulecore.TaskID, fn func(domaintask.Store) error) error {
+	if err := validateTransactionArgs(s, ctx, fn); err != nil {
+		return err
+	}
+	if len(taskIDs) == 0 {
+		return errors.New("activity transaction Task IDs are required")
+	}
+	if s.readOnly {
+		return errors.New("task store is read-only")
+	}
+	ids := append([]modulecore.TaskID(nil), taskIDs...)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for i, taskID := range ids {
+		if err := taskID.Validate(); err != nil {
+			return fmt.Errorf("activity transaction task_id is invalid: %w", err)
+		}
+		if i > 0 && ids[i-1] == taskID {
+			return fmt.Errorf("activity transaction task_id %s is duplicated", taskID)
+		}
+	}
+	releaseAdmission, err := s.lifecycle.admit(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseAdmission()
+	leases := make([]*taskExecutionLease, 0, len(ids))
+	defer func() {
+		for i := len(leases) - 1; i >= 0; i-- {
+			leases[i].release()
+		}
+	}()
+	for _, taskID := range ids {
+		lease, acquireErr := s.executionFence.acquire(ctx, taskID)
+		if acquireErr != nil {
+			return acquireErr
+		}
+		leases = append(leases, lease)
+		if err := s.activeTaskExecutionFenceError(taskID); err != nil {
+			return err
+		}
+	}
+	return s.transactionWithScope(ctx, "", nil, func(store domaintask.Store) error {
+		if tx, ok := store.(*transactionStore); ok {
+			tx.ownedLeases = append([]*taskExecutionLease(nil), leases...)
+		}
+		return fn(store)
+	})
+}
+
 // WithTaskExecutionFence admits a synchronous external leaf while holding an
 // exclusive Task gate. Only the short validation transaction runs under the
 // global JSONL lock; the callback runs after that lock is released.
@@ -92,6 +142,41 @@ func validateTransactionArgs(s *JSONLStore, ctx context.Context, fn func(domaint
 		return errors.New("task transaction context is nil")
 	}
 	return nil
+}
+
+func activityMetadataTransitionAllowed(previous, next *domaintask.ActivityMetadata) bool {
+	if next == nil {
+		return false
+	}
+	if previous == nil {
+		return next.Revision == 1
+	}
+	if next.Revision <= previous.Revision {
+		return false
+	}
+	if !reflect.DeepEqual(previous.Game, next.Game) {
+		if previous.Game == nil || next.Game == nil || previous.Game.GameID != next.Game.GameID ||
+			previous.Game.SessionID != "" || next.Game.SessionID == "" {
+			return false
+		}
+	}
+	prior := make(map[string]domaintask.ActivityParticipant, len(previous.Participants))
+	for _, participant := range previous.Participants {
+		prior[participant.ActorID] = participant
+	}
+	for _, participant := range next.Participants {
+		old, exists := prior[participant.ActorID]
+		if !exists {
+			if participant.Revision == 0 {
+				return false
+			}
+			continue
+		}
+		if participant.Revision < old.Revision || participant.IsCurrent != old.IsCurrent && participant.Revision <= old.Revision {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *JSONLStore) transactionWithScope(ctx context.Context, scopeTaskID modulecore.TaskID, lease *taskExecutionLease, fn func(domaintask.Store) error) error {
@@ -180,6 +265,7 @@ type transactionStore struct {
 	readOnly    bool
 	scopeTaskID modulecore.TaskID
 	lease       *taskExecutionLease
+	ownedLeases []*taskExecutionLease
 	// idxLocked is true for the views of a read transaction on an indexed store,
 	// which holds the index read lock for its whole callback.
 	idxLocked       bool
@@ -225,6 +311,7 @@ type transactionSnapshot struct {
 	payloads          map[string][]byte
 	touched           map[modulecore.TaskID]struct{}
 	owner             *taskExecutionLease
+	owners            []*taskExecutionLease
 	base              *transactionTaskRunBase
 	admittedPending   map[string][]byte
 	ownerOnlyAccessed bool
@@ -260,7 +347,7 @@ func validateTaskTransaction(ctx context.Context, parent *JSONLStore, snapshot t
 	}
 	settlingTask, settling := taskMeetingSettlementTask(ctx, parent, snapshot)
 	if parent.executionFence != nil {
-		if activeTaskID := parent.executionFence.hasActive(snapshot.touched, snapshot.owner); activeTaskID != "" {
+		if activeTaskID := parent.executionFence.hasActiveOwned(snapshot.touched, snapshot.owner, snapshot.owners); activeTaskID != "" {
 			if !settling || activeTaskID != settlingTask {
 				return fmt.Errorf("%w: task transaction conflicts with active execution fence for task %s", ErrTaskExecutionFenceActive, activeTaskID)
 			}
@@ -454,7 +541,7 @@ func (s *transactionStore) appendValue(ctx context.Context, filename string, val
 func (s *transactionStore) freezeAndSnapshot() transactionSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snapshot := transactionSnapshot{owner: s.lease}
+	snapshot := transactionSnapshot{owner: s.lease, owners: append([]*taskExecutionLease(nil), s.ownedLeases...)}
 	if s.state == nil {
 		return snapshot
 	}
@@ -517,6 +604,95 @@ func (s *transactionStore) SaveTask(ctx context.Context, value domaintask.Task) 
 	return s.saveTask(ctx, value)
 }
 
+func (s *transactionStore) SaveTaskActivity(ctx context.Context, value domaintask.Task) error {
+	if err := s.checkWrite(ctx); err != nil {
+		return err
+	}
+	if value.Activity == nil {
+		return domaintask.ErrCurrentActivityInvalid
+	}
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	existing, err := s.getTaskRaw(ctx, value.TaskID)
+	if err != nil {
+		return err
+	}
+	expected := cloneTransactionTask(value)
+	comparable := cloneTransactionTask(existing)
+	comparable.Activity = expected.Activity
+	comparable.UpdatedAt = expected.UpdatedAt
+	if !reflect.DeepEqual(comparable, expected) {
+		return domaintask.ErrActivityTaskRequiresOwner
+	}
+	if !activityMetadataTransitionAllowed(existing.Activity, value.Activity) {
+		return domaintask.ErrCurrentActivityConflict
+	}
+	return s.appendActivityTask(ctx, value)
+}
+
+func (s *transactionStore) SaveNewPassiveActivityTask(ctx context.Context, value domaintask.Task) error {
+	if ctx == nil || value.Activity == nil {
+		return errors.New("new passive activity Task does not meet the restricted fallback contract")
+	}
+	if value.Status != domaintask.StatusRunning || value.StartedAt == nil || value.FinishedAt != nil || value.Route != domaintask.RouteGeneral ||
+		!value.Activity.Passive || value.Activity.Revision != 1 {
+		return errors.New("new passive activity Task has invalid lifecycle state")
+	}
+	switch value.Activity.Kind {
+	case domaintask.ActivityKindEvaluating:
+		if len(value.Activity.Participants) != 1 || value.Activity.Game != nil || value.Title != "Evaluating next activity" ||
+			value.Activity.Label != "Evaluating next activity" || value.Activity.Phase != "evaluating" {
+			return errors.New("new evaluating Task does not meet the restricted fallback contract")
+		}
+		participant := value.Activity.Participants[0]
+		if !participant.IsCurrent || participant.ActorID != value.Assignee {
+			return errors.New("new evaluating Task must bind its assignee as the sole current participant")
+		}
+	case domaintask.ActivityKindGame:
+		if value.Activity.Game == nil || value.Activity.Game.GameID == "" || value.Activity.Game.SessionID == "" ||
+			value.Title != "Playing "+value.Activity.Game.GameID || value.Activity.Label != value.Title ||
+			value.Activity.Phase == "" || len(value.Activity.Participants) == 0 || value.Activity.Participants[0].ActorID != value.Assignee {
+			return errors.New("new observed game Task does not meet the restricted adoption contract")
+		}
+		for _, participant := range value.Activity.Participants {
+			if participant.IsCurrent || participant.Revision != 1 {
+				return errors.New("new observed game Task participants must begin unassigned")
+			}
+		}
+	default:
+		return errors.New("new passive activity Task kind is outside the restricted owner contract")
+	}
+	expected := domaintask.Task{
+		TaskID: value.TaskID, Title: value.Title, Assignee: value.Assignee, Route: domaintask.RouteGeneral,
+		Status: domaintask.StatusRunning, Priority: domaintask.PriorityNormal,
+		InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true, CreatedAt: value.CreatedAt,
+		UpdatedAt: value.UpdatedAt, StartedAt: value.StartedAt, Activity: value.Activity,
+	}
+	if !reflect.DeepEqual(value, expected) {
+		return errors.New("new passive activity Task contains fields outside the restricted owner contract")
+	}
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	if err := s.checkWrite(ctx); err != nil {
+		return err
+	}
+	if _, err := s.getTaskRaw(ctx, value.TaskID); err == nil {
+		return fmt.Errorf("passive activity Task %s already exists: %w", value.TaskID, domaintask.ErrCurrentActivityConflict)
+	} else if !errors.Is(err, domaintask.ErrNotFound) {
+		return err
+	}
+	return s.appendActivityTask(ctx, value)
+}
+
+func (s *transactionStore) GetTaskActivity(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	if err := s.check(ctx); err != nil {
+		return domaintask.Task{}, err
+	}
+	return s.getTaskRaw(ctx, taskID)
+}
+
 func (s *transactionStore) SaveTaskAuthorized(ctx context.Context, value domaintask.Task, authorize domaintask.TaskWriteAuthorizationCheck) error {
 	if domaintask.IsOwnerManagedTask(value) {
 		return domaintask.ErrTypedTaskRequiresOwner
@@ -556,6 +732,16 @@ func (s *transactionStore) saveTask(ctx context.Context, value domaintask.Task) 
 	if err := value.Validate(); err != nil {
 		return err
 	}
+	existing, existingErr := s.getTaskRaw(ctx, value.TaskID)
+	if existingErr != nil && !errors.Is(existingErr, domaintask.ErrNotFound) {
+		return existingErr
+	}
+	if existingErr == nil && !reflect.DeepEqual(existing.Activity, value.Activity) {
+		return domaintask.ErrActivityTaskRequiresOwner
+	}
+	if errors.Is(existingErr, domaintask.ErrNotFound) && value.Activity != nil {
+		return domaintask.ErrActivityTaskRequiresOwner
+	}
 	// Prime the committed Task history before entering the atomic compare+append
 	// below. The committed fold validates every prior pin transition, while the
 	// locked append also checks Task records appended concurrently in this
@@ -570,6 +756,14 @@ func (s *transactionStore) saveTask(ctx context.Context, value domaintask.Task) 
 }
 
 func (s *transactionStore) appendTask(ctx context.Context, value domaintask.Task) error {
+	return s.appendTaskWithScope(ctx, value, false)
+}
+
+func (s *transactionStore) appendActivityTask(ctx context.Context, value domaintask.Task) error {
+	return s.appendTaskWithScope(ctx, value, true)
+}
+
+func (s *transactionStore) appendTaskWithScope(ctx context.Context, value domaintask.Task, activityOnly bool) error {
 	if err := s.checkWrite(ctx); err != nil {
 		return err
 	}
@@ -594,7 +788,7 @@ func (s *transactionStore) appendTask(ctx context.Context, value domaintask.Task
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if s.scopeTaskID != "" && s.scopeTaskID != value.TaskID {
+	if !activityOnly && s.scopeTaskID != "" && s.scopeTaskID != value.TaskID {
 		return errTaskExecutionFenceScope
 	}
 	if s.parent.idx != nil {
@@ -867,6 +1061,88 @@ func (s *transactionStore) GetTask(ctx context.Context, taskID modulecore.TaskID
 		return domaintask.Task{}, domaintask.ErrTypedTaskRequiresOwner
 	}
 	return task, nil
+}
+
+func (s *transactionStore) CurrentActivityTasks(ctx context.Context, actorIDs []string) (map[string]domaintask.Task, error) {
+	if err := s.check(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateActivityActorIDs(actorIDs); err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]struct{}, len(actorIDs))
+	for _, actorID := range actorIDs {
+		wanted[actorID] = struct{}{}
+	}
+	var current map[string]domaintask.Task
+	if s.parent.idx != nil {
+		var err error
+		if s.idxLocked {
+			current, err = s.parent.idx.currentActivityTasksLocked(ctx, actorIDs)
+		} else {
+			current, err = s.parent.idx.currentActivityTasks(ctx, actorIDs)
+		}
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		all, err := s.loadTasks(ctx)
+		if err != nil {
+			return nil, err
+		}
+		current = make(map[string]domaintask.Task)
+		for _, task := range all {
+			if task.Activity == nil {
+				continue
+			}
+			for _, participant := range task.Activity.Participants {
+				if !participant.IsCurrent {
+					continue
+				}
+				if _, ok := wanted[participant.ActorID]; !ok {
+					continue
+				}
+				if prior, duplicate := current[participant.ActorID]; duplicate && prior.TaskID != task.TaskID {
+					return nil, fmt.Errorf("actor %s has multiple current activity Tasks: %w", participant.ActorID, domaintask.ErrCurrentActivityConflict)
+				}
+				current[participant.ActorID] = task
+			}
+		}
+	}
+	if s.state == nil || s.state.ov == nil {
+		return current, nil
+	}
+	s.state.mu.Lock()
+	overlay := make([]domaintask.Task, 0, len(s.state.ov.tasks))
+	for _, task := range s.state.ov.tasks {
+		overlay = append(overlay, cloneTransactionTask(task))
+	}
+	s.state.mu.Unlock()
+	for _, task := range overlay {
+		for actorID, currentTask := range current {
+			if currentTask.TaskID == task.TaskID {
+				delete(current, actorID)
+			}
+		}
+	}
+	for _, task := range overlay {
+		if task.Activity == nil {
+			continue
+		}
+		for _, participant := range task.Activity.Participants {
+			if !participant.IsCurrent {
+				continue
+			}
+			if _, ok := wanted[participant.ActorID]; !ok {
+				continue
+			}
+			if prior, duplicate := current[participant.ActorID]; duplicate && prior.TaskID != task.TaskID {
+				return nil, fmt.Errorf("actor %s has multiple pending current activity Tasks: %w", participant.ActorID, domaintask.ErrCurrentActivityConflict)
+			}
+			current[participant.ActorID] = task
+		}
+	}
+	return current, nil
 }
 
 func (s *transactionStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {

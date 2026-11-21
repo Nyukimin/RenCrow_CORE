@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -20,7 +19,7 @@ func TestBoardAgentWorkRuntimeReaderProjectsAllAssignedWorkInCanonicalActorOrder
 	queued := boardAgentWorkTestTask("mio queued high", "mio", domaintask.StatusQueued, domaintask.PriorityHigh, now.Add(-3*time.Hour))
 	queued.Summary = "secret summary must not cross projection"
 	blocked := boardAgentWorkTestTask("mio blocked", "mio", domaintask.StatusBlocked, domaintask.PriorityNormal, now.Add(-2*time.Hour))
-	running := boardAgentWorkTestTask("mio running", "mio", domaintask.StatusRunning, domaintask.PriorityNormal, now.Add(-time.Hour))
+	running := boardAgentWorkTestTask("mio running private title", "mio", domaintask.StatusRunning, domaintask.PriorityNormal, now.Add(-time.Hour))
 	running.StartedAt = ptrTime(now.Add(-20 * time.Minute))
 	ownerOnly := boardAgentWorkTestTask("owner only", "", domaintask.StatusQueued, domaintask.PriorityCritical, now.Add(-4*time.Hour))
 	ownerOnly.OwnerID = "mio"
@@ -32,7 +31,7 @@ func TestBoardAgentWorkRuntimeReaderProjectsAllAssignedWorkInCanonicalActorOrder
 		Goal: "private queue goal must not cross projection", Action: "chat", Status: "queued", NotBefore: now.Add(time.Hour), CreatedAt: now,
 	}
 	reader := &boardAgentWorkRuntimeReader{
-		tasks: boardAgentWorkTaskOwnerStub{tasks: []domaintask.Task{ownerOnly, otherActor, blocked, running, waiting, queued}},
+		tasks: boardAgentWorkTaskOwnerStub{tasks: []domaintask.Task{ownerOnly, otherActor, blocked, running, waiting, queued}, current: boardCurrentActivityFixture(running)},
 		queue: boardAgentWorkQueueStoreStub{items: []domainsuperagent.RunQueueItem{queueItem}},
 		heartbeat: boardAgentWorkHeartbeatStub{activities: []agentheartbeat.LivingActivity{{
 			ActorID: "mio", State: "running", ActivityKind: string(agentheartbeat.ActivityKindBoard), Title: "current BOARD title",
@@ -53,11 +52,12 @@ func TestBoardAgentWorkRuntimeReaderProjectsAllAssignedWorkInCanonicalActorOrder
 		}
 	}
 	mio := snapshot.Actors[0]
-	if mio.Availability.Heartbeat != "available" || mio.HeartbeatState != "running" || mio.ActivityKind != "board" || mio.ActivityTitle != "current BOARD title" {
+	if mio.Availability.Heartbeat != "available" || mio.HeartbeatState != "running" || mio.ActivityKind != "work" || mio.ActivityTitle != "作業中" {
 		t.Fatalf("mio scheduler activity = %+v", mio)
 	}
-	if len(mio.CurrentTasks) != 1 || mio.CurrentTasks[0].TaskID != string(running.TaskID) || mio.CurrentTasks[0].Title != running.Title {
-		t.Fatalf("mio current tasks = %+v, want running Task only", mio.CurrentTasks)
+	if len(mio.CurrentTasks) != 1 || mio.CurrentTasks[0].TaskID != string(running.TaskID) ||
+		mio.CurrentTasks[0].Title != mio.ActivityTitle || mio.CurrentTasks[0].Title == running.Title {
+		t.Fatalf("mio current tasks = %+v, want canonical Task with safe activity label", mio.CurrentTasks)
 	}
 	if len(mio.WaitingQueue) != 3 {
 		t.Fatalf("mio waiting queue = %+v, want queued/waiting/blocked rows only", mio.WaitingQueue)
@@ -86,28 +86,29 @@ func TestBoardAgentWorkRuntimeReaderProjectsAllAssignedWorkInCanonicalActorOrder
 func TestBoardAgentWorkRuntimeReaderDistinguishesNoWorkFromUnavailableStores(t *testing.T) {
 	actors := domainsuperagent.PrivateChatQueueActorIDs()
 	noWorkReader := &boardAgentWorkRuntimeReader{
-		tasks: boardAgentWorkTaskOwnerStub{}, queue: boardAgentWorkQueueStoreStub{}, heartbeat: boardAgentWorkHeartbeatStub{ready: true},
+		tasks: boardAgentWorkTaskOwnerStub{current: boardCurrentActivityFixture()}, queue: boardAgentWorkQueueStoreStub{}, heartbeat: boardAgentWorkHeartbeatStub{ready: true},
 	}
 	noWork, err := noWorkReader.ReadBoardAgentWork(context.Background())
 	if err != nil {
 		t.Fatalf("no-work ReadBoardAgentWork() error = %v", err)
 	}
 	if len(noWork.Actors) != len(actors) || noWork.Actors[0].Availability.Tasks != "available" || noWork.Actors[0].Availability.RunQueue != "available" ||
-		noWork.Actors[0].CurrentTasks == nil || noWork.Actors[0].WaitingQueue == nil || len(noWork.Actors[0].WaitingQueue) != 0 ||
+		len(noWork.Actors[0].CurrentTasks) != 1 || noWork.Actors[0].CurrentTasks[0].CurrentActivity == nil || noWork.Actors[0].CurrentTasks[0].CurrentActivity.Kind != "evaluating" ||
+		noWork.Actors[0].WaitingQueue == nil || len(noWork.Actors[0].WaitingQueue) != 0 ||
 		noWork.Actors[0].Availability.BoardInbox != "not_configured" || noWork.Actors[0].BoardInboxQueue != nil || noWork.Actors[0].QueueCompleteness != "incomplete" {
 		t.Fatalf("no-work snapshot = %+v, want task-store empty arrays and explicit unconfigured BOARD source", noWork.Actors[0])
 	}
 
 	unavailableReader := &boardAgentWorkRuntimeReader{
-		tasks: boardAgentWorkTaskOwnerStub{listErr: errors.New("store unavailable")},
+		tasks: boardAgentWorkTaskOwnerStub{listErr: errors.New("store unavailable"), current: boardCurrentActivityFixture()},
 		queue: boardAgentWorkQueueStoreStub{}, heartbeat: boardAgentWorkHeartbeatStub{ready: true},
 	}
 	unavailable, err := unavailableReader.ReadBoardAgentWork(context.Background())
 	if err != nil {
 		t.Fatalf("unavailable ReadBoardAgentWork() error = %v", err)
 	}
-	if unavailable.Actors[0].Availability.Tasks != "unavailable" || unavailable.Actors[0].CurrentTasks != nil || unavailable.Actors[0].WaitingQueue != nil {
-		t.Fatalf("unavailable snapshot = %+v, want explicit unavailable/null arrays", unavailable.Actors[0])
+	if unavailable.Actors[0].Availability.Tasks != "unavailable" || len(unavailable.Actors[0].CurrentTasks) != 1 || unavailable.Actors[0].WaitingQueue != nil {
+		t.Fatalf("unavailable snapshot = %+v, want canonical current Task plus unavailable queue", unavailable.Actors[0])
 	}
 }
 
@@ -125,7 +126,7 @@ func TestBoardAndLivingUseTheSameCanonicalRunningTaskIDs(t *testing.T) {
 		t.Fatalf("shared Task projection = %+v, want two running and one queued Task", projection)
 	}
 
-	board := &boardAgentWorkRuntimeReader{tasks: owner, queue: boardAgentWorkQueueStoreStub{}}
+	board := &boardAgentWorkRuntimeReader{tasks: boardAgentWorkTaskOwnerStub{tasks: owner.tasks, current: boardCurrentActivityFixture(first)}, queue: boardAgentWorkQueueStoreStub{}}
 	boardSnapshot, err := board.ReadBoardAgentWork(context.Background())
 	if err != nil {
 		t.Fatalf("read BOARD Task projection: %v", err)
@@ -138,8 +139,8 @@ func TestBoardAndLivingUseTheSameCanonicalRunningTaskIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read LIVING Task projection: %v", err)
 	}
-	if !reflect.DeepEqual(boardIDs, livingIDsByActor["mio"]) {
-		t.Fatalf("BOARD running Task IDs=%v, LIVING running Task IDs=%v", boardIDs, livingIDsByActor["mio"])
+	if len(boardIDs) != 1 || boardIDs[0] != first.TaskID {
+		t.Fatalf("BOARD current Task IDs=%v; want the one canonical current Task %s", boardIDs, first.TaskID)
 	}
 	if len(livingIDsByActor["mio"]) != 2 || livingIDsByActor["shiro"] == nil || len(livingIDsByActor["shiro"]) != 0 {
 		t.Fatalf("LIVING Task snapshot lost multiplicity or known-empty state: %+v", livingIDsByActor)
@@ -155,7 +156,7 @@ func TestLivingTaskProjectionPreservesUnavailableOwnerState(t *testing.T) {
 
 func TestBoardAgentWorkRuntimeReaderKeepsTaskRowsWhenRunQueueIsUnavailable(t *testing.T) {
 	task := boardAgentWorkTestTask("mio queued", "mio", domaintask.StatusQueued, domaintask.PriorityNormal, time.Now().UTC())
-	reader := &boardAgentWorkRuntimeReader{tasks: boardAgentWorkTaskOwnerStub{tasks: []domaintask.Task{task}}, queue: boardAgentWorkQueueStoreStub{err: errors.New("queue unavailable")}}
+	reader := &boardAgentWorkRuntimeReader{tasks: boardAgentWorkTaskOwnerStub{tasks: []domaintask.Task{task}, current: boardCurrentActivityFixture()}, queue: boardAgentWorkQueueStoreStub{err: errors.New("queue unavailable")}}
 	snapshot, err := reader.ReadBoardAgentWork(context.Background())
 	if err != nil {
 		t.Fatalf("ReadBoardAgentWork() error = %v", err)
@@ -170,7 +171,7 @@ func TestBoardAgentWorkRuntimeReaderProjectsBOARDAndForegroundQueuesSeparately(t
 	now := time.Now().UTC().Truncate(time.Second)
 	resume := now.Add(time.Hour)
 	reader := &boardAgentWorkRuntimeReader{
-		tasks: boardAgentWorkTaskOwnerStub{}, queue: boardAgentWorkQueueStoreStub{},
+		tasks: boardAgentWorkTaskOwnerStub{current: boardCurrentActivityFixture()}, queue: boardAgentWorkQueueStoreStub{},
 		heartbeat: boardAgentWorkHeartbeatStub{
 			ready: true,
 			waiters: []agentheartbeat.ForegroundWaiterQueue{{ActorID: "mio", Count: 2, Items: []agentheartbeat.ForegroundWaiterPriority{
@@ -203,7 +204,7 @@ func TestBoardAgentWorkRuntimeReaderProjectsBOARDAndForegroundQueuesSeparately(t
 
 func TestBoardAgentWorkRuntimeReaderMarksUnavailableBOARDQueueIncomplete(t *testing.T) {
 	reader := &boardAgentWorkRuntimeReader{
-		tasks: boardAgentWorkTaskOwnerStub{}, queue: boardAgentWorkQueueStoreStub{},
+		tasks: boardAgentWorkTaskOwnerStub{current: boardCurrentActivityFixture()}, queue: boardAgentWorkQueueStoreStub{},
 		heartbeat: boardAgentWorkHeartbeatStub{ready: true},
 		board:     map[string]boardAgentWorkBoardInboxOwner{"mio": boardAgentWorkBoardInboxStub{err: errors.New("inbox unavailable")}},
 	}
@@ -219,7 +220,20 @@ func TestBoardAgentWorkRuntimeReaderMarksUnavailableBOARDQueueIncomplete(t *test
 
 type boardAgentWorkTaskOwnerStub struct {
 	tasks   []domaintask.Task
+	current map[string]domaintask.CurrentActivitySnapshot
 	listErr error
+}
+
+func (s boardAgentWorkTaskOwnerStub) SnapshotCurrentActivities(_ context.Context, actorIDs []string) (map[string]domaintask.CurrentActivitySnapshot, error) {
+	result := make(map[string]domaintask.CurrentActivitySnapshot, len(actorIDs))
+	for _, actorID := range actorIDs {
+		snapshot, ok := s.current[actorID]
+		if !ok {
+			return nil, domaintask.ErrCurrentActivityNotFound
+		}
+		result[actorID] = snapshot
+	}
+	return result, nil
 }
 
 func (s boardAgentWorkTaskOwnerStub) List(_ context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
@@ -317,6 +331,28 @@ func boardAgentWorkTestTask(title, assignee string, status domaintask.Status, pr
 		task.WaitingReason = "waiting"
 	}
 	return task
+}
+
+func boardCurrentActivityFixture(currentTasks ...domaintask.Task) map[string]domaintask.CurrentActivitySnapshot {
+	currentByActor := make(map[string]domaintask.Task, len(currentTasks))
+	for _, task := range currentTasks {
+		currentByActor[task.Assignee] = task
+	}
+	result := make(map[string]domaintask.CurrentActivitySnapshot, len(domainsuperagent.PrivateChatQueueActorIDs()))
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	for _, actorID := range domainsuperagent.PrivateChatQueueActorIDs() {
+		task, ok := currentByActor[actorID]
+		kind, label, phase, passive := domaintask.ActivityKindEvaluating, "Evaluating", "waiting", true
+		if !ok {
+			task = boardAgentWorkTestTask("activity", actorID, domaintask.StatusRunning, domaintask.PriorityLow, now)
+		} else {
+			kind, label, phase, passive = domaintask.ActivityKindWork, "Work", "working", false
+		}
+		task.Activity = &domaintask.ActivityMetadata{Kind: kind, Label: label, Phase: phase, Passive: passive, Revision: 3,
+			Participants: []domaintask.ActivityParticipant{{ActorID: actorID, IsCurrent: true, Revision: 3}}}
+		result[actorID] = domaintask.CurrentActivitySnapshot{Task: task, Participant: task.Activity.Participants[0]}
+	}
+	return result
 }
 
 func ptrTime(value time.Time) *time.Time { return &value }

@@ -120,3 +120,41 @@ func TestRuntimeHealthChecksIncludeCheckpointOnlyForOpenSQLiteStore(t *testing.T
 		t.Fatalf("checks = %v, want only the opened event store checkpoint", checks)
 	}
 }
+
+func TestRuntimeReadinessRequiresCanonicalCurrentActivities(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"mio"},{"id":"worker"},{"id":"shiro"},{"id":"kuro"},{"id":"midori"}]}`))
+	}))
+	defer gateway.Close()
+	cfg := &config.Config{
+		LLMGateway: config.LLMGatewayConfig{Enabled: true, BaseURL: gateway.URL, TimeoutSec: 1},
+		Heartbeat:  config.HeartbeatConfig{AgentSchedulerEnabled: true},
+	}
+	cases := []struct {
+		name  string
+		deps  *Dependencies
+		close func()
+	}{
+		{name: "missing Task owner", deps: &Dependencies{}},
+	}
+	owner, closeStore := newCurrentActivityTestOwner(t)
+	cases = append(cases, struct {
+		name  string
+		deps  *Dependencies
+		close func()
+	}{name: "missing current bindings", deps: &Dependencies{taskManager: owner}, close: closeStore})
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if test.close != nil {
+				t.Cleanup(test.close)
+			}
+			handler := test.deps.buildHealthHandler(cfg)
+			ready := httptest.NewRecorder()
+			handler.HandleReady(ready, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+			if ready.Code != http.StatusServiceUnavailable {
+				t.Fatalf("GET /health/ready status=%d body=%s; want 503 while current activity owner invariant is missing", ready.Code, ready.Body.String())
+			}
+		})
+	}
+}

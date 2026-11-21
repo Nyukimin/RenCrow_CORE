@@ -301,7 +301,7 @@ func (m *Manager) HasTerminalGameTaskSession(ctx context.Context, gameID, sessio
 func (m *Manager) BeginGameLaunch(ctx context.Context, taskID modulecore.TaskID) (GameTaskState, bool, error) {
 	var state GameTaskState
 	newIntent := false
-	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
+	err := m.withTypedGameActivityTransaction(ctx, taskID, func(txManager *Manager, actors []string, current map[string]domaintask.Task) error {
 		task, err := txManager.store.GetTask(ctx, taskID)
 		if err != nil {
 			return err
@@ -337,7 +337,8 @@ func (m *Manager) BeginGameLaunch(ctx context.Context, taskID modulecore.TaskID)
 			return fmt.Errorf("%w: GAME Task is already terminal", ErrRunConflict)
 		}
 		state = GameTaskState{Task: task, Spec: *shared.GameSpec, Progress: progress}
-		return nil
+		state.Task, err = txManager.ensureTypedGameTaskActivityInTransaction(ctx, taskID, state.Spec.GameID, state.Progress.SessionID, gameActivityPhase(progress.Status), state, actors, current)
+		return err
 	})
 	if err != nil {
 		return GameTaskState{}, false, err
@@ -347,7 +348,7 @@ func (m *Manager) BeginGameLaunch(ctx context.Context, taskID modulecore.TaskID)
 
 func (m *Manager) MarkGameLaunchUnknown(ctx context.Context, taskID modulecore.TaskID, reason string) (GameTaskState, error) {
 	var state GameTaskState
-	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
+	err := m.withTypedGameActivityTransaction(ctx, taskID, func(txManager *Manager, actors []string, current map[string]domaintask.Task) error {
 		task, err := txManager.store.GetTask(ctx, taskID)
 		if err != nil {
 			return err
@@ -378,7 +379,8 @@ func (m *Manager) MarkGameLaunchUnknown(ctx context.Context, taskID modulecore.T
 			return err
 		}
 		state = GameTaskState{Task: task, Spec: *shared.GameSpec, Progress: progress}
-		return nil
+		state.Task, err = txManager.ensureTypedGameTaskActivityInTransaction(ctx, taskID, state.Spec.GameID, state.Progress.SessionID, gameActivityPhase(progress.Status), state, actors, current)
+		return err
 	})
 	if err != nil {
 		return GameTaskState{}, err
@@ -401,7 +403,7 @@ func (m *Manager) RecordGameLaunchReceipt(ctx context.Context, taskID modulecore
 		return GameTaskState{}, fmt.Errorf("%w: terminal GAMES receipt must be committed with FinalizeGameTaskRun", ErrRunConflict)
 	}
 	var state GameTaskState
-	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
+	err := m.withTypedGameActivityTransaction(ctx, taskID, func(txManager *Manager, actors []string, current map[string]domaintask.Task) error {
 		task, err := txManager.store.GetTask(ctx, taskID)
 		if err != nil {
 			return err
@@ -436,7 +438,8 @@ func (m *Manager) RecordGameLaunchReceipt(ctx context.Context, taskID modulecore
 			return err
 		}
 		state = GameTaskState{Task: task, Spec: *shared.GameSpec, Progress: progress}
-		return nil
+		state.Task, err = txManager.ensureTypedGameTaskActivityInTransaction(ctx, taskID, state.Spec.GameID, state.Progress.SessionID, gameActivityPhase(progress.Status), state, actors, current)
+		return err
 	})
 	if err != nil {
 		return GameTaskState{}, err

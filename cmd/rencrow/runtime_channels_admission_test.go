@@ -59,6 +59,26 @@ func TestDirectChannelMessagesAcquireHighAdmissionBeforeOrchestration(t *testing
 	}
 }
 
+func TestChannelCompletionReconcilesAfterActorAdmissionRelease(t *testing.T) {
+	var order []string
+	admission := &channelAdmissionRecorder{order: &order}
+	processor := channelActorAdmissionProcessor{
+		next:      channelAdmissionProcessorFake{order: &order},
+		admission: func() conversationruntime.ActorAdmission { return admission },
+		afterActivity: func(_ context.Context, actorID string) error {
+			order = append(order, "reconcile:"+actorID)
+			return nil
+		},
+	}
+	if _, err := processor.ProcessMessage(context.Background(), orchestrator.ProcessMessageRequest{Channel: "telegram"}); err != nil {
+		t.Fatalf("ProcessMessage(): %v", err)
+	}
+	want := []string{"acquire:mio:high", "process", "release", "reconcile:mio"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("channel completion order=%v, want %v", order, want)
+	}
+}
+
 func TestNonDirectChannelDoesNotAcquireActorAdmission(t *testing.T) {
 	var order []string
 	admission := &channelAdmissionRecorder{order: &order}

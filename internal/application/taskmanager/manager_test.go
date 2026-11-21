@@ -1186,6 +1186,16 @@ func (s *faultTaskStore) TaskTransaction(ctx context.Context, taskID modulecore.
 	})
 }
 
+func (s *faultTaskStore) ActivityTransaction(ctx context.Context, taskIDs []modulecore.TaskID, fn func(domaintask.Store) error) error {
+	transaction, ok := s.Store.(domaintask.ActivityTaskTransaction)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return transaction.ActivityTransaction(ctx, taskIDs, func(store domaintask.Store) error {
+		return fn(s.transactionView(store))
+	})
+}
+
 func (s *faultTaskStore) WithTaskExecutionFence(ctx context.Context, taskID modulecore.TaskID, fn func() error) error {
 	return s.Store.WithTaskExecutionFence(ctx, taskID, fn)
 }
@@ -1229,6 +1239,33 @@ func (s *faultTaskStore) SaveNotification(ctx context.Context, value domaintask.
 		return err
 	}
 	return s.Store.SaveNotification(ctx, value)
+}
+
+func (s *faultTaskStore) GetTaskActivity(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.GetTaskActivity(ctx, taskID)
+}
+
+func (s *faultTaskStore) SaveTaskActivity(ctx context.Context, value domaintask.Task) error {
+	if err := s.injected("activity"); err != nil {
+		return err
+	}
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveTaskActivity(ctx, value)
+}
+
+func (s *faultTaskStore) SaveNewPassiveActivityTask(ctx context.Context, value domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveNewPassiveActivityTask(ctx, value)
 }
 
 func TestManagerCreateRollsBackTaskWhenContextSaveFails(t *testing.T) {

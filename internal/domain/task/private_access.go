@@ -58,6 +58,10 @@ type TaskReadAuthorizationInput struct {
 	GoalID              modulecore.GoalID
 	Scope               TaskAccessScope
 	AuthenticatedUserID string
+	// Origin publication proof is authorization metadata only. It is never
+	// serialized into viewer DTOs or exposed as Task content.
+	OriginSessionID   modulecore.SessionID         `json:"-"`
+	OriginPublication *OriginPublicationProvenance `json:"-"`
 }
 
 type TaskReadAuthorizationCheck func(context.Context, TaskReadAuthorizationInput) error
@@ -119,7 +123,16 @@ func TaskReadInput(task Task, resource TaskReadResource, runID modulecore.RunID)
 		Resource: resource, TaskID: task.TaskID, RunID: runID,
 		WorkstreamID: task.WorkstreamID, GoalID: task.GoalID,
 		Scope: task.PrivateAccess.Scope, AuthenticatedUserID: task.PrivateAccess.AuthenticatedUserID,
+		OriginSessionID: task.OriginSessionID, OriginPublication: cloneOriginPublicationProvenance(task.OriginPublication),
 	}, nil
+}
+
+func cloneOriginPublicationProvenance(input *OriginPublicationProvenance) *OriginPublicationProvenance {
+	if input == nil {
+		return nil
+	}
+	copy := *input
+	return &copy
 }
 
 func PrivateTaskWriteInput(task Task) (TaskWriteAuthorizationInput, error) {

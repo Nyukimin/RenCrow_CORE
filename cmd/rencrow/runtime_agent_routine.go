@@ -304,6 +304,9 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 		if err := ctx.Err(); err != nil {
 			return agentheartbeat.Work{}, false, err
 		}
+		if work, found, err := r.expiredPassiveActivityWork(ctx, actorID, r.now()); err != nil || found {
+			return work, found, err
+		}
 		state, now, err := r.loadDecisionState(ctx, actorID)
 		if err != nil {
 			return agentheartbeat.Work{}, false, err
@@ -1583,7 +1586,7 @@ func (r *agentRoutineRuntime) prepareRun(ctx context.Context, intent *agentrouti
 			OwnerID: r.ownerID, Assignee: actorProgress.ActorID, Route: domaintask.RouteCHAT,
 			Priority: domaintask.PriorityLow, InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true,
 		}
-		started, run, createErr := r.tasks.CreateAndStartRun(ctx, draft, domaintask.SharedRoleContext{
+		started, run, createErr := r.tasks.CreateAndStartActivityRun(ctx, draft, agentRoutineTaskActivity(intent, actorProgress.ActorID), domaintask.SharedRoleContext{
 			TaskID: taskID, UserIntent: "CORE routine step", CurrentPlan: routineTaskTitle(intent.Kind),
 		})
 		if createErr != nil {
@@ -1613,6 +1616,10 @@ func (r *agentRoutineRuntime) prepareRun(ctx context.Context, intent *agentrouti
 		if !routineRunMatchesCheckpoint(intent, actorProgress, latest) {
 			return domaintask.Task{}, domaintask.Run{}, errors.New("running routine Run does not match its persisted checkpoint")
 		}
+		task, err = r.ensureExistingRoutineTaskCurrent(ctx, taskID, intent, actorProgress.ActorID)
+		if err != nil {
+			return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("bind resumed canonical routine Task: %w", err)
+		}
 		if err := r.validateRoutineRun(ctx, task, latest, actorProgress.ActorID); err == nil {
 			return task, latest, nil
 		}
@@ -1626,6 +1633,9 @@ func (r *agentRoutineRuntime) prepareRun(ctx context.Context, intent *agentrouti
 		}
 		return r.resumeRoutineRun(ctx, taskID, latest.RunID, actorProgress.ActorID, intent)
 	case task.Status == domaintask.StatusWaiting && latest.Status == domaintask.RunStatusWaiting:
+		if _, err := r.ensureExistingRoutineTaskCurrent(ctx, taskID, intent, actorProgress.ActorID); err != nil {
+			return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("bind checkpointed canonical routine Task: %w", err)
+		}
 		return r.resumeRoutineRun(ctx, taskID, latest.RunID, actorProgress.ActorID, intent)
 	case task.Status == domaintask.StatusSucceeded && latest.Status == domaintask.RunStatusSucceeded:
 		if !routineProgressHasEffect(intent, actorProgress.ActorID) {
@@ -2706,12 +2716,37 @@ func (r *agentRoutineRuntime) pauseRuns(ctx context.Context, prepared []routineP
 		if err := routinePersistErr(ctx, func(persistCtx context.Context) error {
 			_, completeErr := r.tasks.CompleteRun(persistCtx, item.task.TaskID, item.run.RunID, item.task.Assignee,
 				domaintask.StatusWaiting, "CORE agent routine paused", reason)
-			return completeErr
+			if completeErr != nil {
+				return completeErr
+			}
+			return r.handoffPausedRoutineTask(persistCtx, item.task)
 		}); err != nil && firstErr == nil {
 			firstErr = errors.Join(taskmanager.ErrStartedRunNotClosed, fmt.Errorf("pause exact routine Run %s for Task %s: %w", item.run.RunID, item.task.TaskID, err))
 		}
 	}
 	return firstErr
+}
+
+func (r *agentRoutineRuntime) handoffPausedRoutineTask(ctx context.Context, task domaintask.Task) error {
+	if r == nil || r.tasks == nil || task.TaskID == "" || task.Assignee == "" {
+		return errors.New("paused routine Task has no canonical current-activity owner binding")
+	}
+	snapshots, err := r.tasks.SnapshotCurrentActivities(ctx, []string{task.Assignee})
+	if err != nil {
+		return err
+	}
+	current, found := snapshots[task.Assignee]
+	if !found || current.Task.TaskID != task.TaskID || current.Task.Activity == nil || !current.Participant.IsCurrent {
+		return domaintask.ErrCurrentActivityConflict
+	}
+	draft := domaintask.Task{
+		Title: "Agent activity: evaluating", ModuleID: agentActivityModuleID, OwnerID: r.ownerID,
+		Assignee: task.Assignee, Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow,
+		InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true,
+	}
+	activity := activityMetadataForActor(domaintask.ActivityKindEvaluating, "Evaluating", "waiting", true, task.Assignee, "")
+	_, err = r.tasks.TransitionCurrentActivity(ctx, task.Assignee, task.TaskID, current.Participant.Revision, draft, activity)
+	return err
 }
 
 func (r *agentRoutineRuntime) pausePersistedRoutineRuns(

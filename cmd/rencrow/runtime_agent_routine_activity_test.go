@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentroutine"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
@@ -27,6 +29,25 @@ func TestFinishRoutineIntentStoresRelaxRestBoundedByPlannedSleep(t *testing.T) {
 	}
 	defer store.Close()
 	runtime.store = store
+	taskRoot, err := os.MkdirTemp(".", ".routine-activity-tasks-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(taskRoot); err != nil {
+			t.Errorf("remove Task store root: %v", err)
+		}
+	})
+	taskStore, err := taskpersistence.NewJSONLStore(taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := taskStore.Close(); err != nil {
+			t.Errorf("close Task store: %v", err)
+		}
+	})
+	runtime.tasks, runtime.ownerID = taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()), "mio"
 	runtime.cfg = &config.Config{Heartbeat: config.HeartbeatConfig{Routine: config.RoutineHeartbeatConfig{
 		SharedRooms: []string{"living"}, PrivateRooms: map[string]string{"mio": "private-mio"},
 	}}}
@@ -37,6 +58,9 @@ func TestFinishRoutineIntentStoresRelaxRestBoundedByPlannedSleep(t *testing.T) {
 	state, err := store.EnsureSchedule(ctx, "mio", "2026-11-16")
 	if err != nil || !state.PlannedSleep.Equal(sleepAt) || !state.PlannedWake.Equal(wakeAt) {
 		t.Fatalf("EnsureSchedule = %+v, %v", state, err)
+	}
+	if err := initializeAgentCurrentActivities(ctx, runtime.tasks, runtime.ownerID, runtime, nil); err != nil {
+		t.Fatalf("initialize current Task: %v", err)
 	}
 	intent := agentroutine.Intent{ID: "relax-world-confirmed", ActorID: "mio", Date: "2026-11-15", Kind: agentroutine.ActivityRelax}
 	state, err = store.DraftIntent(ctx, intent)

@@ -124,6 +124,16 @@ func (m *Manager) EnsureTaskCenterExecution(
 		if err := writer.SaveTaskCenterExecutionState(ctx, started, run, &storedContext, stateAuthorization); err != nil {
 			return nil, err
 		}
+		if !canonicalActivityActor(started.Assignee) {
+			return nil, domaintask.ErrCurrentActivityInvalid
+		}
+		activityManager := m.withStore(tx)
+		if _, err := activityManager.SetCurrentActivityInTransaction(ctx, started.TaskID, domaintask.ActivityMetadata{
+			Kind: domaintask.ActivityKindWork, Label: strings.TrimSpace(started.Title), Phase: "active",
+			Participants: []domaintask.ActivityParticipant{{ActorID: started.Assignee}},
+		}); err != nil {
+			return nil, err
+		}
 		return json.Marshal(struct {
 			TaskID modulecore.TaskID `json:"task_id"`
 			RunID  modulecore.RunID  `json:"run_id"`
@@ -388,6 +398,11 @@ func (m *Manager) FinishTaskCenterExecution(
 		runStatus, ok := runStatusForTaskStatus(status)
 		if !ok {
 			return nil, errors.New("TaskCenter terminal status has no canonical Run status")
+		}
+		activityManager := m.withStore(tx)
+		task, err = activityManager.PrepareTerminalActivityTransition(ctx, task)
+		if err != nil {
+			return nil, err
 		}
 		now := m.now()
 		closedRun, err := run.Close(runStatus, now, strings.TrimSpace(summary))

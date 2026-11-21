@@ -25,18 +25,26 @@ type runtimeRoutineHouseViewResponse struct {
 }
 
 type runtimeRoutineHouseViewActorDTO struct {
-	ID                    string       `json:"id"`
-	RoomID                string       `json:"room_id"`
-	SeatID                string       `json:"seat_id,omitempty"`
-	SeatAction            string       `json:"seat_action,omitempty"`
-	Position              [3]float64   `json:"position"`
-	ActiveKind            string       `json:"active_kind,omitempty"`
-	ActivePose            string       `json:"active_pose,omitempty"`
-	ActivityStartedAt     string       `json:"activity_started_at,omitempty"`
-	ActivityDueAt         string       `json:"activity_due_at,omitempty"`
-	MovePoints            [][3]float64 `json:"move_points,omitempty"`
-	TargetRoomID          string       `json:"target_room_id,omitempty"`
-	MirrorPoseCompletions *uint64      `json:"mirror_pose_completions,omitempty"`
+	ID                    string                                 `json:"id"`
+	RoomID                string                                 `json:"room_id"`
+	SeatID                string                                 `json:"seat_id,omitempty"`
+	SeatAction            string                                 `json:"seat_action,omitempty"`
+	Position              [3]float64                             `json:"position"`
+	ActiveKind            string                                 `json:"active_kind,omitempty"`
+	ActivePose            string                                 `json:"active_pose,omitempty"`
+	ActivityStartedAt     string                                 `json:"activity_started_at,omitempty"`
+	ActivityDueAt         string                                 `json:"activity_due_at,omitempty"`
+	MovePoints            [][3]float64                           `json:"move_points,omitempty"`
+	TargetRoomID          string                                 `json:"target_room_id,omitempty"`
+	MirrorPoseCompletions *uint64                                `json:"mirror_pose_completions,omitempty"`
+	CurrentActivity       *runtimeRoutineHouseCurrentActivityDTO `json:"current_activity,omitempty"`
+}
+
+type runtimeRoutineHouseCurrentActivityDTO struct {
+	Kind     string `json:"kind"`
+	Label    string `json:"label"`
+	Phase    string `json:"phase"`
+	Revision uint64 `json:"revision"`
 }
 
 func registerRuntimeRoutineHouseViewRoute(mux *http.ServeMux, cfg *config.Config, deps *Dependencies) {
@@ -122,17 +130,22 @@ func runtimeRoutineHouseViewHasCompleteActorScope(runtime *agentRoutineRuntime) 
 }
 
 func runtimeRoutineHouseViewProject(ctx context.Context, runtime *agentRoutineRuntime, read routineSnapshotRead) (runtimeRoutineHouseViewResponse, error) {
-	if runtime == nil || !runtimeRoutineHouseViewHasCompleteActorScope(runtime) || read.snapshot.WorldID == "" || read.snapshot.HomeSceneSHA256 == "" {
+	if runtime == nil || runtime.deps == nil || runtime.deps.taskManager == nil ||
+		!runtimeRoutineHouseViewHasCompleteActorScope(runtime) || read.snapshot.WorldID == "" || read.snapshot.HomeSceneSHA256 == "" {
 		return runtimeRoutineHouseViewResponse{}, errRoutineHouseViewSnapshotUnavailable
 	}
-	actorByCoreID := make(map[string]runtimeRoutineHouseViewActorDTO, len(read.snapshot.Actors))
-	desired, ready, err := runtime.livingSeats(ctx)
+	currentActivities, err := snapshotAgentCurrentActivities(ctx, runtime.deps.taskManager)
 	if err != nil {
-		return runtimeRoutineHouseViewResponse{}, err
+		return runtimeRoutineHouseViewResponse{}, errors.Join(errRoutineHouseViewSnapshotUnavailable, err)
 	}
-	if !ready {
-		desired = nil
+	actorByCoreID := make(map[string]runtimeRoutineHouseViewActorDTO, len(read.snapshot.Actors))
+	runtime.livingConversationMu.Lock()
+	conversations := make(map[string]livingSeatActivity, len(runtime.livingConversation))
+	for actorID, seat := range runtime.livingConversation {
+		conversations[actorID] = seat
 	}
+	runtime.livingConversationMu.Unlock()
+	desired := buildCanonicalLivingSeatTargets(currentActivities, conversations)
 	for _, actor := range read.snapshot.Actors {
 		coreActorID, allowed := runtime.worldActorIDs[actor.ActorID]
 		if !allowed {
@@ -144,7 +157,18 @@ func runtimeRoutineHouseViewProject(ctx context.Context, runtime *agentRoutineRu
 		if actor.HomeSceneSHA256 != "" && actor.HomeSceneSHA256 != read.snapshot.HomeSceneSHA256 {
 			return runtimeRoutineHouseViewResponse{}, errRoutineHouseViewSnapshotUnavailable
 		}
-		dto := runtimeRoutineHouseViewActorDTO{ID: coreActorID, RoomID: actor.RoomID, Position: actor.Position}
+		current, found := currentActivities[coreActorID]
+		if !found {
+			return runtimeRoutineHouseViewResponse{}, errRoutineHouseViewSnapshotUnavailable
+		}
+		kind, label, phase, revision, valid := publicCurrentActivity(current)
+		if !valid {
+			return runtimeRoutineHouseViewResponse{}, errRoutineHouseViewSnapshotUnavailable
+		}
+		dto := runtimeRoutineHouseViewActorDTO{
+			ID: coreActorID, RoomID: actor.RoomID, Position: actor.Position,
+			CurrentActivity: &runtimeRoutineHouseCurrentActivityDTO{Kind: kind, Label: label, Phase: phase, Revision: revision},
+		}
 		if actor.ActivityID == "" && livingSeatRoom(actor.SlotID) == actor.RoomID {
 			dto.SeatID = actor.SlotID
 			if target := desired[coreActorID]; target.slot == actor.SlotID {

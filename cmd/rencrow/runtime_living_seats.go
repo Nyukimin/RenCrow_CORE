@@ -27,39 +27,61 @@ func livingSeatRoom(slot string) string {
 }
 
 func (r *agentRoutineRuntime) livingSeats(ctx context.Context) (map[string]livingSeatActivity, bool, error) {
-	if r.deps == nil || r.deps.agentHeartbeat == nil {
+	if r == nil || r.deps == nil || r.deps.taskManager == nil {
 		return nil, false, nil
 	}
-	activities, ready := r.deps.agentHeartbeat.LivingSnapshot(ctx, nil)
-	if !ready {
-		return nil, false, nil
-	}
-	var sessions []gameObserverActiveAgentSession
-	if r.gameSessions != nil {
-		var err error
-		sessions, err = r.gameSessions.ActiveAgentSessions(ctx)
-		if err != nil {
-			return nil, false, err
-		}
-	}
-	if r.deps.taskManager == nil {
-		return nil, false, nil
-	}
-	runningTasks := make([]domaintask.Task, 0)
-	for _, actorID := range agentHeartbeatActorIDs {
-		projection, err := readActorTaskProjection(ctx, r.deps.taskManager, actorID, domaintask.StatusRunning)
-		if err != nil {
-			return nil, false, fmt.Errorf("read living Task projection for %s: %w", actorID, err)
-		}
-		runningTasks = append(runningTasks, projection.Current...)
-	}
-	activities, ready = r.deps.agentHeartbeat.LivingSnapshot(ctx, nil)
-	if !ready {
-		return nil, false, nil
+	activities, err := snapshotAgentCurrentActivities(ctx, r.deps.taskManager)
+	if err != nil {
+		return nil, false, fmt.Errorf("read canonical living activities: %w", err)
 	}
 	r.livingConversationMu.Lock()
 	defer r.livingConversationMu.Unlock()
-	return buildLivingSeatTargets(sessions, activities, r.livingConversation, runningTasks), true, nil
+	return buildCanonicalLivingSeatTargets(activities, r.livingConversation), true, nil
+}
+
+func buildCanonicalLivingSeatTargets(
+	activities map[string]domaintask.CurrentActivitySnapshot,
+	conversations map[string]livingSeatActivity,
+) map[string]livingSeatActivity {
+	desired := make(map[string]livingSeatActivity)
+	for actorID, snapshot := range activities {
+		if snapshot.Task.Activity == nil || !snapshot.Participant.IsCurrent {
+			continue
+		}
+		switch snapshot.Task.Activity.Kind {
+		case domaintask.ActivityKindWork, domaintask.ActivityKindGame:
+			desired[actorID] = livingSeatActivity{"living", "desk-" + actorID, "type"}
+		case domaintask.ActivityKindChat:
+			if seat, ok := conversations[actorID]; ok {
+				desired[actorID] = seat
+				continue
+			}
+			if partner := currentChatPartner(snapshot); partner != "" {
+				slot := "sofa"
+				if actorID > partner {
+					slot = "sofa-guest"
+				}
+				desired[actorID] = livingSeatActivity{"living", slot, ""}
+			}
+		}
+	}
+	return desired
+}
+
+func currentChatPartner(snapshot domaintask.CurrentActivitySnapshot) string {
+	if snapshot.Task.Activity == nil {
+		return ""
+	}
+	const prefix = "chat-with-"
+	if partner, ok := strings.CutPrefix(snapshot.Task.Activity.Label, prefix); ok && isAgentHeartbeatActor(partner) && partner != snapshot.Participant.ActorID {
+		return partner
+	}
+	for _, participant := range snapshot.Task.Activity.Participants {
+		if participant.ActorID != snapshot.Participant.ActorID && isAgentHeartbeatActor(participant.ActorID) {
+			return participant.ActorID
+		}
+	}
+	return ""
 }
 
 func buildLivingSeatTargets(sessions []gameObserverActiveAgentSession, activities []agentheartbeat.LivingActivity, conversations map[string]livingSeatActivity, runningTasks []domaintask.Task) map[string]livingSeatActivity {

@@ -205,6 +205,15 @@ func cloneTransactionTask(value domaintask.Task) domaintask.Task {
 		timing := cloneTaskTiming(*value.Timing)
 		value.Timing = &timing
 	}
+	if value.Activity != nil {
+		activity := *value.Activity
+		activity.Participants = append([]domaintask.ActivityParticipant(nil), value.Activity.Participants...)
+		if value.Activity.Game != nil {
+			game := *value.Activity.Game
+			activity.Game = &game
+		}
+		value.Activity = &activity
+	}
 	if value.OriginPublication != nil {
 		originPublication := *value.OriginPublication
 		value.OriginPublication = &originPublication

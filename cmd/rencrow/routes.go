@@ -119,12 +119,10 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		HobbyGraphRelation:           viewer.HandleHobbyGraphRelation(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyMusicImport:             viewer.HandleHobbyMusicImport(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyTopicCandidatesGenerate: viewer.HandleHobbyTopicCandidatesGenerate(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
-		LivingHeartbeat: viewer.HandleLivingHeartbeatWithCurrentTasks(
-			dependencies.agentHeartbeat,
+		LivingHeartbeat: viewer.HandleLivingHeartbeatWithActivities(
 			dependencies.taskStore,
 			runtimePublicTaskVisibility(dependencies.sessionVisibility),
 			newRuntimeLivingTaskProjectionReader(dependencies),
-			dependencies.agentRoutine,
 		),
 		BoardAgentWork: viewer.NewBoardAgentWorkHandler(newRuntimeBoardAgentWorkReader(dependencies), boardAgentWorkOwnerToken),
 	}})
@@ -369,6 +367,7 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		PolicyDecisions: dependencies.agentPolicyDecisions,
 	}})
 	registerTaskCenterRoutes(mux, cfg, dependencies)
+	registerRuntimeTaskActivitiesRoute(mux, cfg, dependencies)
 }
 
 func registerSTTAndAudioRoutes(mux *http.ServeMux, cfg *config.Config, sttRuntime sttRuntime, voiceChatRuntime voiceChatRuntime, dependencies *Dependencies) {

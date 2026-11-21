@@ -12,6 +12,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentroutine"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 const routineWorldMoveWait = 5 * time.Minute
@@ -890,6 +891,9 @@ func (r *agentRoutineRuntime) ensureRoutineWorldArrival(
 		return state, progress, worldread.Actor{}, err
 	}
 	if actor.RoomID == roomID && (slotID == "" || actor.SlotID == slotID) && actor.ActivityKind != "move" {
+		if err := r.restoreRoutineTaskCurrent(ctx, state, actorID); err != nil {
+			return state, progress, worldread.Actor{}, fmt.Errorf("restore routine Task after confirmed WORLD arrival: %w", err)
+		}
 		return state, progress, actor, nil
 	}
 	movePurpose := purpose + ":move"
@@ -907,6 +911,9 @@ func (r *agentRoutineRuntime) ensureRoutineWorldArrival(
 					_, actor, err = r.routineWorldFreshActor(ctx, actorID)
 					if err != nil {
 						return state, progress, worldread.Actor{}, err
+					}
+					if err := r.restoreRoutineTaskCurrent(ctx, state, actorID); err != nil {
+						return state, progress, worldread.Actor{}, fmt.Errorf("restore routine Task after confirmed WORLD arrival: %w", err)
 					}
 					return state, progress, actor, r.verifyRoutineWorldArrivalState(actor, roomID, slotID)
 				}
@@ -959,6 +966,9 @@ func (r *agentRoutineRuntime) ensureRoutineWorldArrival(
 	if err != nil {
 		return state, progress, worldread.Actor{}, err
 	}
+	if err := r.setRoutineMovingActivity(ctx, state, actorID, actor.ActivityDueAt); err != nil {
+		return state, progress, worldread.Actor{}, fmt.Errorf("bind confirmed WORLD move to current Task: %w", err)
+	}
 	if err := r.waitRoutineWorldActivityDue(ctx, stop, actor.ActivityDueAt, maxWait, state); err != nil {
 		return state, progress, worldread.Actor{}, err
 	}
@@ -991,6 +1001,9 @@ func (r *agentRoutineRuntime) ensureRoutineWorldArrival(
 	}
 	progress.World.NextDueAt = time.Time{}
 	state, progress, err = r.saveProgress(ctx, state, "world_move_arrival_confirmed", progress)
+	if err == nil {
+		err = r.restoreRoutineTaskCurrent(ctx, state, actorID)
+	}
 	return state, progress, actor, err
 }
 
@@ -1221,6 +1234,9 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 			if err := r.verifyRoutineWorldSnapshot(read, actor, op); err != nil || actor.ActivityKind != "sleep" || actor.ActivityID != op.ActivityID || actor.RoomID != roomID || actor.SlotID != "bed-"+intent.ActorID {
 				return state, progress, errors.Join(err, errors.New("fresh WORLD snapshot does not confirm the exact sleep activity"))
 			}
+			if err := r.updateCurrentRoutinePhase(ctx, intent.ActorID, domaintask.ActivityKindSleep, "Sleep", "sleeping"); err != nil {
+				return state, progress, fmt.Errorf("record WORLD-confirmed sleep on current Task: %w", err)
+			}
 		} else {
 			index, ok := routineWorldExactOperation(progress, purpose)
 			if !ok {
@@ -1232,6 +1248,9 @@ func (r *agentRoutineRuntime) executeRoutineWorldActivity(
 			}
 			if err := r.verifyRoutineWorldSnapshot(read, actor, op); err != nil {
 				return state, progress, err
+			}
+			if err := r.updateCurrentRoutinePhase(ctx, intent.ActorID, domaintask.ActivityKindSleep, "Sleep", "sleeping"); err != nil {
+				return state, progress, fmt.Errorf("record WORLD-confirmed sleep on current Task: %w", err)
 			}
 		}
 		if !state.LogicalSleepUntil.Equal(state.PlannedWake) {

@@ -107,6 +107,12 @@ Redis、Qdrant、mount、圧縮、checksum、復元検証、Task store・Action 
 
 Task storeとAction storeは、COREを止めた同じ停止窓の中で別archive`workspace-stores.tar.gz`に保存します。journalには、restore checkが隔離したコピーに対して`rencrow tasks verify`と`rencrow actions verify`を実行した結果が、件数だけで出ます（`[OK] Task store verified: layout=v2 segments=… mismatches=0`、続けて`[OK] Action store verified: …`、最後に`[OK] workspace stores verified`）。この最後の行が無いcohortはpublishされません。失敗時、不一致の詳細は記録IDを含むためjournalに出さず、`[NG] Task store verification failed`のように対象と件数だけを出します。詳細はstoreのコピーに対して同じCLIを実行して確かめます。仕様は`docs/05_設定リファレンス.md`の「Task storeとAction storeのbackup」です。
 
+### Task.Activity JSONL互換性とrollback
+
+Activity metadataを含むTaskを書き込む新COREを初めて起動した後は、Task JSONLに`activity` fieldを含む行が保存される場合があります。Task readerは未知fieldを拒否するため、この書き込み後に旧CORE binaryへ戻すと、Task storeを読み込めず起動に失敗する可能性があります。新COREの初回Activity write後は、binary rollbackを行わず、Activity fieldを認識する互換COREを使って前方修復してください。Task storeを編集・巻き戻して起動を通す操作は禁止です。
+
+起動失敗時は、まず現在のTask storeとbackup cohortを保持し、journalと`rencrow tasks verify`の結果を確認します。旧COREでの診断が必要なら、live storeではなく隔離した検証用copyを使います。修正版を適用する前に、対象binaryがActivity fieldを読む互換性を持つことを確認し、修復後は新しい整合backup cohortを作成します。rollback可能性は、Activityを含むTask JSONLを読み込めるbinaryへのforward repairを基準に判断します。
+
 backup windowはrunnerが`RENCROW_BACKUP`をmountして所有し、終了時に元のunmount状態へ戻します。整合snapshot中は
 `rencrow.service`をruntime maskし、deploy、手動restart、resilienceを含む別経路からのstartを失敗させます。
 成功・失敗・signalの全終了経路でmaskを解除し、開始前にactiveだったCOREだけを再開します。

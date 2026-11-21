@@ -9,6 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainhealth "github.com/Nyukimin/RenCrow_CORE/internal/domain/health"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	infrahealth "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/health"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -16,7 +17,41 @@ import (
 
 // buildHealthHandler は Health Check HTTP ハンドラを構築
 func (d *Dependencies) buildHealthHandler(cfg *config.Config) *healthadapter.Handler {
-	return healthadapter.NewHandler(buildHealthService(cfg, d.runtimeHealthChecks()...))
+	checks := d.runtimeHealthChecks()
+	if cfg != nil && cfg.Heartbeat.AgentSchedulerEnabled {
+		var owner currentActivitySnapshotOwner
+		if d != nil {
+			owner = d.taskManager
+		}
+		checks = append(checks, runtimeCurrentActivityCheck{owner: owner})
+	}
+	return healthadapter.NewHandler(buildHealthService(cfg, checks...))
+}
+
+type currentActivitySnapshotOwner interface {
+	SnapshotCurrentActivities(context.Context, []string) (map[string]domaintask.CurrentActivitySnapshot, error)
+}
+
+type runtimeCurrentActivityCheck struct{ owner currentActivitySnapshotOwner }
+
+func (c runtimeCurrentActivityCheck) Name() string { return "agent_current_activity" }
+
+func (c runtimeCurrentActivityCheck) Run(ctx context.Context) domainhealth.CheckResult {
+	started := time.Now()
+	if c.owner == nil {
+		return domainhealth.CheckResult{Name: c.Name(), Status: domainhealth.StatusDegraded, Duration: time.Since(started)}
+	}
+	snapshots, err := c.owner.SnapshotCurrentActivities(ctx, agentHeartbeatActorIDs)
+	if err != nil || len(snapshots) != len(agentHeartbeatActorIDs) {
+		return domainhealth.CheckResult{
+			Name: c.Name(), Status: domainhealth.StatusDegraded, Duration: time.Since(started),
+			Details: map[string]any{"expected_actors": len(agentHeartbeatActorIDs), "resolved_actors": len(snapshots)},
+		}
+	}
+	return domainhealth.CheckResult{
+		Name: c.Name(), Status: domainhealth.StatusOK, Duration: time.Since(started),
+		Details: map[string]any{"expected_actors": len(agentHeartbeatActorIDs), "resolved_actors": len(snapshots)},
+	}
 }
 
 // runtimeHealthChecks are the health checks of what this process has open. The CLI

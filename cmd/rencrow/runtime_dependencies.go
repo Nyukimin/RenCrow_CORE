@@ -101,6 +101,8 @@ type runtimeCanonicalEventStore interface {
 }
 
 type Dependencies struct {
+	localAgentOpsOwnerID                string
+	reconcileActorGameActivity          func(context.Context, string) error
 	privateTextWorkers                  map[string]privateTaskWorker
 	persistenceQueue                    *persistencequeue.Queue[persistencequeue.PersistenceCommand]
 	transportPersistenceQueue           *persistencequeue.Queue[persistencequeue.PersistenceCommand]
@@ -416,6 +418,8 @@ type Dependencies struct {
 	gameBridgeStore              *viewer.GameBridgeStore
 	gameTaskAdmission            *gameTaskRuntimeAdmission
 	agentAdmission               conversationruntime.ActorAdmission
+	activityReconcileSignal      chan string
+	activityReconcileDone        <-chan struct{}
 	agentHeartbeatStarted        bool
 	agentHeartbeatCancel         context.CancelFunc
 	agentHeartbeatDone           <-chan struct{}
@@ -445,6 +449,14 @@ func (d *Dependencies) Shutdown() {
 	queueOwnersSafeToClose := true
 	if d.agentHeartbeatCancel != nil {
 		d.agentHeartbeatCancel()
+		if d.activityReconcileDone != nil {
+			select {
+			case <-d.activityReconcileDone:
+			case <-time.After(5 * time.Minute):
+				log.Printf("Agent activity reconciler did not stop before shutdown timeout")
+				queueOwnersSafeToClose = false
+			}
+		}
 		if d.agentHeartbeatDone != nil {
 			select {
 			case <-d.agentHeartbeatDone:
@@ -2297,6 +2309,14 @@ func startAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies) {
 	deps.agentHeartbeatCancel = cancel
 	deps.agentHeartbeatDone = done
 	deps.agentHeartbeatStarted = true
+	if deps.activityReconcileSignal != nil {
+		reconcileDone := make(chan struct{})
+		deps.activityReconcileDone = reconcileDone
+		go func() {
+			defer close(reconcileDone)
+			runAgentActivityReconciler(ctx, deps)
+		}()
+	}
 	if deps.agentRoutine != nil {
 		go deps.agentRoutine.runLivingSeats(ctx)
 	}

@@ -322,6 +322,7 @@ func TaskCenterDraftMatchesStored(expected, stored Task) bool {
 	expected.CreatedAt, expected.UpdatedAt = stored.CreatedAt, stored.UpdatedAt
 	expected.StartedAt, expected.FinishedAt = stored.StartedAt, stored.FinishedAt
 	expected.Status, expected.Summary, expected.WaitingReason = stored.Status, stored.Summary, stored.WaitingReason
+	expected.Activity = cloneActivityMetadata(stored.Activity)
 	return reflect.DeepEqual(expected, stored)
 }
 

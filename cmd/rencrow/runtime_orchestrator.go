@@ -135,8 +135,8 @@ func buildOrchestratorRuntime(
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
 		privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
-		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), deps.gameTaskAdmission, privateTaskRunner)
 		configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools, privateTaskRunner)
+		deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), deps.gameTaskAdmission, privateTaskRunner)
 		return
 	}
 
@@ -268,22 +268,23 @@ func buildOrchestratorRuntime(
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)
 	deps.voiceDirectHandler = orch
 	privateTaskRunner := newPrivateTaskRunQueueRunner(deps.taskManager, cfg.LocalAgentOps.UserID, agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers)
-	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), deps.gameTaskAdmission, privateTaskRunner)
 	configureAgentHeartbeatScheduler(cfg, deps, agentRoutineWorkers(agents.Mio, agents.ShiroChat, agents.Wild, deps.privateTextWorkers), agents.WorkerTools, privateTaskRunner)
+	deps.agentRunQueue = startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay), deps.gameTaskAdmission, privateTaskRunner)
 }
 
 func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, routineWorkers map[string]privateTaskWorker, routineTools domainagent.ToolRunner, privateRunner ...*privateTaskRunQueueRunner) {
-	if cfg == nil || deps == nil || !cfg.Heartbeat.AgentSchedulerEnabled {
+	if cfg == nil || deps == nil {
 		return
 	}
-	if deps.gameTaskAdmission == nil {
+	deps.localAgentOpsOwnerID = strings.TrimSpace(cfg.LocalAgentOps.UserID)
+	if cfg.Heartbeat.AgentSchedulerEnabled && deps.gameTaskAdmission == nil {
 		sessions, err := newGameObserverSessionsHTTPClient(cfg.Games.ObserverURL)
 		if err != nil {
 			log.Printf("WARN: active GAMES session checks unavailable for GAME Tasks: %v", err)
 		}
 		deps.gameTaskAdmission = newGameTaskRuntimeAdmission(sessions, deps.taskManager)
 	}
-	if cfg.Heartbeat.Routine.Enabled {
+	if cfg.Heartbeat.AgentSchedulerEnabled && cfg.Heartbeat.Routine.Enabled {
 		runtime, err := newAgentRoutineRuntime(cfg, deps, routineWorkers, routineTools)
 		if err != nil {
 			log.Printf("WARN: agent routine runtime unavailable; idle source is disabled: %v", err)
@@ -291,6 +292,39 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 			deps.agentRoutine = runtime
 		}
 		log.Printf("agent routine configured enabled=%t runtime_ready=%t", true, deps.agentRoutine != nil)
+	}
+	if deps.taskManager != nil {
+		var gameSessions gameObserverActiveSessionsReader
+		if deps.gameTaskAdmission != nil {
+			gameSessions = deps.gameTaskAdmission.sessions
+		}
+		if err := initializeAgentCurrentActivities(context.Background(), deps.taskManager, cfg.LocalAgentOps.UserID, deps.agentRoutine, gameSessions); err != nil {
+			log.Printf("WARN: canonical current activities unavailable: %v", err)
+			return
+		}
+	}
+	if deps.taskManager != nil && deps.gameTaskAdmission != nil {
+		deps.activityReconcileSignal = make(chan string, len(agentHeartbeatActorIDs))
+		deps.reconcileActorGameActivity = func(ctx context.Context, actorID string) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !isAgentHeartbeatActor(actorID) {
+				return fmt.Errorf("activity reconciliation actor %q is not registered", actorID)
+			}
+			select {
+			case deps.activityReconcileSignal <- actorID:
+			default:
+				// A full bounded queue coalesces with the periodic all-actor pass.
+			}
+			return nil
+		}
+	}
+	if deps.responseFirst != nil {
+		deps.responseFirst.reconcileActorActivity = deps.reconcileActorGameActivity
+	}
+	if !cfg.Heartbeat.AgentSchedulerEnabled {
+		return
 	}
 	var autonomous *autonomousTaskRuntime
 	if len(privateRunner) > 0 && privateRunner[0] != nil {
@@ -418,10 +452,15 @@ func configureAgentHeartbeatScheduler(cfg *config.Config, deps *Dependencies, ro
 			idleSource = deps.agentRoutine.idleSource(daytimeIdle)
 		}
 	}
-	deps.agentHeartbeat = agentheartbeat.New(append([]string(nil), agentHeartbeatActorIDs...), agentheartbeat.Sources{
+	sources := agentheartbeat.Sources{
 		Board: boardSource, Private: privateSource, Idle: idleSource,
 		IdleRequiresBoard: cfg.Heartbeat.Routine.Enabled && cfg.BoardCommunication.Enabled,
-	}, report)
+	}
+	sources.Idle = externalGameResumeIdleSource(sources.Idle, deps)
+	sources.Board = wrapWorkSourceWithGameResume(sources.Board, deps)
+	sources.Private = wrapWorkSourceWithGameResume(sources.Private, deps)
+	sources.Idle = wrapWorkSourceWithGameResume(sources.Idle, deps)
+	deps.agentHeartbeat = agentheartbeat.New(append([]string(nil), agentHeartbeatActorIDs...), sources, report)
 	if deps.gameTaskAdmission != nil {
 		deps.gameTaskAdmission.setScheduler(func() gameTaskGroupScheduler { return deps.agentHeartbeat })
 		if deps.taskManager != nil {

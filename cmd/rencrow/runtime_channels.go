@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	discordadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels/discord"
@@ -20,6 +21,11 @@ func buildChannelRuntimeHandlers(cfg *config.Config, deps *Dependencies, proc me
 	if cfg != nil && cfg.Heartbeat.AgentSchedulerEnabled && deps != nil {
 		channelProcessor = channelActorAdmissionProcessor{next: proc, admission: func() conversationruntime.ActorAdmission {
 			return deps.agentAdmission
+		}, afterActivity: func(ctx context.Context, actorID string) error {
+			if deps.reconcileActorGameActivity == nil {
+				return nil
+			}
+			return deps.reconcileActorGameActivity(ctx, actorID)
 		}}
 	}
 	lineHandler := line.NewHandler(channelProcessor, cfg.Line.ChannelSecret, cfg.Line.AccessToken)
@@ -49,8 +55,9 @@ func buildChannelRuntimeHandlers(cfg *config.Config, deps *Dependencies, proc me
 }
 
 type channelActorAdmissionProcessor struct {
-	next      messageProcessor
-	admission func() conversationruntime.ActorAdmission
+	next          messageProcessor
+	admission     func() conversationruntime.ActorAdmission
+	afterActivity func(context.Context, string) error
 }
 
 func (p channelActorAdmissionProcessor) ProcessMessage(ctx context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
@@ -65,7 +72,13 @@ func (p channelActorAdmissionProcessor) ProcessMessage(ctx context.Context, req 
 		admission = p.admission()
 	}
 	if admission == nil || !isAgentHeartbeatActor(actor) {
-		return p.next.ProcessMessage(ctx, req)
+		response, processErr := p.next.ProcessMessage(ctx, req)
+		if processErr == nil && p.afterActivity != nil && isAgentHeartbeatActor(actor) {
+			if err := p.afterActivity(ctx, actor); err != nil {
+				log.Printf("channel post-turn activity reconciliation failed actor=%s: %v", actor, err)
+			}
+		}
+		return response, processErr
 	}
 	release, err := admission.Acquire(ctx, actor, domaintask.PriorityHigh)
 	if err != nil {
@@ -74,8 +87,14 @@ func (p channelActorAdmissionProcessor) ProcessMessage(ctx context.Context, req 
 	if release == nil {
 		return orchestrator.ProcessMessageResponse{}, fmt.Errorf("acquire %s channel actor: admission returned no release", actor)
 	}
-	defer release()
-	return p.next.ProcessMessage(ctx, req)
+	response, processErr := p.next.ProcessMessage(ctx, req)
+	release()
+	if processErr == nil && p.afterActivity != nil {
+		if err := p.afterActivity(ctx, actor); err != nil {
+			log.Printf("channel post-turn activity reconciliation failed actor=%s: %v", actor, err)
+		}
+	}
+	return response, processErr
 }
 
 func isDirectChatChannel(channel string) bool {

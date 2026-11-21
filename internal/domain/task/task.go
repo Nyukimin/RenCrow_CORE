@@ -388,6 +388,7 @@ type Task struct {
 	Autonomous               *AutonomousTask                       `json:"autonomous,omitempty"`
 	PrivateAccess            *TaskPrivateAccess                    `json:"private_access,omitempty"`
 	Timing                   *modulecore.TaskTiming                `json:"timing,omitempty"`
+	Activity                 *ActivityMetadata                     `json:"activity,omitempty"`
 	TaskCenterExecution      *TaskCenterExecution                  `json:"task_center_execution,omitempty"`
 	NativePlanningInvocation *NativePlanningInvocation             `json:"native_planning_invocation,omitempty"`
 	TaskMeetingInvocation    *TaskMeetingInvocation                `json:"task_meeting_invocation,omitempty"`
@@ -580,6 +581,11 @@ func (t Task) Validate() error {
 	if t.Timing != nil {
 		if err := t.Timing.Validate(); err != nil {
 			return fmt.Errorf("timing is invalid: %w", err)
+		}
+	}
+	if t.Activity != nil {
+		if err := t.Activity.Validate(t.Status); err != nil {
+			return fmt.Errorf("activity metadata is invalid: %w", err)
 		}
 	}
 	if t.TaskCenterExecution != nil {

@@ -77,6 +77,19 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 	}
 	actors := domainsuperagent.PrivateChatQueueActorIDs()
 	result := viewer.BoardAgentWorkSnapshot{Actors: make([]viewer.BoardAgentWorkActor, 0, len(actors))}
+	if r == nil || r.tasks == nil {
+		return viewer.BoardAgentWorkSnapshot{}, fmt.Errorf("canonical Task owner is unavailable")
+	}
+	activityReader, ok := r.tasks.(interface {
+		SnapshotCurrentActivities(context.Context, []string) (map[string]domaintask.CurrentActivitySnapshot, error)
+	})
+	if !ok {
+		return viewer.BoardAgentWorkSnapshot{}, fmt.Errorf("canonical current activity snapshot is unavailable")
+	}
+	currentActivities, err := activityReader.SnapshotCurrentActivities(ctx, actors)
+	if err != nil {
+		return viewer.BoardAgentWorkSnapshot{}, fmt.Errorf("read canonical current activities: %w", err)
+	}
 	heartbeats := make(map[string]agentheartbeat.LivingActivity, len(actors))
 	heartbeatReady := false
 	waiterQueues := make(map[string]agentheartbeat.ForegroundWaiterQueue, len(actors))
@@ -160,6 +173,21 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 			result.Actors = append(result.Actors, actor)
 			continue
 		}
+		currentSnapshot, hasCurrent := currentActivities[actorID]
+		if !hasCurrent || currentSnapshot.Task.Activity == nil {
+			return viewer.BoardAgentWorkSnapshot{}, fmt.Errorf("canonical current activity is missing for %s", actorID)
+		}
+		kind, label, phase, revision, activityValid := publicCurrentActivity(currentSnapshot)
+		if !activityValid {
+			return viewer.BoardAgentWorkSnapshot{}, fmt.Errorf("canonical current activity is invalid for %s", actorID)
+		}
+		currentActivityDTO := &viewer.BoardAgentWorkCurrentActivity{Kind: kind, Label: label, Phase: phase, Revision: revision}
+		actor.CurrentActivity = currentActivityDTO
+		actor.ActivityKind, actor.ActivityTitle = kind, label
+		currentRow := boardAgentWorkTaskRow(currentSnapshot.Task, domainsuperagent.RunQueueItem{}, false, false)
+		currentRow.Title = currentActivityDTO.Label
+		currentRow.CurrentActivity = currentActivityDTO
+		actor.CurrentTasks = []viewer.BoardAgentWorkTask{currentRow}
 
 		taskProjection, err := readActorTaskProjection(ctx, r.tasks, actorID)
 		if err != nil {
@@ -199,24 +227,21 @@ func (r *boardAgentWorkRuntimeReader) ReadBoardAgentWork(ctx context.Context) (v
 			actor.Availability.RunQueue = "available"
 		}
 
-		current := make([]boardAgentWorkTaskWithQueue, 0, len(taskProjection.Current))
-		for _, task := range taskProjection.Current {
-			item, hasQueueItem := queueItems[task.TaskID]
-			row := boardAgentWorkTaskRow(task, item, hasQueueItem, queueAvailable)
-			current = append(current, boardAgentWorkTaskWithQueue{task: task, item: item, row: row})
-		}
 		waiting := make([]boardAgentWorkTaskWithQueue, 0, len(taskProjection.Waiting))
 		for _, task := range taskProjection.Waiting {
+			if task.TaskID == currentSnapshot.Task.TaskID {
+				continue
+			}
 			item, hasQueueItem := queueItems[task.TaskID]
 			row := boardAgentWorkTaskRow(task, item, hasQueueItem, queueAvailable)
 			waiting = append(waiting, boardAgentWorkTaskWithQueue{task: task, item: item, row: row})
 		}
-		sortBoardAgentWorkTasks(current)
 		sortBoardAgentWorkTasks(waiting)
-		actor.CurrentTasks = make([]viewer.BoardAgentWorkTask, 0, len(current))
-		for _, task := range current {
-			actor.CurrentTasks = append(actor.CurrentTasks, task.row)
-		}
+		item, hasQueueItem := queueItems[currentSnapshot.Task.TaskID]
+		currentRow = boardAgentWorkTaskRow(currentSnapshot.Task, item, hasQueueItem, queueAvailable)
+		currentRow.Title = currentActivityDTO.Label
+		currentRow.CurrentActivity = currentActivityDTO
+		actor.CurrentTasks = []viewer.BoardAgentWorkTask{currentRow}
 		actor.WaitingQueue = make([]viewer.BoardAgentWorkTask, 0, len(waiting))
 		for _, task := range waiting {
 			actor.WaitingQueue = append(actor.WaitingQueue, task.row)

@@ -406,6 +406,39 @@ func (s *JSONLStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([
 	return result, err
 }
 
+func (s *JSONLStore) CurrentActivityTasks(ctx context.Context, actorIDs []string) (map[string]domaintask.Task, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("current activity reader is unavailable")
+	}
+	if err := validateActivityActorIDs(actorIDs); err != nil {
+		return nil, err
+	}
+	release, err := s.beginIndexRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if s.idx == nil {
+		return nil, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return s.idx.currentActivityTasks(ctx, actorIDs)
+}
+
+func (s *JSONLStore) ListActiveExternalGameActivities(ctx context.Context) ([]domaintask.Task, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("active external Game activity reader is unavailable")
+	}
+	release, err := s.beginIndexRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if s.idx == nil {
+		return nil, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return s.idx.activeExternalGameTasks(ctx)
+}
+
 func (s *JSONLStore) SaveContext(ctx context.Context, value domaintask.SharedRoleContext) error {
 	return s.TaskTransaction(ctx, value.TaskID, func(store domaintask.Store) error {
 		return store.SaveContext(ctx, value)

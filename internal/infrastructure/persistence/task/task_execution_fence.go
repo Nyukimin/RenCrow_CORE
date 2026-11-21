@@ -129,6 +129,10 @@ func (lease *taskExecutionLease) release() {
 }
 
 func (f *taskExecutionFence) hasActive(taskIDs map[modulecore.TaskID]struct{}, owner *taskExecutionLease) modulecore.TaskID {
+	return f.hasActiveOwned(taskIDs, owner, nil)
+}
+
+func (f *taskExecutionFence) hasActiveOwned(taskIDs map[modulecore.TaskID]struct{}, owner *taskExecutionLease, owners []*taskExecutionLease) modulecore.TaskID {
 	if f == nil || len(taskIDs) == 0 {
 		return ""
 	}
@@ -140,6 +144,16 @@ func (f *taskExecutionFence) hasActive(taskIDs map[modulecore.TaskID]struct{}, o
 			continue
 		}
 		if owner != nil && owner.task == taskID && owner.entry == entry {
+			continue
+		}
+		owned := false
+		for _, candidate := range owners {
+			if candidate != nil && candidate.task == taskID && candidate.entry == entry {
+				owned = true
+				break
+			}
+		}
+		if owned {
 			continue
 		}
 		return taskID

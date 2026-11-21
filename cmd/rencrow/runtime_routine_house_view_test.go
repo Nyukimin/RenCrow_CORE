@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
 
 const routineHouseViewTestSceneSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -87,10 +90,17 @@ func TestRoutineHouseViewReturnsBoundedCanonicalWorldProjection(t *testing.T) {
 		}
 		for key := range actor {
 			switch key {
-			case "id", "room_id", "position", "active_kind", "active_pose", "activity_started_at", "activity_due_at", "move_points", "target_room_id", "mirror_pose_completions":
+			case "id", "room_id", "position", "active_kind", "active_pose", "activity_started_at", "activity_due_at", "move_points", "target_room_id", "mirror_pose_completions", "current_activity":
 			default:
 				t.Fatalf("actor %q contains unapproved field %q", id, key)
 			}
+		}
+		var currentActivity map[string]json.RawMessage
+		if err := json.Unmarshal(actor["current_activity"], &currentActivity); err != nil {
+			t.Fatalf("actor %q current_activity = %s, err=%v", id, actor["current_activity"], err)
+		}
+		if got, want := sortedJSONKeys(currentActivity), []string{"kind", "label", "phase", "revision"}; !equalStrings(got, want) {
+			t.Fatalf("actor %q current_activity fields = %v, want %v", id, got, want)
 		}
 	}
 
@@ -372,7 +382,33 @@ func newRoutineHouseViewTestRuntime(t *testing.T, includeAllActors bool) (*confi
 			return time.Date(2026, time.November, 14, 2, 3, 4, 123456789, time.FixedZone("test", 9*60*60))
 		},
 	}
-	return cfg, &Dependencies{agentRoutine: runtime}, server
+	taskRoot, err := os.MkdirTemp(".", ".routine-house-tasks-")
+	if err != nil {
+		server.Close()
+		t.Fatalf("create Task store root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(taskRoot); err != nil {
+			t.Errorf("remove Task store root: %v", err)
+		}
+	})
+	taskStore, err := taskpersistence.NewJSONLStore(taskRoot)
+	if err != nil {
+		server.Close()
+		t.Fatalf("create Task store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := taskStore.Close(); err != nil {
+			t.Errorf("close Task store: %v", err)
+		}
+	})
+	deps := &Dependencies{agentRoutine: runtime, taskManager: taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())}
+	runtime.deps, runtime.tasks, runtime.ownerID = deps, deps.taskManager, "mio"
+	if err := initializeAgentCurrentActivities(context.Background(), runtime.tasks, runtime.ownerID, runtime, nil); err != nil {
+		server.Close()
+		t.Fatalf("initialize canonical current Tasks: %v", err)
+	}
+	return cfg, deps, server
 }
 
 func serveRoutineHouseViewRequest(handler http.Handler, method, target string, trusted bool) *httptest.ResponseRecorder {

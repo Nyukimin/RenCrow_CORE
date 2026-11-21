@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentroutine"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // CurrentRoutineActivity reads durable routine state and, for relaxation,
@@ -157,10 +160,49 @@ func (r *agentRoutineRuntime) finishRoutineIntent(ctx context.Context, state age
 	retryAfter := r.now().Add(routineCooldown(intent.Kind))
 	rest, eligible := r.routineRestWindow(state, intent, progress)
 	if !eligible {
-		return r.store.FinishIntent(ctx, intent.ActorID, intent.ID, state.Revision, retryAfter)
+		finished, err := r.store.FinishIntent(ctx, intent.ActorID, intent.ID, state.Revision, retryAfter)
+		if err != nil {
+			return agentroutine.State{}, err
+		}
+		if intent.Kind == agentroutine.ActivitySleep && finished.LogicalSleepUntil.After(r.now()) {
+			phase := "sleep_window"
+			if routineSleepHasConfirmedWorldStart(intent.ID, progress) {
+				phase = "sleeping"
+			}
+			_, err = r.transitionPassiveActivity(ctx, intent.ActorID, domaintask.ActivityKindSleep, "Sleep", phase,
+				finished.LogicalSleepUntil, domaintask.StatusSucceeded, "planned sleep interval completed")
+			if err != nil {
+				return agentroutine.State{}, fmt.Errorf("bind planned sleep interval to canonical Task: %w", err)
+			}
+		}
+		return finished, nil
 	}
 	retryAfter = rest.Until
-	return r.store.FinishIntentWithRestWindow(ctx, intent.ActorID, intent.ID, state.Revision, retryAfter, rest)
+	finished, err := r.store.FinishIntentWithRestWindow(ctx, intent.ActorID, intent.ID, state.Revision, retryAfter, rest)
+	if err != nil {
+		return agentroutine.State{}, err
+	}
+	_, err = r.transitionPassiveActivity(ctx, intent.ActorID, domaintask.ActivityKindRest, "Rest", "resting",
+		rest.Until, domaintask.StatusSucceeded, "confirmed rest interval completed")
+	if err != nil {
+		return agentroutine.State{}, fmt.Errorf("bind confirmed rest interval to canonical Task: %w", err)
+	}
+	return finished, nil
+}
+
+func routineSleepHasConfirmedWorldStart(intentID string, progress routineProgress) bool {
+	if intentID == "" || progress.World == nil {
+		return false
+	}
+	for _, operation := range progress.World.Operations {
+		if operation.Action == worldread.HomeActionSleep && operation.EventKind == "life.home.sleep.started" &&
+			operation.ReceiptStatus == "committed" && operation.ReceiptID != "" && operation.EventVerified &&
+			operation.ActivityKind == "sleep" && operation.ActivityID != "" &&
+			operation.Key == routineWorldOperationKey(intentID, operation.ActorID, operation.Purpose) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *agentRoutineRuntime) routineRestWindow(state agentroutine.State, intent agentroutine.Intent, progress routineProgress) (agentroutine.RestWindow, bool) {

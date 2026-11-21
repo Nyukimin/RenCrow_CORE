@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -17,7 +18,11 @@ import (
 
 func TestTaskCenterExecutionEnsureEffectFinishAndReceiptRecovery(t *testing.T) {
 	ctx := context.Background()
-	storeRoot := t.TempDir()
+	storeRoot, err := os.MkdirTemp(os.TempDir(), "task-center-execution-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(storeRoot) })
 	store, err := taskpersistence.NewJSONLStore(storeRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +72,19 @@ func TestTaskCenterExecutionEnsureEffectFinishAndReceiptRecovery(t *testing.T) {
 	if task.TaskID == "" || task.TaskID != run.TaskID || task.Status != domaintask.StatusRunning || run.Status != domaintask.RunStatusRunning {
 		t.Fatalf("Ensure returned Task=%#v Run=%#v", task, run)
 	}
+	if task.Activity == nil || task.Activity.Kind != domaintask.ActivityKindWork || len(task.Activity.Participants) != 1 || !task.Activity.Participants[0].IsCurrent {
+		t.Fatalf("TaskCenter current activity metadata=%#v", task.Activity)
+	}
+	denied := false
+	if _, err := manager.SnapshotCurrentActivitiesAuthorized(ctx, []string{"mio"}, func(_ context.Context, input domaintask.TaskReadAuthorizationInput) error {
+		denied = true
+		if input.TaskID != task.TaskID || input.WorkstreamID != workstreamID || input.GoalID != goalID {
+			t.Fatalf("current activity authorization input=%#v", input)
+		}
+		return domaintask.ErrPrivateTaskAccessForbidden
+	}); !errors.Is(err, domaintask.ErrPrivateTaskAccessForbidden) || !denied {
+		t.Fatalf("private current activity authorization err=%v callback=%v", err, denied)
+	}
 	genericTasks, _, err := manager.ReadTaskRuns(ctx, []modulecore.TaskID{task.TaskID})
 	if err != nil || len(genericTasks) != 0 {
 		t.Fatalf("generic private Task projection=%#v err=%v, want hidden", genericTasks, err)
@@ -76,6 +94,24 @@ func TestTaskCenterExecutionEnsureEffectFinishAndReceiptRecovery(t *testing.T) {
 	}
 	if _, err := manager.GetTaskAuthorized(ctx, task.TaskID, func(context.Context, domaintask.TaskReadAuthorizationInput) error { return nil }); !errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) {
 		t.Fatalf("generic authorized Task read error=%v, want typed owner required", err)
+	}
+	if _, _, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "public shiro task", Route: domaintask.RouteGeneral, Assignee: "shiro"}, domaintask.SharedRoleContext{}); err != nil {
+		t.Fatalf("create later public current Task: %v", err)
+	}
+	privateAuthorizations := 0
+	goalVisible := true
+	if rows, err := manager.SnapshotCurrentActivitiesAuthorized(ctx, []string{"mio", "shiro"}, func(_ context.Context, input domaintask.TaskReadAuthorizationInput) error {
+		if input.TaskID == task.TaskID {
+			privateAuthorizations++
+			if !goalVisible {
+				return domaintask.ErrPrivateTaskAccessForbidden
+			}
+		} else {
+			goalVisible = false
+		}
+		return nil
+	}); !errors.Is(err, domaintask.ErrPrivateTaskAccessForbidden) || rows != nil || privateAuthorizations != 2 {
+		t.Fatalf("revoked current Goal authorization rows=%#v err=%v checks=%d", rows, err, privateAuthorizations)
 	}
 	if err := manager.ValidateRunExecution(ctx, task.TaskID, run.RunID, "mio"); !errors.Is(err, domaintask.ErrNotFound) {
 		t.Fatalf("generic execution validation error=%v, want private Task not-found", err)
@@ -158,6 +194,13 @@ func TestTaskCenterExecutionEnsureEffectFinishAndReceiptRecovery(t *testing.T) {
 	}
 	if finished.Status != domaintask.StatusSucceeded || finishedRun.Status != domaintask.RunStatusSucceeded || recoveredReference != resultReference {
 		t.Fatalf("finished Task=%#v Run=%#v reference=%#v", finished, finishedRun, recoveredReference)
+	}
+	if finished.Activity == nil || finished.Activity.Participants[0].IsCurrent {
+		t.Fatalf("finished Task retained its current activity binding: %#v", finished.Activity)
+	}
+	evaluation, err := manager.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || evaluation["mio"].Task.TaskID == finished.TaskID || evaluation["mio"].Task.Activity.Kind != domaintask.ActivityKindEvaluating {
+		t.Fatalf("post-finish evaluation=%#v err=%v", evaluation, err)
 	}
 	if finishedRun.WriterGeneration != originalGeneration {
 		t.Fatalf("historical finish relabeled Run generation=%d, want original %d", finishedRun.WriterGeneration, originalGeneration)

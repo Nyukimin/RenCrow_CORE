@@ -50,6 +50,10 @@ func TestEnsureGameTaskCreatedUsesDurableGlobalCreateReceipt(t *testing.T) {
 	if replayed.Route != domaintask.RouteGAME || replayed.OwnerID != "ren" || replayed.Title != "first title" {
 		t.Fatalf("replayed Task identity=%+v", replayed)
 	}
+	if replayed.Activity == nil || replayed.Activity.Kind != domaintask.ActivityKindGame || replayed.Activity.Game == nil ||
+		replayed.Activity.Game.GameID != shared.GameSpec.GameID || replayed.Activity.Phase != "preparing" || len(replayed.Activity.Participants) != len(shared.GameSpec.Personas) {
+		t.Fatalf("typed GAME Task activity metadata=%#v", replayed.Activity)
+	}
 
 	changedDraft, changedShared := gameTaskCreateInput(t, "changed title", "initial plan")
 	if _, err := manager.EnsureGameTaskCreated(ctx, requestID, "ren", changedDraft, changedShared); !errors.Is(err, taskpersistence.ErrTaskOperationConflict) {

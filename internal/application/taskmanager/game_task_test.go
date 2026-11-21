@@ -95,6 +95,130 @@ func TestGameTaskLaunchIntentAndReceiptOwnTerminalTransitions(t *testing.T) {
 	}
 }
 
+func TestTypedGameTaskOwnsCurrentActivityAcrossControllerPauseAndReceipt(t *testing.T) {
+	ctx := context.Background()
+	manager, task, spec := newGameTaskFixture(t, "survival_garden")
+	for _, actorID := range spec.Personas {
+		if _, err := manager.CreateCurrentActivity(ctx, domaintask.Task{Title: "Evaluating next activity", Route: domaintask.RouteGeneral, Assignee: actorID}, domaintask.ActivityMetadata{
+			Kind: domaintask.ActivityKindEvaluating, Label: "Evaluating next activity", Phase: "evaluating", Passive: true,
+			Participants: []domaintask.ActivityParticipant{{ActorID: actorID}},
+		}); err != nil {
+			t.Fatalf("create initial evaluation for %s: %v", actorID, err)
+		}
+	}
+	run, err := manager.StartGameTaskRun(ctx, task.TaskID, modulecore.NewQueueItemID(), task.Assignee, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, created, err := manager.BeginGameLaunch(ctx, task.TaskID)
+	if err != nil || !created || state.Task.Activity == nil || state.Task.Activity.Game == nil ||
+		state.Task.Activity.Game.GameID != spec.GameID || state.Task.Activity.Phase != "launching" {
+		t.Fatalf("BeginGameLaunch activity=%#v created=%t err=%v", state.Task.Activity, created, err)
+	}
+	current, err := manager.SnapshotCurrentActivities(ctx, spec.Personas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, actorID := range spec.Personas {
+		if current[actorID].Task.TaskID != task.TaskID {
+			t.Fatalf("actor %s current Task=%s, want typed GAME Task %s", actorID, current[actorID].Task.TaskID, task.TaskID)
+		}
+	}
+	now := time.Now().UTC()
+	receipt := domaintask.GameLaunchReceipt{LaunchKey: string(task.TaskID), SessionID: "survival_garden_live_session", Status: domaintask.GameExecutionRunning,
+		Request: spec, CreatedAt: now, UpdatedAt: now.Add(time.Second)}
+	state, err = manager.RecordGameLaunchReceipt(ctx, task.TaskID, receipt)
+	if err != nil || state.Task.TaskID != task.TaskID || state.Task.Activity == nil || state.Task.Activity.Game == nil ||
+		state.Task.Activity.Game.SessionID != receipt.SessionID || state.Task.Activity.Phase != "playing" {
+		t.Fatalf("receipt Game activity=%#v err=%v", state.Task.Activity, err)
+	}
+	if err := manager.PauseGameTaskRun(ctx, task.TaskID, run.RunID, task.Assignee); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := manager.Get(ctx, task.TaskID)
+	if err != nil || paused.Status != domaintask.StatusWaiting {
+		t.Fatalf("paused typed GAME Task=%#v err=%v", paused, err)
+	}
+	current, err = manager.SnapshotCurrentActivities(ctx, spec.Personas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, actorID := range spec.Personas {
+		if current[actorID].Task.TaskID != task.TaskID {
+			t.Fatalf("actor %s lost GAME Task during controller pause", actorID)
+		}
+	}
+	resumed, err := manager.StartGameTaskRun(ctx, task.TaskID, modulecore.NewQueueItemID(), task.Assignee, run.RunID, spec.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.BeginGameLaunch(ctx, task.TaskID); err != nil {
+		t.Fatalf("resume exact Game Task activity: %v", err)
+	}
+	terminal := acceptanceReceipt(task, spec, receipt.SessionID, domaintask.GameExecutionCompleted, now.Add(2*time.Second))
+	if _, err := manager.FinalizeGameTaskRun(ctx, task.TaskID, resumed.RunID, task.Assignee, terminal, "game complete"); err != nil {
+		t.Fatalf("finalize typed GAME Task: %v", err)
+	}
+	current, err = manager.SnapshotCurrentActivities(ctx, spec.Personas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, actorID := range spec.Personas {
+		if current[actorID].Task.TaskID == task.TaskID || current[actorID].Task.Activity.Kind != domaintask.ActivityKindEvaluating {
+			t.Fatalf("actor %s terminal current Task=%#v, want evaluating successor", actorID, current[actorID].Task)
+		}
+	}
+}
+
+func TestBeginGameLaunchRollsBackIntentWhenActivityWriteFails(t *testing.T) {
+	ctx := context.Background()
+	manager, task, spec := newGameTaskFixture(t, "survival_garden")
+	if _, err := manager.StartGameTaskRun(ctx, task.TaskID, modulecore.NewQueueItemID(), task.Assignee, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("typed game activity append failed")
+	faultManager := New(&faultTaskStore{Store: manager.store, failOperation: "activity", failErr: injected}, DefaultParallelLimits())
+	if _, created, err := faultManager.BeginGameLaunch(ctx, task.TaskID); !errors.Is(err, injected) || created {
+		t.Fatalf("BeginGameLaunch with activity failure=(created %t, err %v), want rollback and injected error", created, err)
+	}
+	afterFailure, err := manager.GetGameTaskState(ctx, task.TaskID)
+	if err != nil || afterFailure.Progress.Status != domaintask.GameExecutionPrepared || afterFailure.Progress.LaunchKey != string(task.TaskID) {
+		t.Fatalf("failed BeginGameLaunch left progress=%+v err=%v; want prepared exact launch key", afterFailure.Progress, err)
+	}
+	retried, created, err := manager.BeginGameLaunch(ctx, task.TaskID)
+	if err != nil || !created || retried.Progress.Status != domaintask.GameExecutionLaunching || retried.Progress.LaunchKey != string(task.TaskID) {
+		t.Fatalf("retry BeginGameLaunch=(status %s, created %t, key %q, err %v), want one launch of the same TaskID key", retried.Progress.Status, created, retried.Progress.LaunchKey, err)
+	}
+	if retried.Spec.GameID != spec.GameID {
+		t.Fatalf("retry Game spec=%+v, want %s", retried.Spec, spec.GameID)
+	}
+	if _, err := faultManager.MarkGameLaunchUnknown(ctx, task.TaskID, "receipt read failed"); !errors.Is(err, injected) {
+		t.Fatalf("MarkGameLaunchUnknown activity failure=%v, want injected error", err)
+	}
+	afterUnknownFailure, err := manager.GetGameTaskState(ctx, task.TaskID)
+	if err != nil || afterUnknownFailure.Progress.Status != domaintask.GameExecutionLaunching || afterUnknownFailure.Progress.SessionID != "" {
+		t.Fatalf("failed unknown-state write left progress=%+v err=%v; want launching checkpoint", afterUnknownFailure.Progress, err)
+	}
+	if _, err := manager.MarkGameLaunchUnknown(ctx, task.TaskID, "receipt read failed"); err != nil {
+		t.Fatalf("retry MarkGameLaunchUnknown: %v", err)
+	}
+	now := time.Now().UTC()
+	receipt := domaintask.GameLaunchReceipt{LaunchKey: string(task.TaskID), SessionID: "session:after-commit-guard", Status: domaintask.GameExecutionRunning,
+		Request: spec, CreatedAt: now, UpdatedAt: now.Add(time.Second)}
+	if _, err := faultManager.RecordGameLaunchReceipt(ctx, task.TaskID, receipt); !errors.Is(err, injected) {
+		t.Fatalf("RecordGameLaunchReceipt activity failure=%v, want injected error", err)
+	}
+	afterReceiptFailure, err := manager.GetGameTaskState(ctx, task.TaskID)
+	if err != nil || afterReceiptFailure.Progress.Status != domaintask.GameExecutionUnknown || afterReceiptFailure.Progress.SessionID != "" {
+		t.Fatalf("failed receipt write left progress=%+v err=%v; want exact unknown checkpoint", afterReceiptFailure.Progress, err)
+	}
+	bound, err := manager.RecordGameLaunchReceipt(ctx, task.TaskID, receipt)
+	if err != nil || bound.Progress.Status != domaintask.GameExecutionRunning || bound.Progress.SessionID != receipt.SessionID ||
+		bound.Task.Activity == nil || bound.Task.Activity.Game == nil || bound.Task.Activity.Game.SessionID != receipt.SessionID {
+		t.Fatalf("receipt retry state=%+v err=%v, want atomically bound exact session", bound.Progress, err)
+	}
+}
+
 func TestGameTaskCanCancelBeforeLaunchIntent(t *testing.T) {
 	manager, task, _ := newGameTaskFixture(t, "herzog_zwei")
 	if _, err := manager.RecordAssignment(context.Background(), task.TaskID, "aka", modulecore.NewEventID()); !errors.Is(err, ErrRunConflict) {

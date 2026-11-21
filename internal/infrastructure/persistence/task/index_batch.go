@@ -20,9 +20,11 @@ type appendChunk struct {
 }
 
 type batchTask struct {
-	key   key16
-	facts taskFacts
-	pos   linePos
+	key           key16
+	facts         taskFacts
+	pos           linePos
+	currentActors []string
+	externalGame  bool
 }
 
 type batchRun struct {
@@ -205,7 +207,16 @@ func (b *indexBatch) absorbTask(line []byte, pos linePos) error {
 		}
 	}
 	b.pins[key] = pinOfTask(value)
-	b.tasks = append(b.tasks, batchTask{key: key, facts: summaryOfTask(value), pos: pos})
+	currentActors := make([]string, 0)
+	if value.Activity != nil {
+		for _, participant := range value.Activity.Participants {
+			if participant.IsCurrent {
+				currentActors = append(currentActors, participant.ActorID)
+			}
+		}
+	}
+	b.tasks = append(b.tasks, batchTask{key: key, facts: summaryOfTask(value), pos: pos, currentActors: currentActors,
+		externalGame: isActiveExternalGameActivity(value)})
 	b.newTasks[key] = struct{}{}
 	return nil
 }
@@ -401,6 +412,46 @@ func (ix *taskIndex) internEnum(value string) (uint16, error) {
 func (ix *taskIndex) merge(b *indexBatch) error {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
+	currentByActor := make(map[string]key16, len(ix.currentActivityByActor))
+	for actorID, taskKey := range ix.currentActivityByActor {
+		currentByActor[actorID] = taskKey
+	}
+	actorsByTask := make(map[key16][]string, len(ix.currentActivityActorsByTask))
+	for taskKey, actors := range ix.currentActivityActorsByTask {
+		actorsByTask[taskKey] = append([]string(nil), actors...)
+	}
+	externalGames := make(map[key16]struct{}, len(ix.activeExternalGameTaskByID))
+	for taskKey := range ix.activeExternalGameTaskByID {
+		externalGames[taskKey] = struct{}{}
+	}
+	finalByTask := make(map[key16][]string, len(b.tasks))
+	for _, task := range b.tasks {
+		finalByTask[task.key] = task.currentActors
+	}
+	for taskKey := range finalByTask {
+		for _, actorID := range actorsByTask[taskKey] {
+			if currentByActor[actorID] == taskKey {
+				delete(currentByActor, actorID)
+			}
+		}
+		delete(actorsByTask, taskKey)
+	}
+	for _, task := range b.tasks {
+		if task.externalGame {
+			externalGames[task.key] = struct{}{}
+		} else {
+			delete(externalGames, task.key)
+		}
+	}
+	for taskKey, actorIDs := range finalByTask {
+		for _, actorID := range actorIDs {
+			if existing, ok := currentByActor[actorID]; ok && existing != taskKey {
+				return fmt.Errorf("%w: actor %q has multiple current activity Tasks", ErrIndexInconsistent, actorID)
+			}
+			currentByActor[actorID] = taskKey
+			actorsByTask[taskKey] = append(actorsByTask[taskKey], actorID)
+		}
+	}
 
 	tasks := make([]resolvedTask, len(b.tasks))
 	for i := range b.tasks {
@@ -542,6 +593,9 @@ func (ix *taskIndex) merge(b *indexBatch) error {
 	if ix.ck != nil {
 		ix.ck.noteLines(ix.totalLinesLocked())
 	}
+	ix.currentActivityByActor = currentByActor
+	ix.currentActivityActorsByTask = actorsByTask
+	ix.activeExternalGameTaskByID = externalGames
 	return nil
 }
 

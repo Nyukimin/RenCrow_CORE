@@ -189,6 +189,9 @@ func (s *JSONLStore) indexReadTransaction(ctx context.Context, fn func(domaintas
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := s.idx.ensureCurrentActivityIndex(ctx); err != nil {
+		return err
+	}
 	if _, admitted := persistencequeue.AdmissionFromContext(ctx); admitted {
 		if s.idx == nil {
 			return ErrTaskAdmissionRequiresIndex

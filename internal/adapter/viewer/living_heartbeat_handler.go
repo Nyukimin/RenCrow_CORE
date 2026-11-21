@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentheartbeat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -24,6 +25,23 @@ type LivingHeartbeatTaskReader interface {
 // for the internal activity merge. IDs are never serialized by this handler.
 type LivingHeartbeatCurrentTaskReader interface {
 	CurrentRunningTaskIDs(context.Context) (map[string][]modulecore.TaskID, error)
+}
+
+type LivingHeartbeatCurrentActivity struct {
+	Task                domaintask.Task
+	Kind                string
+	Label               string
+	Phase               string
+	Revision            uint64
+	State               string
+	ActivityKind        string
+	GameID              string
+	RoutineAvailability string
+	OngoingActivity     string
+}
+
+type LivingHeartbeatActivityReader interface {
+	CurrentActivities(context.Context) (map[string]LivingHeartbeatCurrentActivity, error)
 }
 
 type RoutineActivityReader interface {
@@ -45,14 +63,17 @@ type livingHeartbeatResponse struct {
 }
 
 type livingHeartbeatAgent struct {
-	ActorID             string `json:"actor_id"`
-	State               string `json:"state"`
-	ActivityKind        string `json:"activity_kind,omitempty"`
-	GameID              string `json:"game_id,omitempty"`
-	Title               string `json:"title,omitempty"`
-	RoutineAvailability string `json:"routine_availability,omitempty"`
-	OngoingActivity     string `json:"ongoing_activity,omitempty"`
+	ActorID             string                          `json:"actor_id"`
+	State               string                          `json:"state"`
+	ActivityKind        string                          `json:"activity_kind,omitempty"`
+	GameID              string                          `json:"game_id,omitempty"`
+	Title               string                          `json:"title,omitempty"`
+	RoutineAvailability string                          `json:"routine_availability,omitempty"`
+	OngoingActivity     string                          `json:"ongoing_activity,omitempty"`
+	CurrentActivity     *livingHeartbeatCurrentActivity `json:"current_activity,omitempty"`
 }
+
+type livingHeartbeatCurrentActivity = PublicCurrentActivity
 
 // HandleLivingHeartbeat returns a small read-only view of the actual CORE
 // actor scheduler leases. It omits task identity, errors, prompts, and source
@@ -64,6 +85,129 @@ func HandleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHear
 
 func HandleLivingHeartbeatWithCurrentTasks(scheduler *agentheartbeat.Scheduler, tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility, currentTasks LivingHeartbeatCurrentTaskReader, routineReaders ...RoutineActivityReader) http.HandlerFunc {
 	return handleLivingHeartbeat(scheduler, tasks, visibility, currentTasks, routineReaders...)
+}
+
+// HandleLivingHeartbeatWithActivities publishes the durable current Task
+// assignment. The runtime reader must fail if any configured actor is missing
+// or has an invalid current assignment; this handler never manufactures one.
+func HandleLivingHeartbeatWithActivities(tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility, activities LivingHeartbeatActivityReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !security.IsDirectLoopbackRequest(r) {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Path != livingHeartbeatPath || r.URL.RawQuery != "" || r.URL.ForceQuery {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		if activities == nil {
+			http.Error(w, "current activity unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		readCtx, cancel := context.WithTimeout(r.Context(), livingHeartbeatTitleReadTimeout)
+		defer cancel()
+		current, err := activities.CurrentActivities(readCtx)
+		actorIDs := superagent.PrivateChatQueueActorIDs()
+		if err != nil || len(current) != len(actorIDs) {
+			http.Error(w, "current activity unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		agents := make([]livingHeartbeatAgent, 0, len(actorIDs))
+		for _, actorID := range actorIDs {
+			activity, found := current[actorID]
+			if !found || activity.Task.TaskID.Validate() != nil || activity.Kind == "" || activity.Label == "" || activity.Phase == "" || activity.Revision == 0 {
+				http.Error(w, "current activity unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			agent := livingHeartbeatAgent{
+				ActorID: actorID, State: activity.State, ActivityKind: activity.ActivityKind, GameID: activity.GameID,
+				RoutineAvailability: activity.RoutineAvailability, OngoingActivity: activity.OngoingActivity,
+				CurrentActivity: &livingHeartbeatCurrentActivity{Kind: activity.Kind, Label: activity.Label, Phase: activity.Phase, Revision: activity.Revision},
+			}
+			if tasks != nil {
+				freshTask, taskErr := tasks.GetTask(readCtx, activity.Task.TaskID)
+				if taskErr != nil {
+					// Private and typed Task owners may intentionally hide the full
+					// Task from the generic public reader. The canonical activity
+					// snapshot still supplies its safe descriptor below.
+					agents = append(agents, agent)
+					continue
+				}
+				if !heartbeatTaskStillCurrent(freshTask, activity, actorID) {
+					http.Error(w, "current activity unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				if visibility != nil {
+					visible, visibilityErr := visibility(readCtx, freshTask)
+					if visibilityErr == nil && visible {
+						agent.Title = freshTask.Title
+					}
+				}
+			}
+			agents = append(agents, agent)
+		}
+		for index, actorID := range actorIDs {
+			if agents[index].Title == "" {
+				continue
+			}
+			activity := current[actorID]
+			freshTask, taskErr := tasks.GetTask(readCtx, activity.Task.TaskID)
+			if taskErr != nil {
+				agents[index].Title = ""
+				continue
+			}
+			if !heartbeatTaskStillCurrent(freshTask, activity, actorID) || visibility == nil {
+				http.Error(w, "current activity unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			visible, visibilityErr := visibility(readCtx, freshTask)
+			if visibilityErr != nil || !visible {
+				http.Error(w, "current activity unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			agents[index].Title = freshTask.Title
+		}
+		latest, err := activities.CurrentActivities(readCtx)
+		if err != nil || len(latest) != len(actorIDs) {
+			http.Error(w, "current activity unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		for _, actorID := range actorIDs {
+			before, beforeOK := current[actorID]
+			after, afterOK := latest[actorID]
+			if !beforeOK || !afterOK || !heartbeatSameCurrentActivity(before, after, actorID) {
+				http.Error(w, "current activity changed during projection", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(livingHeartbeatResponse{ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Agents: agents})
+	}
+}
+
+func heartbeatTaskStillCurrent(task domaintask.Task, activity LivingHeartbeatCurrentActivity, actorID string) bool {
+	if task.TaskID == "" || task.TaskID != activity.Task.TaskID || task.Activity == nil || activity.Task.Activity == nil ||
+		task.Activity.Revision != activity.Revision || task.Activity.Kind != activity.Task.Activity.Kind {
+		return false
+	}
+	for _, participant := range task.Activity.Participants {
+		if participant.ActorID == actorID && participant.IsCurrent {
+			return true
+		}
+	}
+	return false
+}
+
+func heartbeatSameCurrentActivity(left, right LivingHeartbeatCurrentActivity, actorID string) bool {
+	return left.Task.TaskID == right.Task.TaskID && left.Revision == right.Revision &&
+		heartbeatTaskStillCurrent(right.Task, left, actorID)
 }
 
 func handleLivingHeartbeat(scheduler *agentheartbeat.Scheduler, tasks LivingHeartbeatTaskReader, visibility PublicTaskVisibility, currentTasks LivingHeartbeatCurrentTaskReader, routineReaders ...RoutineActivityReader) http.HandlerFunc {

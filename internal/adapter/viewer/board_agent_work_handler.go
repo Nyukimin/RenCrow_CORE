@@ -31,6 +31,7 @@ type BoardAgentWorkActor struct {
 	HeartbeatState    string                           `json:"heartbeat_state"`
 	ActivityKind      string                           `json:"activity_kind,omitempty"`
 	ActivityTitle     string                           `json:"activity_title,omitempty"`
+	CurrentActivity   *BoardAgentWorkCurrentActivity   `json:"current_activity,omitempty"`
 	QueueCompleteness string                           `json:"queue_completeness"`
 	CurrentTasks      []BoardAgentWorkTask             `json:"current_tasks"`
 	WaitingQueue      []BoardAgentWorkTask             `json:"waiting_queue"`
@@ -38,20 +39,23 @@ type BoardAgentWorkActor struct {
 	ForegroundWaiters *BoardAgentWorkForegroundWaiters `json:"foreground_waiters"`
 }
 
+type BoardAgentWorkCurrentActivity = PublicCurrentActivity
+
 // BoardAgentWorkTask deliberately projects only task identity, title, state,
 // and scheduler metadata. It never serializes Task context, summary, evidence,
 // waiting reason, or user-provided prompt content.
 type BoardAgentWorkTask struct {
-	TaskID         string     `json:"task_id"`
-	Title          string     `json:"title"`
-	Status         string     `json:"status"`
-	Priority       string     `json:"priority"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	QueueClass     string     `json:"queue_class"`
-	RunQueueStatus string     `json:"run_queue_status,omitempty"`
-	NotBefore      *time.Time `json:"not_before,omitempty"`
+	TaskID          string                         `json:"task_id"`
+	Title           string                         `json:"title"`
+	Status          string                         `json:"status"`
+	Priority        string                         `json:"priority"`
+	CreatedAt       time.Time                      `json:"created_at"`
+	UpdatedAt       time.Time                      `json:"updated_at"`
+	StartedAt       *time.Time                     `json:"started_at,omitempty"`
+	QueueClass      string                         `json:"queue_class"`
+	RunQueueStatus  string                         `json:"run_queue_status,omitempty"`
+	NotBefore       *time.Time                     `json:"not_before,omitempty"`
+	CurrentActivity *BoardAgentWorkCurrentActivity `json:"current_activity,omitempty"`
 }
 
 // BoardAgentWorkBoardItem contains only authenticated Inbox preview metadata

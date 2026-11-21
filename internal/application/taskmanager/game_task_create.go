@@ -77,6 +77,30 @@ func (m *Manager) EnsureGameTaskCreated(
 		if err != nil {
 			return nil, err
 		}
+		participants, err := gameActivityActors(*request.Shared.GameSpec)
+		if err != nil {
+			return nil, err
+		}
+		activityParticipants := make([]domaintask.ActivityParticipant, 0, len(participants))
+		for _, actorID := range participants {
+			participant, _ := typedGameParticipant(*request.Shared.GameSpec, actorID)
+			participant.Revision = 1
+			activityParticipants = append(activityParticipants, participant)
+		}
+		created.Activity = &domaintask.ActivityMetadata{
+			Kind: domaintask.ActivityKindGame, Label: "Playing " + request.Shared.GameSpec.GameID,
+			Phase: "preparing", Revision: 1,
+			Game:         &domaintask.ActivityGameReference{GameID: request.Shared.GameSpec.GameID},
+			Participants: activityParticipants,
+		}
+		created.UpdatedAt = txManager.now()
+		writer, ok := tx.(domaintask.ActivityTaskWriter)
+		if !ok {
+			return nil, domaintask.ErrActivityTaskWriterUnsupported
+		}
+		if err := writer.SaveTaskActivity(ctx, created); err != nil {
+			return nil, err
+		}
 		return json.Marshal(gameTaskCreateOperationReceipt{TaskID: created.TaskID})
 	})
 	if err != nil {

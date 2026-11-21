@@ -393,6 +393,11 @@ func buildViewerBridgeHandlers(
 				log.Printf("[main] viewerSendFromOrch: transient Mio delta publication failed root_task_id=%s trace_id=%s message_id=%s err=%v", req.RootTaskID, req.TraceID, req.MessageID, publicationErr)
 				return "", publicationErr
 			}
+			if deps != nil && deps.reconcileActorGameActivity != nil && isAgentHeartbeatActor(string(req.To)) {
+				if reconcileErr := deps.reconcileActorGameActivity(ctx, string(req.To)); reconcileErr != nil {
+					log.Printf("[main] viewerSendFromOrch: post-turn activity reconciliation failed actor=%s: %v", req.To, reconcileErr)
+				}
+			}
 			log.Printf("[main] viewerSendFromOrch: complete task_id=%s root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s route=%s %s", resp.TaskID, resp.RootTaskID, resp.TraceID, resp.MessageID, req.ViewerClientID, req.To, resp.Route, req.Provenance.LogFields())
 			return resp.Response, nil
 		}

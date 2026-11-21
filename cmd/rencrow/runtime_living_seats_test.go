@@ -308,7 +308,7 @@ func TestRunningTaskOnlyTargetsDeskBelowGameAndConversation(t *testing.T) {
 	}
 }
 
-func TestLivingSeatsRechecksLeaseAfterTaskProjection(t *testing.T) {
+func TestLivingSeatsUsesCanonicalCurrentTaskAfterForegroundLeaseAcquisition(t *testing.T) {
 	scheduler := startLivingSeatTestScheduler(t)
 	root, err := os.MkdirTemp(".", ".living-seat-task-projection-")
 	if err != nil {
@@ -333,24 +333,32 @@ func TestLivingSeatsRechecksLeaseAfterTaskProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	var release func()
-	owner := livingSeatLeaseOnTaskListStore{Store: store, acquire: func() error {
+	owner := livingSeatLeaseOnTaskListStore{JSONLStore: store, acquire: func() error {
 		var acquireErr error
 		release, acquireErr = scheduler.Acquire(context.Background(), "midori", domaintask.PriorityCritical)
 		return acquireErr
 	}}
 	deps := &Dependencies{agentHeartbeat: scheduler, taskManager: taskmanager.New(&owner, taskmanager.DefaultParallelLimits())}
+	t.Cleanup(func() {
+		if release != nil {
+			release()
+		}
+	})
 	runtime := &agentRoutineRuntime{
 		deps: deps,
 		gameSessions: gameObserverSessionsReaderFunc(func(context.Context) ([]gameObserverActiveAgentSession, error) {
 			return nil, nil
 		}),
 	}
+	if err := initializeAgentCurrentActivities(context.Background(), deps.taskManager, "mio", nil, nil); err != nil {
+		t.Fatalf("initialize current activity Tasks: %v", err)
+	}
 	seats, ready, err := runtime.livingSeats(context.Background())
 	if release != nil {
 		release()
 	}
 	if err != nil || !ready {
-		t.Fatalf("livingSeats() = (%+v, %t, %v), want ready after lease acquisition", seats, ready, err)
+		t.Fatalf("livingSeats() = (%+v, %t, %v), want a complete canonical current snapshot after lease acquisition", seats, ready, err)
 	}
 	if got, want := seats["midori"], (livingSeatActivity{room: "living", slot: "desk-midori", pose: "type"}); got != want {
 		t.Fatalf("running Task with foreground acquired during Task read seat = %+v, want %+v", got, want)
@@ -358,7 +366,7 @@ func TestLivingSeatsRechecksLeaseAfterTaskProjection(t *testing.T) {
 }
 
 type livingSeatLeaseOnTaskListStore struct {
-	domaintask.Store
+	*taskpersistence.JSONLStore
 	mu       sync.Mutex
 	acquired bool
 	acquire  func() error
@@ -399,7 +407,7 @@ func (s *livingSeatLeaseOnTaskListStore) ListTasks(ctx context.Context, filter d
 			return nil, err
 		}
 	}
-	return s.Store.ListTasks(ctx, filter)
+	return s.JSONLStore.ListTasks(ctx, filter)
 }
 
 func startLivingSeatTestScheduler(t *testing.T) *agentheartbeat.Scheduler {
