@@ -19,10 +19,11 @@ import (
 )
 
 var (
-	ErrNotFound      = domaintask.ErrNotFound
-	ErrTaskExists    = domaintask.ErrTaskExists
-	ErrParallelLimit = errors.New("parallel limit exceeded")
-	ErrRunConflict   = errors.New("run state conflict")
+	ErrNotFound                          = domaintask.ErrNotFound
+	ErrTaskExists                        = domaintask.ErrTaskExists
+	ErrParallelLimit                     = errors.New("parallel limit exceeded")
+	ErrRunConflict                       = errors.New("run state conflict")
+	errActivityAssignmentSnapshotChanged = fmt.Errorf("current activity assignment changed during admission: %w", domaintask.ErrCurrentActivityConflict)
 )
 
 // Store is kept as an application-facing alias to the canonical domain store
@@ -40,6 +41,7 @@ type ParallelLimits struct {
 
 const taskAdmissionRunningScanLimit = 10000
 const privateTextRecoveryTaskListMaxLimit = 5001
+const activityAdmissionConflictRetries = 2
 
 func DefaultParallelLimits() ParallelLimits {
 	return ParallelLimits{Global: 3, PerModule: 1, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 1}
@@ -286,10 +288,18 @@ func (m *Manager) CreateAndStartRun(ctx context.Context, draft domaintask.Task, 
 		return domaintask.Task{}, domaintask.Run{}, errors.New("autonomous Task metadata requires the autonomous Task owner API")
 	}
 	_, activityOwnerAvailable := m.store.(domaintask.ActivityTaskTransaction)
+	if activityOwnerAvailable && draft.ParentTaskID == "" && draft.Route != domaintask.RouteGAME && canonicalActivityActor(draft.Assignee) && draft.TaskID == "" {
+		draft.TaskID = modulecore.NewTaskID()
+	}
 	if activityOwnerAvailable && draft.ParentTaskID == "" && draft.Route != domaintask.RouteGAME && canonicalActivityActor(draft.Assignee) {
 		activity, eligible := activityForRootTask(draft)
 		if eligible {
-			return m.CreateAndStartActivityRun(ctx, draft, activity, shared)
+			for attempt := 0; ; attempt++ {
+				started, run, err := m.CreateAndStartActivityRun(ctx, draft, activity, shared)
+				if !errors.Is(err, errActivityAssignmentSnapshotChanged) || attempt >= activityAdmissionConflictRetries {
+					return started, run, err
+				}
+			}
 		}
 	}
 	if activityOwnerAvailable && draft.ParentTaskID != "" && draft.Route != domaintask.RouteGAME && canonicalActivityActor(draft.Assignee) {
@@ -1035,11 +1045,47 @@ func (m *Manager) transitionTerminalCurrentActivity(ctx context.Context, task do
 	if task.Activity.Revision == ^uint64(0) {
 		return domaintask.Task{}, errors.New("activity revision overflow")
 	}
-	updated := task
-	activity := *task.Activity
-	activity.Participants = append([]domaintask.ActivityParticipant(nil), task.Activity.Participants...)
+	fallbackActors := make([]domaintask.ActivityParticipant, 0, len(current))
 	for _, prior := range current {
 		if prior.Revision > ^uint64(0)-2 {
+			return domaintask.Task{}, errors.New("activity participant revision overflow")
+		}
+		candidate, found, err := m.activeRootActivityForActor(ctx, prior.ActorID, task.TaskID)
+		if err != nil {
+			return domaintask.Task{}, err
+		}
+		if !found {
+			fallbackActors = append(fallbackActors, prior)
+			continue
+		}
+		activity := domaintask.ActivityMetadata{
+			Kind: candidate.Kind, Label: candidate.Label, Phase: candidate.Phase,
+			Participants: []domaintask.ActivityParticipant{{ActorID: prior.ActorID, Role: candidate.ParticipantRole}},
+		}
+		if _, err := m.setCurrentActivityWithRevisionFloorInTransaction(ctx, candidate.TaskID, activity, map[string]uint64{prior.ActorID: prior.Revision + 1}); err != nil {
+			return domaintask.Task{}, err
+		}
+	}
+	persisted, err := writer.GetTaskActivity(ctx, task.TaskID)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	if len(fallbackActors) == 0 {
+		task.Activity = cloneGameActivityMetadata(persisted.Activity)
+		return task, nil
+	}
+	if persisted.Activity == nil || persisted.Activity.Revision == ^uint64(0) {
+		return domaintask.Task{}, errors.New("activity revision overflow")
+	}
+	activity := *persisted.Activity
+	activity.Participants = append([]domaintask.ActivityParticipant(nil), persisted.Activity.Participants...)
+	now := m.now()
+	for _, prior := range fallbackActors {
+		participant, found := currentParticipant(persisted, prior.ActorID)
+		if !found || !participant.IsCurrent {
+			return domaintask.Task{}, domaintask.ErrCurrentActivityConflict
+		}
+		if participant.Revision > ^uint64(0)-2 {
 			return domaintask.Task{}, errors.New("activity participant revision overflow")
 		}
 		for index := range activity.Participants {
@@ -1051,13 +1097,13 @@ func (m *Manager) transitionTerminalCurrentActivity(ctx context.Context, task do
 		}
 	}
 	activity.Revision++
-	updated.Activity = &activity
-	now := m.now()
-	updated.UpdatedAt = now
-	if err := writer.SaveTaskActivity(ctx, updated); err != nil {
+	persisted.Activity = &activity
+	persisted.UpdatedAt = now
+	if err := writer.SaveTaskActivity(ctx, persisted); err != nil {
 		return domaintask.Task{}, err
 	}
-	for _, prior := range current {
+	for _, prior := range fallbackActors {
+		participant, _ := currentParticipant(task, prior.ActorID)
 		started := now
 		fallback := domaintask.Task{
 			TaskID: modulecore.NewTaskID(), Title: "Evaluating next activity", Assignee: prior.ActorID,
@@ -1067,14 +1113,22 @@ func (m *Manager) transitionTerminalCurrentActivity(ctx context.Context, task do
 			Activity: &domaintask.ActivityMetadata{
 				Kind: domaintask.ActivityKindEvaluating, Label: "Evaluating next activity", Phase: "evaluating",
 				Passive: true, Revision: 1,
-				Participants: []domaintask.ActivityParticipant{{ActorID: prior.ActorID, IsCurrent: true, Revision: prior.Revision + 2}},
+				Participants: []domaintask.ActivityParticipant{{ActorID: prior.ActorID, IsCurrent: true, Revision: participant.Revision + 2}},
 			},
 		}
 		if err := writer.SaveNewPassiveActivityTask(ctx, fallback); err != nil {
 			return domaintask.Task{}, err
 		}
 	}
-	return updated, nil
+	task.Activity = cloneGameActivityMetadata(&activity)
+	return task, nil
+}
+
+func (m *Manager) activeRootActivityForActor(ctx context.Context, actorID string, completingTaskID modulecore.TaskID) (domaintask.ActivityRootTaskCandidate, bool, error) {
+	if reader, ok := m.store.(domaintask.ActivityRootTaskCandidateReader); ok {
+		return reader.FindRunningRootActivityCandidate(ctx, actorID, completingTaskID)
+	}
+	return domaintask.ActivityRootTaskCandidate{}, false, domaintask.ErrCurrentActivityReaderUnsupported
 }
 
 func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRoleContext) error {

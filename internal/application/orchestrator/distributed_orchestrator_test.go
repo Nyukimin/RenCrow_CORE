@@ -1614,25 +1614,44 @@ func TestDistributedWorkerTerminalFailurePersistsFailedTaskAndRun(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) == 0 {
-		t.Fatal("no persisted tasks")
+	if len(tasks) != 3 {
+		t.Fatalf("persisted Tasks=%+v, want root execution, delegated worker execution, and passive Evaluating successor", tasks)
 	}
+	executionTaskID := worker.sentMessages[0].TaskID
+	var executionTask, rootTask, successor domaintask.Task
 	for _, task := range tasks {
-		if task.Status != domaintask.StatusFailed {
-			t.Fatalf("task %s status=%s", task.TaskID, task.Status)
+		if task.TaskID == executionTaskID {
+			executionTask = task
+		} else if task.Activity != nil && task.Activity.Kind == domaintask.ActivityKindEvaluating {
+			successor = task
+		} else {
+			rootTask = task
 		}
+	}
+	if executionTask.TaskID != executionTaskID || executionTask.Status != domaintask.StatusFailed || executionTask.Activity == nil ||
+		executionTask.Activity.Kind != domaintask.ActivityKindWork || rootTask.TaskID == "" || rootTask.ParentTaskID != "" || rootTask.Status != domaintask.StatusFailed || successor.TaskID == "" ||
+		successor.Status != domaintask.StatusRunning || successor.Activity == nil ||
+		successor.Activity.Kind != domaintask.ActivityKindEvaluating || !successor.Activity.Passive {
+		t.Fatalf("root=%+v execution=%+v successor=%+v, want failed root and worker execution Tasks plus passive Evaluating successor", rootTask, executionTask, successor)
 	}
 	runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) == 0 {
-		t.Fatal("no persisted runs")
+	if len(runs) != 2 {
+		t.Fatalf("persisted Runs=%+v, want exactly the failed root and worker Runs", runs)
 	}
 	for _, run := range runs {
-		if run.Status != domaintask.RunStatusFailed {
+		if (run.TaskID != executionTask.TaskID && run.TaskID != rootTask.TaskID) || run.Status != domaintask.RunStatusFailed {
 			t.Fatalf("run %s status=%s", run.RunID, run.Status)
 		}
+	}
+	if successorRuns, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
+		t.Fatalf("Evaluating successor Runs=%+v err=%v, want none", successorRuns, err)
+	}
+	current, err := owner.SnapshotCurrentActivities(context.Background(), []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID != successor.TaskID {
+		t.Fatalf("current Shiro activity=%+v err=%v, want passive successor", current, err)
 	}
 	for _, msg := range worker.sentMessages {
 		if _, err := owner.Get(context.Background(), msg.TaskID); err != nil {

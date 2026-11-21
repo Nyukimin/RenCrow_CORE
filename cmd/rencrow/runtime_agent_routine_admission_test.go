@@ -103,6 +103,23 @@ func TestAgentRoutineCapacityRetryUsesHeartbeatAndCompletesSameTaskIDs(t *testin
 		if err != nil || len(runs) == 0 || runs[len(runs)-1].Status != domaintask.RunStatusSucceeded {
 			t.Fatalf("actor %s Runs after retry = %+v err=%v, want completed latest Run", actor.ActorID, runs, err)
 		}
+		executionTasks, err := tasks.List(ctx, domaintask.Filter{Assignee: actor.ActorID, ModuleID: agentRoutineModuleID})
+		if err != nil || len(executionTasks) != 1 || executionTasks[0].TaskID != actor.TaskID {
+			t.Fatalf("actor %s routine execution Tasks = %+v err=%v, want the one completed canonical Task", actor.ActorID, executionTasks, err)
+		}
+		current, err := tasks.SnapshotCurrentActivities(ctx, []string{actor.ActorID})
+		if err != nil {
+			t.Fatalf("snapshot actor %s passive successor: %v", actor.ActorID, err)
+		}
+		successor := current[actor.ActorID].Task
+		if successor.Activity == nil || successor.Activity.Kind != domaintask.ActivityKindEvaluating ||
+			!successor.Activity.Passive || successor.Status != domaintask.StatusRunning {
+			t.Fatalf("actor %s current Task after routine completion = %+v, want a passive evaluating successor", actor.ActorID, successor)
+		}
+		successorRuns, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: successor.TaskID})
+		if err != nil || len(successorRuns) != 0 {
+			t.Fatalf("actor %s passive successor Runs = %+v err=%v, want no execution Run", actor.ActorID, successorRuns, err)
+		}
 	}
 	firstRuns, err = tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: firstTaskID})
 	if err != nil || len(firstRuns) != 2 || firstRuns[0].RunID == firstRuns[1].RunID || firstRuns[0].Status != domaintask.RunStatusWaiting {
@@ -464,6 +481,9 @@ func newRoutineAdmissionRuntime(t *testing.T, taskStore taskmanager.Store, clock
 		ownerID: "ren",
 		now:     func() time.Time { return *clock },
 	}
+	if err := initializeAgentCurrentActivities(context.Background(), tasks, runtime.ownerID, nil, nil); err != nil {
+		t.Fatalf("initialize canonical current activity Tasks: %v", err)
+	}
 	return runtime, tasks
 }
 
@@ -514,6 +534,46 @@ func (s *routineAdmissionFaultStore) TaskTransaction(ctx context.Context, taskID
 	return s.Store.TaskTransaction(ctx, taskID, func(store domaintask.Store) error {
 		return fn(&routineAdmissionFaultStore{Store: store, fault: s.fault})
 	})
+}
+
+func (s *routineAdmissionFaultStore) ActivityTransaction(ctx context.Context, taskIDs []modulecore.TaskID, fn func(domaintask.Store) error) error {
+	transaction, ok := s.Store.(domaintask.ActivityTaskTransaction)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return transaction.ActivityTransaction(ctx, taskIDs, fn)
+}
+
+func (s *routineAdmissionFaultStore) FindRunningRootActivityCandidate(ctx context.Context, actorID string, excludeTaskID modulecore.TaskID) (domaintask.ActivityRootTaskCandidate, bool, error) {
+	reader, ok := s.Store.(domaintask.ActivityRootTaskCandidateReader)
+	if !ok {
+		return domaintask.ActivityRootTaskCandidate{}, false, errors.New("Task store does not support running root activity candidate reads")
+	}
+	return reader.FindRunningRootActivityCandidate(ctx, actorID, excludeTaskID)
+}
+
+func (s *routineAdmissionFaultStore) GetTaskActivity(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.GetTaskActivity(ctx, taskID)
+}
+
+func (s *routineAdmissionFaultStore) SaveTaskActivity(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveTaskActivity(ctx, task)
+}
+
+func (s *routineAdmissionFaultStore) SaveNewPassiveActivityTask(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveNewPassiveActivityTask(ctx, task)
 }
 
 func (s *routineAdmissionFaultStore) SaveRun(ctx context.Context, run domaintask.Run) error {

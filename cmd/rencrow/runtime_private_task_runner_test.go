@@ -102,9 +102,13 @@ func (w *privateTaskFirstRunGate) ExecutePrivateWork(ctx context.Context, input 
 func runTaskEnqueueWakeContinuation(t *testing.T, actorID string, worker privateTaskWorker, waitTimeout time.Duration) {
 	t.Helper()
 	ctx := context.Background()
-	owner, _, _ := newTaskEnqueueFixture(t, domaintask.Task{
+	root := t.TempDir()
+	owner := newAutonomousTaskOwner(t, root)
+	if _, err := owner.Create(ctx, domaintask.Task{
 		OwnerID: "ren", Route: domaintask.RouteCHAT, Assignee: "continuation-fixture", Priority: domaintask.PriorityCritical, Title: "scheduler setup fixture outside configured actors",
-	}, domaintask.SharedRoleContext{})
+	}, domaintask.SharedRoleContext{}); err != nil {
+		t.Fatalf("create scheduler setup Task: %v", err)
+	}
 	events, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "events.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +118,7 @@ func runTaskEnqueueWakeContinuation(t *testing.T, actorID string, worker private
 			t.Errorf("close event store: %v", err)
 		}
 	})
-	queue, err := superagentpersistence.NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.sqlite"), 3000)
+	queue, err := superagentpersistence.NewSQLiteStore(filepath.Join(root, "superagent.sqlite"), 3000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +152,7 @@ func runTaskEnqueueWakeContinuation(t *testing.T, actorID string, worker private
 		},
 	)
 	deps := &Dependencies{taskManager: owner, agentRunQueue: runQueue, superAgentStore: runtimeStore}
+	installEmptyAgentGameSessionsForSchedulerFixture(deps, owner)
 	tokenFile := filepath.Join(t.TempDir(), "agent-ops-token")
 	if err := os.WriteFile(tokenFile, []byte(taskEnqueueTestToken+"\n"), 0o600); err != nil {
 		t.Fatal(err)

@@ -113,7 +113,7 @@ func (m *Manager) CreateAndStartActivityRun(ctx context.Context, draft domaintas
 			return err
 		}
 		if !sameActivityTaskAssignments(priorTasks, current) {
-			return domaintask.ErrCurrentActivityConflict
+			return errActivityAssignmentSnapshotChanged
 		}
 		started, run, err = txManager.createAndStartRunInTransaction(ctx, draft, shared)
 		if err != nil {
@@ -841,9 +841,9 @@ func (m *Manager) CompleteObservedGameActivity(ctx context.Context, gameTaskID m
 	return replacements, nil
 }
 
-// ListActiveExternalGameActivities returns only indexed live, runless passive
-// Game Tasks. The persistence reader enforces a hard result bound and fails
-// closed if that bound is exceeded; it never scans or truncates full history.
+// ListActiveExternalGameActivities returns live, runless passive Game Tasks.
+// The result is bounded in both store modes; only indexed stores avoid a
+// history scan, while the compatibility reader uses one consistent snapshot.
 func (m *Manager) ListActiveExternalGameActivities(ctx context.Context) ([]domaintask.Task, error) {
 	if m == nil || m.store == nil || ctx == nil {
 		return nil, domaintask.ErrCurrentActivityInvalid
@@ -1107,6 +1107,10 @@ func (m *Manager) SnapshotCurrentActivitiesAuthorized(ctx context.Context, actor
 }
 
 func (m *Manager) setCurrentActivityInTransaction(ctx context.Context, taskID modulecore.TaskID, input domaintask.ActivityMetadata) (domaintask.Task, error) {
+	return m.setCurrentActivityWithRevisionFloorInTransaction(ctx, taskID, input, nil)
+}
+
+func (m *Manager) setCurrentActivityWithRevisionFloorInTransaction(ctx context.Context, taskID modulecore.TaskID, input domaintask.ActivityMetadata, revisionFloor map[string]uint64) (domaintask.Task, error) {
 	if input.Passive && input.Kind != domaintask.ActivityKindRest && input.Kind != domaintask.ActivityKindSleep &&
 		input.Kind != domaintask.ActivityKindMoving && input.Kind != domaintask.ActivityKindEvaluating && input.Kind != domaintask.ActivityKindGame {
 		return domaintask.Task{}, errors.New("only rest, sleep, moving, evaluating, or game activity may be passive")
@@ -1147,9 +1151,14 @@ func (m *Manager) setCurrentActivityInTransaction(ctx context.Context, taskID mo
 		return domaintask.Task{}, err
 	}
 	maxRevision := make(map[string]uint64, len(actors))
+	for actorID, floor := range revisionFloor {
+		if _, included := actors[actorID]; included {
+			maxRevision[actorID] = floor
+		}
+	}
 	if target.Activity != nil {
 		for actorID := range actors {
-			if participant, found := currentParticipant(target, actorID); found {
+			if participant, found := currentParticipant(target, actorID); found && participant.Revision > maxRevision[actorID] {
 				maxRevision[actorID] = participant.Revision
 			}
 		}
@@ -1163,7 +1172,9 @@ func (m *Manager) setCurrentActivityInTransaction(ctx context.Context, taskID mo
 		if !found || !participant.IsCurrent {
 			continue
 		}
-		maxRevision[actorID] = participant.Revision
+		if participant.Revision > maxRevision[actorID] {
+			maxRevision[actorID] = participant.Revision
+		}
 		if currentTask.TaskID != taskID {
 			if participant.Revision == ^uint64(0) {
 				return domaintask.Task{}, errors.New("activity participant revision overflow")

@@ -251,7 +251,7 @@ func TestAgentRoutineCheckpointResumeReadFailureRequeuesSuccessor(t *testing.T) 
 	if _, err := owner.CompleteRun(ctx, task.TaskID, predecessor.RunID, "mio", domaintask.StatusWaiting, "paused", "test checkpoint"); err != nil {
 		t.Fatal(err)
 	}
-	faultStore := &failRoutineTaskReadStore{Store: taskStore, failNext: true}
+	faultStore := &failRoutineTaskReadStore{Store: taskStore, targetTaskID: task.TaskID}
 	runtime := &agentRoutineRuntime{tasks: taskmanager.New(faultStore, taskmanager.DefaultParallelLimits())}
 	intent := &agentroutine.Intent{ID: "routine-intent", ActorID: "mio", Step: "checkpoint", Output: "saved output"}
 	if _, _, err := runtime.resumeRoutineRun(ctx, task.TaskID, predecessor.RunID, "mio", intent); err == nil || !strings.Contains(err.Error(), "injected post-start Task read failure") {
@@ -276,15 +276,66 @@ func TestAgentRoutineCheckpointResumeReadFailureRequeuesSuccessor(t *testing.T) 
 
 type failRoutineTaskReadStore struct {
 	domaintask.Store
-	failNext bool
+	targetTaskID modulecore.TaskID
+	failed       bool
 }
 
 func (s *failRoutineTaskReadStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
-	if s.failNext {
-		s.failNext = false
-		return domaintask.Task{}, errors.New("injected post-start Task read failure")
+	task, err := s.Store.GetTask(ctx, taskID)
+	if err != nil {
+		return domaintask.Task{}, err
 	}
-	return s.Store.GetTask(ctx, taskID)
+	if taskID == s.targetTaskID && task.Status == domaintask.StatusRunning && !s.failed {
+		runs, listErr := s.Store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+		if listErr != nil {
+			return domaintask.Task{}, listErr
+		}
+		if len(runs) > 0 && runs[len(runs)-1].Status == domaintask.RunStatusRunning {
+			s.failed = true
+			return domaintask.Task{}, errors.New("injected post-start Task read failure")
+		}
+	}
+	return task, nil
+}
+
+func (s *failRoutineTaskReadStore) ActivityTransaction(ctx context.Context, taskIDs []modulecore.TaskID, fn func(domaintask.Store) error) error {
+	transaction, ok := s.Store.(domaintask.ActivityTaskTransaction)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return transaction.ActivityTransaction(ctx, taskIDs, fn)
+}
+
+func (s *failRoutineTaskReadStore) FindRunningRootActivityCandidate(ctx context.Context, actorID string, excludeTaskID modulecore.TaskID) (domaintask.ActivityRootTaskCandidate, bool, error) {
+	reader, ok := s.Store.(domaintask.ActivityRootTaskCandidateReader)
+	if !ok {
+		return domaintask.ActivityRootTaskCandidate{}, false, errors.New("Task store does not support running root activity candidate reads")
+	}
+	return reader.FindRunningRootActivityCandidate(ctx, actorID, excludeTaskID)
+}
+
+func (s *failRoutineTaskReadStore) GetTaskActivity(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.GetTaskActivity(ctx, taskID)
+}
+
+func (s *failRoutineTaskReadStore) SaveTaskActivity(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveTaskActivity(ctx, task)
+}
+
+func (s *failRoutineTaskReadStore) SaveNewPassiveActivityTask(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveNewPassiveActivityTask(ctx, task)
 }
 
 func TestAgentRoutineExpiresPausedRunsAndPreservesTerminalSuccess(t *testing.T) {

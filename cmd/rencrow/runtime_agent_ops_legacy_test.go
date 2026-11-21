@@ -203,25 +203,48 @@ func captureLegacyOPSLog(t *testing.T) *bytes.Buffer {
 	return &buffer
 }
 
-// legacyOPSOnlyTask returns the single OPS Task and its single Run. It fails
-// the test when the Task owner holds any other shape.
+// legacyOPSOnlyTask returns the one executed OPS Task and its Run, and verifies
+// that completion leaves exactly one passive current Evaluating successor.
 func legacyOPSOnlyTask(t *testing.T, owner *taskmanager.Manager) (domaintask.Task, domaintask.Run) {
 	t.Helper()
 	tasks, err := owner.List(context.Background(), domaintask.Filter{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) != 1 {
-		t.Fatalf("Task owner holds %d Tasks, want exactly 1: %+v", len(tasks), tasks)
+	if len(tasks) != 2 {
+		t.Fatalf("Task owner holds %d Tasks, want exactly one OPS Task and its Evaluating successor: %+v", len(tasks), tasks)
 	}
-	runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: tasks[0].TaskID})
+	var executed, successor domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.Route == domaintask.RouteOperations {
+			if executed.TaskID != "" {
+				t.Fatalf("multiple OPS execution Tasks: %+v", tasks)
+			}
+			executed = candidate
+		} else {
+			successor = candidate
+		}
+	}
+	if executed.TaskID == "" || successor.TaskID == "" || !domaintask.IsTerminal(executed.Status) ||
+		successor.Status != domaintask.StatusRunning || successor.Activity == nil ||
+		successor.Activity.Kind != domaintask.ActivityKindEvaluating || !successor.Activity.Passive {
+		t.Fatalf("Tasks=%+v, want one terminal OPS execution and one passive Evaluating successor", tasks)
+	}
+	runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 1 {
-		t.Fatalf("Task %s holds %d Runs, want exactly 1", tasks[0].TaskID, len(runs))
+	if len(runs) != 1 || runs[0].TaskID != executed.TaskID || !domaintask.IsRunTerminal(runs[0].Status) {
+		t.Fatalf("Runs=%+v, want exactly one terminal Run for OPS Task %s", runs, executed.TaskID)
 	}
-	return tasks[0], runs[0]
+	if successorRuns, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
+		t.Fatalf("Evaluating successor Runs=%+v err=%v, want none", successorRuns, err)
+	}
+	current, err := owner.SnapshotCurrentActivities(context.Background(), []string{executed.Assignee})
+	if err != nil || current[executed.Assignee].Task.TaskID != successor.TaskID {
+		t.Fatalf("current activity=%+v err=%v, want Evaluating successor %s", current, err, successor.TaskID)
+	}
+	return executed, runs[0]
 }
 
 func assertLegacyOPSTaskShape(t *testing.T, task domaintask.Task) {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,36 @@ func TestCurrentRoutineActivityProjectsSleepAndRequiresFreshSameRoomForRest(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	type taskRunSnapshot struct {
+		TaskID string
+		Runs   []domaintask.Run
+	}
+	type projectionReadSnapshot struct {
+		Tasks   []domaintask.Task
+		Runs    []taskRunSnapshot
+		Current map[string]domaintask.CurrentActivitySnapshot
+	}
+	readTaskState := func() projectionReadSnapshot {
+		t.Helper()
+		allTasks, listErr := tasks.List(ctx, domaintask.Filter{})
+		if listErr != nil {
+			t.Fatalf("list Tasks around read-only projection: %v", listErr)
+		}
+		state := projectionReadSnapshot{Tasks: allTasks, Runs: make([]taskRunSnapshot, 0, len(allTasks))}
+		for _, task := range allTasks {
+			runs, runsErr := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+			if runsErr != nil {
+				t.Fatalf("list Runs for Task %s around projection: %v", task.TaskID, runsErr)
+			}
+			state.Runs = append(state.Runs, taskRunSnapshot{TaskID: string(task.TaskID), Runs: runs})
+		}
+		state.Current, err = tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+		if err != nil {
+			t.Fatalf("snapshot canonical current activity around projection: %v", err)
+		}
+		return state
+	}
+	beforeProjection := readTaskState()
 	got, err := runtime.CurrentRoutineActivity(ctx, "mio")
 	if err != nil || got.Availability != "available" || got.OngoingActivity != "sleep_window" {
 		t.Fatalf("sleep projection = %+v, %v; want logical sleep window", got, err)
@@ -163,9 +194,9 @@ func TestCurrentRoutineActivityProjectsSleepAndRequiresFreshSameRoomForRest(t *t
 	if err != nil || got.OngoingActivity != "waiting" || requests != 3 {
 		t.Fatalf("expired rest projection = %+v, %v requests=%d; expired window must skip WORLD read", got, err, requests)
 	}
-	created, err := tasks.List(ctx, domaintask.Filter{})
-	if err != nil || len(created) != 0 {
-		t.Fatalf("read-only routine projection created Tasks: %+v err=%v", created, err)
+	afterProjection := readTaskState()
+	if !reflect.DeepEqual(afterProjection, beforeProjection) {
+		t.Fatalf("read-only routine projection changed Task, Activity metadata, current binding, or Run state:\nbefore=%+v\nafter=%+v", beforeProjection, afterProjection)
 	}
 }
 

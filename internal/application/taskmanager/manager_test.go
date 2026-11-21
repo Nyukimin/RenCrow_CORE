@@ -1196,6 +1196,14 @@ func (s *faultTaskStore) ActivityTransaction(ctx context.Context, taskIDs []modu
 	})
 }
 
+func (s *faultTaskStore) FindRunningRootActivityCandidate(ctx context.Context, actorID string, excludeTaskID modulecore.TaskID) (domaintask.ActivityRootTaskCandidate, bool, error) {
+	reader, ok := s.Store.(domaintask.ActivityRootTaskCandidateReader)
+	if !ok {
+		return domaintask.ActivityRootTaskCandidate{}, false, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return reader.FindRunningRootActivityCandidate(ctx, actorID, excludeTaskID)
+}
+
 func (s *faultTaskStore) WithTaskExecutionFence(ctx context.Context, taskID modulecore.TaskID, fn func() error) error {
 	return s.Store.WithTaskExecutionFence(ctx, taskID, fn)
 }

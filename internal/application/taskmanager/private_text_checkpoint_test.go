@@ -35,6 +35,42 @@ func newPrivateTextFixture(t *testing.T) (*Manager, *taskpersistence.JSONLStore,
 	return manager, store, task
 }
 
+func TestTerminalForegroundRestoresActivePrivateRootWithoutChangingOtherActor(t *testing.T) {
+	ctx := context.Background()
+	manager, _, privateTask := newPrivateTextFixture(t)
+	privateRun, err := manager.StartPrivateTextRun(ctx, privateTask.TaskID, modulecore.NewQueueItemID(), "mio", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SavePrivateTextOutput(ctx, privateTask.TaskID, privateRun.RunID, "mio", "private output"); err != nil {
+		t.Fatal(err)
+	}
+	otherActorTask, _, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "Shiro work", Route: domaintask.RouteGeneral, Assignee: "shiro"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreground, foregroundRun, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "Mio foreground chat", Route: domaintask.RouteCHAT, Assignee: "mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CompleteRun(ctx, foreground.TaskID, foregroundRun.RunID, "mio", domaintask.StatusSucceeded, "foreground completed", ""); err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{"mio", "shiro"})
+	if err != nil || current["mio"].Task.TaskID != privateTask.TaskID || current["mio"].Task.Activity == nil ||
+		current["mio"].Task.Activity.Kind != domaintask.ActivityKindWork || current["shiro"].Task.TaskID != otherActorTask.TaskID {
+		t.Fatalf("current activities after foreground completion=%#v err=%v, want private Work restored for Mio and Shiro unchanged", current, err)
+	}
+	if err := manager.CompletePrivateTextRun(ctx, privateTask.TaskID, privateRun.RunID, "mio", false); err != nil {
+		t.Fatal(err)
+	}
+	current, err = manager.SnapshotCurrentActivities(ctx, []string{"mio", "shiro"})
+	if err != nil || current["mio"].Task.Activity == nil || current["mio"].Task.Activity.Kind != domaintask.ActivityKindEvaluating ||
+		current["shiro"].Task.TaskID != otherActorTask.TaskID {
+		t.Fatalf("current activities after private completion=%#v err=%v, want Mio Evaluating and Shiro unchanged", current, err)
+	}
+}
+
 func TestPrivateTextRunPersistsPrivateCursorAndGenericContextCannotWriteIt(t *testing.T) {
 	ctx := context.Background()
 	manager, _, task := newPrivateTextFixture(t)

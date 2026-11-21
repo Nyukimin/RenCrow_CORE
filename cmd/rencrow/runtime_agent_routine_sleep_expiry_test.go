@@ -328,6 +328,16 @@ func TestAgentRoutineExpiredSleepFinishesExactActiveWORLDCheckpoint(t *testing.T
 	if err := work.Run(ctx, nil); err != nil {
 		t.Fatalf("complete exact active sleep checkpoint: %v", err)
 	}
+	current, err := tasks.SnapshotCurrentActivities(ctx, []string{"aka"})
+	if err != nil {
+		t.Fatalf("snapshot sleep successor after exact WORLD receipt: %v", err)
+	}
+	sleepTask := current["aka"].Task
+	if sleepTask.Activity == nil || sleepTask.Activity.Kind != domaintask.ActivityKindSleep ||
+		sleepTask.Activity.Phase != "sleeping" || !sleepTask.Activity.Passive || sleepTask.Timing == nil ||
+		sleepTask.Timing.DeadlineAt == nil || !sleepTask.Timing.DeadlineAt.Equal(wakeAt) {
+		t.Fatalf("current Task after WORLD-confirmed sleep start = %+v, want passive sleeping Task through planned wake %s", sleepTask, wakeAt)
+	}
 	after, err := runtime.store.Load(ctx, "aka")
 	if err != nil || after.Pending != nil || after.LastFinishedIntentID != "intent-active-sleep" || !after.LogicalSleepUntil.Equal(wakeAt) {
 		t.Fatalf("active sleep checkpoint after recovery = %+v err=%v, want existing sleep gate through planned wake", after, err)
@@ -345,8 +355,24 @@ func TestAgentRoutineExpiredSleepFinishesExactActiveWORLDCheckpoint(t *testing.T
 	}
 	clock = wakeAt
 	work, found, err = runtime.idleSource(nil)(ctx, "aka")
+	if err != nil || !found || !strings.HasPrefix(work.ID, "activity-expiry:aka:") || work.Run == nil {
+		t.Fatalf("planned sleep expiry discovery = %+v found=%t err=%v, want canonical expiry Work before wake selection", work, found, err)
+	}
+	if err := work.Run(ctx, nil); err != nil {
+		t.Fatalf("expire planned sleep Task at its persisted deadline: %v", err)
+	}
+	expiredSleep, err := tasks.Get(ctx, sleepTask.TaskID)
+	if err != nil || expiredSleep.Status != domaintask.StatusSucceeded {
+		t.Fatalf("sleep Task after deadline owner transition = %+v err=%v, want the exact passive interval closed", expiredSleep, err)
+	}
+	current, err = tasks.SnapshotCurrentActivities(ctx, []string{"aka"})
+	if err != nil || current["aka"].Task.Activity == nil ||
+		current["aka"].Task.Activity.Kind != domaintask.ActivityKindEvaluating {
+		t.Fatalf("current activity after sleep interval expiry = %+v err=%v, want evaluating before wake selection", current["aka"].Task.Activity, err)
+	}
+	work, found, err = runtime.idleSource(nil)(ctx, "aka")
 	if err != nil || !found || !strings.HasSuffix(work.ID, ":wake") {
-		t.Fatalf("planned wake discovery = %+v found=%t err=%v, want legitimate wake intent", work, found, err)
+		t.Fatalf("planned wake discovery after sleep Task expiry = %+v found=%t err=%v, want legitimate wake intent", work, found, err)
 	}
 }
 
@@ -370,7 +396,7 @@ func TestAgentRoutineWorldSleepStartBlockedWhenBedArrivalCrossesTwo(t *testing.T
 			t.Errorf("close Task store: %v", err)
 		}
 	})
-	runtime, _ := newRoutineAdmissionRuntime(t, taskStore, &clock)
+	runtime, tasks := newRoutineAdmissionRuntime(t, taskStore, &clock)
 	if _, err := runtime.store.EnsureSchedule(ctx, "aka", date); err != nil {
 		t.Fatalf("seed schedule: %v", err)
 	}
@@ -449,6 +475,22 @@ func TestAgentRoutineWorldSleepStartBlockedWhenBedArrivalCrossesTwo(t *testing.T
 	runtime.cfg = &config.Config{Heartbeat: config.HeartbeatConfig{Routine: config.RoutineHeartbeatConfig{
 		WorldActors: map[string]string{"aka": "aka-world"}, PrivateRooms: map[string]string{"aka": "aka-bedroom"},
 	}}}
+	taskID := modulecore.TaskID(progress.Actors[0].TaskID)
+	_, run, err := tasks.CreateAndStartActivityRun(ctx, domaintask.Task{
+		TaskID: taskID, Title: routineTaskTitle(agentroutine.ActivitySleep), ModuleID: agentRoutineModuleID,
+		OwnerID: runtime.ownerID, Assignee: "aka", Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow,
+		InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true,
+	}, agentRoutineTaskActivity(state.Pending, "aka"), domaintask.SharedRoleContext{
+		TaskID: taskID, UserIntent: "CORE routine sleep activity", CurrentPlan: "complete the exact sleep boundary",
+	})
+	if err != nil {
+		t.Fatalf("create canonical routine Task/Run for persisted WORLD movement: %v", err)
+	}
+	progress.Actors[0].RunID = run.RunID
+	state, progress, err = runtime.saveProgress(ctx, state, "world_move_checkpoint", progress)
+	if err != nil {
+		t.Fatalf("save exact active routine Run checkpoint: %v", err)
+	}
 	_, _, err = runtime.executeRoutineWorldActivity(ctx, nil, state, progress)
 	if err == nil || !strings.Contains(err.Error(), "02:00") {
 		t.Fatalf("sleep action after bed arrival crossed 02:00 = %v, want a boundary error", err)

@@ -428,6 +428,42 @@ func (s *JSONLStore) ListActiveExternalGameActivities(ctx context.Context) ([]do
 	if s == nil || ctx == nil {
 		return nil, errors.New("active external Game activity reader is unavailable")
 	}
+	if s.idx == nil {
+		var result []domaintask.Task
+		err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+			view, ok := store.(*transactionStore)
+			if !ok {
+				return errors.New("active external Game activity snapshot is unavailable")
+			}
+			tasks, err := view.loadTasks(ctx)
+			if err != nil {
+				return err
+			}
+			runs, err := view.loadRuns(ctx)
+			if err != nil {
+				return err
+			}
+			hasRun := make(map[modulecore.TaskID]struct{}, len(runs))
+			for _, run := range runs {
+				hasRun[run.TaskID] = struct{}{}
+			}
+			for _, task := range tasks {
+				if _, found := hasRun[task.TaskID]; found || !isActiveExternalGameActivity(task) {
+					continue
+				}
+				result = append(result, task)
+			}
+			if len(result) > domaintask.MaxActiveExternalGameActivities {
+				return domaintask.ErrActiveExternalGameActivitiesTooMany
+			}
+			sort.Slice(result, func(i, j int) bool { return result[i].TaskID < result[j].TaskID })
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 	release, err := s.beginIndexRead(ctx)
 	if err != nil {
 		return nil, err

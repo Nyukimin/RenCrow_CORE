@@ -89,8 +89,32 @@ func TestResponseFirstReadbackAdmitsExecutesAndDeliversTaskReportThroughMio(t *t
 		t.Fatalf("private worker calls=%d capabilities=%v, want one Shiro call with empty capabilities", worker.calls, worker.capabilities)
 	}
 	created, err := tasks.List(ctx, domaintask.Filter{Limit: 10})
-	if err != nil || len(created) != 1 || created[0].Assignee != "shiro" || created[0].Status != domaintask.StatusSucceeded {
-		t.Fatalf("Task owner list=%+v err=%v, want one completed Shiro Task", created, err)
+	if err != nil || len(created) != 2 {
+		t.Fatalf("Task owner list=%+v err=%v, want one completed Shiro execution Task and its Evaluating successor", created, err)
+	}
+	var workTask, successor domaintask.Task
+	for _, candidate := range created {
+		if candidate.Assignee == "shiro" && candidate.Status == domaintask.StatusSucceeded && candidate.Activity != nil && !candidate.Activity.Passive {
+			workTask = candidate
+		} else {
+			successor = candidate
+		}
+	}
+	if workTask.TaskID == "" || workTask.Activity.Kind != domaintask.ActivityKindWork || successor.TaskID == "" ||
+		successor.Status != domaintask.StatusRunning || successor.Activity == nil ||
+		successor.Activity.Kind != domaintask.ActivityKindEvaluating || !successor.Activity.Passive {
+		t.Fatalf("Task owner list=%+v, want one succeeded work Task and one passive Evaluating successor", created)
+	}
+	runs, err := tasks.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil || len(runs) != 1 || runs[0].TaskID != workTask.TaskID || !domaintask.IsRunTerminal(runs[0].Status) {
+		t.Fatalf("Task Runs=%+v err=%v, want exactly one terminal Run on the Shiro work Task", runs, err)
+	}
+	if successorRuns, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
+		t.Fatalf("successor Runs=%+v err=%v, want none", successorRuns, err)
+	}
+	current, err := tasks.SnapshotCurrentActivities(ctx, []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID != successor.TaskID {
+		t.Fatalf("current Shiro activity=%+v err=%v, want the passive successor", current, err)
 	}
 	if pending, err := tasks.ListPendingReports(ctx); err != nil || len(pending) != 0 {
 		t.Fatalf("pending Task reports=%+v err=%v, want delivered report", pending, err)
@@ -103,7 +127,7 @@ func TestResponseFirstReadbackAdmitsExecutesAndDeliversTaskReportThroughMio(t *t
 			reportInput = event
 		}
 	}
-	if reportInput.EventType != "conversation.agent_report" || reportInput.Payload["trusted_sender"] != "shiro" || reportInput.Payload["work_task_id"] != string(created[0].TaskID) {
+	if reportInput.EventType != "conversation.agent_report" || reportInput.Payload["trusted_sender"] != "shiro" || reportInput.Payload["work_task_id"] != string(workTask.TaskID) {
 		t.Fatalf("published accepted report input=%+v, want private report bound to the Shiro Task", reportInput)
 	}
 	committedReportReply, found, err := eventStore.LoadCommittedOutcome(ctx, reportInput.TurnID)

@@ -33,6 +33,62 @@ type autonomousCompleteFaultStore struct {
 	state *autonomousCompleteFaultState
 }
 
+func (s *autonomousCompleteFaultStore) ActivityTransaction(ctx context.Context, taskIDs []modulecore.TaskID, fn func(domaintask.Store) error) error {
+	transaction, ok := s.Store.(domaintask.ActivityTaskTransaction)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return transaction.ActivityTransaction(ctx, taskIDs, fn)
+}
+
+func (s *autonomousCompleteFaultStore) GetTaskActivity(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.GetTaskActivity(ctx, taskID)
+}
+
+func (s *autonomousCompleteFaultStore) SaveTaskActivity(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveTaskActivity(ctx, task)
+}
+
+func (s *autonomousCompleteFaultStore) SaveNewPassiveActivityTask(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveNewPassiveActivityTask(ctx, task)
+}
+
+func (s *autonomousCompleteFaultStore) CurrentActivityTasks(ctx context.Context, actorIDs []string) (map[string]domaintask.Task, error) {
+	reader, ok := s.Store.(domaintask.CurrentActivityTaskReader)
+	if !ok {
+		return nil, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return reader.CurrentActivityTasks(ctx, actorIDs)
+}
+
+func (s *autonomousCompleteFaultStore) ListActiveExternalGameActivities(ctx context.Context) ([]domaintask.Task, error) {
+	reader, ok := s.Store.(domaintask.ActiveExternalGameActivityReader)
+	if !ok {
+		return nil, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return reader.ListActiveExternalGameActivities(ctx)
+}
+
+func (s *autonomousCompleteFaultStore) FindRunningRootActivityCandidate(ctx context.Context, actorID string, excludeTaskID modulecore.TaskID) (domaintask.ActivityRootTaskCandidate, bool, error) {
+	reader, ok := s.Store.(domaintask.ActivityRootTaskCandidateReader)
+	if !ok {
+		return domaintask.ActivityRootTaskCandidate{}, false, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return reader.FindRunningRootActivityCandidate(ctx, actorID, excludeTaskID)
+}
+
 func (s *autonomousCompleteFaultStore) TaskTransaction(ctx context.Context, taskID modulecore.TaskID, fn func(domaintask.Store) error) error {
 	s.state.Lock()
 	if s.state.armed && s.state.failuresRemaining > 0 {
@@ -49,6 +105,46 @@ func (s *autonomousCompleteFaultStore) TaskTransaction(ctx context.Context, task
 type autonomousCompleteFaultView struct {
 	domaintask.Store
 	state *autonomousCompleteFaultState
+}
+
+func (s *autonomousCompleteFaultView) GetTaskActivity(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.GetTaskActivity(ctx, taskID)
+}
+
+func (s *autonomousCompleteFaultView) SaveTaskActivity(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveTaskActivity(ctx, task)
+}
+
+func (s *autonomousCompleteFaultView) SaveNewPassiveActivityTask(ctx context.Context, task domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveNewPassiveActivityTask(ctx, task)
+}
+
+func (s *autonomousCompleteFaultView) CurrentActivityTasks(ctx context.Context, actorIDs []string) (map[string]domaintask.Task, error) {
+	reader, ok := s.Store.(domaintask.CurrentActivityTaskReader)
+	if !ok {
+		return nil, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return reader.CurrentActivityTasks(ctx, actorIDs)
+}
+
+func (s *autonomousCompleteFaultView) FindRunningRootActivityCandidate(ctx context.Context, actorID string, excludeTaskID modulecore.TaskID) (domaintask.ActivityRootTaskCandidate, bool, error) {
+	reader, ok := s.Store.(domaintask.ActivityRootTaskCandidateReader)
+	if !ok {
+		return domaintask.ActivityRootTaskCandidate{}, false, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return reader.FindRunningRootActivityCandidate(ctx, actorID, excludeTaskID)
 }
 
 func (s *autonomousCompleteFaultView) SaveContext(ctx context.Context, shared domaintask.SharedRoleContext) error {
@@ -327,6 +423,7 @@ func newAutonomousCompleteFaultFixture(t *testing.T, failureCount int, responses
 		}},
 	)
 	deps := &Dependencies{taskManager: owner, superAgentStore: store, superAgentStateStore: queue, agentRunQueue: scheduler}
+	installEmptyAgentGameSessionsForSchedulerFixture(deps, owner)
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, UserID: "ren"}, Heartbeat: config.HeartbeatConfig{AgentSchedulerEnabled: true}}
 	cfg.Heartbeat.Routine.Enabled = true
 	configureAgentHeartbeatScheduler(cfg, deps, workers, nil, runner)

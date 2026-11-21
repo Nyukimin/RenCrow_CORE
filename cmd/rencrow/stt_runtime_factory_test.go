@@ -142,14 +142,40 @@ func TestBuildSTTRuntimeRelaysAnUtteranceThroughTheRenCrowSTTStream(t *testing.T
 	if want := "stt.stream:" + requestID + ":v1-1"; recorded[0].Name != want || recorded[0].Status != domainaction.StatusSucceeded {
 		t.Fatalf("Action = %+v, want name %q succeeded", recorded[0], want)
 	}
-	var tasks []domaintask.Task
+	var utteranceTask domaintask.Task
 	var taskErr error
 	waitUntil(t, "the Task of the utterance", func() bool {
-		tasks, taskErr = owners.tasks.List(context.Background(), domaintask.Filter{Limit: 100})
-		return taskErr == nil && len(tasks) == 1 && domaintask.IsTerminal(tasks[0].Status)
+		utteranceTask, taskErr = owners.tasks.Get(context.Background(), recorded[0].TaskID)
+		return taskErr == nil && domaintask.IsTerminal(utteranceTask.Status)
 	})
-	if taskErr != nil || len(tasks) != 1 || tasks[0].Status != domaintask.StatusSucceeded {
-		t.Fatalf("Tasks=%v err=%v: one short-lived Task per utterance, closed", tasks, taskErr)
+	if taskErr != nil || utteranceTask.TaskID != recorded[0].TaskID || utteranceTask.Status != domaintask.StatusSucceeded || utteranceTask.Activity == nil ||
+		utteranceTask.Activity.Kind != domaintask.ActivityKindChat || utteranceTask.Activity.Passive {
+		t.Fatalf("utterance Task=%+v err=%v: exact short-lived Chat Task should be closed", utteranceTask, taskErr)
+	}
+	tasks, err := owners.tasks.List(context.Background(), domaintask.Filter{Limit: 100})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("Tasks=%+v err=%v: want utterance execution plus one Evaluating successor", tasks, err)
+	}
+	var successor domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.TaskID != utteranceTask.TaskID {
+			successor = candidate
+		}
+	}
+	if successor.TaskID == "" || successor.Status != domaintask.StatusRunning || successor.Activity == nil ||
+		successor.Activity.Kind != domaintask.ActivityKindEvaluating || !successor.Activity.Passive {
+		t.Fatalf("Tasks=%+v: want one passive Evaluating successor to the exact utterance Task", tasks)
+	}
+	runs, err := owners.tasks.ListRuns(context.Background(), domaintask.RunFilter{})
+	if err != nil || len(runs) != 1 || runs[0].TaskID != utteranceTask.TaskID || runs[0].RunID != recorded[0].RunID || !domaintask.IsRunTerminal(runs[0].Status) {
+		t.Fatalf("Runs=%+v err=%v: want exactly the terminal utterance Run", runs, err)
+	}
+	if successorRuns, err := owners.tasks.ListRuns(context.Background(), domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
+		t.Fatalf("successor Runs=%+v err=%v, want none", successorRuns, err)
+	}
+	current, err := owners.tasks.SnapshotCurrentActivities(context.Background(), []string{"mio"})
+	if err != nil || current["mio"].Task.TaskID != successor.TaskID {
+		t.Fatalf("current Mio activity=%+v err=%v, want Evaluating successor", current, err)
 	}
 	// A transport receipt needs a Run and an Action bound before the request, and
 	// nothing precedes an utterance; the Action carries the correlation instead.

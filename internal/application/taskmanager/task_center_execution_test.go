@@ -95,7 +95,8 @@ func TestTaskCenterExecutionEnsureEffectFinishAndReceiptRecovery(t *testing.T) {
 	if _, err := manager.GetTaskAuthorized(ctx, task.TaskID, func(context.Context, domaintask.TaskReadAuthorizationInput) error { return nil }); !errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) {
 		t.Fatalf("generic authorized Task read error=%v, want typed owner required", err)
 	}
-	if _, _, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "public shiro task", Route: domaintask.RouteGeneral, Assignee: "shiro"}, domaintask.SharedRoleContext{}); err != nil {
+	shiroTask, _, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "public shiro task", Route: domaintask.RouteGeneral, Assignee: "shiro"}, domaintask.SharedRoleContext{})
+	if err != nil {
 		t.Fatalf("create later public current Task: %v", err)
 	}
 	privateAuthorizations := 0
@@ -136,6 +137,21 @@ func TestTaskCenterExecutionEnsureEffectFinishAndReceiptRecovery(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("ExecuteTaskCenterKind: %v", err)
+	}
+	foreground, foregroundRun, err := manager.CreateAndStartRun(ctx, domaintask.Task{
+		Title: "Mio foreground work", Route: domaintask.RouteCHAT, Assignee: "mio",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("create Mio foreground root: %v", err)
+	}
+	if _, err := manager.CompleteRun(ctx, foreground.TaskID, foregroundRun.RunID, "mio", domaintask.StatusSucceeded, "foreground completed", ""); err != nil {
+		t.Fatalf("complete Mio foreground root: %v", err)
+	}
+	currentActivities, err := manager.SnapshotCurrentActivities(ctx, []string{"mio", "shiro"})
+	if err != nil || currentActivities["mio"].Task.TaskID != task.TaskID || currentActivities["mio"].Task.Activity == nil ||
+		currentActivities["mio"].Task.Activity.Kind != domaintask.ActivityKindWork || currentActivities["mio"].Participant.Revision < 3 ||
+		currentActivities["shiro"].Task.TaskID != shiroTask.TaskID {
+		t.Fatalf("current activities after foreground completion=%#v err=%v, want TaskCenter root restored for Mio and Shiro unchanged", currentActivities, err)
 	}
 	resultDigestBytes := sha256.Sum256(result)
 	resultArtifactID, err := domaintask.TaskCenterResultArtifactID(task.TaskID, run.RunID)

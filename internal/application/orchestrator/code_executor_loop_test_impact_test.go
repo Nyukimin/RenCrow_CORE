@@ -302,18 +302,37 @@ func TestCoderLoopTerminalPersistsFailedTaskAndRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) == 0 || len(runs) == 0 {
-		t.Fatal("missing persisted lifecycle")
+	if len(tasks) != 2 {
+		t.Fatalf("persisted Tasks=%+v, want exact failed execution Task and passive Evaluating successor", tasks)
 	}
+	var executionTask, successor domaintask.Task
 	for _, task := range tasks {
-		if task.Status != domaintask.StatusFailed {
-			t.Fatalf("task status=%s", task.Status)
+		if task.TaskID == rootTaskID {
+			executionTask = task
+		} else {
+			successor = task
 		}
+	}
+	if executionTask.TaskID != rootTaskID || executionTask.Status != domaintask.StatusFailed || executionTask.Activity == nil ||
+		executionTask.Activity.Kind != domaintask.ActivityKindWork || successor.TaskID == "" ||
+		successor.Status != domaintask.StatusRunning || successor.Activity == nil ||
+		successor.Activity.Kind != domaintask.ActivityKindEvaluating || !successor.Activity.Passive {
+		t.Fatalf("execution=%+v successor=%+v, want failed execution and passive Evaluating successor", executionTask, successor)
 	}
 	for _, run := range runs {
-		if run.Status != domaintask.RunStatusFailed {
+		if run.TaskID != executionTask.TaskID || run.Status != domaintask.RunStatusFailed {
 			t.Fatalf("run status=%s", run.Status)
 		}
+	}
+	if len(runs) != 1 {
+		t.Fatalf("execution Runs=%+v, want exactly the original failed Run", runs)
+	}
+	if successorRuns, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
+		t.Fatalf("Evaluating successor Runs=%+v err=%v, want none", successorRuns, err)
+	}
+	current, err := owner.SnapshotCurrentActivities(context.Background(), []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID != successor.TaskID {
+		t.Fatalf("current Shiro activity=%+v err=%v, want passive successor", current, err)
 	}
 }
 

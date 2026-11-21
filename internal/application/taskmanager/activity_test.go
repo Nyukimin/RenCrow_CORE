@@ -6,13 +6,214 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type activityTransactionHiddenStore struct{ Store }
+
+type activityRootCandidateHiddenStore struct{ Store }
+
+func (s activityRootCandidateHiddenStore) TaskTransaction(ctx context.Context, taskID modulecore.TaskID, fn func(Store) error) error {
+	return s.Store.TaskTransaction(ctx, taskID, func(tx Store) error {
+		return fn(activityRootCandidateHiddenStore{Store: tx})
+	})
+}
+
+func (s activityRootCandidateHiddenStore) GetTaskActivity(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.GetTaskActivity(ctx, taskID)
+}
+
+func (s activityRootCandidateHiddenStore) SaveTaskActivity(ctx context.Context, value domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveTaskActivity(ctx, value)
+}
+
+func (s activityRootCandidateHiddenStore) SaveNewPassiveActivityTask(ctx context.Context, value domaintask.Task) error {
+	writer, ok := s.Store.(domaintask.ActivityTaskWriter)
+	if !ok {
+		return domaintask.ErrActivityTaskWriterUnsupported
+	}
+	return writer.SaveNewPassiveActivityTask(ctx, value)
+}
+
+type activityStartBarrierStore struct {
+	Store
+	transaction domaintask.ActivityTaskTransaction
+	mu          sync.Mutex
+	arrivals    int
+	release     chan struct{}
+}
+
+func (s *activityStartBarrierStore) ActivityTransaction(ctx context.Context, taskIDs []modulecore.TaskID, fn func(domaintask.Store) error) error {
+	s.mu.Lock()
+	s.arrivals++
+	if s.arrivals == 2 {
+		close(s.release)
+	}
+	release := s.release
+	s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-release:
+	}
+	return s.transaction.ActivityTransaction(ctx, taskIDs, fn)
+}
+
+func (s *activityStartBarrierStore) FindRunningRootActivityCandidate(ctx context.Context, actorID string, excludeTaskID modulecore.TaskID) (domaintask.ActivityRootTaskCandidate, bool, error) {
+	reader, ok := s.Store.(domaintask.ActivityRootTaskCandidateReader)
+	if !ok {
+		return domaintask.ActivityRootTaskCandidate{}, false, domaintask.ErrCurrentActivityReaderUnsupported
+	}
+	return reader.FindRunningRootActivityCandidate(ctx, actorID, excludeTaskID)
+}
+
+func TestConcurrentGenericRootStartsRetryCurrentSnapshotConflict(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStoreWithOptions(t.TempDir(), taskpersistence.OpenOptions{Index: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	wrapped := &activityStartBarrierStore{Store: store, transaction: store, release: make(chan struct{})}
+	manager := New(wrapped, ParallelLimits{Global: 3, PerModule: 1, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 2})
+	type result struct {
+		task domaintask.Task
+		run  domaintask.Run
+		err  error
+	}
+	ids := []modulecore.TaskID{modulecore.NewTaskID(), modulecore.NewTaskID()}
+	results := make(chan result, len(ids))
+	for _, taskID := range ids {
+		go func(taskID modulecore.TaskID) {
+			task, run, err := manager.CreateAndStartRun(ctx, domaintask.Task{
+				TaskID: taskID, Title: "concurrent OPS request", Route: domaintask.RouteOperations, Assignee: "shiro", OwnerID: "shiro",
+			}, domaintask.SharedRoleContext{})
+			results <- result{task: task, run: run, err: err}
+		}(taskID)
+	}
+	started := make(map[modulecore.TaskID]domaintask.Run, len(ids))
+	for range ids {
+		outcome := <-results
+		if outcome.err != nil {
+			t.Fatalf("concurrent root start err=%v", outcome.err)
+		}
+		if outcome.task.TaskID == "" || outcome.run.TaskID != outcome.task.TaskID {
+			t.Fatalf("Task/Run identities=%s/%s", outcome.task.TaskID, outcome.run.TaskID)
+		}
+		started[outcome.task.TaskID] = outcome.run
+	}
+	if len(started) != len(ids) {
+		t.Fatalf("started Task IDs=%v, want both stable request IDs %v", started, ids)
+	}
+	for _, taskID := range ids {
+		if _, found := started[taskID]; !found {
+			t.Fatalf("request TaskID %s was not preserved across retry: started=%v", taskID, started)
+		}
+	}
+	tasks, err := manager.List(ctx, domaintask.Filter{Limit: 10})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("Tasks=%+v err=%v, want exactly two concurrent executions", tasks, err)
+	}
+	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil || len(runs) != 2 {
+		t.Fatalf("Runs=%+v err=%v, want exactly one Run per request", runs, err)
+	}
+	for _, task := range tasks {
+		if _, found := started[task.TaskID]; !found || task.Status != domaintask.StatusRunning || task.Activity == nil || task.Activity.Passive {
+			t.Fatalf("unexpected concurrent Task: %+v", task)
+		}
+	}
+	for _, run := range runs {
+		if _, found := started[run.TaskID]; !found || run.Status != domaintask.RunStatusRunning {
+			t.Fatalf("unexpected concurrent Run: %+v", run)
+		}
+	}
+	current, err := manager.SnapshotCurrentActivities(ctx, []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID == "" {
+		t.Fatalf("current activity=%+v err=%v, want exactly one canonical current Task", current, err)
+	}
+	if _, found := started[current["shiro"].Task.TaskID]; !found {
+		t.Fatalf("current activity points outside the two execution Tasks: %+v", current["shiro"])
+	}
+}
+
+func TestRootCompletionRestoresAnotherActiveRootBeforeEvaluating(t *testing.T) {
+	for _, firstToComplete := range []string{"older root", "current root"} {
+		t.Run(firstToComplete, func(t *testing.T) {
+			ctx := context.Background()
+			store, err := taskpersistence.NewJSONLStoreWithOptions(t.TempDir(), taskpersistence.OpenOptions{Index: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			registerTaskStoreCleanup(t, store)
+			manager := New(store, DefaultParallelLimits())
+			older, olderRun, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "first work", Route: domaintask.RouteCHAT, Assignee: "shiro"}, domaintask.SharedRoleContext{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentRoot, currentRun, err := manager.CreateAndStartRun(ctx, domaintask.Task{Title: "second work", Route: domaintask.RouteOperations, Assignee: "shiro"}, domaintask.SharedRoleContext{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := manager.SnapshotCurrentActivities(ctx, []string{"shiro"})
+			if err != nil || current["shiro"].Task.TaskID != currentRoot.TaskID {
+				t.Fatalf("initial current=%+v err=%v, want most recently started root", current, err)
+			}
+			if firstToComplete == "older root" {
+				if _, err := manager.CompleteRun(ctx, older.TaskID, olderRun.RunID, "shiro", domaintask.StatusSucceeded, "older complete", ""); err != nil {
+					t.Fatal(err)
+				}
+				current, err = manager.SnapshotCurrentActivities(ctx, []string{"shiro"})
+				if err != nil || current["shiro"].Task.TaskID != currentRoot.TaskID {
+					t.Fatalf("after noncurrent root completed current=%+v err=%v, want current root unchanged", current, err)
+				}
+				if _, err := manager.CompleteRun(ctx, currentRoot.TaskID, currentRun.RunID, "shiro", domaintask.StatusSucceeded, "current complete", ""); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := manager.CompleteRun(ctx, currentRoot.TaskID, currentRun.RunID, "shiro", domaintask.StatusFailed, "current failed", ""); err != nil {
+					t.Fatal(err)
+				}
+				current, err = manager.SnapshotCurrentActivities(ctx, []string{"shiro"})
+				if err != nil || current["shiro"].Task.TaskID != older.TaskID || current["shiro"].Task.Activity == nil || current["shiro"].Task.Activity.Kind != domaintask.ActivityKindChat || current["shiro"].Participant.Revision < 3 {
+					t.Fatalf("after current root completed current=%+v err=%v, want older active root with monotonic assignment revision", current, err)
+				}
+				if _, err := manager.CompleteRun(ctx, older.TaskID, olderRun.RunID, "shiro", domaintask.StatusCancelled, "older cancelled", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			current, err = manager.SnapshotCurrentActivities(ctx, []string{"shiro"})
+			if err != nil || current["shiro"].Task.Activity == nil || current["shiro"].Task.Activity.Kind != domaintask.ActivityKindEvaluating || !current["shiro"].Task.Activity.Passive {
+				t.Fatalf("final current=%+v err=%v, want passive Evaluating after last root terminal", current, err)
+			}
+			runs, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+			if err != nil || len(runs) != 2 {
+				t.Fatalf("Runs=%+v err=%v, want exactly the two execution Runs", runs, err)
+			}
+			for _, run := range runs {
+				if !domaintask.IsRunTerminal(run.Status) {
+					t.Fatalf("execution Run left active: %+v", run)
+				}
+			}
+			if evaluationRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: current["shiro"].Task.TaskID}); err != nil || len(evaluationRuns) != 0 {
+				t.Fatalf("Evaluating Task Runs=%+v err=%v, want none", evaluationRuns, err)
+			}
+		})
+	}
+}
 
 func TestCurrentGameTurnRunUsesChildIdentityAndPreservesGameActivity(t *testing.T) {
 	ctx := context.Background()
@@ -203,6 +404,32 @@ func TestStoreWithoutActivityTransactionCannotIgnoreExistingCurrentTask(t *testi
 	current, err := baseManager.SnapshotCurrentActivities(ctx, []string{"shiro"})
 	if err != nil || current["shiro"].Task.Activity.Kind != domaintask.ActivityKindRest {
 		t.Fatalf("current Task changed through hidden owner port: %#v err=%v", current, err)
+	}
+}
+
+func TestTerminalCurrentActivityFailsClosedWhenRootCandidateReaderIsHidden(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStoreWithOptions(t.TempDir(), taskpersistence.OpenOptions{Index: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	ctx := context.Background()
+	base := New(store, DefaultParallelLimits())
+	started, run, err := base.CreateAndStartRun(ctx, domaintask.Task{Title: "active chat", Route: domaintask.RouteCHAT, Assignee: "shiro"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := New(activityRootCandidateHiddenStore{Store: store}, DefaultParallelLimits())
+	if _, err := wrapped.CompleteRun(ctx, started.TaskID, run.RunID, "shiro", domaintask.StatusSucceeded, "finished", ""); !errors.Is(err, domaintask.ErrCurrentActivityReaderUnsupported) {
+		t.Fatalf("terminal completion with hidden current-owner reader err=%v, want fail-closed unsupported-reader error", err)
+	}
+	unchangedTask, err := base.Get(ctx, started.TaskID)
+	if err != nil || unchangedTask.Status != domaintask.StatusRunning {
+		t.Fatalf("Task after rejected terminal handoff=%#v err=%v, want unchanged running Task", unchangedTask, err)
+	}
+	current, err := base.SnapshotCurrentActivities(ctx, []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID != started.TaskID {
+		t.Fatalf("current after rejected terminal handoff=%#v err=%v, want original current Task", current, err)
 	}
 }
 

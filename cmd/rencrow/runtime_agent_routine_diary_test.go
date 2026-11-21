@@ -545,11 +545,15 @@ func newRoutineDiaryTestRuntime(t *testing.T, gameStore *viewer.GameBridgeStore)
 		t.Fatalf("open Task store: %v", err)
 	}
 	t.Cleanup(func() { _ = taskStore.Close() })
-	return &agentRoutineRuntime{
+	runtime := &agentRoutineRuntime{
 		store: store, tasks: taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()), ownerID: "ren",
 		cfg: &config.Config{}, deps: &Dependencies{gameBridgeStore: gameStore},
 		now: func() time.Time { return time.Date(2026, time.November, 14, 10, 0, 0, 0, time.UTC) },
 	}
+	if err := initializeAgentCurrentActivities(context.Background(), runtime.tasks, runtime.ownerID, nil, nil); err != nil {
+		t.Fatalf("initialize canonical current activity Tasks: %v", err)
+	}
+	return runtime
 }
 
 func TestAgentRoutineRetryingDiaryPausesIntoSleepInSameWorkItem(t *testing.T) {

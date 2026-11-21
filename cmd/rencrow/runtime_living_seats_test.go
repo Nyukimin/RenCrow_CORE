@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -55,10 +56,22 @@ func TestLivingConversationUsesDistinctSeatsAndTracksCurrentTurn(t *testing.T) {
 func TestRunningGameLeaseTargetsOwnDeskAndProjectsTyping(t *testing.T) {
 	_, deps, server := newRoutineHouseViewTestRuntime(t, true)
 	defer server.Close()
-	gamesResponse := []byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio","personas":["mio"],"status":"running"}]}`)
-	gamesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	gameStatus := "running"
+	activeSessionReads, sessionDetailReads := 0, 0
+	gamesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(gamesResponse)
+		switch request.URL.Path {
+		case "/games/sessions":
+			activeSessionReads++
+			_, _ = w.Write([]byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio","personas":["mio"],"status":"running"}]}`))
+		case "/games/sessions/nethack-mio":
+			sessionDetailReads++
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": gameObserverSessionSummary{
+				GameID: "nethack", SessionID: "nethack-mio", Personas: []string{"mio"}, Status: gameStatus,
+			}})
+		default:
+			http.NotFound(w, request)
+		}
 	}))
 	defer gamesServer.Close()
 	gameSessions, err := newGameObserverSessionsHTTPClient(gamesServer.URL)
@@ -66,11 +79,18 @@ func TestRunningGameLeaseTargetsOwnDeskAndProjectsTyping(t *testing.T) {
 		t.Fatalf("create GAMES sessions client: %v", err)
 	}
 	deps.agentRoutine.gameSessions = gameSessions
-	deps.taskManager = newEmptyLivingTaskManager(t)
 	scheduler := startLivingSeatTestScheduler(t)
 	deps.agentHeartbeat = scheduler
 	runtime := deps.agentRoutine
 	runtime.deps = deps
+	sessions, err := gameSessions.ActiveAgentSessions(context.Background())
+	if err != nil || len(sessions) != 1 || sessions[0].GameID != "nethack" || sessions[0].SessionID != "nethack-mio" {
+		t.Fatalf("read confirmed existing GAMES session for adoption: %+v, %v", sessions, err)
+	}
+	if _, err := deps.taskManager.EnsureExternalGameActivity(context.Background(), runtime.ownerID,
+		sessions[0].GameID, sessions[0].SessionID, "playing", []domaintask.ActivityParticipant{{ActorID: "mio", Role: "player"}}); err != nil {
+		t.Fatalf("adopt confirmed existing GAMES session: %v", err)
+	}
 
 	release, err := scheduler.AcquireGameTurn(context.Background(), "mio", domaintask.PriorityHigh, "nethack")
 	if err != nil {
@@ -147,17 +167,27 @@ func TestRunningGameLeaseTargetsOwnDeskAndProjectsTyping(t *testing.T) {
 			t.Fatalf("active session projection after turn release = %q/%q, want desk-mio/type", actor.SeatID, actor.SeatAction)
 		}
 	}
-	gamesResponse = []byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio-1","personas":["mio"],"status":"running"},{"game_id":"nethack","session_id":"nethack-mio-2","personas":["mio"],"status":"running"}]}`)
-	seat, ready, err = runtime.livingSeats(context.Background())
-	if err != nil || !ready || seat["mio"] != (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}) {
-		t.Fatalf("two active sessions for mio = (%+v, %t, %v), want union retaining desk-mio/type", seat, ready, err)
+	if activeSessionReads != 1 || sessionDetailReads != 0 {
+		t.Fatalf("GAMES reads after current Task adoption and projections = active=%d detail=%d, want startup adoption only", activeSessionReads, sessionDetailReads)
 	}
-	gamesResponse = []byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio-2","personas":["mio"],"status":"running"}]}`)
-	seat, ready, err = runtime.livingSeats(context.Background())
-	if err != nil || !ready || seat["mio"] != (livingSeatActivity{room: "living", slot: "desk-mio", pose: "type"}) {
-		t.Fatalf("one remaining session for mio = (%+v, %t, %v), want desk-mio/type", seat, ready, err)
+	current, err := deps.taskManager.SnapshotCurrentActivities(context.Background(), []string{"mio"})
+	if err != nil {
+		t.Fatalf("snapshot adopted GAME Task: %v", err)
 	}
-	gamesResponse = []byte(`{"ok":true,"source":"local_observer","sessions":[{"game_id":"nethack","session_id":"nethack-mio","persona":"mio","status":"completed"}],"active_agent_sessions":[]}`)
+	participant := current["mio"]
+	if participant.Task.Activity == nil || participant.Task.Activity.Kind != domaintask.ActivityKindGame ||
+		participant.Task.Activity.Game == nil || participant.Task.Activity.Game.SessionID != "nethack-mio" {
+		t.Fatalf("canonical current GAME activity = %+v, want adopted exact GAMES session", participant.Task.Activity)
+	}
+	deps.gameTaskAdmission = newGameTaskRuntimeAdmission(gameSessions, deps.taskManager)
+	gameStatus = "completed"
+	work, found, err := observedGameTerminalWork(context.Background(), deps, participant)
+	if err != nil || !found || work.Run == nil {
+		t.Fatalf("observe confirmed terminal GAMES session: work=%+v found=%t err=%v", work, found, err)
+	}
+	if err := work.Run(context.Background(), nil); err != nil {
+		t.Fatalf("complete observer-confirmed canonical GAMES Task: %v", err)
+	}
 	seat, ready, err = runtime.livingSeats(context.Background())
 	if err != nil {
 		t.Fatalf("read desired living seats after session completion: %v", err)
@@ -167,6 +197,9 @@ func TestRunningGameLeaseTargetsOwnDeskAndProjectsTyping(t *testing.T) {
 	}
 	if _, exists := seat["mio"]; exists {
 		t.Fatalf("terminal session left a stale desired seat: %+v", seat["mio"])
+	}
+	if activeSessionReads != 1 || sessionDetailReads != 1 {
+		t.Fatalf("GAMES reads after owner-confirmed terminal handoff and projections = active=%d detail=%d, want only explicit adoption/terminal checks", activeSessionReads, sessionDetailReads)
 	}
 	projected, err = runtimeRoutineHouseViewProject(context.Background(), runtime, read)
 	if err != nil {
@@ -182,9 +215,18 @@ func TestRunningGameLeaseTargetsOwnDeskAndProjectsTyping(t *testing.T) {
 func TestActiveGameSessionTargetsDeskBeforeFirstTurnLease(t *testing.T) {
 	_, deps, server := newRoutineHouseViewTestRuntime(t, true)
 	defer server.Close()
-	gamesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	gamesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio","personas":["mio"],"status":"launching"}]}`))
+		switch request.URL.Path {
+		case "/games/sessions":
+			_, _ = w.Write([]byte(`{"ok":true,"source":"local_observer","sessions":[],"active_agent_sessions":[{"game_id":"nethack","session_id":"nethack-mio","personas":["mio"],"status":"launching"}]}`))
+		case "/games/sessions/nethack-mio":
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "session": gameObserverSessionSummary{
+				GameID: "nethack", SessionID: "nethack-mio", Personas: []string{"mio"}, Status: "launching",
+			}})
+		default:
+			http.NotFound(w, request)
+		}
 	}))
 	defer gamesServer.Close()
 	gameSessions, err := newGameObserverSessionsHTTPClient(gamesServer.URL)
@@ -192,7 +234,14 @@ func TestActiveGameSessionTargetsDeskBeforeFirstTurnLease(t *testing.T) {
 		t.Fatalf("create GAMES sessions client: %v", err)
 	}
 	deps.agentRoutine.gameSessions = gameSessions
-	deps.taskManager = newEmptyLivingTaskManager(t)
+	sessions, err := gameSessions.ActiveAgentSessions(context.Background())
+	if err != nil || len(sessions) != 1 || sessions[0].GameID != "nethack" || sessions[0].SessionID != "nethack-mio" || sessions[0].Status != "launching" {
+		t.Fatalf("read confirmed launching GAMES session for adoption: %+v, %v", sessions, err)
+	}
+	if _, err := deps.taskManager.EnsureExternalGameActivity(context.Background(), deps.agentRoutine.ownerID,
+		sessions[0].GameID, sessions[0].SessionID, "playing", []domaintask.ActivityParticipant{{ActorID: "mio", Role: "player"}}); err != nil {
+		t.Fatalf("adopt confirmed launching GAMES session: %v", err)
+	}
 	scheduler := startLivingSeatTestScheduler(t)
 	deps.agentHeartbeat = scheduler
 	runtime := deps.agentRoutine
@@ -209,25 +258,31 @@ func TestActiveGameSessionTargetsDeskBeforeFirstTurnLease(t *testing.T) {
 	}
 }
 
-func TestGameSessionSnapshotFailureDoesNotBecomeAnEmptySeatSet(t *testing.T) {
+func TestCurrentActivitySnapshotFailureDoesNotBecomeAnEmptySeatSet(t *testing.T) {
 	_, deps, server := newRoutineHouseViewTestRuntime(t, true)
 	defer server.Close()
 	scheduler := startLivingSeatTestScheduler(t)
 	deps.agentHeartbeat = scheduler
 	runtime := deps.agentRoutine
 	runtime.deps = deps
+	deps.taskManager = newEmptyLivingTaskManager(t)
+	observerReads := 0
 	runtime.gameSessions = gameObserverSessionsReaderFunc(func(context.Context) ([]gameObserverActiveAgentSession, error) {
+		observerReads++
 		return nil, errGameObserverSessionsUnavailable
 	})
 	seats, ready, err := runtime.livingSeats(context.Background())
-	if ready || !errors.Is(err, errGameObserverSessionsUnavailable) || seats != nil {
-		t.Fatalf("livingSeats() = (%+v, %t, %v), want unavailable snapshot", seats, ready, err)
+	if ready || !errors.Is(err, domaintask.ErrCurrentActivityNotFound) || seats != nil {
+		t.Fatalf("livingSeats() = (%+v, %t, %v), want missing canonical current Task error", seats, ready, err)
 	}
 	read := routineSnapshotRead{snapshot: worldread.Snapshot{
 		WorldID: "home-world", HomeSceneSHA256: routineHouseViewTestSceneSHA256,
 	}}
-	if _, err := runtimeRoutineHouseViewProject(context.Background(), runtime, read); !errors.Is(err, errGameObserverSessionsUnavailable) {
-		t.Fatalf("house view projection error = %v, want unavailable GAMES snapshot", err)
+	if _, err := runtimeRoutineHouseViewProject(context.Background(), runtime, read); !errors.Is(err, domaintask.ErrCurrentActivityNotFound) {
+		t.Fatalf("house view projection error = %v, want missing canonical current Task", err)
+	}
+	if observerReads != 0 {
+		t.Fatalf("GAMES observer reads during failed current-activity projections = %d, want zero", observerReads)
 	}
 }
 

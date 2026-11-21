@@ -31,7 +31,10 @@ var (
 	ErrActivityTaskWriterUnsupported       = errors.New("Task store does not support activity owner writes")
 	ErrCurrentActivityReaderUnsupported    = errors.New("Task store does not support indexed current activity reads")
 	ErrActiveExternalGameActivitiesTooMany = errors.New("active external Game Task count exceeds bounded read limit")
+	ErrActivityRootCandidateSearchLimit    = errors.New("active root activity candidate search exceeds bounded read limit")
 )
+
+const MaxActivityRootCandidateScan = 256
 
 // ActivityTaskWriter is the narrow TaskStore path for atomically changing
 // activity assignment metadata while preserving all other Task fields.
@@ -51,6 +54,23 @@ type CurrentActivityTaskReader interface {
 // passive external Game Tasks, including Tasks no longer current for an actor.
 type ActiveExternalGameActivityReader interface {
 	ListActiveExternalGameActivities(context.Context) ([]Task, error)
+}
+
+// ActivityRootTaskCandidate contains only the owner facts needed to restore
+// an actor's current activity to another still-running root Task.
+type ActivityRootTaskCandidate struct {
+	TaskID          modulecore.TaskID
+	Kind            ActivityKind
+	Label           string
+	Phase           string
+	ParticipantRole string
+}
+
+// ActivityRootTaskCandidateReader is an internal trusted CORE owner port, not
+// a public read or authorization surface. It selects one deterministic active
+// root without returning Task titles, context, summaries, or private payloads.
+type ActivityRootTaskCandidateReader interface {
+	FindRunningRootActivityCandidate(context.Context, string, modulecore.TaskID) (ActivityRootTaskCandidate, bool, error)
 }
 
 const MaxActiveExternalGameActivities = 64

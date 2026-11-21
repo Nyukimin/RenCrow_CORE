@@ -20,6 +20,7 @@ import (
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	superagentpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/superagent"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -59,16 +60,39 @@ type autonomousAcceptanceFixture struct {
 	clock     atomic.Int64
 }
 
+func newAutonomousTaskOwner(t *testing.T, root string) *taskmanager.Manager {
+	t.Helper()
+	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(root, "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())
+	t.Cleanup(func() {
+		if err := owner.Close(); err != nil {
+			t.Errorf("close autonomous Task owner: %v", err)
+		}
+	})
+	return owner
+}
+
+func installEmptyAgentGameSessionsForSchedulerFixture(deps *Dependencies, owner *taskmanager.Manager) {
+	deps.gameTaskAdmission = newGameTaskRuntimeAdmission(currentActivityGameReader{}, owner)
+}
+
 func newAutonomousAcceptanceFixture(t *testing.T, responses ...string) *autonomousAcceptanceFixture {
 	return newAutonomousAcceptanceFixtureBackend(t, "jsonl", responses...)
 }
 
 func newAutonomousAcceptanceFixtureBackend(t *testing.T, backend string, responses ...string) *autonomousAcceptanceFixture {
 	t.Helper()
-	owner, jsonlQueue, _ := newTaskEnqueueFixture(t, domaintask.Task{
+	root := t.TempDir()
+	owner := newAutonomousTaskOwner(t, root)
+	if _, err := owner.Create(context.Background(), domaintask.Task{
 		OwnerID: "ren", Assignee: "outside-fixture", Route: domaintask.RouteCHAT, Title: "isolated acceptance setup",
-	}, domaintask.SharedRoleContext{})
-	var queue runtimeSuperAgentStateStore = jsonlQueue
+	}, domaintask.SharedRoleContext{}); err != nil {
+		t.Fatalf("create isolated acceptance setup Task: %v", err)
+	}
+	var queue runtimeSuperAgentStateStore
 	if backend == "sqlite" {
 		sqliteQueue, err := superagentpersistence.NewSQLiteStore(filepath.Join(t.TempDir(), "queue.sqlite"), 3000)
 		if err != nil {
@@ -76,6 +100,9 @@ func newAutonomousAcceptanceFixtureBackend(t *testing.T, backend string, respons
 		}
 		t.Cleanup(func() { _ = sqliteQueue.Close() })
 		queue = sqliteQueue
+	} else if backend == "jsonl" {
+		jsonlQueue := superagentpersistence.NewJSONLStore(filepath.Join(root, "superagent"), 3000)
+		queue = jsonlQueue
 	} else if backend != "jsonl" {
 		t.Fatalf("unknown fixture queue backend %q", backend)
 	}
@@ -100,6 +127,7 @@ func newAutonomousAcceptanceFixtureBackend(t *testing.T, backend string, respons
 		}},
 	)
 	deps := &Dependencies{taskManager: owner, superAgentStore: store, superAgentStateStore: queue, agentRunQueue: scheduler}
+	installEmptyAgentGameSessionsForSchedulerFixture(deps, owner)
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, UserID: "ren"}, Heartbeat: config.HeartbeatConfig{AgentSchedulerEnabled: true}}
 	cfg.Heartbeat.Routine.Enabled = true
 	configureAgentHeartbeatScheduler(cfg, deps, workers, nil, runner)

@@ -104,7 +104,7 @@ func (f *claimableIntegration) failAt(batch domainmemory.ProfilePromotionBatch, 
 	}
 }
 
-func (f *claimableIntegration) counts() (tasks, actions int) {
+func (f *claimableIntegration) assertNoExecutionSubject() {
 	f.t.Helper()
 	taskList, err := f.tasks.List(context.Background(), domaintask.Filter{})
 	if err != nil {
@@ -114,7 +114,60 @@ func (f *claimableIntegration) counts() (tasks, actions int) {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return len(taskList), len(actionList)
+	runs, err := f.tasks.ListRuns(context.Background(), domaintask.RunFilter{})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if len(taskList) != 0 || len(actionList) != 0 || len(runs) != 0 {
+		f.t.Fatalf("claimless execution created Tasks=%+v Actions=%+v Runs=%+v", taskList, actionList, runs)
+	}
+}
+
+func (f *claimableIntegration) assertOneExecutionAndEvaluatingSuccessor() domaintask.Task {
+	f.t.Helper()
+	ctx := context.Background()
+	tasks, err := f.tasks.List(ctx, domaintask.Filter{Limit: 100})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	actions, err := f.actions.ListActions(ctx, domainaction.Filter{})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	runs, err := f.tasks.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if len(tasks) != 2 || len(actions) != 1 || len(runs) != 1 {
+		f.t.Fatalf("Tasks=%d Actions=%d Runs=%d, want one execution subject plus one passive successor", len(tasks), len(actions), len(runs))
+	}
+	var execution, successor domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.TaskID == actions[0].TaskID {
+			execution = candidate
+		} else {
+			successor = candidate
+		}
+	}
+	if execution.TaskID == "" || execution.Route != domaintask.RouteResearch || execution.Activity == nil ||
+		execution.Activity.Kind != domaintask.ActivityKindWork || execution.Activity.Passive || !domaintask.IsTerminal(execution.Status) {
+		f.t.Fatalf("execution Task=%+v, want one terminal active-work Task linked by the Action", execution)
+	}
+	if runs[0].TaskID != execution.TaskID || runs[0].RunID != actions[0].RunID || !domaintask.IsRunTerminal(runs[0].Status) {
+		f.t.Fatalf("Run=%+v Action=%+v, want the one terminal Run bound to the execution Task", runs[0], actions[0])
+	}
+	if successor.TaskID == "" || successor.Status != domaintask.StatusRunning || successor.Activity == nil ||
+		successor.Activity.Kind != domaintask.ActivityKindEvaluating || !successor.Activity.Passive {
+		f.t.Fatalf("successor Task=%+v, want one passive evaluating Task", successor)
+	}
+	if successorRuns, err := f.tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
+		f.t.Fatalf("passive successor Runs=%+v err=%v, want no execution Run", successorRuns, err)
+	}
+	current, err := f.tasks.SnapshotCurrentActivities(ctx, []string{"midori"})
+	if err != nil || current["midori"].Task.TaskID != successor.TaskID {
+		f.t.Fatalf("current midori activity=%+v err=%v, want the passive successor", current, err)
+	}
+	return execution
 }
 
 func (f *claimableIntegration) jobState() string {
@@ -193,13 +246,10 @@ func TestActionMemoryPromotionRunnerAgainstTheRealClaim(t *testing.T) {
 			if result.Processed != tc.wantProcessed {
 				t.Fatalf("Processed=%v, want %v", result.Processed, tc.wantProcessed)
 			}
-			tasks, actions := f.counts()
-			wantCount := 0
 			if tc.wantCreated {
-				wantCount = 1
-			}
-			if tasks != wantCount || actions != wantCount {
-				t.Fatalf("tasks=%d actions=%d, want %d each", tasks, actions, wantCount)
+				f.assertOneExecutionAndEvaluatingSuccessor()
+			} else {
+				f.assertNoExecutionSubject()
 			}
 			if tc.wantJobState != "" {
 				if got := f.jobState(); got != tc.wantJobState {
@@ -221,14 +271,16 @@ func TestActionMemoryPromotionRunnerLeavesNothingOnEveryIdleTickAfterTheWorkIsDo
 	if err != nil || !result.Processed {
 		t.Fatalf("first RunOne result=%#v err=%v, want the job processed", result, err)
 	}
+	firstExecution := f.assertOneExecutionAndEvaluatingSuccessor()
 	for tick := 1; tick <= 20; tick++ {
 		f.clock = t0.Add(time.Duration(tick) * 11 * time.Second)
 		result, err := f.runner.RunOne(context.Background())
 		if err != nil || result.Processed {
-			t.Fatalf("tick %d result=%#v err=%v, want an idle tick", tick, result, err)
+			f.t.Fatalf("tick %d result=%#v err=%v, want an idle tick", tick, result, err)
 		}
 	}
-	if tasks, actions := f.counts(); tasks != 1 || actions != 1 {
-		t.Fatalf("tasks=%d actions=%d after 20 idle ticks, want the one processed run only", tasks, actions)
+	lastExecution := f.assertOneExecutionAndEvaluatingSuccessor()
+	if lastExecution.TaskID != firstExecution.TaskID {
+		t.Fatalf("idle ticks changed the execution Task from %s to %s", firstExecution.TaskID, lastExecution.TaskID)
 	}
 }

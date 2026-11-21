@@ -45,13 +45,23 @@ func TestAgentRoutineDaytimeRelaxCreatesCanonicalTaskAndRun(t *testing.T) {
 			if err != nil || len(facts) != 1 || facts[0].Kind != agentroutine.ActivityRelax || !facts[0].Confirmed {
 				t.Fatalf("relaxation facts = %+v err=%v; want one confirmed room observation", facts, err)
 			}
-			all, err := tasks.List(ctx, domaintask.Filter{Assignee: "mio"})
+			all, err := tasks.List(ctx, domaintask.Filter{Assignee: "mio", ModuleID: agentRoutineModuleID})
 			if err != nil || len(all) != 1 || all[0].Status != domaintask.StatusSucceeded || all[0].Title != routineTaskTitle(agentroutine.ActivityRelax) {
-				t.Fatalf("canonical routine Tasks = %+v err=%v; want one succeeded relax Task", all, err)
+				t.Fatalf("canonical routine execution Tasks = %+v err=%v; want one succeeded relax Task", all, err)
 			}
 			runs, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: all[0].TaskID})
 			if err != nil || len(runs) != 1 || runs[0].Status != domaintask.RunStatusSucceeded {
 				t.Fatalf("canonical routine Runs = %+v err=%v; want one succeeded Run", runs, err)
+			}
+			current, err := tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+			if err != nil {
+				t.Fatalf("snapshot current rest successor: %v", err)
+			}
+			successor := current["mio"].Task
+			if successor.ModuleID != agentActivityModuleID || successor.Activity == nil ||
+				successor.Activity.Kind != domaintask.ActivityKindRest || !successor.Activity.Passive ||
+				successor.Timing == nil || successor.Timing.DeadlineAt == nil || !successor.Timing.DeadlineAt.Equal(state.RestWindow.Until) {
+				t.Fatalf("current Task after relax completion = %+v; want one passive Rest successor with the persisted interval deadline", successor)
 			}
 		})
 	}
@@ -135,9 +145,9 @@ func TestAgentRoutineDaytimePreemptedOrStoppedWorkCreatesNoTask(t *testing.T) {
 			if err := work.Run(ctx, stop); err != nil {
 				t.Fatalf("preempted/stopped Work.Run() = %v; want clean no-op", err)
 			}
-			created, err := tasks.List(ctx, domaintask.Filter{Assignee: "mio"})
+			created, err := tasks.List(ctx, domaintask.Filter{Assignee: "mio", ModuleID: agentRoutineModuleID})
 			if err != nil || len(created) != 0 {
-				t.Fatalf("preempted/stopped Tasks = %+v err=%v; want no canonical Task", created, err)
+				t.Fatalf("preempted/stopped execution Tasks = %+v err=%v; want no routine execution Task", created, err)
 			}
 			state, err := runtime.store.Load(ctx, "mio")
 			if err != nil || state.Pending != nil {
