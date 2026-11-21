@@ -24,37 +24,56 @@ type BoundOptions struct {
 }
 
 func Append(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 	line, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(append(line, '\n'))
-	return err
+	return unwrapAppendError(AppendLine(path, append(line, '\n')))
 }
 
-func AppendBounded(path string, value any, opts BoundOptions) error {
-	if err := Append(path, value); err != nil {
-		return err
-	}
-	if opts.MaxRecords <= 0 && opts.MaxBytes <= 0 {
-		return nil
-	}
-	info, err := os.Stat(path)
+// AppendImmediate appends one record in path order without waiting for the
+// normal batching window. It still fences earlier accepted appends for path.
+func AppendImmediate(path string, value any) error {
+	line, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	if opts.MaxBytes > 0 && info.Size() <= opts.MaxBytes {
-		return nil
+	return unwrapAppendError(AppendLineImmediate(path, append(line, '\n')))
+}
+
+func AppendBounded(path string, value any, opts BoundOptions) error {
+	if opts.MaxRecords <= 0 && opts.MaxBytes <= 0 {
+		return AppendImmediate(path, value)
 	}
-	return CompactLatestRecords(path, opts.MaxRecords)
+	line, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	err = appendBatches.submitOperation(path, len(line)+1, func(canonical string) error {
+		if err := appendBatches.writeImmediate(canonical, [][]byte{append(line, '\n')}); err != nil {
+			return err
+		}
+		if opts.MaxRecords <= 0 && opts.MaxBytes <= 0 {
+			return nil
+		}
+		info, err := os.Stat(canonical)
+		if err != nil {
+			return err
+		}
+		if opts.MaxBytes > 0 && info.Size() <= opts.MaxBytes {
+			return nil
+		}
+		return compactLatestRecords(canonical, opts.MaxRecords)
+	})
+	return unwrapAppendError(err)
+}
+
+func unwrapAppendError(err error) error {
+	var appendErr *AppendError
+	if errors.As(err, &appendErr) {
+		return appendErr.Err
+	}
+	return err
 }
 
 func ListLatest[T any](path string, limit int) ([]T, error) {
@@ -98,6 +117,15 @@ func CompactLatestRecords(path string, maxRecords int) error {
 	if maxRecords <= 0 {
 		return nil
 	}
+	return appendBatches.submitOperation(path, 0, func(canonical string) error {
+		return compactLatestRecords(canonical, maxRecords)
+	})
+}
+
+func compactLatestRecords(path string, maxRecords int) error {
+	if maxRecords <= 0 {
+		return nil
+	}
 	lines, err := ReadAllLines(path)
 	if err != nil {
 		return err
@@ -118,12 +146,11 @@ func CompactLatestRecords(path string, maxRecords int) error {
 	if err != nil {
 		return err
 	}
-	for _, line := range kept {
-		if _, err := tmp.Write(append(line, '\n')); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpPath)
-			return err
-		}
+	defer tmp.Close()
+	if err := writeCompactedLines(tmp, kept); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
@@ -134,6 +161,16 @@ func CompactLatestRecords(path string, maxRecords int) error {
 		return err
 	}
 	return nil
+}
+
+func writeCompactedLines(dst io.Writer, lines [][]byte) error {
+	writer := bufio.NewWriter(dst)
+	for _, line := range lines {
+		if _, err := writer.Write(append(line, '\n')); err != nil {
+			return err
+		}
+	}
+	return writer.Flush()
 }
 
 func ReadAllLines(path string) ([][]byte, error) {

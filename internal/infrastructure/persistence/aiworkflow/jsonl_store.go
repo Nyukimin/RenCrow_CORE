@@ -133,7 +133,7 @@ func (s *JSONLStore) save(ctx context.Context, kind, path string, item any, boun
 }
 
 func appendJSONL(path string, value any) error {
-	return jsonlutil.Append(path, value)
+	return jsonlutil.AppendImmediate(path, value)
 }
 
 func appendJSONLBounded(path string, value any, maxRecords int, maxBytes int64) error {

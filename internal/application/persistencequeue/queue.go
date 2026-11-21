@@ -65,6 +65,8 @@ type Status struct {
 	Reserved        int
 	PendingBytes    int64
 	ReservedBytes   int64
+	BatchWrites     uint64
+	BatchedCommands uint64
 	OldestSequence  uint64
 	OldestPendingAt time.Time
 	InFlight        bool
@@ -94,15 +96,29 @@ type Queue[T any] struct {
 	pendingBytes      int64
 	reservedBytes     int64
 	writer            func(Command[T]) error
+	batchKey          func(T) (*JSONLBatchToken, bool)
+	batchWriter       func([]Command[T]) error
 	accepting         bool
 	inFlight          bool
 	lastSequence      uint64
 	completedSequence uint64
+	batchWrites       uint64
+	batchedCommands   uint64
 	failure           *Failure
 	workerDone        chan struct{}
 }
 
 func New[T any](capacity int, byteCapacity int64, writer func(Command[T]) error) (*Queue[T], error) {
+	return newQueue(capacity, byteCapacity, writer, nil, nil)
+}
+
+func newQueue[T any](
+	capacity int,
+	byteCapacity int64,
+	writer func(Command[T]) error,
+	batchKey func(T) (*JSONLBatchToken, bool),
+	batchWriter func([]Command[T]) error,
+) (*Queue[T], error) {
 	if capacity < 1 {
 		return nil, ErrInvalidCapacity
 	}
@@ -118,6 +134,8 @@ func New[T any](capacity int, byteCapacity int64, writer func(Command[T]) error)
 		capacity:     capacity,
 		byteCapacity: byteCapacity,
 		writer:       writer,
+		batchKey:     batchKey,
+		batchWriter:  batchWriter,
 		accepting:    true,
 		workerDone:   make(chan struct{}),
 	}
@@ -339,13 +357,15 @@ func (q *Queue[T]) Status() Status {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	status := Status{
-		Accepting:     q.accepting,
-		Pending:       len(q.items),
-		Reserved:      q.reserved,
-		PendingBytes:  q.pendingBytes,
-		ReservedBytes: q.reservedBytes,
-		InFlight:      q.inFlight,
-		Failure:       q.copyFailureLocked(),
+		Accepting:       q.accepting,
+		Pending:         len(q.items),
+		Reserved:        q.reserved,
+		PendingBytes:    q.pendingBytes,
+		ReservedBytes:   q.reservedBytes,
+		BatchWrites:     q.batchWrites,
+		BatchedCommands: q.batchedCommands,
+		InFlight:        q.inFlight,
+		Failure:         q.copyFailureLocked(),
 	}
 	if len(q.items) > 0 {
 		status.OldestSequence = q.items[0].command.Sequence
@@ -366,29 +386,58 @@ func (q *Queue[T]) run() {
 			return
 		}
 		item := q.items[0]
-		command := item.command
+		commands := []Command[T]{item.command}
+		batchCount := 1
+		batchBytes := item.sizeBytes
+		if q.batchKey != nil && q.batchWriter != nil && item.sizeBytes <= MaxJSONLBatchBytes {
+			if key, ok := q.batchKey(item.command.Value); ok && key != nil {
+				for _, candidate := range q.items[1:] {
+					if batchCount >= MaxJSONLBatchCommands || candidate.sizeBytes > MaxJSONLBatchBytes-batchBytes {
+						break
+					}
+					candidateKey, eligible := q.batchKey(candidate.command.Value)
+					if !eligible || candidateKey != key {
+						break
+					}
+					commands = append(commands, candidate.command)
+					batchCount++
+					batchBytes += candidate.sizeBytes
+				}
+			}
+		}
 		q.inFlight = true
 		q.mu.Unlock()
 
-		err := q.writer(command)
+		var err error
+		if len(commands) == 1 {
+			err = q.writer(commands[0])
+		} else {
+			err = q.batchWriter(commands)
+		}
 
 		q.mu.Lock()
 		q.inFlight = false
 		if err != nil {
-			q.failure = &Failure{Sequence: command.Sequence, Err: err}
+			q.failure = &Failure{Sequence: commands[0].Sequence, Err: err}
 			q.accepting = false
 			q.ready.Broadcast()
 			q.notifyChangedLocked()
 			q.mu.Unlock()
 			return
 		}
-		q.pendingBytes -= item.sizeBytes
-		q.items[0] = queuedItem[T]{}
-		q.items = q.items[1:]
+		for index := 0; index < len(commands); index++ {
+			q.pendingBytes -= q.items[index].sizeBytes
+			q.items[index] = queuedItem[T]{}
+		}
+		q.items = q.items[len(commands):]
 		if len(q.items) == 0 {
 			q.items = nil
 		}
-		q.completedSequence = command.Sequence
+		q.completedSequence = commands[len(commands)-1].Sequence
+		if len(commands) > 1 {
+			q.batchWrites++
+			q.batchedCommands += uint64(len(commands))
+		}
 		q.notifyChangedLocked()
 		q.mu.Unlock()
 	}

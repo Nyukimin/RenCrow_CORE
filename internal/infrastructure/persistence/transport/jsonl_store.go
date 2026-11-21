@@ -29,6 +29,7 @@ type JSONLStore struct {
 	requestPath  string
 	responsePath string
 	batch        *jsonlbatch.Store
+	batchToken   *persistencequeue.JSONLBatchToken
 	// admissionMu protects the volatile read-your-writes view and queue ticket.
 	// The queue worker never holds this mutex while it performs filesystem I/O.
 	admissionMu  sync.Mutex
@@ -61,6 +62,10 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 		requests:     make(map[modulecore.RequestID]domaintransport.Request),
 		responses:    make(map[modulecore.ResponseID]domaintransport.Response),
 	}
+	store.batchToken = persistencequeue.NewJSONLBatchToken(store)
+	if store.batchToken == nil {
+		return nil, errors.New("transport JSONL batch owner is unavailable")
+	}
 	if err := batch.Read(context.Background(), func() error {
 		requests, err := store.loadRequests()
 		if err != nil {
@@ -77,6 +82,31 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+// WriteJSONLBatch preserves queue order within each append-only file while
+// committing the complete group through the store's existing WAL transaction.
+func (s *JSONLStore) WriteJSONLBatch(ctx context.Context, writes []map[string][]byte) error {
+	if s == nil || s.batch == nil || len(writes) < 2 || len(writes) > persistencequeue.MaxJSONLBatchCommands {
+		return fmt.Errorf("transport JSONL batch requires 2 to %d writes and an initialized store", persistencequeue.MaxJSONLBatchCommands)
+	}
+	joined := make(map[string][]byte)
+	var totalBytes int64
+	for _, write := range writes {
+		if len(write) == 0 {
+			return errors.New("transport JSONL batch contains an empty write")
+		}
+		for filename, payload := range write {
+			if len(payload) == 0 || int64(len(payload)) > persistencequeue.MaxJSONLBatchBytes-totalBytes {
+				return fmt.Errorf("transport JSONL batch exceeds %d bytes or contains an empty payload", persistencequeue.MaxJSONLBatchBytes)
+			}
+			totalBytes += int64(len(payload))
+			joined[filename] = append(joined[filename], payload...)
+		}
+	}
+	return s.batch.Write(ctx, func() (map[string][]byte, error) {
+		return joined, nil
+	})
 }
 
 func (s *JSONLStore) Transaction(ctx context.Context, callback func(domaintransport.Store) error) error {

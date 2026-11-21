@@ -313,10 +313,16 @@ func EnsureHobbySchema(ctx context.Context, hobbyDB *sql.DB) error {
 		}
 	}()
 	for _, statement := range hobbySchemaStatements() {
-		if strings.Contains(statement, "CREATE INDEX IF NOT EXISTS idx_hobby_summary_jobs_due") {
+		if statement == hobbySummaryJobsDueIndex.createStatement() {
 			if err := ensureSummaryJobColumns(ctx, tx); err != nil {
 				return err
 			}
+		}
+		if index, ok := hobbyIndexForStatement(statement); ok {
+			if err := ensureHobbyIndex(ctx, tx, index); err != nil {
+				return fmt.Errorf("ensure hobby index %s: %w", index.name, err)
+			}
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("create person related catalog schema: %w", err)
@@ -327,6 +333,132 @@ func EnsureHobbySchema(ctx context.Context, hobbyDB *sql.DB) error {
 	}
 	rollback = false
 	return nil
+}
+
+type hobbyIndexDefinition struct {
+	name    string
+	table   string
+	columns []string
+}
+
+var (
+	hobbySummaryJobsDueIndex = hobbyIndexDefinition{
+		name: "idx_hobby_summary_jobs_due", table: "hobby_summary_jobs",
+		columns: []string{"state", "next_attempt_at", "category", "item_id"},
+	}
+	hobbyItemSummariesExpiryIndex = hobbyIndexDefinition{
+		name: "idx_hobby_item_summaries_expiry", table: "hobby_item_summaries",
+		columns: []string{"source_status", "expires_at", "category", "item_id", "source"},
+	}
+)
+
+func (index hobbyIndexDefinition) createStatement() string {
+	return fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)", index.name, index.table, strings.Join(index.columns, ", "))
+}
+
+func hobbyIndexForStatement(statement string) (hobbyIndexDefinition, bool) {
+	for _, index := range []hobbyIndexDefinition{hobbySummaryJobsDueIndex, hobbyItemSummariesExpiryIndex} {
+		if statement == index.createStatement() {
+			return index, true
+		}
+	}
+	return hobbyIndexDefinition{}, false
+}
+
+func ensureHobbyIndex(ctx context.Context, tx *sql.Tx, index hobbyIndexDefinition) error {
+	current, err := hobbyIndexMatches(ctx, tx, index)
+	if err != nil {
+		return err
+	}
+	if current {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, "DROP INDEX IF EXISTS "+index.name); err != nil {
+		return fmt.Errorf("drop stale index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, index.createStatement()); err != nil {
+		return fmt.Errorf("create current index: %w", err)
+	}
+	return nil
+}
+
+func hobbyIndexMatches(ctx context.Context, tx *sql.Tx, index hobbyIndexDefinition) (bool, error) {
+	var owner string
+	err := tx.QueryRowContext(ctx, `SELECT tbl_name FROM sqlite_master WHERE type='index' AND name=?`, index.name).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect index owner: %w", err)
+	}
+	if owner != index.table {
+		return false, nil
+	}
+	rows, err := tx.QueryContext(ctx, "PRAGMA index_list("+index.table+")")
+	if err != nil {
+		return false, fmt.Errorf("inspect index list: %w", err)
+	}
+	found, ordinary, partial := false, false, false
+	for rows.Next() {
+		var sequence, isUnique, isPartial int
+		var name, origin string
+		if err := rows.Scan(&sequence, &name, &isUnique, &origin, &isPartial); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("scan index list: %w", err)
+		}
+		if name == index.name {
+			found = true
+			ordinary = isUnique == 0 && origin == "c"
+			partial = isPartial != 0
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("read index list: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close index list: %w", err)
+	}
+	if !found || !ordinary || partial {
+		return false, nil
+	}
+	rows, err = tx.QueryContext(ctx, "PRAGMA index_xinfo("+index.name+")")
+	if err != nil {
+		return false, fmt.Errorf("inspect index columns: %w", err)
+	}
+	columns := make([]string, 0, len(index.columns))
+	for rows.Next() {
+		var sequence, cid, descending, key int
+		var name, collation sql.NullString
+		if err := rows.Scan(&sequence, &cid, &name, &descending, &collation, &key); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("scan index columns: %w", err)
+		}
+		if key == 0 {
+			continue
+		}
+		if cid < 0 || !name.Valid || descending != 0 || !collation.Valid || collation.String != "BINARY" {
+			_ = rows.Close()
+			return false, nil
+		}
+		columns = append(columns, name.String)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("read index columns: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close index columns: %w", err)
+	}
+	if len(columns) != len(index.columns) {
+		return false, nil
+	}
+	for position, column := range columns {
+		if column != index.columns[position] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func ensureSummaryJobColumns(ctx context.Context, tx *sql.Tx) error {
@@ -590,12 +722,8 @@ func hobbySchemaStatements() []string {
   ON hobby_collection_attempts(person_ref_id, movie_catalog_person_id, category, source, expires_at, retrieved_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_item_summaries_category_item_source
 	  ON hobby_item_summaries(category, item_id, source, source_status, translation_status)`,
-		`DROP INDEX IF EXISTS idx_hobby_summary_jobs_due`,
-		`CREATE INDEX IF NOT EXISTS idx_hobby_summary_jobs_due
-	  ON hobby_summary_jobs(state, next_attempt_at, category, item_id)`,
-		`DROP INDEX IF EXISTS idx_hobby_item_summaries_expiry`,
-		`CREATE INDEX IF NOT EXISTS idx_hobby_item_summaries_expiry
-	  ON hobby_item_summaries(source_status, expires_at, category, item_id, source)`,
+		hobbySummaryJobsDueIndex.createStatement(),
+		hobbyItemSummariesExpiryIndex.createStatement(),
 		`CREATE INDEX IF NOT EXISTS idx_hobby_person_external_ids_authority_external
 	  ON hobby_person_external_ids(authority, external_id, person_id, state)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_person_external_ids_person

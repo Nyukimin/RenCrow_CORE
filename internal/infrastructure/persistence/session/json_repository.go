@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1688,6 +1689,17 @@ func (r *JSONSessionRepository) writeSessionBytesLocked(ctx context.Context, id 
 			return err
 		}
 	}
+	canonicalPath := r.getFilePath(id)
+	secureMode := os.FileMode(0600)
+	if runtime.GOOS == "windows" {
+		// Windows exposes chmod's read-only flag as a coarse 0666 mode.
+		secureMode = 0666
+	}
+	if info, err := os.Lstat(canonicalPath); err == nil && info.Mode().IsRegular() && info.Mode().Perm() == secureMode {
+		if existing, readErr := os.ReadFile(canonicalPath); readErr == nil && bytes.Equal(existing, data) {
+			return nil
+		}
+	}
 	temporary, err := os.CreateTemp(r.baseDir, ".session-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create session temp file: %w", err)
@@ -1712,7 +1724,7 @@ func (r *JSONSessionRepository) writeSessionBytesLocked(ctx context.Context, id 
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("failed to close session temp file: %w", err)
 	}
-	if err := os.Rename(temporaryPath, r.getFilePath(id)); err != nil {
+	if err := os.Rename(temporaryPath, canonicalPath); err != nil {
 		return fmt.Errorf("failed to commit session file: %w", err)
 	}
 	committed = true
