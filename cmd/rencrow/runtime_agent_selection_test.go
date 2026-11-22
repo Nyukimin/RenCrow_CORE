@@ -103,10 +103,13 @@ func TestRoutineSelectionLeavesEvaluationDuringDeferredActivity(t *testing.T) {
 }
 
 func TestRoutineSelectionRestRevalidatesRoomAndCurrentTask(t *testing.T) {
-	for _, scenario := range []string{"unknown room", "active WORLD operation", "foreground wins", "stop"} {
+	for _, scenario := range []string{"unknown room", "active WORLD operation", "night shared room", "foreground wins", "stop"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
 			clock := time.Date(2026, 11, 15, 12, 0, 0, 0, time.FixedZone(agentroutine.JST, 9*60*60))
+			if scenario == "night shared room" {
+				clock = clock.Add(10 * time.Hour)
+			}
 			room := "living"
 			if scenario == "unknown room" {
 				room = "unknown"

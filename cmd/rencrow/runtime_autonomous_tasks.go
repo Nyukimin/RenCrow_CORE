@@ -197,9 +197,8 @@ func (r *autonomousTaskRuntime) autonomousWindow(ctx context.Context, actorID st
 		return false
 	}
 	presence := agentroutine.Presence{SharedRoom: agentroutine.AvailabilityUnknown, OwnRoom: agentroutine.AvailabilityUnknown}
-	canHobby := r.routine.canHobby(actorID)
-	plan := agentroutine.Decide(local, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, state, presence, canHobby)
-	return plan.Kind == agentroutine.ActivityDaytime
+	selection := r.routine.selectRoutineActivity(actorID, state, local, presence)
+	return !selection.Deferred && selection.DaytimeFallback
 }
 
 func runDaytimeFallback(ctx context.Context, fallback agentheartbeat.Source, actorID string) (agentheartbeat.Work, bool, error) {

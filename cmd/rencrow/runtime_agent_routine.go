@@ -491,6 +491,13 @@ func (r *agentRoutineRuntime) deferredRoutineRestWork(ctx context.Context, actor
 			if !actor.Present || actor.ActivityID != "" || actor.ActivityKind != "" || !r.routineRelaxRoomAllowed(actorID, actor.RoomID) {
 				return errors.New("next activity rest requires an idle actor in a verified allowed room")
 			}
+			hour := now.In(r.location()).Hour()
+			if (hour < 6 || hour >= 22) && actor.RoomID != r.routinePrivateRoom(actorID) {
+				return errors.New("night rest requires the actor's configured private room")
+			}
+			if routineStopRequested(runCtx, stop) {
+				return nil
+			}
 			timing := modulecore.TaskTiming{Timezone: r.location().String(), DeadlineAt: &until}
 			draft := domaintask.Task{Title: "Agent activity: Rest", ModuleID: agentActivityModuleID, OwnerID: r.ownerID,
 				Assignee: actorID, Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow,
