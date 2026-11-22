@@ -1122,7 +1122,9 @@ func (s *studioSnapshot) addArtifacts(rows []viewerArtifact, atlas viewerAtlas, 
 		}
 		state := "created"
 		switch row.State {
-		case "pending_review", "reported":
+		case "pending_review":
+			state = "review"
+		case "reported":
 			state = "reported"
 		case "archived":
 			state = "archived"

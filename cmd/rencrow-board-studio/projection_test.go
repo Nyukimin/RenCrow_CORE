@@ -51,6 +51,34 @@ func TestSnapshotUsesScopedPublicRecordsAndCanonicalAtlasRevision(t *testing.T) 
 	}
 }
 
+func TestAddArtifactsPreservesReviewStatusAndExplicitVerification(t *testing.T) {
+	rows := []viewerArtifact{
+		{ID: "pending-review", Title: "Review proposal", Kind: "proposal", State: "pending_review"},
+		{ID: "reported", Title: "Reported proposal", Kind: "proposal", State: "reported"},
+		{ID: "archived", Title: "Archived proposal", Kind: "proposal", State: "archived"},
+		{ID: "unknown", Title: "Unspecified status", Kind: "proposal"},
+		{ID: "created", Title: "Created proposal", Kind: "proposal", State: "created"},
+		{ID: "verified", Title: "Atlas verified output", Kind: "atlas_implementation_unit", State: "pending_review"},
+	}
+	atlas := viewerAtlas{Closures: []atlasClosure{{Artifact: "verified", Unit: "unit", State: "completed", Target: "DONE"}}}
+
+	snapshot := studioSnapshot{}
+	snapshot.addArtifacts(rows, atlas, nil)
+
+	wantStates := []string{"review", "reported", "archived", "unknown", "created", "verified"}
+	if len(snapshot.Artifacts) != len(rows) {
+		t.Fatalf("artifacts = %d, want %d", len(snapshot.Artifacts), len(rows))
+	}
+	for i, want := range wantStates {
+		if got := snapshot.Artifacts[i].State; got != want {
+			t.Errorf("artifact %q state = %q, want %q", rows[i].ID, got, want)
+		}
+		if snapshot.Artifacts[i].ID != rows[i].ID || snapshot.Artifacts[i].Title != rows[i].Title || snapshot.Artifacts[i].Kind != rows[i].Kind {
+			t.Errorf("artifact %q changed its identity or content metadata: %+v", rows[i].ID, snapshot.Artifacts[i])
+		}
+	}
+}
+
 func TestSnapshotProjectsQueueGateAndScopedStageReceiptHistory(t *testing.T) {
 	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
 	work := viewerWorkstreams{Workstreams: []viewerProject{{ID: "project", Title: "Atlas", State: "active"}}}
