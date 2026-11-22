@@ -5,39 +5,51 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskcenter"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/taskexecution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	persistworkstream "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
 )
 
 type taskCenterHandlerServiceStub struct {
-	capabilities taskcenter.Capabilities
-	capContext   context.Context
-	listResult   taskcenter.ListResult
-	item         taskcenter.Item
-	mutation     taskcenter.MutationResult
-	receiptFound bool
-	receiptErr   error
-	getErr       error
-	listQuery    taskcenter.ListQuery
-	listContext  context.Context
-	dailyQuery   taskcenter.DailyQuery
-	dailyContext context.Context
-	dailyResult  taskcenter.DailyListResult
-	dailyCalls   int
-	submitCalls  int
-	submitInput  taskcenter.SubmitInput
-	submitCtx    context.Context
-	claimCalls   int
-	getCalls     int
-	acceptCalls  int
-	acceptInput  taskcenter.AcceptResultInput
-	acceptCtx    context.Context
-	resultView   taskcenter.ResultView
-	resultCtx    context.Context
-	resultGoalID string
+	capabilities   taskcenter.Capabilities
+	capContext     context.Context
+	listResult     taskcenter.ListResult
+	item           taskcenter.Item
+	mutation       taskcenter.MutationResult
+	receiptFound   bool
+	receiptErr     error
+	getErr         error
+	listQuery      taskcenter.ListQuery
+	listContext    context.Context
+	dailyQuery     taskcenter.DailyQuery
+	dailyContext   context.Context
+	dailyResult    taskcenter.DailyListResult
+	dailyCalls     int
+	submitCalls    int
+	submitInput    taskcenter.SubmitInput
+	submitCtx      context.Context
+	claimCalls     int
+	getCalls       int
+	acceptCalls    int
+	acceptInput    taskcenter.AcceptResultInput
+	acceptCtx      context.Context
+	resultView     taskcenter.ResultView
+	resultCtx      context.Context
+	resultGoalID   string
+	gamePlanResult domainworkstream.ProjectPlanMutationResult
+	gamePlanFound  bool
+	gamePlanErr    error
+	gamePlanInput  domainworkstream.GameProjectSubmission
+	gamePlanCtx    context.Context
+	gamePlanCalls  int
 }
 
 func (s *taskCenterHandlerServiceStub) Capabilities(ctx context.Context) (taskcenter.Capabilities, error) {
@@ -77,6 +89,20 @@ func (s *taskCenterHandlerServiceStub) AcceptResult(ctx context.Context, input t
 func (s *taskCenterHandlerServiceStub) ReadResult(ctx context.Context, goalID string) (taskcenter.ResultView, error) {
 	s.resultCtx, s.resultGoalID = ctx, goalID
 	return s.resultView, nil
+}
+
+func (s *taskCenterHandlerServiceStub) SubmitGameProjectPlan(ctx context.Context, input domainworkstream.GameProjectSubmission) (domainworkstream.ProjectPlanMutationResult, error) {
+	s.gamePlanCalls++
+	s.gamePlanCtx, s.gamePlanInput = ctx, input
+	return s.gamePlanResult, s.gamePlanErr
+}
+
+func (s *taskCenterHandlerServiceStub) GameProjectPlanReceipt(ctx context.Context, key string) (domainworkstream.ProjectPlanMutationResult, bool, error) {
+	s.gamePlanCtx = ctx
+	if key != s.gamePlanInput.IdempotencyKey {
+		return domainworkstream.ProjectPlanMutationResult{}, false, nil
+	}
+	return s.gamePlanResult, s.gamePlanFound, s.gamePlanErr
 }
 
 func TestTaskCenterHandlerAuthenticatesUserAndBuildsTrustedScope(t *testing.T) {
@@ -140,6 +166,79 @@ func TestTaskCenterHandlerRequiresLoopbackBearerAndProfile(t *testing.T) {
 	response := serveTaskCenterRequest(missingConfig, http.MethodGet, "/api/v1/task-center/capabilities", "", "owner-token", "RenCrow_Viewer", "task-center")
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("missing user credential status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTaskCenterGameProjectHTTPUsesCenterSQLiteOwnerAndShowsPublicRows(t *testing.T) {
+	store, err := persistworkstream.NewSQLiteStore(filepath.Join(t.TempDir(), "task-center-game-plan.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	policy := taskexecution.Policy{
+		SchemaVersion: taskexecution.SchemaVersionV1,
+		TaskKinds: map[string]taskexecution.KindPolicy{
+			"research": {AllowedAgents: taskexecution.AllowedAgents{Mode: taskexecution.AllowedAgentsExplicit, ActorIDs: []string{"mio"}}},
+		},
+	}
+	service, err := taskcenter.NewService(store, policy, []string{"mio"}, []taskcenter.Kind{{ID: "research", Label: "Research", ExecutorAvailable: true}}, time.Now)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	center, err := taskcenter.NewCenter(service, nil, time.Now)
+	if err != nil {
+		t.Fatalf("NewCenter() error = %v", err)
+	}
+	handler := NewTaskCenterHandler(center, "local-user", []byte("owner-token"), "")
+	stages := make([]domainworkstream.GameProjectStage, 0, len(domainworkstream.GameProjectStageKeys()))
+	for _, key := range domainworkstream.GameProjectStageKeys() {
+		stages = append(stages, domainworkstream.GameProjectStage{Key: key, Title: key, Description: "deliverable", SuccessCriteria: []string{"deliverable exists"}, Verification: []string{"inspect deliverable"}})
+	}
+	body, err := json.Marshal(domainworkstream.GameProjectSubmission{Name: "HTTP game", Description: "Brief", IdempotencyKey: "http-game-plan", Stages: stages})
+	if err != nil {
+		t.Fatalf("marshal submission: %v", err)
+	}
+	post := serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/game-project-plans", string(body), "owner-token", "RenCrow_Viewer", "task-center")
+	if post.Code != http.StatusCreated {
+		t.Fatalf("POST status=%d body=%s", post.Code, post.Body.String())
+	}
+	var registration domainworkstream.ProjectPlanMutationResult
+	if err := json.Unmarshal(post.Body.Bytes(), &registration); err != nil {
+		t.Fatalf("decode POST response: %v", err)
+	}
+	if registration.Registration.WorkstreamID == "" || len(registration.Registration.GoalIDs) != len(stages) {
+		t.Fatalf("registration=%+v", registration)
+	}
+	get := serveTaskCenterRequest(handler, http.MethodGet, "/api/v1/task-center/game-project-plan?idempotency_key=http-game-plan", "", "owner-token", "RenCrow_Viewer", "task-center")
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET status=%d body=%s", get.Code, get.Body.String())
+	}
+	var recovered domainworkstream.ProjectPlanMutationResult
+	if err := json.Unmarshal(get.Body.Bytes(), &recovered); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	if !recovered.Replayed || recovered.Registration.WorkstreamID != registration.Registration.WorkstreamID ||
+		!reflect.DeepEqual(recovered.Registration.GoalIDs, registration.Registration.GoalIDs) ||
+		!reflect.DeepEqual(recovered.Registration.StageKeys, registration.Registration.StageKeys) {
+		t.Fatalf("recovered=%+v created=%+v", recovered, registration)
+	}
+	workstreams, err := store.ListWorkstreams(context.Background(), 100)
+	if err != nil || len(workstreams) != 1 || workstreams[0].ProjectDomain == nil || *workstreams[0].ProjectDomain != domainworkstream.ProjectDomainGame {
+		t.Fatalf("public Workstreams=%+v err=%v", workstreams, err)
+	}
+	goals, err := store.ListGoals(context.Background(), 100)
+	if err != nil || len(goals) != len(stages) {
+		t.Fatalf("public Goals count=%d err=%v", len(goals), err)
+	}
+	goalsByID := make(map[string]domainworkstream.Goal, len(goals))
+	for _, goal := range goals {
+		goalsByID[goal.GoalID] = goal
+	}
+	for index, goalID := range registration.Registration.GoalIDs {
+		goal, ok := goalsByID[goalID]
+		if !ok || goal.WorkstreamID != registration.Registration.WorkstreamID || goal.Status != domainworkstream.StatusDraft || goal.Title != stages[index].Title {
+			t.Fatalf("public Goal %q=%+v found=%v for receipt stage %q", goalID, goal, ok, stages[index].Key)
+		}
 	}
 }
 
@@ -229,6 +328,49 @@ func TestTaskCenterHandlerSubmitUsesTrustedUserScopeAndReturnsMutationEnvelope(t
 	response = serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/requests", body, "owner-token", "RenCrow_Viewer", "task-center")
 	if response.Code != http.StatusOK {
 		t.Fatalf("replayed mutation status=%d response=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTaskCenterHandlerGameProjectPlanUsesUserScopeAndSupportsReceiptRecovery(t *testing.T) {
+	input := domainworkstream.GameProjectSubmission{
+		Name: "Sample game", IdempotencyKey: "project-plan-key",
+		Stages: []domainworkstream.GameProjectStage{
+			{Key: "idea", Title: "Ideas", SuccessCriteria: []string{"select a concept"}, Verification: []string{"review the concept"}},
+			{Key: "specification", Title: "Specification", SuccessCriteria: []string{"freeze requirements"}, Verification: []string{"check acceptance criteria"}},
+			{Key: "prototype", Title: "Prototype", SuccessCriteria: []string{"prove the core loop"}, Verification: []string{"play the prototype"}},
+			{Key: "test", Title: "Test", SuccessCriteria: []string{"record test results"}, Verification: []string{"check evidence"}},
+			{Key: "review", Title: "Review", SuccessCriteria: []string{"record independent review"}, Verification: []string{"review findings"}},
+			{Key: "implementation", Title: "Implementation", SuccessCriteria: []string{"implement approved spec"}, Verification: []string{"inspect the change"}},
+			{Key: "post_implementation_qa", Title: "QA", SuccessCriteria: []string{"verify final build"}, Verification: []string{"run QA checks"}},
+		},
+	}
+	registration := domainworkstream.ProjectPlanRegistration{WorkstreamID: "ws_game_project", GoalIDs: []string{"gol_1", "gol_2", "gol_3", "gol_4", "gol_5", "gol_6", "gol_7"}, StageKeys: domainworkstream.GameProjectStageKeys()}
+	service := &taskCenterHandlerServiceStub{gamePlanFound: true, gamePlanResult: domainworkstream.ProjectPlanMutationResult{Registration: registration, ReceiptRef: "receipt-1"}}
+	handler := NewTaskCenterHandler(service, "local-user", []byte("owner-token"), "")
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/game-project-plans", string(body), "owner-token", "RenCrow_Viewer", "task-center")
+	if response.Code != http.StatusCreated || service.gamePlanCalls != 1 || service.gamePlanInput.Name != input.Name {
+		t.Fatalf("status=%d calls=%d input=%+v body=%s", response.Code, service.gamePlanCalls, service.gamePlanInput, response.Body.String())
+	}
+	scope, found := tool.ToolExecutionScopeFromContext(service.gamePlanCtx)
+	if !found || scope.ActorKind != tool.ActorKindUser || scope.ActorID != "local-user" || scope.AuthenticatedUserID != "local-user" {
+		t.Fatalf("project plan received untrusted scope=%+v found=%v", scope, found)
+	}
+	service.gamePlanResult.Replayed = true
+	response = serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/game-project-plans", string(body), "owner-token", "RenCrow_Viewer", "task-center")
+	if response.Code != http.StatusOK {
+		t.Fatalf("same-request replay status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = serveTaskCenterRequest(handler, http.MethodGet, "/api/v1/task-center/game-project-plan?idempotency_key=project-plan-key", "", "owner-token", "RenCrow_Viewer", "task-center")
+	if response.Code != http.StatusOK {
+		t.Fatalf("receipt recovery status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/game-project-plans", string(body), "owner-token", "RenCrow_Viewer", "general")
+	if response.Code != http.StatusForbidden || service.gamePlanCalls != 2 {
+		t.Fatalf("wrong profile status=%d calls=%d", response.Code, service.gamePlanCalls)
 	}
 }
 

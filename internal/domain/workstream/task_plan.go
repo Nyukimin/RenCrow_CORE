@@ -25,7 +25,97 @@ const (
 	TaskPlanHandoffOutcomeUnknown  = "outcome_unknown"
 	TaskPlanHandoffLinked          = "linked"
 	TaskPlanKindMovieCatalogLookup = "movie.catalog.lookup"
+	ProjectDomainGame              = "game"
+	ProjectDomainSoftware          = "software"
+	ProjectDomainContent           = "content"
 )
+
+var gameProjectStageOrder = [...]string{"idea", "specification", "prototype", "test", "review", "implementation", "post_implementation_qa"}
+
+func GameProjectStageKeys() []string {
+	return append([]string(nil), gameProjectStageOrder[:]...)
+}
+
+// GameProjectStage is one pre-registered, non-executable Workstream Goal.
+type GameProjectStage struct {
+	Key             string   `json:"key"`
+	Title           string   `json:"title"`
+	Description     string   `json:"description"`
+	SuccessCriteria []string `json:"success_criteria"`
+	Verification    []string `json:"verification"`
+}
+
+// GameProjectSubmission describes one public Workstream and all planned stages.
+// The stage Goals are created as drafts and are not TaskCenter execution items.
+type GameProjectSubmission struct {
+	Name           string             `json:"name"`
+	Description    string             `json:"description,omitempty"`
+	Stages         []GameProjectStage `json:"stages"`
+	IdempotencyKey string             `json:"idempotency_key"`
+}
+
+func (submission GameProjectSubmission) Validate() error {
+	if strings.TrimSpace(submission.Name) == "" || len([]rune(submission.Name)) > 160 {
+		return errors.New("game project name is required and must be at most 160 characters")
+	}
+	if strings.TrimSpace(submission.Description) != submission.Description || len([]rune(submission.Description)) > 4000 {
+		return errors.New("game project description is invalid")
+	}
+	if submission.IdempotencyKey == "" || len(submission.IdempotencyKey) > 128 || strings.TrimSpace(submission.IdempotencyKey) != submission.IdempotencyKey {
+		return errors.New("game project idempotency_key is required and must be at most 128 characters")
+	}
+	if len(submission.Stages) != len(gameProjectStageOrder) {
+		return fmt.Errorf("game project requires exactly %d ordered stages", len(gameProjectStageOrder))
+	}
+	for i, stage := range submission.Stages {
+		if stage.Key != gameProjectStageOrder[i] || strings.TrimSpace(stage.Title) == "" || len([]rune(stage.Title)) > 160 || strings.TrimSpace(stage.Description) != stage.Description || len([]rune(stage.Description)) > 4000 {
+			return fmt.Errorf("game project stage %d is invalid", i)
+		}
+		if !validProjectPlanTextList(stage.SuccessCriteria) || !validProjectPlanTextList(stage.Verification) {
+			return fmt.Errorf("game project stage %q requires success criteria and verification", stage.Key)
+		}
+	}
+	return nil
+}
+
+func validProjectPlanTextList(values []string) bool {
+	if len(values) == 0 || len(values) > 16 {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" || len([]rune(value)) > 1000 {
+			return false
+		}
+	}
+	return true
+}
+
+// ProjectPlanRegistration is immutable evidence of creation, not a current
+// Workstream or Goal snapshot. Callers read current records from the Workstream API.
+type ProjectPlanRegistration struct {
+	WorkstreamID string    `json:"workstream_id"`
+	GoalIDs      []string  `json:"goal_ids"`
+	StageKeys    []string  `json:"stage_keys"`
+	InputSHA256  string    `json:"input_sha256"`
+	RegisteredAt time.Time `json:"registered_at"`
+}
+
+type ProjectPlanOperationReceipt struct {
+	Version             int                     `json:"version"`
+	ActorKind           string                  `json:"actor_kind"`
+	ActorID             string                  `json:"actor_id"`
+	AuthenticatedUserID string                  `json:"authenticated_user_id,omitempty"`
+	Operation           string                  `json:"operation"`
+	IdempotencyKey      string                  `json:"idempotency_key"`
+	InputHash           string                  `json:"input_hash"`
+	Registration        ProjectPlanRegistration `json:"registration"`
+}
+
+type ProjectPlanMutationResult struct {
+	Registration ProjectPlanRegistration `json:"registration"`
+	Replayed     bool                    `json:"replayed"`
+	ReceiptRef   string                  `json:"receipt_ref"`
+}
 
 var (
 	ErrTaskPlanConflict    = errors.New("task plan conflict")

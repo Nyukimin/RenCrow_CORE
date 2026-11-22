@@ -88,6 +88,80 @@ func TestSubmitReceiptReplaySurvivesPolicyChange(t *testing.T) {
 	}
 }
 
+func TestGameProjectRegistrationIsAtomicReplayableAndDoesNotRollbackProgress(t *testing.T) {
+	store, err := persistworkstream.NewSQLiteStore(filepath.Join(t.TempDir(), "game-project.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	service, err := NewService(store, taskCenterTestPolicy("mio"), []string{"mio"}, []Kind{{ID: "research", Label: "Research", ExecutorAvailable: true}}, time.Now)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	submission := domainworkstream.GameProjectSubmission{Name: "New game", Description: "Initial game brief", IdempotencyKey: "new-game-plan"}
+	for _, key := range domainworkstream.GameProjectStageKeys() {
+		submission.Stages = append(submission.Stages, domainworkstream.GameProjectStage{
+			Key: key, Title: key, Description: "stage output", SuccessCriteria: []string{"expected result exists"}, Verification: []string{"inspect expected result"},
+		})
+	}
+	userContext := tool.WithToolExecutionScope(context.Background(), taskCenterServiceTestScope(t, "game-project-register"))
+	created, err := service.SubmitGameProjectPlan(userContext, submission)
+	if err != nil || created.Replayed || created.Registration.WorkstreamID == "" || len(created.Registration.GoalIDs) != len(submission.Stages) {
+		t.Fatalf("registration=%+v err=%v", created, err)
+	}
+	workstreams, err := store.ListWorkstreams(context.Background(), 100)
+	if err != nil || len(workstreams) != 1 || workstreams[0].ProjectDomain == nil || *workstreams[0].ProjectDomain != domainworkstream.ProjectDomainGame || workstreams[0].TaskCenterScope != nil {
+		t.Fatalf("public Workstreams=%+v err=%v", workstreams, err)
+	}
+	goals, err := store.ListGoals(context.Background(), 100)
+	if err != nil || len(goals) != len(submission.Stages) {
+		t.Fatalf("public Goals=%+v err=%v", goals, err)
+	}
+	goalsByID := make(map[string]domainworkstream.Goal, len(goals))
+	for _, goal := range goals {
+		goalsByID[goal.GoalID] = goal
+	}
+	for index, goalID := range created.Registration.GoalIDs {
+		goal, ok := goalsByID[goalID]
+		if !ok || goal.WorkstreamID != created.Registration.WorkstreamID || goal.Status != domainworkstream.StatusDraft || goal.TaskPlan != nil || goal.Title != submission.Stages[index].Title {
+			t.Fatalf("Goal %q=%+v found=%v; expected public draft Goal for receipt stage %q", goalID, goal, ok, submission.Stages[index].Key)
+		}
+		if !goal.CreatedAt.Equal(created.Registration.RegisteredAt) {
+			t.Fatalf("Goal %q CreatedAt=%s, want actual registration time %s", goalID, goal.CreatedAt, created.Registration.RegisteredAt)
+		}
+	}
+	progressed := goalsByID[created.Registration.GoalIDs[0]]
+	progressed.Status = domainworkstream.StatusActive
+	if err := store.SaveGoal(context.Background(), progressed); err != nil {
+		t.Fatalf("advance first stage through current Workstream owner: %v", err)
+	}
+	replayed, err := service.SubmitGameProjectPlan(userContext, submission)
+	if err != nil || !replayed.Replayed || replayed.Registration.WorkstreamID != created.Registration.WorkstreamID || !reflect.DeepEqual(replayed.Registration.GoalIDs, created.Registration.GoalIDs) {
+		t.Fatalf("same-request replay=%+v err=%v", replayed, err)
+	}
+	current, found, err := store.FindGoalByID(context.Background(), progressed.GoalID)
+	if err != nil || !found || current.Status != domainworkstream.StatusActive {
+		t.Fatalf("current Goal=%+v found=%v err=%v; replay must not restore initial draft", current, found, err)
+	}
+	recovered, found, err := service.GameProjectPlanReceipt(userContext, submission.IdempotencyKey)
+	if err != nil || !found || recovered.Registration.WorkstreamID != created.Registration.WorkstreamID {
+		t.Fatalf("recovery=%+v found=%v err=%v", recovered, found, err)
+	}
+	changed := submission
+	changed.Name = "Different request"
+	if _, err := service.SubmitGameProjectPlan(userContext, changed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("same key with changed payload error=%v, want conflict", err)
+	}
+	otherUserContext := tool.WithToolExecutionScope(context.Background(), taskCenterServiceTestScope(t, "other-user-game-project"))
+	otherScope, _ := tool.ToolExecutionScopeFromContext(otherUserContext)
+	otherScope.ActorID = "user-b"
+	otherScope.AuthenticatedUserID = "user-b"
+	otherUserContext = tool.WithToolExecutionScope(context.Background(), otherScope)
+	if _, found, err := service.GameProjectPlanReceipt(otherUserContext, submission.IdempotencyKey); err != nil || found {
+		t.Fatalf("other user receipt found=%v err=%v, want scoped 404", found, err)
+	}
+}
+
 func TestClaimabilityUsesCurrentPolicyTimingAndAgentAssignee(t *testing.T) {
 	store, err := persistworkstream.NewSQLiteStore(filepath.Join(t.TempDir(), "claimability.db"))
 	if err != nil {

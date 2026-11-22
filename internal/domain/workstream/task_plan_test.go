@@ -25,6 +25,36 @@ func validTaskPlan() TaskPlan {
 	}
 }
 
+func validGameProjectSubmission() GameProjectSubmission {
+	stages := make([]GameProjectStage, 0, len(GameProjectStageKeys()))
+	for _, key := range GameProjectStageKeys() {
+		stages = append(stages, GameProjectStage{Key: key, Title: key, SuccessCriteria: []string{"result recorded"}, Verification: []string{"check result"}})
+	}
+	return GameProjectSubmission{Name: "Game project", Stages: stages, IdempotencyKey: "project-key"}
+}
+
+func TestGameProjectSubmissionRequiresCompleteOrderedDraftPlan(t *testing.T) {
+	valid := validGameProjectSubmission()
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid game project submission: %v", err)
+	}
+	wrongOrder := valid
+	wrongOrder.Stages = append([]GameProjectStage(nil), valid.Stages...)
+	wrongOrder.Stages[0], wrongOrder.Stages[1] = wrongOrder.Stages[1], wrongOrder.Stages[0]
+	missingStage := valid
+	missingStage.Stages = append([]GameProjectStage(nil), valid.Stages[:len(valid.Stages)-1]...)
+	missingVerification := valid
+	missingVerification.Stages = append([]GameProjectStage(nil), valid.Stages...)
+	missingVerification.Stages[2].Verification = nil
+	for name, candidate := range map[string]GameProjectSubmission{"wrong order": wrongOrder, "missing stage": missingStage, "missing verification": missingVerification} {
+		t.Run(name, func(t *testing.T) {
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("Validate() succeeded for invalid game project plan")
+			}
+		})
+	}
+}
+
 func TestTaskPlanValidateScopeAndNativeReferences(t *testing.T) {
 	valid := validTaskPlan()
 	if err := valid.Validate(); err != nil {

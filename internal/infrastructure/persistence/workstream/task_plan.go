@@ -28,6 +28,8 @@ const taskMeetingOccurrenceArtifactType = "task_meeting_occurrence"
 const taskMeetingOccurrenceReservationArtifactType = "task_meeting_occurrence_reservation"
 const taskMeetingMinutesArtifactType = "task_meeting_minutes"
 const taskMeetingMinutesReservationArtifactType = "task_meeting_minutes_reservation"
+const gameProjectPlanReceiptArtifactType = "game_project_plan_registration"
+const gameProjectPlanReservationArtifactType = "game_project_plan_registration_reservation"
 
 func isTaskCenterInternalArtifactType(value string) bool {
 	for _, reserved := range taskCenterInternalArtifactTypes() {
@@ -43,6 +45,7 @@ func taskCenterInternalArtifactTypes() []string {
 		taskPlanOperationArtifactType, taskPlanReservationArtifactType, taskExecutionResultArtifactType,
 		taskMeetingOccurrenceArtifactType, taskMeetingOccurrenceReservationArtifactType,
 		taskMeetingMinutesArtifactType, taskMeetingMinutesReservationArtifactType,
+		gameProjectPlanReceiptArtifactType, gameProjectPlanReservationArtifactType,
 	}
 }
 
@@ -144,6 +147,146 @@ func (s *SQLiteStore) SubmitTaskPlan(ctx context.Context, scope tool.ToolExecuti
 		return domainworkstream.TaskPlanMutationResult{}, classifyTaskPlanStorageError(err)
 	}
 	return result, nil
+}
+
+func (s *SQLiteStore) SubmitGameProjectPlan(ctx context.Context, scope tool.ToolExecutionScope, request domainworkstream.GameProjectSubmission) (domainworkstream.ProjectPlanMutationResult, error) {
+	if err := validateTaskPlanOwnerCall(ctx, scope); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	if scope.ActorKind != tool.ActorKindUser || scope.ActorID != scope.AuthenticatedUserID || scope.AuthenticatedUserID == "" || !scope.Allows(tool.DataScopePublic) {
+		return domainworkstream.ProjectPlanMutationResult{}, domainworkstream.ErrTaskPlanForbidden
+	}
+	if err := request.Validate(); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, fmt.Errorf("%w: %v", domainworkstream.ErrTaskPlanInvalid, err)
+	}
+	inputHash, err := hashTaskPlanValue(struct {
+		Name        string                              `json:"name"`
+		Description string                              `json:"description,omitempty"`
+		Stages      []domainworkstream.GameProjectStage `json:"stages"`
+	}{Name: request.Name, Description: request.Description, Stages: request.Stages})
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	if s == nil || s.db == nil {
+		return domainworkstream.ProjectPlanMutationResult{}, domainworkstream.ErrTaskPlanUnavailable
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+	}
+	defer tx.Rollback()
+	reservationID := string(modulecore.NewArtifactID())
+	reservationPayload, err := json.Marshal(domainworkstream.ProjectPlanOperationReceipt{
+		Version: 0, ActorKind: string(scope.ActorKind), ActorID: scope.ActorID,
+		AuthenticatedUserID: scope.AuthenticatedUserID, Operation: "game_project_register",
+		IdempotencyKey: request.IdempotencyKey,
+	})
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	reservation := domainworkstream.Artifact{
+		ArtifactID: reservationID, Type: gameProjectPlanReservationArtifactType,
+		Title: "Game project registration reservation", Status: "pending", Payload: reservationPayload, CreatedAt: time.Now().UTC(),
+	}
+	reservationJSON, err := json.Marshal(reservation)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO artifact (artifact_id, workstream_id, created_at, payload) VALUES (?, '', ?, ?)`, reservation.ArtifactID, reservation.CreatedAt.Format(timeFormatRFC3339Nano), string(reservationJSON)); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+	}
+	prior, priorID, found, err := findGameProjectPlanReceipt(ctx, tx, scope, request.IdempotencyKey)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	if found {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM artifact WHERE artifact_id = ? AND json_extract(payload, '$.artifact_type') = ?`, reservationID, gameProjectPlanReservationArtifactType); err != nil {
+			return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+		}
+		if prior.InputHash != inputHash {
+			return domainworkstream.ProjectPlanMutationResult{}, domainworkstream.ErrTaskPlanConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+		}
+		return domainworkstream.ProjectPlanMutationResult{Registration: prior.Registration, Replayed: true, ReceiptRef: priorID}, nil
+	}
+
+	now := time.Now().UTC()
+	workstreamID := string(modulecore.NewWorkstreamID())
+	domain := domainworkstream.ProjectDomainGame
+	workstream := domainworkstream.Workstream{
+		WorkstreamID: workstreamID, Name: request.Name, ProjectDomain: &domain,
+		Description: request.Description, Status: domainworkstream.StatusActive, CreatedAt: now,
+	}
+	if err := domainworkstream.ValidateWorkstream(workstream); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, fmt.Errorf("%w: %v", domainworkstream.ErrTaskPlanInvalid, err)
+	}
+	workstreamJSON, err := json.Marshal(workstream)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workstream (workstream_id, created_at, payload) VALUES (?, ?, ?)`, workstream.WorkstreamID, now.Format(timeFormatRFC3339Nano), string(workstreamJSON)); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+	}
+	goalIDs := make([]string, len(request.Stages))
+	stageKeys := make([]string, len(request.Stages))
+	// Receipt arrays preserve stage order; Goal timestamps remain the real shared registration time.
+	for index, stage := range request.Stages {
+		goal := domainworkstream.Goal{
+			GoalID: string(modulecore.NewGoalID()), WorkstreamID: workstreamID,
+			Title: stage.Title, Description: stage.Description,
+			SuccessCriteria: append([]string(nil), stage.SuccessCriteria...), Verification: append([]string(nil), stage.Verification...),
+			Status: domainworkstream.StatusDraft, CreatedAt: now,
+		}
+		if err := domainworkstream.ValidateGoal(goal); err != nil {
+			return domainworkstream.ProjectPlanMutationResult{}, fmt.Errorf("%w: stage %q: %v", domainworkstream.ErrTaskPlanInvalid, stage.Key, err)
+		}
+		goalJSON, err := json.Marshal(goal)
+		if err != nil {
+			return domainworkstream.ProjectPlanMutationResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO workstream_goal (goal_id, workstream_id, created_at, payload) VALUES (?, ?, ?, ?)`, goal.GoalID, workstreamID, goal.CreatedAt.Format(timeFormatRFC3339Nano), string(goalJSON)); err != nil {
+			return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+		}
+		goalIDs[index], stageKeys[index] = goal.GoalID, stage.Key
+	}
+	registration := domainworkstream.ProjectPlanRegistration{
+		WorkstreamID: workstreamID, GoalIDs: goalIDs, StageKeys: stageKeys, InputSHA256: inputHash, RegisteredAt: now,
+	}
+	receipt := domainworkstream.ProjectPlanOperationReceipt{
+		Version: 1, ActorKind: string(scope.ActorKind), ActorID: scope.ActorID, AuthenticatedUserID: scope.AuthenticatedUserID,
+		Operation: "game_project_register", IdempotencyKey: request.IdempotencyKey, InputHash: inputHash, Registration: registration,
+	}
+	receiptPayload, err := json.Marshal(receipt)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	artifact := domainworkstream.Artifact{
+		ArtifactID: reservationID, WorkstreamID: workstreamID, Type: gameProjectPlanReceiptArtifactType,
+		Title: "Game project registration receipt", Status: "stored", Payload: receiptPayload, CreatedAt: now,
+	}
+	if err := domainworkstream.ValidateArtifact(artifact); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	artifactJSON, err := json.Marshal(artifact)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	updated, err := tx.ExecContext(ctx, `UPDATE artifact SET workstream_id = ?, created_at = ?, payload = ? WHERE artifact_id = ? AND json_extract(payload, '$.artifact_type') = ?`, workstreamID, now.Format(timeFormatRFC3339Nano), string(artifactJSON), reservationID, gameProjectPlanReservationArtifactType)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+	}
+	if count, err := updated.RowsAffected(); err != nil || count != 1 {
+		if err != nil {
+			return domainworkstream.ProjectPlanMutationResult{}, err
+		}
+		return domainworkstream.ProjectPlanMutationResult{}, domainworkstream.ErrTaskPlanConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, classifyTaskPlanStorageError(err)
+	}
+	return domainworkstream.ProjectPlanMutationResult{Registration: registration, ReceiptRef: reservationID}, nil
 }
 
 func (s *SQLiteStore) ClaimTaskPlan(ctx context.Context, scope tool.ToolExecutionScope, request domainworkstream.TaskPlanClaim, authorize func(domainworkstream.Goal) error) (domainworkstream.TaskPlanMutationResult, error) {
@@ -1124,6 +1267,92 @@ func findTaskPlanOperationReceipt(ctx context.Context, queryer interface {
 		return domainworkstream.TaskPlanOperationReceipt{}, "", false, err
 	}
 	return matched, matchedID, found, nil
+}
+
+func (s *SQLiteStore) GameProjectPlanReceipt(ctx context.Context, scope tool.ToolExecutionScope, key string) (domainworkstream.ProjectPlanMutationResult, bool, error) {
+	if err := validateTaskPlanOwnerCall(ctx, scope); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, false, err
+	}
+	if scope.ActorKind != tool.ActorKindUser || scope.ActorID != scope.AuthenticatedUserID || scope.AuthenticatedUserID == "" || !scope.Allows(tool.DataScopePublic) || !validTaskPlanKey(key) {
+		return domainworkstream.ProjectPlanMutationResult{}, false, domainworkstream.ErrTaskPlanForbidden
+	}
+	if s == nil || s.db == nil {
+		return domainworkstream.ProjectPlanMutationResult{}, false, domainworkstream.ErrTaskPlanUnavailable
+	}
+	receipt, receiptID, found, err := findGameProjectPlanReceipt(ctx, s.db, scope, key)
+	if err != nil || !found {
+		return domainworkstream.ProjectPlanMutationResult{}, found, err
+	}
+	return domainworkstream.ProjectPlanMutationResult{Registration: receipt.Registration, Replayed: true, ReceiptRef: receiptID}, true, nil
+}
+
+func findGameProjectPlanReceipt(ctx context.Context, queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, scope tool.ToolExecutionScope, key string) (domainworkstream.ProjectPlanOperationReceipt, string, bool, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT artifact_id, workstream_id, payload FROM artifact ORDER BY rowid`)
+	if err != nil {
+		return domainworkstream.ProjectPlanOperationReceipt{}, "", false, err
+	}
+	defer rows.Close()
+	var matched domainworkstream.ProjectPlanOperationReceipt
+	var matchedID string
+	found := false
+	for rows.Next() {
+		var indexedID, indexedWorkstreamID, payload string
+		if err := rows.Scan(&indexedID, &indexedWorkstreamID, &payload); err != nil {
+			return domainworkstream.ProjectPlanOperationReceipt{}, "", false, err
+		}
+		var artifact domainworkstream.Artifact
+		if err := json.Unmarshal([]byte(payload), &artifact); err != nil {
+			return domainworkstream.ProjectPlanOperationReceipt{}, "", false, err
+		}
+		if artifact.ArtifactID != indexedID {
+			return domainworkstream.ProjectPlanOperationReceipt{}, "", false, errors.New("game project registration artifact identity is inconsistent")
+		}
+		if artifact.Type != gameProjectPlanReceiptArtifactType {
+			continue
+		}
+		var receipt domainworkstream.ProjectPlanOperationReceipt
+		if err := decodeTaskPlanStrictJSON(artifact.Payload, &receipt); err != nil {
+			return domainworkstream.ProjectPlanOperationReceipt{}, "", false, err
+		}
+		if err := validateGameProjectPlanReceipt(artifact, indexedWorkstreamID, receipt); err != nil {
+			return domainworkstream.ProjectPlanOperationReceipt{}, "", false, err
+		}
+		if receipt.ActorKind == string(scope.ActorKind) && receipt.ActorID == scope.ActorID && receipt.AuthenticatedUserID == scope.AuthenticatedUserID && receipt.IdempotencyKey == key {
+			if found {
+				return domainworkstream.ProjectPlanOperationReceipt{}, "", false, errors.New("duplicate game project registration receipt")
+			}
+			matched, matchedID, found = receipt, indexedID, true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return domainworkstream.ProjectPlanOperationReceipt{}, "", false, err
+	}
+	return matched, matchedID, found, nil
+}
+
+func validateGameProjectPlanReceipt(artifact domainworkstream.Artifact, indexedWorkstreamID string, receipt domainworkstream.ProjectPlanOperationReceipt) error {
+	stageKeys := domainworkstream.GameProjectStageKeys()
+	registration := receipt.Registration
+	if receipt.Version != 1 || receipt.ActorKind != string(tool.ActorKindUser) || receipt.ActorID == "" || receipt.ActorID != receipt.AuthenticatedUserID ||
+		receipt.Operation != "game_project_register" || !validTaskPlanKey(receipt.IdempotencyKey) || !validTaskCenterSHA256(receipt.InputHash) || registration.WorkstreamID == "" ||
+		artifact.WorkstreamID != registration.WorkstreamID || indexedWorkstreamID != registration.WorkstreamID || modulecore.WorkstreamID(registration.WorkstreamID).Validate() != nil || registration.InputSHA256 != receipt.InputHash ||
+		len(registration.GoalIDs) != len(stageKeys) || len(registration.StageKeys) != len(stageKeys) || registration.RegisteredAt.IsZero() {
+		return errors.New("game project registration receipt is malformed")
+	}
+	seenGoalIDs := make(map[string]struct{}, len(registration.GoalIDs))
+	for i, stageKey := range stageKeys {
+		goalID := registration.GoalIDs[i]
+		if registration.StageKeys[i] != stageKey || modulecore.GoalID(goalID).Validate() != nil {
+			return errors.New("game project registration receipt stage identity is malformed")
+		}
+		if _, exists := seenGoalIDs[goalID]; exists {
+			return errors.New("game project registration receipt repeats a Goal ID")
+		}
+		seenGoalIDs[goalID] = struct{}{}
+	}
+	return nil
 }
 
 func replayTaskPlanReceipt(ctx context.Context, tx *sql.Tx, scope tool.ToolExecutionScope, receipt domainworkstream.TaskPlanOperationReceipt, receiptID, operation, key, inputHash string) (domainworkstream.TaskPlanMutationResult, error) {

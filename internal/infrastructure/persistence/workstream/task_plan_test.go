@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 func TestSQLiteTaskPlanSubmitReplayReceiptAndLegacyPrivacy(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "tasks.db")
 	store := taskPlanTestStore(t, databasePath)
+	insertTaskPlanCompatibilityArtifact(t, store)
 	scope := taskPlanTestAgentScope(t, "request-1", "mio", "user-A", tool.DataScopeUser)
 	ctx := tool.WithToolExecutionScope(context.Background(), scope)
 	request := taskPlanTestSubmission(scope, "submit-key", domainworkstream.TaskPlanDataScopeUser)
@@ -179,6 +181,200 @@ func TestSQLiteTaskPlanSubmitReplayReceiptAndLegacyPrivacy(t *testing.T) {
 		if isTaskCenterInternalArtifactType(artifact.Type) {
 			t.Fatalf("legacy ListArtifacts() exposed reserved meeting artifact: %#v", artifact)
 		}
+	}
+}
+
+func TestGameProjectReceiptRejectsCorruptRegistrationEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *SQLiteStore, string)
+	}{
+		{
+			name: "corrupt payload",
+			mutate: func(t *testing.T, store *SQLiteStore, receiptID string) {
+				t.Helper()
+				if _, err := store.db.Exec(`UPDATE artifact SET payload = '{' WHERE artifact_id = ?`, receiptID); err != nil {
+					t.Fatalf("corrupt receipt payload: %v", err)
+				}
+			},
+		},
+		{
+			name: "stage keys out of order",
+			mutate: func(t *testing.T, store *SQLiteStore, receiptID string) {
+				t.Helper()
+				mutateGameProjectReceipt(t, store, receiptID, func(receipt *domainworkstream.ProjectPlanOperationReceipt) {
+					receipt.Registration.StageKeys[0], receipt.Registration.StageKeys[1] = receipt.Registration.StageKeys[1], receipt.Registration.StageKeys[0]
+				})
+			},
+		},
+		{
+			name: "duplicate goal id",
+			mutate: func(t *testing.T, store *SQLiteStore, receiptID string) {
+				t.Helper()
+				mutateGameProjectReceipt(t, store, receiptID, func(receipt *domainworkstream.ProjectPlanOperationReceipt) {
+					receipt.Registration.GoalIDs[1] = receipt.Registration.GoalIDs[0]
+				})
+			},
+		},
+		{
+			name: "registration input hash mismatch",
+			mutate: func(t *testing.T, store *SQLiteStore, receiptID string) {
+				t.Helper()
+				mutateGameProjectReceipt(t, store, receiptID, func(receipt *domainworkstream.ProjectPlanOperationReceipt) {
+					receipt.Registration.InputSHA256 = strings.Repeat("b", 64)
+				})
+			},
+		},
+		{
+			name: "artifact row workstream mismatch",
+			mutate: func(t *testing.T, store *SQLiteStore, receiptID string) {
+				t.Helper()
+				if _, err := store.db.Exec(`UPDATE artifact SET workstream_id = ? WHERE artifact_id = ?`, "ws_tampered", receiptID); err != nil {
+					t.Fatalf("tamper artifact row workstream: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := taskPlanTestStore(t, filepath.Join(t.TempDir(), "game-project.db"))
+			insertTaskPlanCompatibilityArtifact(t, store)
+			scope := taskPlanTestUserScope(t, "game-project-receipt-integrity")
+			ctx := tool.WithToolExecutionScope(context.Background(), scope)
+			request := domainworkstream.GameProjectSubmission{Name: "Test game", Description: "Brief", IdempotencyKey: "integrity-key"}
+			for _, key := range domainworkstream.GameProjectStageKeys() {
+				request.Stages = append(request.Stages, domainworkstream.GameProjectStage{
+					Key: key, Title: key, Description: "deliverable", SuccessCriteria: []string{"deliverable exists"}, Verification: []string{"inspect deliverable"},
+				})
+			}
+			created, err := store.SubmitGameProjectPlan(ctx, scope, request)
+			if err != nil {
+				t.Fatalf("SubmitGameProjectPlan() error = %v", err)
+			}
+			test.mutate(t, store, created.ReceiptRef)
+			if _, found, err := store.GameProjectPlanReceipt(ctx, scope, request.IdempotencyKey); err == nil || found {
+				t.Fatalf("GameProjectPlanReceipt() found=%v err=%v; corrupted registration evidence must fail closed", found, err)
+			}
+		})
+	}
+}
+
+func TestSQLiteGameProjectRegistrationSerializesConcurrentSameKeySubmissions(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "concurrent-game-project.db")
+	storeA := taskPlanTestStore(t, databasePath)
+	storeB := taskPlanTestStore(t, databasePath)
+	scopeA := taskPlanTestUserScope(t, "game-project-concurrent-a")
+	scopeB := scopeA
+	scopeB.RequestID = "game-project-concurrent-b"
+	request := domainworkstream.GameProjectSubmission{Name: "Concurrent game", Description: "Brief", IdempotencyKey: "concurrent-game-key"}
+	for _, key := range domainworkstream.GameProjectStageKeys() {
+		request.Stages = append(request.Stages, domainworkstream.GameProjectStage{
+			Key: key, Title: key, Description: "deliverable", SuccessCriteria: []string{"deliverable exists"}, Verification: []string{"inspect deliverable"},
+		})
+	}
+	start := make(chan struct{})
+	type outcome struct {
+		result domainworkstream.ProjectPlanMutationResult
+		err    error
+	}
+	results := make(chan outcome, 2)
+	var group sync.WaitGroup
+	for _, attempt := range []struct {
+		store *SQLiteStore
+		scope tool.ToolExecutionScope
+	}{{storeA, scopeA}, {storeB, scopeB}} {
+		attempt := attempt
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			ctx := tool.WithToolExecutionScope(context.Background(), attempt.scope)
+			result, err := attempt.store.SubmitGameProjectPlan(ctx, attempt.scope, request)
+			results <- outcome{result: result, err: err}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(results)
+	var registration domainworkstream.ProjectPlanRegistration
+	var successful, fresh int
+	for result := range results {
+		if result.err != nil {
+			if !errors.Is(result.err, domainworkstream.ErrTaskPlanConflict) {
+				t.Fatalf("concurrent submit error = %v, want successful replay or transient SQLite conflict", result.err)
+			}
+			continue
+		}
+		successful++
+		if !result.result.Replayed {
+			fresh++
+		}
+		if registration.WorkstreamID == "" {
+			registration = result.result.Registration
+		} else if result.result.Registration.WorkstreamID != registration.WorkstreamID || !reflect.DeepEqual(result.result.Registration.GoalIDs, registration.GoalIDs) {
+			t.Fatalf("concurrent submissions returned different registrations: first=%+v next=%+v", registration, result.result.Registration)
+		}
+	}
+	if fresh != 1 || successful == 0 {
+		t.Fatalf("concurrent submission successes=%d fresh=%d; want one durable creation and at least one successful response", successful, fresh)
+	}
+	ctx := tool.WithToolExecutionScope(context.Background(), scopeA)
+	recovered, found, err := storeA.GameProjectPlanReceipt(ctx, scopeA, request.IdempotencyKey)
+	if err != nil || !found || recovered.Registration.WorkstreamID != registration.WorkstreamID {
+		t.Fatalf("receipt recovery=%+v found=%v err=%v", recovered, found, err)
+	}
+	workstreams, err := storeA.ListWorkstreams(context.Background(), 100)
+	if err != nil || len(workstreams) != 1 {
+		t.Fatalf("public Workstreams=%d err=%v; want exactly one", len(workstreams), err)
+	}
+	goals, err := storeA.ListGoals(context.Background(), 100)
+	if err != nil || len(goals) != len(request.Stages) {
+		t.Fatalf("public Goals=%d err=%v; want exactly one seven-stage bundle", len(goals), err)
+	}
+}
+
+func insertTaskPlanCompatibilityArtifact(t *testing.T, store *SQLiteStore) {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"artifact_id": "art_compatibility_fixture", "workstream_id": "", "artifact_type": "legacy_fixture",
+		"title": "legacy fixture", "status": "stored", "payload": json.RawMessage(`{}`),
+		"created_at": time.Now().UTC(), "future_field": "preserve forward compatibility",
+	})
+	if err != nil {
+		t.Fatalf("marshal compatibility fixture: %v", err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO artifact (artifact_id, workstream_id, created_at, payload) VALUES (?, '', ?, ?)`, "art_compatibility_fixture", time.Now().UTC().Format(timeFormatRFC3339Nano), string(payload)); err != nil {
+		t.Fatalf("insert compatibility fixture: %v", err)
+	}
+}
+
+func mutateGameProjectReceipt(t *testing.T, store *SQLiteStore, receiptID string, mutate func(*domainworkstream.ProjectPlanOperationReceipt)) {
+	t.Helper()
+	var raw string
+	if err := store.db.QueryRow(`SELECT payload FROM artifact WHERE artifact_id = ?`, receiptID).Scan(&raw); err != nil {
+		t.Fatalf("read receipt artifact: %v", err)
+	}
+	var artifact domainworkstream.Artifact
+	if err := json.Unmarshal([]byte(raw), &artifact); err != nil {
+		t.Fatalf("decode artifact envelope: %v", err)
+	}
+	var receipt domainworkstream.ProjectPlanOperationReceipt
+	if err := json.Unmarshal(artifact.Payload, &receipt); err != nil {
+		t.Fatalf("decode receipt payload: %v", err)
+	}
+	mutate(&receipt)
+	payload, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatalf("encode mutated receipt: %v", err)
+	}
+	artifact.Payload = payload
+	artifactJSON, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatalf("encode artifact envelope: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE artifact SET payload = ? WHERE artifact_id = ?`, string(artifactJSON), receiptID); err != nil {
+		t.Fatalf("save mutated receipt: %v", err)
 	}
 }
 

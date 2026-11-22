@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
 // Center composes the existing native Goal service with independent,
@@ -90,6 +91,20 @@ func (c *Center) Submit(ctx context.Context, input SubmitInput) (MutationResult,
 		return MutationResult{}, unavailableManagedOperation(ctx)
 	}
 	return c.managed.Submit(ctx, input)
+}
+
+func (c *Center) SubmitGameProjectPlan(ctx context.Context, input domainworkstream.GameProjectSubmission) (domainworkstream.ProjectPlanMutationResult, error) {
+	if c == nil || c.managed == nil {
+		return domainworkstream.ProjectPlanMutationResult{}, ErrUnsupported
+	}
+	return c.managed.SubmitGameProjectPlan(ctx, input)
+}
+
+func (c *Center) GameProjectPlanReceipt(ctx context.Context, idempotencyKey string) (domainworkstream.ProjectPlanMutationResult, bool, error) {
+	if c == nil || c.managed == nil {
+		return domainworkstream.ProjectPlanMutationResult{}, false, ErrUnsupported
+	}
+	return c.managed.GameProjectPlanReceipt(ctx, idempotencyKey)
 }
 
 func (c *Center) Claim(ctx context.Context, input ClaimInput) (MutationResult, error) {

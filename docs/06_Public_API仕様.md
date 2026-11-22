@@ -2238,7 +2238,7 @@ queryは`view=current|unfinished|all|history`（既定`all`）、任意のcanoni
 
 Status: ローカル実装・検証済み（2026-11-18）。本番未反映。既存`GET /viewer/tasks`のcanonical Task APIを維持し、`GET /viewer/task-center`を追加する。検証範囲は08に記録する。
 
-TaskCenter page／API clientは`X-RenCrow-Client: RenCrow_Viewer`と`X-RenCrow-Interaction-Profile: task-center`を送ります。このprofileは`GET /viewer/task-center`、表中のGET endpoint、`POST /api/v1/task-center/requests`、`POST /api/v1/task-center/claims`、`POST /api/v1/task-center/result/accept`だけを許可します。認証の代替ではなく、profile guardは未登録のmethod／pathを拒否します。
+TaskCenter page／API clientは`X-RenCrow-Client: RenCrow_Viewer`と`X-RenCrow-Interaction-Profile: task-center`を送ります。このprofileは`GET /viewer/task-center`、表中のGET endpoint、`POST /api/v1/task-center/requests`、`POST /api/v1/task-center/claims`、`POST /api/v1/task-center/result/accept`、`POST /api/v1/task-center/game-project-plans`だけを許可します。認証の代替ではなく、profile guardは未登録のmethod／pathを拒否します。
 
 | 入口 | 契約 |
 |---|---|
@@ -2251,6 +2251,12 @@ TaskCenter page／API clientは`X-RenCrow-Client: RenCrow_Viewer`と`X-RenCrow-I
 | `GET /api/v1/task-center/result` | 認可済みGoalの保存済み実行結果を取得 |
 | `POST /api/v1/task-center/result/accept` | 作成したuserが、確認した結果を明示的に受理 |
 | `GET /api/v1/task-center/result/acceptance` | 同じGoalとidempotency keyによる結果受理の回復 |
+| `POST /api/v1/task-center/game-project-plans` | ゲーム案件1件の公開Workstreamと、企画から実装後QAまで7件のdraft GoalをSQLite transactionで登録 |
+| `GET /api/v1/task-center/game-project-plan` | 同じ認証済みuserとidempotency keyによる登録receiptの回復 |
+
+ゲーム案件の作成bodyは`name`、`description`、`idempotency_key`と、順序固定の`stages`（`idea`、`specification`、`prototype`、`test`、`review`、`implementation`、`post_implementation_qa`）を含みます。各stageは`title`、`description`、`success_criteria`、`verification`を持ちます。認証済みuserの信頼済みcontextからownerを決め、公開範囲を許可されたuserだけが作成できます。新規作成は201、同一key・同一入力の再送は200、異なる入力の同一key再利用は409、未登録receiptのGETは404です。応答は登録時点のWorkstream ID・Goal ID・stage順・入力hash・登録時刻を示すreceiptです。Workstream／Goalの現在状態ではなく、状態確認は`GET /viewer/workstreams`で行います。
+
+作成はWorkstreamと7件のdraft Goalを同じSQLite transactionで保存し、途中の自動実行やstage間の依存ゲートは行いません。JSONL ownerではunsupportedです。Robloxの自動制作pipelineからこのAPIを呼び出す接続は未実装です。公開Workstreamと通常Goalを作る既存APIからreceipt対象を保護するものではなく、receiptは作成記録であって以後の状態を固定しません。
 
 Actor／user scopeは認証contextから決定し、bodyやqueryによる偽装を許さない。userの全体表示も認可範囲内、Agentのself表示は有効割当を参照する。GETは実行・LLM・設定変更を起動しない。全項目に共通時間情報とsource revisionを返し、取得不能・未知を空一覧へ丸めない。
 

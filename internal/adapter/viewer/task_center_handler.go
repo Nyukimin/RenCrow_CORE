@@ -14,6 +14,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskcenter"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/google/uuid"
 )
@@ -31,6 +32,11 @@ type TaskCenterService interface {
 	Receipt(context.Context, string, string) (taskcenter.MutationResult, bool, error)
 	AcceptResult(context.Context, taskcenter.AcceptResultInput) (taskcenter.MutationResult, error)
 	ReadResult(context.Context, string) (taskcenter.ResultView, error)
+}
+
+type TaskCenterProjectPlanService interface {
+	SubmitGameProjectPlan(context.Context, domainworkstream.GameProjectSubmission) (domainworkstream.ProjectPlanMutationResult, error)
+	GameProjectPlanReceipt(context.Context, string) (domainworkstream.ProjectPlanMutationResult, bool, error)
 }
 
 type taskCenterHandler struct {
@@ -172,6 +178,54 @@ func (h *taskCenterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusOK
 		}
 		writeTaskCenterJSON(w, status, result)
+	case "game-project-plans":
+		if !taskCenterMethod(w, r, http.MethodPost) || !taskCenterNoQuery(w, queryValues) {
+			return
+		}
+		service, ok := h.service.(TaskCenterProjectPlanService)
+		if !ok {
+			writeTaskCenterError(w, http.StatusServiceUnavailable, "task_center_unsupported")
+			return
+		}
+		var input domainworkstream.GameProjectSubmission
+		if !decodeTaskCenterJSON(w, r, &input) {
+			return
+		}
+		result, err := service.SubmitGameProjectPlan(r.Context(), input)
+		if err != nil {
+			writeTaskCenterDomainError(w, err)
+			return
+		}
+		status := http.StatusCreated
+		if result.Replayed {
+			status = http.StatusOK
+		}
+		writeTaskCenterJSON(w, status, result)
+	case "game-project-plan":
+		if !taskCenterMethod(w, r, http.MethodGet) {
+			return
+		}
+		values, ok := taskCenterQueryValues(queryValues, map[string]bool{"idempotency_key": true})
+		if !ok || !taskCenterRequiredValue(values, "idempotency_key", 128) {
+			writeTaskCenterError(w, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		service, ok := h.service.(TaskCenterProjectPlanService)
+		if !ok {
+			writeTaskCenterError(w, http.StatusServiceUnavailable, "task_center_unsupported")
+			return
+		}
+		result, found, err := service.GameProjectPlanReceipt(r.Context(), values.Get("idempotency_key"))
+		if err != nil {
+			writeTaskCenterDomainError(w, err)
+			return
+		}
+		if !found {
+			writeTaskCenterError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		result.Replayed = true
+		writeTaskCenterJSON(w, http.StatusOK, result)
 	case "claims":
 		if !taskCenterMethod(w, r, http.MethodPost) {
 			return

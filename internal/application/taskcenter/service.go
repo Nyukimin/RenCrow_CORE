@@ -193,6 +193,50 @@ func (s *Service) Submit(ctx context.Context, input SubmitInput) (MutationResult
 	return MutationResult{Item: s.item(result.Goal), Replayed: result.Replayed, ReceiptRef: result.ReceiptRef}, nil
 }
 
+func (s *Service) SubmitGameProjectPlan(ctx context.Context, input domainworkstream.GameProjectSubmission) (domainworkstream.ProjectPlanMutationResult, error) {
+	scope, err := s.scopeFromContext(ctx)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, err
+	}
+	if scope.ActorKind != tool.ActorKindUser || scope.ActorID != scope.AuthenticatedUserID || scope.AuthenticatedUserID == "" || !scope.Allows(tool.DataScopePublic) {
+		return domainworkstream.ProjectPlanMutationResult{}, ErrForbidden
+	}
+	if err := input.Validate(); err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	store, ok := s.store.(GameProjectPlanStore)
+	if !ok {
+		return domainworkstream.ProjectPlanMutationResult{}, ErrUnsupported
+	}
+	result, err := store.SubmitGameProjectPlan(ctx, scope, input)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, mapOwnerError(err)
+	}
+	return result, nil
+}
+
+func (s *Service) GameProjectPlanReceipt(ctx context.Context, idempotencyKey string) (domainworkstream.ProjectPlanMutationResult, bool, error) {
+	scope, err := s.scopeFromContext(ctx)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, false, err
+	}
+	if scope.ActorKind != tool.ActorKindUser || scope.ActorID != scope.AuthenticatedUserID || scope.AuthenticatedUserID == "" || !scope.Allows(tool.DataScopePublic) {
+		return domainworkstream.ProjectPlanMutationResult{}, false, ErrForbidden
+	}
+	if idempotencyKey == "" || len(idempotencyKey) > 128 || strings.TrimSpace(idempotencyKey) != idempotencyKey {
+		return domainworkstream.ProjectPlanMutationResult{}, false, ErrInvalid
+	}
+	store, ok := s.store.(GameProjectPlanStore)
+	if !ok {
+		return domainworkstream.ProjectPlanMutationResult{}, false, ErrUnsupported
+	}
+	result, found, err := store.GameProjectPlanReceipt(ctx, scope, idempotencyKey)
+	if err != nil {
+		return domainworkstream.ProjectPlanMutationResult{}, false, mapOwnerError(err)
+	}
+	return result, found, nil
+}
+
 // PrepareHandoff durably freezes the exact TaskManager draft, shared context
 // and typed owner input in the Goal before any TaskManager write is attempted.
 func (s *Service) PrepareHandoff(ctx context.Context, input HandoffPrepareInput) (MutationResult, error) {

@@ -125,6 +125,11 @@ type SubmitInput struct {
 	ExpectedPolicyRevision string                `json:"expected_policy_revision"`
 }
 
+type GameProjectPlanStore interface {
+	SubmitGameProjectPlan(context.Context, tool.ToolExecutionScope, domainworkstream.GameProjectSubmission) (domainworkstream.ProjectPlanMutationResult, error)
+	GameProjectPlanReceipt(context.Context, tool.ToolExecutionScope, string) (domainworkstream.ProjectPlanMutationResult, bool, error)
+}
+
 type ClaimInput struct {
 	GoalID                 string `json:"goal_id"`
 	ExpectedRevision       uint64 `json:"expected_revision"`
