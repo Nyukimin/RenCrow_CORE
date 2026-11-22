@@ -9,15 +9,20 @@ import (
 )
 
 const (
-	OwnerSession      = "session"
-	OwnerTask         = "task"
-	OwnerEvent        = "event"
-	OwnerConversation = "conversation"
-	OwnerPersona      = "persona"
-	OwnerSuperAgent   = "superagent"
-	OwnerAction       = "action"
-	OwnerTransport    = "transport"
-	OwnerAIWorkflow   = "aiworkflow"
+	OwnerSession                    = "session"
+	OwnerTask                       = "task"
+	OwnerEvent                      = "event"
+	OwnerConversation               = "conversation"
+	OwnerPersona                    = "persona"
+	OwnerSuperAgent                 = "superagent"
+	OwnerAction                     = "action"
+	OwnerTransport                  = "transport"
+	OwnerAIWorkflow                 = "aiworkflow"
+	KindTransportReceiptTransaction = "transport.receipt_transaction"
+	// MaxJSONLBatchCommands caps one typed JSONL commit group.
+	MaxJSONLBatchCommands = 64
+	// MaxJSONLBatchBytes caps the canonical payload bytes in one commit group.
+	MaxJSONLBatchBytes = int64(1 << 20)
 )
 
 var (
@@ -29,13 +34,50 @@ var (
 
 // PersistenceCommand is an immutable command accepted for persistence.
 // Owner and Kind are stable identifiers. SizeBytes is the canonical byte
-// accounting charged against the request's reservation. Apply must not mutate
-// the command or data reachable from its closure after Enqueue accepts it.
+// accounting charged against the request's reservation. Apply and JSONLBatch
+// must not mutate the command or data reachable from them after Enqueue accepts it.
 type PersistenceCommand struct {
-	Owner     string
-	Kind      string
-	SizeBytes int64
-	Apply     func(context.Context) error
+	Owner      string
+	Kind       string
+	SizeBytes  int64
+	Apply      func(context.Context) error
+	JSONLBatch *JSONLWriteBatch
+}
+
+// JSONLBatchWriter commits several immutable JSONL payload maps in one owner
+// transaction. Implementations must preserve the order of payload maps.
+type JSONLBatchWriter interface {
+	WriteJSONLBatch(context.Context, []map[string][]byte) error
+}
+
+// JSONLBatchToken identifies one concrete JSONL owner and binds the typed batch
+// capability to that owner's commit operation. Its non-zero-sized pointer is
+// used only for equality while selecting a contiguous queue prefix.
+type JSONLBatchToken struct {
+	writer JSONLBatchWriter
+	marker byte
+}
+
+// NewJSONLBatchToken creates an owner identity for typed JSONL batching.
+func NewJSONLBatchToken(writer JSONLBatchWriter) *JSONLBatchToken {
+	if writer == nil {
+		return nil
+	}
+	return &JSONLBatchToken{writer: writer, marker: 1}
+}
+
+func (token *JSONLBatchToken) write(ctx context.Context, payloads []map[string][]byte) error {
+	if token == nil || token.marker == 0 || token.writer == nil {
+		return ErrInvalidPersistenceCommand
+	}
+	return token.writer.WriteJSONLBatch(ctx, payloads)
+}
+
+// JSONLWriteBatch carries schema-specific bytes without exposing arbitrary
+// Apply closures to the batching path.
+type JSONLWriteBatch struct {
+	Token    *JSONLBatchToken
+	Payloads map[string][]byte
 }
 
 // Ticket identifies one accepted persistence command in the shared queue's
@@ -48,7 +90,7 @@ type Ticket uint64
 // request's cancellation never cancels work accepted by the queue.
 func NewPersistenceQueue(capacity int, byteCapacity int64) (*Queue[PersistenceCommand], error) {
 	workerContext := context.Background()
-	return New[PersistenceCommand](capacity, byteCapacity, func(queued Command[PersistenceCommand]) error {
+	writer := func(queued Command[PersistenceCommand]) error {
 		command := queued.Value
 		if err := command.validate(); err != nil {
 			return err
@@ -57,7 +99,41 @@ func NewPersistenceQueue(capacity int, byteCapacity int64) (*Queue[PersistenceCo
 			return fmt.Errorf("apply persistence command %s/%s: %w", command.Owner, command.Kind, err)
 		}
 		return nil
-	})
+	}
+	batchKey := func(command PersistenceCommand) (*JSONLBatchToken, bool) {
+		if command.validate() != nil || command.Owner != OwnerTransport ||
+			command.Kind != KindTransportReceiptTransaction || command.JSONLBatch == nil {
+			return nil, false
+		}
+		return command.JSONLBatch.Token, true
+	}
+	batchWriter := func(commands []Command[PersistenceCommand]) error {
+		if len(commands) < 2 || len(commands) > MaxJSONLBatchCommands {
+			return ErrInvalidPersistenceCommand
+		}
+		first := commands[0].Value.JSONLBatch
+		if first == nil || first.Token == nil {
+			return ErrInvalidPersistenceCommand
+		}
+		payloads := make([]map[string][]byte, len(commands))
+		var totalBytes int64
+		for index, queued := range commands {
+			if err := queued.Value.validate(); err != nil {
+				return err
+			}
+			batch := queued.Value.JSONLBatch
+			if batch == nil || batch.Token != first.Token {
+				return ErrInvalidPersistenceCommand
+			}
+			if queued.Value.SizeBytes > MaxJSONLBatchBytes-totalBytes {
+				return ErrInvalidPersistenceCommand
+			}
+			totalBytes += queued.Value.SizeBytes
+			payloads[index] = batch.Payloads
+		}
+		return first.Token.write(workerContext, payloads)
+	}
+	return newQueue(capacity, byteCapacity, writer, batchKey, batchWriter)
 }
 
 // Admit reserves a request's command count and byte budget before the owner
@@ -186,6 +262,22 @@ func (command PersistenceCommand) validate() error {
 	}
 	if !validPersistenceOwner(command.Owner) || strings.TrimSpace(command.Kind) == "" || command.Apply == nil {
 		return ErrInvalidPersistenceCommand
+	}
+	if command.JSONLBatch != nil {
+		if command.Owner != OwnerTransport || command.Kind != KindTransportReceiptTransaction ||
+			command.JSONLBatch.Token == nil || command.JSONLBatch.Token.marker == 0 || command.JSONLBatch.Token.writer == nil {
+			return ErrInvalidPersistenceCommand
+		}
+		var payloadBytes int64
+		for _, payload := range command.JSONLBatch.Payloads {
+			if len(payload) == 0 || int64(len(payload)) > command.SizeBytes-payloadBytes {
+				return ErrInvalidPersistenceCommand
+			}
+			payloadBytes += int64(len(payload))
+		}
+		if payloadBytes != command.SizeBytes {
+			return ErrInvalidPersistenceCommand
+		}
 	}
 	return nil
 }

@@ -111,8 +111,12 @@ func (s *JSONLStore) queueTransaction(
 	immutablePayloads := clonePayloads(payloads)
 	command := persistencequeue.PersistenceCommand{
 		Owner:     persistencequeue.OwnerTransport,
-		Kind:      "transport.receipt_transaction",
+		Kind:      persistencequeue.KindTransportReceiptTransaction,
 		SizeBytes: sizeBytes,
+		JSONLBatch: &persistencequeue.JSONLWriteBatch{
+			Token:    s.batchToken,
+			Payloads: immutablePayloads,
+		},
 		Apply: func(workerContext context.Context) error {
 			return s.batch.Write(workerContext, func() (map[string][]byte, error) {
 				return clonePayloads(immutablePayloads), nil

@@ -3,15 +3,14 @@ package logging
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlutil"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -31,7 +30,6 @@ type SessionLogEntry struct {
 // SessionLogWriter はセッション別の会話ログをJSONLファイルに書き出す
 type SessionLogWriter struct {
 	baseDir string
-	mu      sync.Mutex
 }
 
 // NewSessionLogWriter は指定ディレクトリ配下にセッションログを書くWriterを返す
@@ -131,7 +129,7 @@ func (w *SessionLogWriter) write(entry SessionLogEntry) {
 		log.Printf("ERROR: session log encode failed path=%s session_id=%s err=%v", path, entry.SessionID, err)
 		return
 	}
-	_ = w.writeLine(path, entry.SessionID, line)
+	_ = w.writeLineBatched(path, entry.SessionID, line)
 }
 
 func (w *SessionLogWriter) writeContext(ctx context.Context, entry SessionLogEntry) error {
@@ -143,7 +141,7 @@ func (w *SessionLogWriter) writeContext(ctx context.Context, entry SessionLogEnt
 	}
 	admission, admitted := persistencequeue.AdmissionFromContext(ctx)
 	if !admitted {
-		return w.writeLine(path, entry.SessionID, line)
+		return w.writeLineBatched(path, entry.SessionID, line)
 	}
 	command := persistencequeue.PersistenceCommand{
 		Owner:     persistencequeue.OwnerSession,
@@ -169,32 +167,43 @@ func encodeSessionLogEntry(entry SessionLogEntry) ([]byte, error) {
 }
 
 func (w *SessionLogWriter) writeLine(path, sessionID string, line []byte) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		log.Printf("ERROR: session log directory create failed path=%s session_id=%s err=%v", filepath.Dir(path), sessionID, err)
-		return fmt.Errorf("create session log directory: %w", err)
+	return w.appendSessionLogLine(path, sessionID, line, true)
+}
+
+func (w *SessionLogWriter) writeLineBatched(path, sessionID string, line []byte) error {
+	return w.appendSessionLogLine(path, sessionID, line, false)
+}
+
+func (w *SessionLogWriter) appendSessionLogLine(path, sessionID string, line []byte, immediate bool) error {
+	var err error
+	if immediate {
+		err = jsonlutil.AppendLineImmediate(path, line)
+	} else {
+		err = jsonlutil.AppendLine(path, line)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Printf("ERROR: session log open failed path=%s session_id=%s err=%v", path, sessionID, err)
-		return fmt.Errorf("open session log: %w", err)
+	if err == nil {
+		return nil
 	}
-	n, writeErr := f.Write(line)
-	closeErr := f.Close()
-	if writeErr != nil {
-		log.Printf("ERROR: session log write failed path=%s session_id=%s err=%v", path, sessionID, writeErr)
-		return fmt.Errorf("write session log: %w", writeErr)
+	var appendErr *jsonlutil.AppendError
+	if errors.As(err, &appendErr) {
+		cause := appendErr.Unwrap()
+		switch appendErr.Stage {
+		case jsonlutil.AppendStageDirectory:
+			log.Printf("ERROR: session log directory create failed path=%s session_id=%s err=%v", filepath.Dir(path), sessionID, cause)
+			return fmt.Errorf("create session log directory: %w", cause)
+		case jsonlutil.AppendStageOpen:
+			log.Printf("ERROR: session log open failed path=%s session_id=%s err=%v", path, sessionID, cause)
+			return fmt.Errorf("open session log: %w", cause)
+		case jsonlutil.AppendStageClose:
+			log.Printf("ERROR: session log close failed path=%s session_id=%s err=%v", path, sessionID, cause)
+			return fmt.Errorf("close session log: %w", cause)
+		default:
+			log.Printf("ERROR: session log write failed path=%s session_id=%s err=%v", path, sessionID, cause)
+			return fmt.Errorf("write session log: %w", cause)
+		}
 	}
-	if n != len(line) {
-		log.Printf("ERROR: session log write failed path=%s session_id=%s err=%v", path, sessionID, io.ErrShortWrite)
-		return fmt.Errorf("write session log: %w", io.ErrShortWrite)
-	}
-	if closeErr != nil {
-		log.Printf("ERROR: session log close failed path=%s session_id=%s err=%v", path, sessionID, closeErr)
-		return fmt.Errorf("close session log: %w", closeErr)
-	}
-	return nil
+	log.Printf("ERROR: session log write failed path=%s session_id=%s err=%v", path, sessionID, err)
+	return fmt.Errorf("write session log: %w", err)
 }
 
 func (w *SessionLogWriter) pathFor(sessionID string) string {

@@ -12,6 +12,7 @@ import (
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	infrahealth "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/health"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlutil"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -128,6 +129,9 @@ func (c *runtimePersistenceQueueCheck) Run(context.Context) domainhealth.CheckRe
 			"failed":                status.Failure != nil,
 			"failed_sequence":       failedSequence,
 			"durable_event_seq":     durableEventSeq,
+			"batch_writes":          status.BatchWrites,
+			"batched_commands":      status.BatchedCommands,
+			"sync_append":           jsonlutil.AppendBatchStatsSnapshot(),
 		},
 	}
 }

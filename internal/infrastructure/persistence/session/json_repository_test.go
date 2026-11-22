@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2774,6 +2776,188 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 	if value != "value1" {
 		t.Errorf("Expected memory value 'value1', got '%v'", value)
 	}
+}
+
+func TestJSONSessionRepositoryRepeatedSaveSkipsUnchangedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo := NewJSONSessionRepository(tmpDir)
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+	path := repo.getFilePath(sess.ID())
+	initial, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialFile, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer initialFile.Close()
+	var writes atomic.Int32
+	repo.beforeWriteSessionBytes = func(context.Context, string, []byte) error { writes.Add(1); return nil }
+	for i := 0; i < 100; i++ {
+		if err := repo.Save(context.Background(), sess); err != nil {
+			t.Fatalf("Save %d: %v", i, err)
+		}
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(initial, after) {
+		t.Fatal("unchanged save replaced the canonical file")
+	}
+	if got := writes.Load(); got != 100 {
+		t.Fatalf("before-write hook calls=%d, want 100", got)
+	}
+}
+
+func TestJSONSessionRepositoryUnchangedSaveAfterReopenSkipsAndLoads(t *testing.T) {
+	tmpDir := t.TempDir()
+	sess := newCanonicalRepositoryTestSession(t)
+	first := NewJSONSessionRepository(tmpDir)
+	if err := first.Save(context.Background(), sess); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+	path := first.getFilePath(sess.ID())
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	second := NewJSONSessionRepository(tmpDir)
+	var writes atomic.Int32
+	second.beforeWriteSessionBytes = func(context.Context, string, []byte) error { writes.Add(1); return nil }
+	if err := second.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save after reopen: %v", err)
+	}
+	if got, err := os.Stat(path); err != nil || !os.SameFile(fileStat(t, file), got) {
+		t.Fatalf("reopened Save replaced file (stat err=%v)", err)
+	}
+	if got := writes.Load(); got != 1 {
+		t.Fatalf("before-write hook calls=%d, want 1", got)
+	}
+	loaded, err := second.Load(context.Background(), sess.ID())
+	if err != nil {
+		t.Fatalf("Load after reopened Save: %v", err)
+	}
+	if loaded.ID() != sess.ID() || loaded.ChannelAddress() != sess.ChannelAddress() {
+		t.Fatalf("loaded identity/address=(%q,%v), want (%q,%v)", loaded.ID(), loaded.ChannelAddress(), sess.ID(), sess.ChannelAddress())
+	}
+}
+
+func TestJSONSessionRepositoryChangedSaveReplacesContent(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	sess.SetMemory("changed", "after")
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.Load(context.Background(), sess.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := loaded.GetMemory("changed"); !ok || got != "after" {
+		t.Fatalf("loaded changed memory=(%v,%t), want (after,true)", got, ok)
+	}
+}
+
+func TestJSONSessionRepositorySameBytesWithWrongModeAreReplaced(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	path := repo.getFilePath(sess.ID())
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		if err := repo.Save(context.Background(), sess); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0666 {
+			t.Fatalf("Windows mode=%#o, want coarse writable mode 0666", info.Mode().Perm())
+		}
+		if !os.SameFile(fileStat(t, file), info) {
+			t.Fatal("Windows Chmod(0644) should preserve the unchanged writable file")
+		}
+		return
+	}
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("mode=%#o, want 0600", info.Mode().Perm())
+	}
+	if os.SameFile(fileStat(t, file), info) {
+		t.Fatal("wrong-mode file was not replaced")
+	}
+}
+
+func TestJSONSessionRepositoryMissingFileIsRecreated(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	path := repo.getFilePath(sess.ID())
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("session file not recreated: %v", err)
+	}
+	if _, err := repo.Load(context.Background(), sess.ID()); err != nil {
+		t.Fatalf("Load recreated session: %v", err)
+	}
+}
+
+func TestJSONSessionRepositoryWriteFailureCanRetry(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := newCanonicalRepositoryTestSession(t)
+	writeErr := errors.New("injected write failure")
+	repo.beforeWriteSessionBytes = func(context.Context, string, []byte) error { return writeErr }
+	if err := repo.Save(context.Background(), sess); !errors.Is(err, writeErr) {
+		t.Fatalf("failed Save error=%v, want %v", err, writeErr)
+	}
+	repo.beforeWriteSessionBytes = nil
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("retry Save: %v", err)
+	}
+	if _, err := repo.Load(context.Background(), sess.ID()); err != nil {
+		t.Fatalf("Load after retry: %v", err)
+	}
+}
+
+func fileStat(t *testing.T, file *os.File) os.FileInfo {
+	t.Helper()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
 }
 
 func TestJSONSessionRepository_LoadNotFound(t *testing.T) {

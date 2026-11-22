@@ -2,9 +2,11 @@ package logging
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlutil"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -190,5 +193,85 @@ func TestSessionLogWriterContextReturnsAdmissionErrorWithoutWriting(t *testing.T
 	}
 	if _, err := os.Stat(writer.pathFor("session-full")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rejected session log was written, stat err=%v", err)
+	}
+}
+
+func TestSessionLogWriterBatchesOnlyNonAdmittedWrites(t *testing.T) {
+	baseDir := t.TempDir()
+	writer := NewSessionLogWriter(baseDir)
+	contextWriter := any(writer).(contextAwareSessionLogWriter)
+	before := jsonlutil.AppendBatchStatsSnapshot()
+	const count = 80
+	start := make(chan struct{})
+	errCh := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errCh <- contextWriter.WriteUserWithIdentityContext(context.Background(), "batch-session", "cmd", "", "", fmt.Sprintf("message-%d", i))
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("non-admitted log write: %v", err)
+		}
+	}
+	after := jsonlutil.AppendBatchStatsSnapshot()
+	if got := after.NormalRecordsWritten - before.NormalRecordsWritten; got != count {
+		t.Fatalf("normal records stat=%d, want %d", got, count)
+	}
+	if got := after.NormalFlushSuccesses - before.NormalFlushSuccesses; got >= count {
+		t.Fatalf("normal append flushes=%d, want fewer than %d", got, count)
+	}
+	data, err := os.ReadFile(writer.pathFor("batch-session"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := bytes.Count(data, []byte{'\n'}); lines != count {
+		t.Fatalf("persisted session records=%d, want %d", lines, count)
+	}
+}
+
+func TestSessionLogWriterAdmittedWriteUsesImmediateCoordinatorPath(t *testing.T) {
+	queue, err := persistencequeue.NewPersistenceQueue(1, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission, err := persistencequeue.Admit(queue, 1, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = admission.Release()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = queue.Shutdown(shutdownCtx)
+	})
+	baseDir := t.TempDir()
+	writer := NewSessionLogWriter(baseDir)
+	ctx := persistencequeue.WithAdmission(context.Background(), admission)
+	before := jsonlutil.AppendBatchStatsSnapshot()
+	if err := writer.WriteUserWithIdentityContext(ctx, "admitted-session", "cmd", "msg-1", "trace-1", "hello"); err != nil {
+		t.Fatalf("enqueue admitted session log: %v", err)
+	}
+	barrierCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := admission.Barrier(barrierCtx); err != nil {
+		t.Fatalf("wait for admitted session log: %v", err)
+	}
+	after := jsonlutil.AppendBatchStatsSnapshot()
+	if got := after.ImmediateRecordsWritten - before.ImmediateRecordsWritten; got != 1 {
+		t.Fatalf("immediate records stat=%d, want 1", got)
+	}
+	if got := after.NormalRecordsWritten - before.NormalRecordsWritten; got != 0 {
+		t.Fatalf("admitted write entered normal batch path: records=%d", got)
+	}
+	if _, err := os.Stat(writer.pathFor("admitted-session")); err != nil {
+		t.Fatalf("admitted log not persisted before barrier: %v", err)
 	}
 }
