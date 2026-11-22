@@ -288,3 +288,86 @@ func TestRoutineSelectionPreservesLogicalSleepBoundaryForRevalidation(t *testing
 		t.Fatalf("sleep boundary lost: %+v %v", plan, err)
 	}
 }
+
+func TestRoutineSelectionRestoresLogicalSleepWindowAfterForegroundCompletion(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Date(2026, 11, 15, 2, 0, 0, 0, time.FixedZone(agentroutine.JST, 9*60*60))
+	runtime, tasks := newDaytimeRoutineRuntime(t, &clock, "living")
+	state, err := runtime.store.EnsureSchedule(ctx, "mio", "2026-11-15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sleepAt, wakeAt, err := agentroutine.ScheduleFor("mio", "2026-11-15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock = sleepAt.Add(time.Minute)
+	state.PlannedSleep, state.PlannedWake, state.LogicalSleepUntil = sleepAt, wakeAt, wakeAt
+	state, err = runtime.store.Save(ctx, state, state.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreground, run, err := tasks.CreateAndStartActivityRun(ctx, domaintask.Task{
+		Title: "foreground work during logical sleep", ModuleID: "runtime-test", OwnerID: "mio", Assignee: "mio", Route: domaintask.RouteCHAT,
+	}, domaintask.ActivityMetadata{Kind: domaintask.ActivityKindWork, Label: "Work", Phase: "working",
+		Participants: []domaintask.ActivityParticipant{{ActorID: "mio"}}}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("start foreground Task: %v", err)
+	}
+	if _, err := tasks.CompleteRun(ctx, foreground.TaskID, run.RunID, "mio", domaintask.StatusSucceeded, "done", ""); err != nil {
+		t.Fatalf("complete foreground Task: %v", err)
+	}
+	before, err := tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || before["mio"].Task.Activity == nil || before["mio"].Task.Activity.Kind != domaintask.ActivityKindEvaluating {
+		t.Fatalf("foreground completion current=%+v err=%v; want Evaluating", before, err)
+	}
+	runtime.world = nil // Logical sleep recovery is backed by the persisted CORE schedule, not a WORLD claim.
+	work, found, err := runtime.idleSource(nil)(ctx, "mio")
+	if err != nil || !found {
+		t.Fatalf("logical sleep-window selection found=%t err=%v; want bounded passive activity", found, err)
+	}
+	unchanged, err := runtime.store.Load(ctx, "mio")
+	if err != nil || unchanged.Revision != state.Revision || !unchanged.LogicalSleepUntil.Equal(wakeAt) {
+		t.Fatalf("selection changed logical sleep checkpoint: %+v err=%v", unchanged, err)
+	}
+	if err := work.Run(ctx, make(chan struct{})); err != nil {
+		t.Fatalf("restore logical sleep window: %v", err)
+	}
+	current, err := tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sleep := current["mio"]
+	if sleep.Task.TaskID == before["mio"].Task.TaskID || sleep.Task.Activity == nil || sleep.Task.Activity.Kind != domaintask.ActivityKindSleep ||
+		!sleep.Task.Activity.Passive || sleep.Task.Activity.Phase != "sleep_window" || sleep.Task.Timing == nil ||
+		sleep.Task.Timing.DeadlineAt == nil || !sleep.Task.Timing.DeadlineAt.Equal(wakeAt) {
+		t.Fatalf("logical sleep current=%+v; want new passive sleep_window Task until wake", sleep)
+	}
+	if runs, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: sleep.Task.TaskID}); err != nil || len(runs) != 0 {
+		t.Fatalf("passive logical sleep Runs=%+v err=%v; want no provider Run", runs, err)
+	}
+	if _, found, err := runtime.idleSource(nil)(ctx, "mio"); err != nil || found {
+		t.Fatalf("duplicate logical sleep selection found=%t err=%v; want existing window preserved", found, err)
+	}
+
+	clock = wakeAt
+	expiry, found, err := runtime.idleSource(nil)(ctx, "mio")
+	if err != nil || !found {
+		t.Fatalf("wake deadline expiry found=%t err=%v", found, err)
+	}
+	if err := expiry.Run(ctx, make(chan struct{})); err != nil {
+		t.Fatalf("expire planned sleep window: %v", err)
+	}
+	finishedSleep, err := tasks.Get(ctx, sleep.Task.TaskID)
+	if err != nil || finishedSleep.Status != domaintask.StatusSucceeded {
+		t.Fatalf("expired sleep-window Task=%+v err=%v; want the original passive Task terminal", finishedSleep, err)
+	}
+	postExpiry, err := tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+	if err != nil || postExpiry["mio"].Task.TaskID == sleep.Task.TaskID || postExpiry["mio"].Task.Activity == nil ||
+		postExpiry["mio"].Task.Activity.Kind != domaintask.ActivityKindEvaluating {
+		t.Fatalf("wake expiry current=%+v err=%v; want a new Evaluating Task", postExpiry, err)
+	}
+	if next, found, err := runtime.idleSource(nil)(ctx, "mio"); err != nil || !found || !strings.Contains(next.ID, string(agentroutine.ActivityWake)) {
+		t.Fatalf("post-wake routine selection=%q found=%t err=%v; want normal Wake work", next.ID, found, err)
+	}
+}

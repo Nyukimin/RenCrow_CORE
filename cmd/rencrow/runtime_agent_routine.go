@@ -341,7 +341,7 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			}
 		}
 		if decision.Deferred || plan.Kind == agentroutine.ActivityWait || plan.Kind == agentroutine.ActivityDaytime {
-			return r.deferredRoutineRestWork(ctx, actorID, state, decision)
+			return r.deferredRoutineActivityWork(ctx, actorID, state, decision)
 		}
 		participants := []string(nil)
 		if state.Pending != nil {
@@ -386,11 +386,11 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 // routineActivitySelection is the one policy result consumed by discovery and
 // execution-time revalidation. A retry/cooldown is not a selected activity.
 type routineActivitySelection struct {
-	Plan            agentroutine.Plan
-	DaytimeFallback bool
-	Deferred        bool
-	DeferredUntil   time.Time
-	AllowRest       bool
+	Plan             agentroutine.Plan
+	DaytimeFallback  bool
+	Deferred         bool
+	DeferredUntil    time.Time
+	DeferredActivity domaintask.ActivityKind
 }
 
 func (r *agentRoutineRuntime) selectRoutineActivity(actorID string, state agentroutine.State, now time.Time, presence agentroutine.Presence) routineActivitySelection {
@@ -409,7 +409,9 @@ func (r *agentRoutineRuntime) selectRoutineActivity(actorID string, state agentr
 		result.Deferred = true
 		result.Plan.Reason = "routine retry deadline has not arrived"
 		result.DeferredUntil = state.Pending.RetryAfter
-		result.AllowRest = state.Pending.Kind != agentroutine.ActivitySleep && state.Pending.Kind != agentroutine.ActivityWake
+		if state.Pending.Kind != agentroutine.ActivitySleep && state.Pending.Kind != agentroutine.ActivityWake {
+			result.DeferredActivity = domaintask.ActivityKindRest
+		}
 		hour := now.In(r.location()).Hour()
 		result.DaytimeFallback = retryingDiary && hour >= 9 && hour < 22
 		return result
@@ -417,10 +419,13 @@ func (r *agentRoutineRuntime) selectRoutineActivity(actorID string, state agentr
 	if state.Pending == nil && plan.Kind == agentroutine.ActivitySleep && plan.LogicalSleep && state.LogicalSleepUntil.After(now) {
 		result.Deferred = true
 		result.DeferredUntil = state.LogicalSleepUntil
+		if routineSleepWindowLive(state, now) {
+			result.DeferredActivity = domaintask.ActivityKindSleep
+		}
 		return result
 	}
 	if state.Pending == nil && plan.Kind == agentroutine.ActivityWait && state.CooldownUntil.After(now) {
-		result.DeferredUntil, result.AllowRest = state.CooldownUntil, true
+		result.DeferredUntil, result.DeferredActivity = state.CooldownUntil, domaintask.ActivityKindRest
 		return result
 	}
 	if plan.Kind == agentroutine.ActivityDaytime {
@@ -430,16 +435,17 @@ func (r *agentRoutineRuntime) selectRoutineActivity(actorID string, state agentr
 	if plan.Kind == agentroutine.ActivityDiary && r.boardClient(actorID) == nil {
 		result.Deferred = true
 		result.Plan.Reason = "pinned BOARD diary writer is unavailable"
-		result.DeferredUntil, result.AllowRest = now.Add(agentRoutineRetryDelay), true
+		result.DeferredUntil, result.DeferredActivity = now.Add(agentRoutineRetryDelay), domaintask.ActivityKindRest
 	}
 	return result
 }
 
-// deferredRoutineRestWork chooses a new, bounded rest activity while retaining
-// the exact deferred intent/checkpoint. Only an idle actor in a freshly verified
-// allowed room may rest; no WORLD action or completed routine fact is invented.
-func (r *agentRoutineRuntime) deferredRoutineRestWork(ctx context.Context, actorID string, state agentroutine.State, decision routineActivitySelection) (agentheartbeat.Work, bool, error) {
-	if !decision.AllowRest || !decision.DeferredUntil.After(r.now()) || r.tasks == nil || r.world == nil {
+// deferredRoutineActivityWork chooses a bounded passive activity while retaining
+// the exact deferred intent/checkpoint. Rest requires a freshly verified allowed
+// WORLD room; logical sleep uses CORE's exact planned interval and claims no WORLD action.
+func (r *agentRoutineRuntime) deferredRoutineActivityWork(ctx context.Context, actorID string, state agentroutine.State, decision routineActivitySelection) (agentheartbeat.Work, bool, error) {
+	if decision.DeferredActivity == "" || !decision.DeferredUntil.After(r.now()) || r.tasks == nil ||
+		(decision.DeferredActivity == domaintask.ActivityKindRest && r.world == nil) {
 		return agentheartbeat.Work{}, false, nil
 	}
 	current, err := r.tasks.SnapshotCurrentActivities(ctx, []string{actorID})
@@ -460,14 +466,16 @@ func (r *agentRoutineRuntime) deferredRoutineRestWork(ctx context.Context, actor
 		}
 	}
 	until := decision.DeferredUntil
-	if limit := r.now().Add(routineCooldown(agentroutine.ActivityRelax)); until.After(limit) {
-		until = limit
-	}
-	if state.PlannedSleep.After(r.now()) && state.PlannedSleep.Before(until) {
-		until = state.PlannedSleep
+	if decision.DeferredActivity == domaintask.ActivityKindRest {
+		if limit := r.now().Add(routineCooldown(agentroutine.ActivityRelax)); until.After(limit) {
+			until = limit
+		}
+		if state.PlannedSleep.After(r.now()) && state.PlannedSleep.Before(until) {
+			until = state.PlannedSleep
+		}
 	}
 	return agentheartbeat.Work{
-		ID:       "routine-deferred-rest:" + actorID + ":" + string(expected.Task.TaskID),
+		ID:       "routine-deferred-activity:" + actorID + ":" + string(expected.Task.TaskID),
 		Priority: domaintask.PriorityLow, CreatedAt: r.now().UTC(), ActivityKind: agentheartbeat.ActivityKindRoutine,
 		Run: func(runCtx context.Context, stop <-chan struct{}) error {
 			if routineStopRequested(runCtx, stop) {
@@ -480,31 +488,42 @@ func (r *agentRoutineRuntime) deferredRoutineRestWork(ctx context.Context, actor
 			if latestState.Revision != state.Revision || !until.After(now) {
 				return nil
 			}
+			if decision.DeferredActivity == domaintask.ActivityKindSleep &&
+				(!routineSleepWindowLive(latestState, now) || !latestState.LogicalSleepUntil.Equal(until)) {
+				return nil
+			}
 			blocked, err := r.routineGameAdmissionBlocked(runCtx, actorID)
 			if blocked || err != nil {
 				return err
 			}
-			_, actor, err := r.routineWorldFreshActor(runCtx, actorID)
-			if err != nil {
-				return err
-			}
-			if !actor.Present || actor.ActivityID != "" || actor.ActivityKind != "" || !r.routineRelaxRoomAllowed(actorID, actor.RoomID) {
-				return errors.New("next activity rest requires an idle actor in a verified allowed room")
-			}
-			hour := now.In(r.location()).Hour()
-			if (hour < 6 || hour >= 22) && actor.RoomID != r.routinePrivateRoom(actorID) {
-				return errors.New("night rest requires the actor's configured private room")
+			phase, label, reason := "resting", "Rest", "next activity selected: bounded rest during routine deferral"
+			if decision.DeferredActivity == domaintask.ActivityKindRest {
+				_, actor, err := r.routineWorldFreshActor(runCtx, actorID)
+				if err != nil {
+					return err
+				}
+				if !actor.Present || actor.ActivityID != "" || actor.ActivityKind != "" || !r.routineRelaxRoomAllowed(actorID, actor.RoomID) {
+					return errors.New("next activity rest requires an idle actor in a verified allowed room")
+				}
+				hour := now.In(r.location()).Hour()
+				if (hour < 6 || hour >= 22) && actor.RoomID != r.routinePrivateRoom(actorID) {
+					return errors.New("night rest requires the actor's configured private room")
+				}
+			} else if decision.DeferredActivity == domaintask.ActivityKindSleep {
+				phase, label, reason = "sleep_window", "Sleep", "next activity selected: verified CORE logical sleep window"
+			} else {
+				return nil
 			}
 			if routineStopRequested(runCtx, stop) {
 				return nil
 			}
 			timing := modulecore.TaskTiming{Timezone: r.location().String(), DeadlineAt: &until}
-			draft := domaintask.Task{Title: "Agent activity: Rest", ModuleID: agentActivityModuleID, OwnerID: r.ownerID,
+			draft := domaintask.Task{Title: "Agent activity: " + label, ModuleID: agentActivityModuleID, OwnerID: r.ownerID,
 				Assignee: actorID, Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow,
 				InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true, Timing: &timing}
-			activity := activityMetadataForActor(domaintask.ActivityKindRest, "Rest", "resting", true, actorID, "")
+			activity := activityMetadataForActor(decision.DeferredActivity, label, phase, true, actorID, "")
 			_, err = r.tasks.CompleteAndTransitionCurrentActivity(runCtx, actorID, expected.Task.TaskID, expected.Participant.Revision,
-				domaintask.StatusSucceeded, "next activity selected: bounded rest during routine deferral", draft, activity)
+				domaintask.StatusSucceeded, reason, draft, activity)
 			return err
 		},
 	}, true, nil
