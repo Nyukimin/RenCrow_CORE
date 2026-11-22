@@ -112,6 +112,101 @@ func TestCurrentActivityBootstrapCreatesOneCanonicalTaskPerActor(t *testing.T) {
 	}
 }
 
+func TestMorningRoutineMovementUsesEachActorsCanonicalTask(t *testing.T) {
+	ctx := context.Background()
+	owner, closeStore := newCurrentActivityTestOwner(t)
+	defer closeStore()
+	now := time.Date(2026, time.November, 22, 8, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	runtime := &agentRoutineRuntime{tasks: owner, ownerID: "mio", now: func() time.Time { return now }}
+	primaryTaskID, peerTaskID := modulecore.NewTaskID(), modulecore.NewTaskID()
+	progress := routineProgress{Actors: []routineActorProgress{
+		{ActorID: "mio", TaskID: primaryTaskID},
+		{ActorID: "shiro", TaskID: peerTaskID},
+	}}
+	encoded, err := json.Marshal(progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := &agentroutine.Intent{
+		ID: "morning-movement-two-actors", ActorID: "mio", TaskID: string(primaryTaskID),
+		Kind: agentroutine.ActivityMorningChat, Participants: []string{"shiro"}, Output: string(encoded),
+	}
+	state := agentroutine.State{Pending: intent}
+	if got, err := routineActorTaskID(intent, "mio"); err != nil || got != primaryTaskID {
+		t.Fatalf("primary actor TaskID=(%s,%v), want %s", got, err, primaryTaskID)
+	}
+	if got, err := routineActorTaskID(intent, "shiro"); err != nil || got != peerTaskID {
+		t.Fatalf("peer actor TaskID=(%s,%v), want %s", got, err, peerTaskID)
+	}
+	_, _, err = owner.CreateAndStartActivityRun(ctx, domaintask.Task{
+		TaskID: peerTaskID, Title: "CORE morning routine", ModuleID: agentRoutineModuleID,
+		OwnerID: "shiro", Assignee: "shiro", Route: domaintask.RouteCHAT,
+	}, agentRoutineTaskActivity(intent, "shiro"), domaintask.SharedRoleContext{
+		TaskID: peerTaskID, UserIntent: "CORE routine step", CurrentPlan: "morning conversation",
+	})
+	if err != nil {
+		t.Fatalf("create peer routine Task: %v", err)
+	}
+	dueAt := now.Add(5 * time.Minute)
+	if err := runtime.setRoutineMovingActivity(ctx, state, "shiro", dueAt); err != nil {
+		t.Fatalf("bind confirmed movement for peer: %v", err)
+	}
+	current, err := owner.SnapshotCurrentActivities(ctx, []string{"shiro"})
+	if err != nil {
+		t.Fatalf("read moving current Task for peer: %v", err)
+	}
+	moving := current["shiro"].Task
+	if moving.Activity == nil || moving.Activity.Kind != domaintask.ActivityKindMoving || moving.ParentTaskID != peerTaskID {
+		t.Fatalf("moving Task for peer = %+v, want parent %s", moving, peerTaskID)
+	}
+	if err := runtime.restoreRoutineTaskCurrent(ctx, state, "shiro"); err != nil {
+		t.Fatalf("restore peer routine Task after arrival: %v", err)
+	}
+	current, err = owner.SnapshotCurrentActivities(ctx, []string{"shiro"})
+	if err != nil || current["shiro"].Task.TaskID != peerTaskID {
+		t.Fatalf("restored current Task for peer = %+v err=%v, want %s", current["shiro"], err, peerTaskID)
+	}
+}
+
+func TestRoutineActorTaskIDRejectsInconsistentMultiActorCheckpoint(t *testing.T) {
+	primaryTaskID, peerTaskID := modulecore.NewTaskID(), modulecore.NewTaskID()
+	base := &agentroutine.Intent{
+		ActorID: "mio", TaskID: string(primaryTaskID),
+	}
+	encode := func(actors ...routineActorProgress) *agentroutine.Intent {
+		copy := *base
+		progress, err := json.Marshal(routineProgress{Actors: actors})
+		if err != nil {
+			t.Fatal(err)
+		}
+		copy.Output = string(progress)
+		return &copy
+	}
+	tests := []struct {
+		name   string
+		intent *agentroutine.Intent
+		actor  string
+	}{
+		{name: "missing peer", intent: encode(routineActorProgress{ActorID: "mio", TaskID: primaryTaskID}), actor: "shiro"},
+		{name: "foreign intent task", intent: func() *agentroutine.Intent {
+			intent := encode(routineActorProgress{ActorID: "mio", TaskID: peerTaskID})
+			return intent
+		}(), actor: "mio"},
+		{name: "duplicate peer", intent: encode(
+			routineActorProgress{ActorID: "mio", TaskID: primaryTaskID},
+			routineActorProgress{ActorID: "shiro", TaskID: peerTaskID},
+			routineActorProgress{ActorID: "shiro", TaskID: modulecore.NewTaskID()},
+		), actor: "shiro"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if taskID, err := routineActorTaskID(test.intent, test.actor); err == nil {
+				t.Fatalf("routineActorTaskID()=(%s,nil), want checkpoint rejection", taskID)
+			}
+		})
+	}
+}
+
 func TestRunningWorkRecoveryChoosesActiveRootOverProviderChild(t *testing.T) {
 	ctx := context.Background()
 	owner, closeStore := newCurrentActivityTestOwner(t)

@@ -96,8 +96,8 @@ func TestAgentRoutineDaytimeFallbackPrecedenceAndSafeWait(t *testing.T) {
 			t.Fatalf("unknown-room result = %+v found=%t err=%v; want safe idle", work, found, err)
 		}
 	})
-	t.Run("cooldown remains idle", func(t *testing.T) {
-		runtime, _ := newDaytimeRoutineRuntime(t, &clock, "living")
+	t.Run("cooldown selects bounded rest", func(t *testing.T) {
+		runtime, tasks := newDaytimeRoutineRuntime(t, &clock, "living")
 		state, err := runtime.store.EnsureSchedule(context.Background(), "mio", "2026-11-15")
 		if err != nil {
 			t.Fatal(err)
@@ -107,8 +107,19 @@ func TestAgentRoutineDaytimeFallbackPrecedenceAndSafeWait(t *testing.T) {
 			t.Fatal(err)
 		}
 		work, found, err := runtime.idleSource(nil)(context.Background(), "mio")
-		if err != nil || found {
-			t.Fatalf("cooldown result = %+v found=%t err=%v; want no new activity", work, found, err)
+		if err != nil || !found {
+			t.Fatalf("cooldown result = %+v found=%t err=%v; want a bounded rest activity", work, found, err)
+		}
+		if err := work.Run(context.Background(), make(chan struct{})); err != nil {
+			t.Fatal(err)
+		}
+		current, err := tasks.SnapshotCurrentActivities(context.Background(), []string{"mio"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rest := current["mio"].Task
+		if rest.Activity.Kind != domaintask.ActivityKindRest || rest.Timing == nil || rest.Timing.DeadlineAt == nil || !rest.Timing.DeadlineAt.Equal(clock.Add(45*time.Minute)) {
+			t.Fatalf("cooldown current Task=%+v; want a real rest capped at 45 minutes", rest)
 		}
 	})
 }
@@ -167,7 +178,7 @@ func TestDaytimeRelaxPlanDoesNotReplaceOtherRoutineBoundaries(t *testing.T) {
 	}
 }
 
-func newDaytimeRoutineRuntime(t *testing.T, clock *time.Time, room string) (*agentRoutineRuntime, *taskmanager.Manager) {
+func newDaytimeRoutineRuntime(t *testing.T, clock *time.Time, room string, activity ...string) (*agentRoutineRuntime, *taskmanager.Manager) {
 	t.Helper()
 	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
 	if err != nil {
@@ -183,10 +194,14 @@ func newDaytimeRoutineRuntime(t *testing.T, clock *time.Time, room string) (*age
 		SharedRooms: []string{"living"}, PrivateRooms: map[string]string{"mio": "mio-room"},
 	}}}
 	runtime.worldActorIDs = map[string]string{"mio-world": "mio"}
+	actor := map[string]any{"room_id": room}
+	if len(activity) > 0 {
+		actor["activity_id"], actor["activity_kind"] = "active-world-operation", activity[0]
+	}
 	snapshot := map[string]any{
 		"schema_version": 1, "world_id": "world", "timeline_id": "timeline", "timeline_epoch": "epoch",
 		"state_seq": 1, "state_hash": strings.Repeat("0", 64),
-		"state":            map[string]any{"actors": map[string]any{"mio-world": map[string]any{"room_id": room}}},
+		"state":            map[string]any{"actors": map[string]any{"mio-world": actor}},
 		"home_move_points": map[string]any{},
 	}
 	encoded, err := json.Marshal(snapshot)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
@@ -832,21 +833,9 @@ func (r *agentRoutineRuntime) setRoutineMovingActivity(ctx context.Context, stat
 	if r == nil || r.tasks == nil || state.Pending == nil || dueAt.IsZero() {
 		return errors.New("confirmed WORLD movement has no exact routine Task or due time")
 	}
-	taskID := modulecore.TaskID(state.Pending.TaskID)
-	if taskID == "" {
-		progress, err := decodeRoutineProgress(state.Pending.Output)
-		if err != nil {
-			return err
-		}
-		for _, actorProgress := range progress.Actors {
-			if actorProgress.ActorID == actorID && actorProgress.TaskID != "" {
-				taskID = modulecore.TaskID(actorProgress.TaskID)
-				break
-			}
-		}
-	}
-	if taskID == "" {
-		return errors.New("confirmed WORLD movement has no exact actor Task binding")
+	taskID, err := routineActorTaskID(state.Pending, actorID)
+	if err != nil {
+		return fmt.Errorf("confirmed WORLD movement has no exact actor Task binding: %w", err)
 	}
 	snapshots, err := r.tasks.SnapshotCurrentActivities(ctx, []string{actorID})
 	if err != nil {
@@ -877,21 +866,9 @@ func (r *agentRoutineRuntime) restoreRoutineTaskCurrent(ctx context.Context, sta
 	if r == nil || r.tasks == nil || state.Pending == nil {
 		return errors.New("routine movement recovery has no exact owner context")
 	}
-	taskID := modulecore.TaskID(state.Pending.TaskID)
-	if taskID == "" {
-		progress, err := decodeRoutineProgress(state.Pending.Output)
-		if err != nil {
-			return err
-		}
-		for _, actorProgress := range progress.Actors {
-			if actorProgress.ActorID == actorID && actorProgress.TaskID != "" {
-				taskID = modulecore.TaskID(actorProgress.TaskID)
-				break
-			}
-		}
-	}
-	if taskID == "" {
-		return errors.New("routine movement recovery has no exact actor Task binding")
+	taskID, err := routineActorTaskID(state.Pending, actorID)
+	if err != nil {
+		return fmt.Errorf("routine movement recovery has no exact actor Task binding: %w", err)
 	}
 	snapshots, err := r.tasks.SnapshotCurrentActivities(ctx, []string{actorID})
 	if err != nil {
@@ -910,6 +887,40 @@ func (r *agentRoutineRuntime) restoreRoutineTaskCurrent(ctx context.Context, sta
 	activity := agentRoutineTaskActivity(state.Pending, actorID)
 	_, err = r.tasks.BindCurrentActivity(ctx, actorID, current.Task.TaskID, current.Participant.Revision, taskID, activity)
 	return err
+}
+
+// routineActorTaskID resolves the actor-specific Task from the exact persisted
+// intent checkpoint. Intent.TaskID belongs to the intent owner; a multi-actor
+// intent stores each participant's distinct canonical Task in progress.Actors.
+func routineActorTaskID(intent *agentroutine.Intent, actorID string) (modulecore.TaskID, error) {
+	if intent == nil || strings.TrimSpace(actorID) == "" || strings.TrimSpace(intent.ActorID) == "" {
+		return "", errors.New("routine intent and actor are required")
+	}
+	progress, err := decodeRoutineProgress(intent.Output)
+	if err != nil {
+		return "", fmt.Errorf("decode routine actor Task checkpoint: %w", err)
+	}
+	if len(progress.Actors) == 0 || progress.Actors[0].ActorID != intent.ActorID ||
+		progress.Actors[0].TaskID == "" || string(progress.Actors[0].TaskID) != intent.TaskID {
+		return "", errors.New("routine intent TaskID does not match its first actor checkpoint")
+	}
+	var taskID modulecore.TaskID
+	for _, actor := range progress.Actors {
+		if actor.ActorID != actorID {
+			continue
+		}
+		if taskID != "" {
+			return "", fmt.Errorf("routine checkpoint duplicates actor %q", actorID)
+		}
+		if actor.TaskID == "" || actor.TaskID.Validate() != nil {
+			return "", fmt.Errorf("routine checkpoint TaskID for actor %q is invalid", actorID)
+		}
+		taskID = actor.TaskID
+	}
+	if taskID == "" {
+		return "", fmt.Errorf("routine checkpoint has no Task for actor %q", actorID)
+	}
+	return taskID, nil
 }
 
 // expiredPassiveActivityWork is read-only during scheduler discovery. The

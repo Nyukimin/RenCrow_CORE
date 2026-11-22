@@ -311,14 +311,6 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 		if err != nil {
 			return agentheartbeat.Work{}, false, err
 		}
-		retryingDiary := state.Pending != nil && state.Pending.Kind == agentroutine.ActivityDiary && state.Pending.RetryAfter.After(now)
-		bedtimeCleanup := state.Pending != nil && r.pendingRoutineIntentAtBedtime(
-			state.Pending, state.ScheduleDate, state.PlannedSleep, now,
-		)
-		sleepCleanup := state.Pending != nil && r.pendingRoutineSleepExpired(state.Pending, now)
-		if state.Pending != nil && state.Pending.RetryAfter.After(now) && !retryingDiary && !bedtimeCleanup && !sleepCleanup {
-			return agentheartbeat.Work{}, false, nil
-		}
 		read, snapshotErr := r.readSnapshot(ctx)
 		if snapshotErr != nil {
 			// A failed WORLD read leaves all room facts unknown. Diary timing and
@@ -326,12 +318,7 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			read = routineSnapshotRead{}
 		}
 		presence := r.presence(read.snapshot, actorID, read.readAt, true, nil)
-		canHobby := r.canHobby(actorID)
 		planState := state
-		if retryingDiary {
-			planState.Pending = nil
-			planState.NextDiaryDate = "" // Retry backoff must not monopolize the daylight fallback.
-		}
 		if state.Pending == nil {
 			localNow := now.In(r.location())
 			hour := localNow.Hour()
@@ -343,38 +330,18 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 				}
 			}
 		}
-		plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, planState, presence, canHobby)
-		if retryingDiary && plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
-			hour := now.In(r.location()).Hour()
-			if hour < 9 || hour >= 22 {
-				return agentheartbeat.Work{}, false, nil
-			}
-		}
-		if state.Pending == nil && plan.Kind == agentroutine.ActivitySleep && plan.LogicalSleep && state.LogicalSleepUntil.After(now) {
-			return agentheartbeat.Work{}, false, nil
-		}
-		if state.Pending == nil && plan.Kind == agentroutine.ActivityWait {
-			return agentheartbeat.Work{}, false, nil
-		}
-		if plan.Kind == agentroutine.ActivityDaytime {
+		decision := r.selectRoutineActivity(actorID, planState, now, presence)
+		plan := decision.Plan
+		if decision.DaytimeFallback {
 			if daytimeFallback != nil {
 				fallbackWork, found, fallbackErr := daytimeFallback(ctx, actorID)
 				if fallbackErr != nil || found {
 					return fallbackWork, found, fallbackErr
 				}
 			}
-			plan = daytimeRelaxPlan(plan, presence)
-			if plan.Kind == agentroutine.ActivityDaytime {
-				return agentheartbeat.Work{}, false, nil
-			}
 		}
-		if retryingDiary && plan.Kind != agentroutine.ActivitySleep && plan.Kind != agentroutine.ActivityWake {
-			return agentheartbeat.Work{}, false, nil
-		}
-		if plan.Kind == agentroutine.ActivityDiary && r.boardClient(actorID) == nil {
-			// A per-actor BOARD grant is optional at runtime. The diary remains
-			// eligible, but a missing pinned writer does not occupy an actor slot.
-			return agentheartbeat.Work{}, false, nil
+		if decision.Deferred || plan.Kind == agentroutine.ActivityWait || plan.Kind == agentroutine.ActivityDaytime {
+			return r.deferredRoutineRestWork(ctx, actorID, state, decision)
 		}
 		participants := []string(nil)
 		if state.Pending != nil {
@@ -414,6 +381,126 @@ func (r *agentRoutineRuntime) idleSource(daytimeFallback agentheartbeat.Source) 
 			},
 		}, true, nil
 	}
+}
+
+// routineActivitySelection is the one policy result consumed by discovery and
+// execution-time revalidation. A retry/cooldown is not a selected activity.
+type routineActivitySelection struct {
+	Plan            agentroutine.Plan
+	DaytimeFallback bool
+	Deferred        bool
+	DeferredUntil   time.Time
+	AllowRest       bool
+}
+
+func (r *agentRoutineRuntime) selectRoutineActivity(actorID string, state agentroutine.State, now time.Time, presence agentroutine.Presence) routineActivitySelection {
+	canHobby := r.canHobby(actorID)
+	policyState := state
+	retrying := state.Pending != nil && state.Pending.RetryAfter.After(now)
+	retryingDiary := retrying && state.Pending.Kind == agentroutine.ActivityDiary
+	if retryingDiary {
+		policyState.Pending = nil
+		policyState.NextDiaryDate = ""
+	}
+	plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, policyState, presence, canHobby)
+	result := routineActivitySelection{Plan: plan}
+	cleanup := state.Pending != nil && (r.pendingRoutineIntentAtBedtime(state.Pending, state.ScheduleDate, state.PlannedSleep, now) || r.pendingRoutineSleepExpired(state.Pending, now))
+	if retrying && !cleanup && !(retryingDiary && (plan.Kind == agentroutine.ActivitySleep || plan.Kind == agentroutine.ActivityWake)) {
+		result.Deferred = true
+		result.Plan.Reason = "routine retry deadline has not arrived"
+		result.DeferredUntil = state.Pending.RetryAfter
+		result.AllowRest = state.Pending.Kind != agentroutine.ActivitySleep && state.Pending.Kind != agentroutine.ActivityWake
+		hour := now.In(r.location()).Hour()
+		result.DaytimeFallback = retryingDiary && hour >= 9 && hour < 22
+		return result
+	}
+	if state.Pending == nil && plan.Kind == agentroutine.ActivitySleep && plan.LogicalSleep && state.LogicalSleepUntil.After(now) {
+		result.Deferred = true
+		result.DeferredUntil = state.LogicalSleepUntil
+		return result
+	}
+	if state.Pending == nil && plan.Kind == agentroutine.ActivityWait && state.CooldownUntil.After(now) {
+		result.DeferredUntil, result.AllowRest = state.CooldownUntil, true
+		return result
+	}
+	if plan.Kind == agentroutine.ActivityDaytime {
+		result.DaytimeFallback = true
+		result.Plan = daytimeRelaxPlan(plan, presence)
+	}
+	if plan.Kind == agentroutine.ActivityDiary && r.boardClient(actorID) == nil {
+		result.Deferred = true
+		result.Plan.Reason = "pinned BOARD diary writer is unavailable"
+		result.DeferredUntil, result.AllowRest = now.Add(agentRoutineRetryDelay), true
+	}
+	return result
+}
+
+// deferredRoutineRestWork chooses a new, bounded rest activity while retaining
+// the exact deferred intent/checkpoint. Only an idle actor in a freshly verified
+// allowed room may rest; no WORLD action or completed routine fact is invented.
+func (r *agentRoutineRuntime) deferredRoutineRestWork(ctx context.Context, actorID string, state agentroutine.State, decision routineActivitySelection) (agentheartbeat.Work, bool, error) {
+	if !decision.AllowRest || !decision.DeferredUntil.After(r.now()) || r.tasks == nil || r.world == nil {
+		return agentheartbeat.Work{}, false, nil
+	}
+	current, err := r.tasks.SnapshotCurrentActivities(ctx, []string{actorID})
+	if err != nil {
+		return agentheartbeat.Work{}, false, err
+	}
+	expected := current[actorID]
+	if expected.Task.Activity == nil || expected.Task.Activity.Kind != domaintask.ActivityKindEvaluating {
+		return agentheartbeat.Work{}, false, nil
+	}
+	if state.Pending != nil {
+		progress, err := decodeRoutineProgress(state.Pending.Output)
+		if err != nil {
+			return agentheartbeat.Work{}, false, err
+		}
+		if routineProgressNeedsWorldSettlement(progress) || routineProgressHasUnresolvedWorldAction(progress) {
+			return agentheartbeat.Work{}, false, nil
+		}
+	}
+	until := decision.DeferredUntil
+	if limit := r.now().Add(routineCooldown(agentroutine.ActivityRelax)); until.After(limit) {
+		until = limit
+	}
+	if state.PlannedSleep.After(r.now()) && state.PlannedSleep.Before(until) {
+		until = state.PlannedSleep
+	}
+	return agentheartbeat.Work{
+		ID:       "routine-deferred-rest:" + actorID + ":" + string(expected.Task.TaskID),
+		Priority: domaintask.PriorityLow, CreatedAt: r.now().UTC(), ActivityKind: agentheartbeat.ActivityKindRoutine,
+		Run: func(runCtx context.Context, stop <-chan struct{}) error {
+			if routineStopRequested(runCtx, stop) {
+				return nil
+			}
+			latestState, now, err := r.loadDecisionState(runCtx, actorID)
+			if err != nil {
+				return err
+			}
+			if latestState.Revision != state.Revision || !until.After(now) {
+				return nil
+			}
+			blocked, err := r.routineGameAdmissionBlocked(runCtx, actorID)
+			if blocked || err != nil {
+				return err
+			}
+			_, actor, err := r.routineWorldFreshActor(runCtx, actorID)
+			if err != nil {
+				return err
+			}
+			if !actor.Present || actor.ActivityID != "" || actor.ActivityKind != "" || !r.routineRelaxRoomAllowed(actorID, actor.RoomID) {
+				return errors.New("next activity rest requires an idle actor in a verified allowed room")
+			}
+			timing := modulecore.TaskTiming{Timezone: r.location().String(), DeadlineAt: &until}
+			draft := domaintask.Task{Title: "Agent activity: Rest", ModuleID: agentActivityModuleID, OwnerID: r.ownerID,
+				Assignee: actorID, Route: domaintask.RouteCHAT, Priority: domaintask.PriorityLow,
+				InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true, Timing: &timing}
+			activity := activityMetadataForActor(domaintask.ActivityKindRest, "Rest", "resting", true, actorID, "")
+			_, err = r.tasks.CompleteAndTransitionCurrentActivity(runCtx, actorID, expected.Task.TaskID, expected.Participant.Revision,
+				domaintask.StatusSucceeded, "next activity selected: bounded rest during routine deferral", draft, activity)
+			return err
+		},
+	}, true, nil
 }
 
 func (r *agentRoutineRuntime) hasActiveRoutineGame(ctx context.Context, actorIDs ...string) (bool, error) {
@@ -1326,9 +1413,7 @@ func (r *agentRoutineRuntime) planFresh(ctx context.Context, actorID string, cle
 		read = routineSnapshotRead{}
 	}
 	presence := r.presence(read.snapshot, actorID, read.readAt, !clearPending, reservedParticipants)
-	canHobby := r.canHobby(actorID)
-	plan := agentroutine.Decide(now, agentroutine.ActorState{ID: actorID, HobbyConfigured: canHobby}, state, presence, canHobby)
-	plan = daytimeRelaxPlan(plan, presence)
+	plan := r.selectRoutineActivity(actorID, state, now, presence).Plan
 	if plan.Kind == agentroutine.ActivityMorningChat {
 		if len(reservedParticipants) == 1 && containsRoutineActor(presence.ChatParticipants, reservedParticipants[0]) {
 			plan.Participants = append([]string(nil), reservedParticipants...)
