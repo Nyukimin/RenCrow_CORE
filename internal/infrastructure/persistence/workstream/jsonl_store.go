@@ -676,7 +676,14 @@ func (s *JSONLStore) SaveWorkstream(_ context.Context, item domainworkstream.Wor
 	if err := domainworkstream.ValidateWorkstream(item); err != nil {
 		return err
 	}
-	if err := s.ensureLegacyWorkstreamWritable(item); err != nil {
+	existing, err := s.ensureLegacyWorkstreamWritable(item)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		item = domainworkstream.PreserveProjectDomain(item, *existing)
+	}
+	if err := domainworkstream.ValidateWorkstream(item); err != nil {
 		return err
 	}
 	if s.vaultRoot != "" {

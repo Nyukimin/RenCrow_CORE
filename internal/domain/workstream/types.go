@@ -50,6 +50,7 @@ const (
 type Workstream struct {
 	WorkstreamID    string                     `json:"workstream_id"`
 	Name            string                     `json:"name"`
+	ProjectDomain   *string                    `json:"project_domain,omitempty"`
 	Description     string                     `json:"description,omitempty"`
 	Status          string                     `json:"status"`
 	PrimaryAgent    string                     `json:"primary_agent,omitempty"`
@@ -57,6 +58,17 @@ type Workstream struct {
 	VaultPath       string                     `json:"vault_path,omitempty"`
 	CreatedAt       time.Time                  `json:"created_at"`
 	UpdatedAt       time.Time                  `json:"updated_at,omitempty"`
+}
+
+// PreserveProjectDomain carries the canonical domain through a partial
+// Workstream update. A nil incoming value means the caller omitted the field;
+// a non-nil empty string is an explicit clear to the unclassified state.
+func PreserveProjectDomain(incoming, current Workstream) Workstream {
+	if incoming.ProjectDomain == nil && current.ProjectDomain != nil {
+		value := *current.ProjectDomain
+		incoming.ProjectDomain = &value
+	}
+	return incoming
 }
 
 type Goal struct {

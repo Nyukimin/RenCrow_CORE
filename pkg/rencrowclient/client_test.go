@@ -3486,13 +3486,14 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 func TestWorkstreamStatus(t *testing.T) {
 	var gotPath string
 	now := time.Date(2026, 5, 20, 3, 15, 0, 0, time.UTC)
+	futureDomain := "future-domain"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.String()
 		if r.Method != http.MethodGet {
 			t.Fatalf("method=%s", r.Method)
 		}
 		_ = json.NewEncoder(w).Encode(WorkstreamStatus{
-			Workstreams: []Workstream{{WorkstreamID: "ws_1", Name: "Ops", Status: "active", CreatedAt: now}},
+			Workstreams: []Workstream{{WorkstreamID: "ws_1", Name: "Ops", Status: "active", ProjectDomain: &futureDomain, CreatedAt: now}},
 			Goals:       []WorkstreamGoal{{GoalID: "goal_1", WorkstreamID: "ws_1", Title: "Ship", Status: "active", CreatedAt: now}},
 			Artifacts:   []WorkstreamArtifact{{ArtifactID: "art_1", WorkstreamID: "ws_1", Type: "note", Status: "draft", CreatedAt: now}},
 			Annotations: []WorkstreamAnnotation{{AnnotationID: "ann_1", ArtifactID: "art_1", Comment: "review", Status: "open", CreatedAt: now}},
@@ -3521,6 +3522,9 @@ func TestWorkstreamStatus(t *testing.T) {
 	}
 	if len(status.Workstreams) != 1 || len(status.VaultUpdates) != 1 {
 		t.Fatalf("status=%#v", status)
+	}
+	if status.Workstreams[0].ProjectDomain == nil || *status.Workstreams[0].ProjectDomain != futureDomain {
+		t.Fatalf("project_domain was not transparently preserved: %+v", status.Workstreams[0].ProjectDomain)
 	}
 }
 

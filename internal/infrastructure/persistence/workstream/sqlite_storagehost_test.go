@@ -124,6 +124,33 @@ func TestSaveWorkstreamRowStorageHostDoesNotCreateVaultFiles(t *testing.T) {
 	}
 }
 
+func TestWorkstreamStorageHostCreatesAndReplaysClassifiedWorkstreamExactly(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "workstream.sqlite"))
+	if err != nil {
+		t.Fatalf("open owner: %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	game := "game"
+	request := domainworkstream.Workstream{WorkstreamID: "ws-storagehost-domain", Name: "game project", Status: domainworkstream.StatusActive, ProjectDomain: &game, CreatedAt: now}
+	identity := workstreamStorageHostIdentityForTest(WorkstreamSaveWorkstreamStorageHostOperation, "host-save-workstream-domain-preserve")
+	result, err := store.SaveWorkstreamRowForStorageHostOperation(ctx, identity, request)
+	if err != nil || !reflect.DeepEqual(result, request) {
+		t.Fatalf("saved result=%+v err=%v, want %+v", result, err, request)
+	}
+	replay, err := store.SaveWorkstreamRowForStorageHostOperation(ctx, identity, request)
+	if err != nil || !reflect.DeepEqual(replay, request) {
+		t.Fatalf("receipt replay=%+v err=%v, want %+v", replay, err, request)
+	}
+	clear := ""
+	conflictingReplay := request
+	conflictingReplay.ProjectDomain = &clear
+	if _, err := store.SaveWorkstreamRowForStorageHostOperation(ctx, identity, conflictingReplay); err == nil {
+		t.Fatal("same operation identity accepted a different explicit project_domain")
+	}
+}
+
 func workstreamStorageHostIdentityForTest(operation, opID string) WorkstreamStorageHostOperationIdentity {
 	payload := sha256.Sum256([]byte("typed " + operation + " request"))
 	return WorkstreamStorageHostOperationIdentity{OpID: opID, Operation: operation, PayloadSHA256: hex.EncodeToString(payload[:]), WriterGeneration: 17}

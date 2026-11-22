@@ -1201,12 +1201,32 @@ func (s *SQLiteStore) saveLegacyTaskCenterRecord(ctx context.Context, table, idC
 	}
 	var current string
 	readQuery := fmt.Sprintf(`SELECT payload FROM %s WHERE %s = ?`, table, idColumn)
+	var currentWorkstream domainworkstream.Workstream
 	if err := tx.QueryRowContext(ctx, readQuery, id).Scan(&current); err == nil {
 		if err := rejectExistingManagedRecord(table, current); err != nil {
 			return err
 		}
+		if table == "workstream" {
+			if err := json.Unmarshal([]byte(current), &currentWorkstream); err != nil {
+				return err
+			}
+			if currentWorkstream.WorkstreamID != id {
+				return errors.New("stored workstream id does not match its row key")
+			}
+		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if table == "workstream" {
+		workstream, ok := item.(domainworkstream.Workstream)
+		if !ok {
+			return errors.New("workstream row has an invalid item type")
+		}
+		workstream = domainworkstream.PreserveProjectDomain(workstream, currentWorkstream)
+		if err := domainworkstream.ValidateWorkstream(workstream); err != nil {
+			return err
+		}
+		item = workstream
 	}
 	payload, err := json.Marshal(item)
 	if err != nil {
@@ -1362,9 +1382,9 @@ func (s *JSONLStore) ensureLegacyGoalWritable(goal domainworkstream.Goal) error 
 	return nil
 }
 
-func (s *JSONLStore) ensureLegacyWorkstreamWritable(item domainworkstream.Workstream) error {
+func (s *JSONLStore) ensureLegacyWorkstreamWritable(item domainworkstream.Workstream) (*domainworkstream.Workstream, error) {
 	if item.TaskCenterScope != nil {
-		return domainworkstream.ErrTaskPlanForbidden
+		return nil, domainworkstream.ErrTaskPlanForbidden
 	}
 	var existing *domainworkstream.Workstream
 	if err := readJSONL(s.workstreamPath, func(line []byte) error {
@@ -1378,12 +1398,12 @@ func (s *JSONLStore) ensureLegacyWorkstreamWritable(item domainworkstream.Workst
 		}
 		return nil
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if existing != nil && existing.TaskCenterScope != nil {
-		return domainworkstream.ErrTaskPlanForbidden
+		return nil, domainworkstream.ErrTaskPlanForbidden
 	}
-	return nil
+	return existing, nil
 }
 
 func (s *JSONLStore) ensureLegacyArtifactWritable(item domainworkstream.Artifact) error {

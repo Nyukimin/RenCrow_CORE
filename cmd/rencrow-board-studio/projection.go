@@ -43,18 +43,19 @@ type studioAgent struct {
 	Freshness         string                  `json:"freshness"`
 }
 type studioProject struct {
-	ID         string          `json:"project_id"`
-	Title      string          `json:"title"`
-	Category   string          `json:"category"`
-	State      string          `json:"state"`
-	Agents     []string        `json:"assigned_agent_ids"`
-	Current    []coreRef       `json:"current_step_runs"`
-	NotDone    *int            `json:"not_done_count"`
-	Blockers   *int            `json:"blocker_count"`
-	Completion *studioProgress `json:"completion"`
-	Refs       []coreRef       `json:"refs"`
-	Steps      []studioStep    `json:"steps,omitempty"`
-	Updated    *time.Time      `json:"updated_at,omitempty"`
+	ID            string          `json:"project_id"`
+	Title         string          `json:"title"`
+	Category      string          `json:"category"`
+	ProjectDomain *string         `json:"project_domain,omitempty"`
+	State         string          `json:"state"`
+	Agents        []string        `json:"assigned_agent_ids"`
+	Current       []coreRef       `json:"current_step_runs"`
+	NotDone       *int            `json:"not_done_count"`
+	Blockers      *int            `json:"blocker_count"`
+	Completion    *studioProgress `json:"completion"`
+	Refs          []coreRef       `json:"refs"`
+	Steps         []studioStep    `json:"steps,omitempty"`
+	Updated       *time.Time      `json:"updated_at,omitempty"`
 }
 type studioProgress struct {
 	Done     int    `json:"done"`
@@ -205,11 +206,12 @@ type viewerTasks struct {
 }
 
 type viewerProject struct {
-	ID      string     `json:"workstream_id"`
-	Title   string     `json:"name"`
-	State   string     `json:"status"`
-	Agent   string     `json:"primary_agent"`
-	Updated *time.Time `json:"updated_at"`
+	ID            string     `json:"workstream_id"`
+	Title         string     `json:"name"`
+	ProjectDomain *string    `json:"project_domain,omitempty"`
+	State         string     `json:"status"`
+	Agent         string     `json:"primary_agent"`
+	Updated       *time.Time `json:"updated_at"`
 }
 type viewerGoal struct {
 	ID        string     `json:"goal_id"`
@@ -559,12 +561,14 @@ func projectStudio(observed time.Time, agents viewerAgents, tasks viewerTasks, w
 		Observed: observed, Agents: []studioAgent{}, Projects: []studioProject{}, Work: []studioWork{}, Artifacts: []studioArtifact{},
 		Blockers: []studioBlocker{}, Activities: []studioActivity{}}
 	projectIndex := map[string]int{}
+	seenProjectIDs := map[string]bool{}
 	for _, row := range work.Workstreams {
-		if row.ID == "" {
+		if row.ID == "" || seenProjectIDs[row.ID] {
 			continue
 		}
+		seenProjectIDs[row.ID] = true
 		projectIndex[row.ID] = len(snapshot.Projects)
-		snapshot.Projects = append(snapshot.Projects, studioProject{ID: row.ID, Title: fallback(row.Title, row.ID), Category: "Workstream",
+		snapshot.Projects = append(snapshot.Projects, studioProject{ID: row.ID, Title: fallback(row.Title, row.ID), Category: "Workstream", ProjectDomain: row.ProjectDomain,
 			State: mapped(projectStates, row.State), Agents: assignee(row.Agent), Current: []coreRef{}, Refs: []coreRef{ref("workstream", row.ID)},
 			Updated: timestamp(row.Updated)})
 	}
@@ -609,9 +613,14 @@ func projectStudio(observed time.Time, agents viewerAgents, tasks viewerTasks, w
 		}
 	}
 
+	seenGoalIDs := map[string]bool{}
 	for _, row := range work.Goals {
+		if row.ID == "" || seenGoalIDs[row.ID] {
+			continue
+		}
+		seenGoalIDs[row.ID] = true
 		idx, ok := projectIndex[row.Project]
-		if !ok || row.ID == "" {
+		if !ok {
 			continue
 		}
 		state := mapped(goalStates, row.State)

@@ -838,7 +838,8 @@ func TestWorkstreamResolveLeaseRehashedFailureIsRejectedAfterReopen(t *testing.T
 
 func TestWorkstreamMutationsReconcileAfterOwnerAndHandlerReopen(t *testing.T) {
 	now := time.Date(2026, 10, 4, 16, 0, 0, 0, time.UTC)
-	workstream := domainworkstream.Workstream{WorkstreamID: "ws-rpc-save", Name: "RPC owner", Status: domainworkstream.StatusActive, CreatedAt: now}
+	gameDomain := "game"
+	workstream := domainworkstream.Workstream{WorkstreamID: "ws-rpc-save", Name: "RPC owner", Status: domainworkstream.StatusActive, ProjectDomain: &gameDomain, CreatedAt: now}
 	goal := workstreamGoalFixture()
 	artifact := domainworkstream.Artifact{ArtifactID: "artifact-rpc-save", WorkstreamID: workstream.WorkstreamID, Type: "markdown", Status: "draft", CreatedAt: now}
 	annotation := domainworkstream.ArtifactAnnotation{AnnotationID: "annotation-rpc-save", ArtifactID: artifact.ArtifactID, Comment: "review", Status: "open", CreatedAt: now}

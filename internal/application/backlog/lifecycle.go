@@ -734,6 +734,9 @@ func (s *Service) archiveRejectedCancellationResources(ctx context.Context, rece
 	now := s.now()
 	workstream.Status = domainworkstream.StatusArchived
 	workstream.UpdatedAt = now
+	// This transition changes only lifecycle state. Let the store preserve the
+	// latest canonical project_domain instead of writing a possibly stale read.
+	workstream.ProjectDomain = nil
 	goal.Status = domainworkstream.StatusArchived
 	artifact.Status = domainworkstream.StatusArchived
 	artifact.UpdatedAt = now

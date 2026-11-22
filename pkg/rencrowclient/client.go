@@ -1190,14 +1190,15 @@ type WorkstreamStatus struct {
 }
 
 type Workstream struct {
-	WorkstreamID string    `json:"workstream_id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description,omitempty"`
-	Status       string    `json:"status"`
-	PrimaryAgent string    `json:"primary_agent,omitempty"`
-	VaultPath    string    `json:"vault_path,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	WorkstreamID  string    `json:"workstream_id"`
+	Name          string    `json:"name"`
+	ProjectDomain *string   `json:"project_domain,omitempty"`
+	Description   string    `json:"description,omitempty"`
+	Status        string    `json:"status"`
+	PrimaryAgent  string    `json:"primary_agent,omitempty"`
+	VaultPath     string    `json:"vault_path,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }
 
 type WorkstreamGoal struct {

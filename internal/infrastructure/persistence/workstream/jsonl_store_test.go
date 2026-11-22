@@ -118,6 +118,36 @@ func TestJSONLStoreSaveAndListWorkstreamRecords(t *testing.T) {
 	}
 }
 
+func TestJSONLStorePreservesOmittedProjectDomainAndAllowsClear(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	game := "game"
+	item := domainworkstream.Workstream{WorkstreamID: "ws-domain-jsonl", Name: "game project", Status: domainworkstream.StatusActive, ProjectDomain: &game, CreatedAt: now}
+	if err := store.SaveWorkstream(ctx, item); err != nil {
+		t.Fatalf("save initial Workstream: %v", err)
+	}
+	update := item
+	update.ProjectDomain = nil
+	update.Status = domainworkstream.StatusPaused
+	if err := store.SaveWorkstream(ctx, update); err != nil {
+		t.Fatalf("save omitted-domain update: %v", err)
+	}
+	rows, err := store.ListWorkstreams(ctx, 10)
+	if err != nil || len(rows) < 2 || rows[0].ProjectDomain == nil || *rows[0].ProjectDomain != game || rows[0].Status != domainworkstream.StatusPaused {
+		t.Fatalf("after omitted update rows=%+v err=%v", rows, err)
+	}
+	clear := ""
+	update.ProjectDomain = &clear
+	if err := store.SaveWorkstream(ctx, update); err != nil {
+		t.Fatalf("save explicit clear: %v", err)
+	}
+	rows, err = store.ListWorkstreams(ctx, 10)
+	if err != nil || len(rows) < 3 || rows[0].ProjectDomain == nil || *rows[0].ProjectDomain != "" {
+		t.Fatalf("after explicit clear rows=%+v err=%v", rows, err)
+	}
+}
+
 func TestJSONLStoreArtifactPayloadSurvivesReopen(t *testing.T) {
 	root := t.TempDir()
 	ctx := context.Background()

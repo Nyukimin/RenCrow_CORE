@@ -64,6 +64,13 @@ func ValidateWorkstream(item Workstream) error {
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
 	}
+	if item.ProjectDomain != nil {
+		switch *item.ProjectDomain {
+		case "", "game", "software", "content":
+		default:
+			return errors.New("project_domain must be game, software, content, or empty")
+		}
+	}
 	if item.TaskCenterScope != nil {
 		if err := item.TaskCenterScope.Validate(); err != nil {
 			return fmt.Errorf("task_center_scope: %w", err)

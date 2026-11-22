@@ -23,8 +23,9 @@ func TestSnapshotUsesScopedPublicRecordsAndCanonicalAtlasRevision(t *testing.T) 
 	public.Publication.Audience = "public"
 	private := viewerTask{ID: "private", Title: "NEVER RENDER", Agent: "kuro", State: "running"}
 	private.Publication.Audience = "private"
+	gameDomain := "game"
 	work := viewerWorkstreams{
-		Workstreams: []viewerProject{{ID: "project", Title: "Live Workstream", State: "active", Agent: "mio"}},
+		Workstreams: []viewerProject{{ID: "project", Title: "Live Workstream", ProjectDomain: &gameDomain, State: "active", Agent: "mio"}},
 		Artifacts:   []viewerArtifact{{ID: "artifact", Project: "project", Title: "Registered output", State: "completed"}},
 	}
 	atlas := viewerAtlas{
@@ -43,11 +44,54 @@ func TestSnapshotUsesScopedPublicRecordsAndCanonicalAtlasRevision(t *testing.T) 
 		s.Projects[0].Completion.Total != 2 || len(s.Blockers) != 1 || *s.Blockers[0].Reason != "stage_failed" {
 		t.Fatalf("unexpected Atlas projection: %+v %+v", s.Projects, s.Blockers)
 	}
+	if s.Projects[0].Category != "Atlas" || s.Projects[0].ProjectDomain == nil || *s.Projects[0].ProjectDomain != gameDomain {
+		t.Fatalf("project domain/category projection=%+v, want game domain independent of Atlas category", s.Projects[0])
+	}
 	if len(s.Agents[0].TaskRefs) != 1 || len(s.Agents[1].TaskRefs) != 0 || s.Agents[1].Freshness != "stale" {
 		t.Fatalf("unexpected agent references: %+v", s.Agents)
 	}
 	if len(s.Artifacts) != 1 || s.Artifacts[0].State != "created" {
 		t.Fatalf("registration promoted to verification: %+v", s.Artifacts)
+	}
+}
+
+func TestProjectStudioUsesNewestWorkstreamAndGoalHistoryRows(t *testing.T) {
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	projectDomain := "software"
+	work := viewerWorkstreams{
+		// Workstream and Goal stores return append-only JSONL history newest first.
+		Workstreams: []viewerProject{
+			{ID: "project", Title: "Current project", ProjectDomain: &projectDomain, State: "active"},
+			{ID: "project", Title: "Old project", State: "paused"},
+		},
+		Goals: []viewerGoal{
+			{ID: "goal-active", Project: "project", Title: "Current goal", State: "active"},
+			{ID: "goal-active", Project: "project", Title: "Old archived goal", State: "archived"},
+			{ID: "goal-archived", Project: "project", Title: "Current archived goal", State: "archived"},
+			{ID: "goal-archived", Project: "project", Title: "Old active goal", State: "active"},
+		},
+	}
+	atlas := viewerAtlas{
+		Backlog:  []atlasItem{{ID: "item", Project: "project", Unit: "unit", Revision: 1}},
+		Pipeline: []atlasPipeline{{ID: "unit", Item: "item", Revision: 1, State: "COMPLETED", Stages: []atlasStage{{Code: "SPEC", State: "passed"}}}},
+	}
+
+	snapshot := projectStudio(now, viewerAgents{}, viewerTasks{}, work, atlas)
+	if len(snapshot.Projects) != 1 {
+		t.Fatalf("projects=%+v, want one latest project row", snapshot.Projects)
+	}
+	project := snapshot.Projects[0]
+	if project.Title != "Current project" || project.State != "active" || project.Category != "Atlas" || project.ProjectDomain == nil || *project.ProjectDomain != projectDomain {
+		t.Fatalf("project projection=%+v, want latest Workstream with Atlas category and current domain", project)
+	}
+	goalIDs := map[string]string{}
+	for _, row := range snapshot.Work {
+		if row.ID == "goal-active" || row.ID == "goal-archived" {
+			goalIDs[row.ID] = row.Title
+		}
+	}
+	if len(goalIDs) != 1 || goalIDs["goal-active"] != "Current goal" {
+		t.Fatalf("goal history projection=%v, want only latest active row", goalIDs)
 	}
 }
 

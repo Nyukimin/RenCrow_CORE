@@ -57,6 +57,43 @@ func TestValidateWorkstreamRequiresIdentityAndStatus(t *testing.T) {
 	}
 }
 
+func TestWorkstreamProjectDomainContractAndLegacyDecode(t *testing.T) {
+	base := Workstream{WorkstreamID: "ws-domain", Name: "domain", Status: StatusActive, CreatedAt: time.Now().UTC()}
+	for _, value := range []string{"", "game", "software", "content"} {
+		candidate := base
+		candidate.ProjectDomain = &value
+		if err := ValidateWorkstream(candidate); err != nil {
+			t.Errorf("ValidateWorkstream(project_domain=%q): %v", value, err)
+		}
+	}
+	for _, value := range []string{"Game", " game", "other"} {
+		candidate := base
+		candidate.ProjectDomain = &value
+		if err := ValidateWorkstream(candidate); err == nil {
+			t.Errorf("ValidateWorkstream(project_domain=%q) unexpectedly succeeded", value)
+		}
+	}
+
+	var legacy Workstream
+	if err := json.Unmarshal([]byte(`{"workstream_id":"ws-domain","name":"legacy","status":"active","created_at":"2026-01-01T00:00:00Z"}`), &legacy); err != nil {
+		t.Fatalf("decode legacy Workstream: %v", err)
+	}
+	if legacy.ProjectDomain != nil {
+		t.Fatalf("legacy project_domain=%v, want omitted/unclassified", *legacy.ProjectDomain)
+	}
+
+	game := "game"
+	updated := PreserveProjectDomain(base, Workstream{ProjectDomain: &game})
+	if updated.ProjectDomain == nil || *updated.ProjectDomain != game {
+		t.Fatalf("omitted project_domain did not preserve current value: %+v", updated.ProjectDomain)
+	}
+	clear := ""
+	cleared := PreserveProjectDomain(Workstream{ProjectDomain: &clear}, Workstream{ProjectDomain: &game})
+	if cleared.ProjectDomain == nil || *cleared.ProjectDomain != "" {
+		t.Fatalf("explicit empty project_domain was not kept as a clear: %+v", cleared.ProjectDomain)
+	}
+}
+
 func TestValidateArtifactRequiresContractFields(t *testing.T) {
 	now := time.Date(2026, 5, 20, 6, 50, 0, 0, time.UTC)
 	item := Artifact{}
