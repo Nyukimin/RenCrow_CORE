@@ -2,12 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/boardcommunication"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/agentroutine"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRoutineSelectionLeavesEvaluationDuringDeferredActivity(t *testing.T) {
@@ -31,6 +37,47 @@ func TestRoutineSelectionLeavesEvaluationDuringDeferredActivity(t *testing.T) {
 					t.Fatal(err)
 				}
 				intent.RetryAfter = until
+				diaryTask, diaryRun, err := tasks.CreateAndStartActivityRun(ctx, domaintask.Task{
+					TaskID: modulecore.NewTaskID(), Title: "CORE routine diary", ModuleID: agentRoutineModuleID,
+					OwnerID: runtime.ownerID, Assignee: "mio", Route: domaintask.RouteCHAT,
+					Priority: domaintask.PriorityLow, InterruptPolicy: domaintask.InterruptSilent, ReadOnly: true,
+				}, agentRoutineTaskActivity(&intent, "mio"), domaintask.SharedRoleContext{
+					UserIntent: "CORE routine step", CurrentPlan: "CORE routine diary",
+				})
+				if err != nil {
+					t.Fatalf("create saved diary Task and Run: %v", err)
+				}
+				if err := runtime.pauseRuns(ctx, []routinePreparedRun{{task: diaryTask, run: diaryRun}}, "saved diary retry fixture"); err != nil {
+					t.Fatalf("pause saved diary Run: %v", err)
+				}
+				boardServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					http.Error(w, "unexpected BOARD call for completed checkpoint", http.StatusInternalServerError)
+				}))
+				t.Cleanup(boardServer.Close)
+				boardClient, err := boardcommunication.NewClient(boardcommunication.Options{
+					URL: boardServer.URL, TokenSource: func(context.Context) ([]byte, error) { return []byte("test-token"), nil },
+					ExpectedConnection: boardcommunication.ConnectionIdentity{
+						PrincipalID: "rencrow-comm", JournalInstanceID: "journal_0123456789abcdef0123456789abcdef",
+					},
+				})
+				if err != nil {
+					t.Fatalf("create test BOARD client: %v", err)
+				}
+				t.Cleanup(boardClient.Close)
+				runtime.deps = &Dependencies{}
+				runtime.deps.boardCommunicationActorBoots = map[string]*boardCommunicationBoot{
+					"mio": {composition: &boardCommunicationComposition{boardClient: boardClient}},
+				}
+				intent.TaskID = string(diaryTask.TaskID)
+				progress := routineProgress{
+					Actors:          []routineActorProgress{{ActorID: "mio", TaskID: diaryTask.TaskID, RunID: diaryRun.RunID}},
+					EffectCompleted: true, CompletedAt: clock,
+				}
+				encoded, err := json.Marshal(progress)
+				if err != nil {
+					t.Fatal(err)
+				}
+				intent.Output = string(encoded)
 				state, err = runtime.store.DraftIntent(ctx, intent)
 				if err != nil {
 					t.Fatal(err)
@@ -88,14 +135,77 @@ func TestRoutineSelectionLeavesEvaluationDuringDeferredActivity(t *testing.T) {
 			if err != nil || finished.Status != domaintask.StatusSucceeded {
 				t.Fatalf("rest did not expire: %+v %v", finished, err)
 			}
+			currentAfterExpiry, err := tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			successor := currentAfterExpiry["mio"]
+			if successor.Task.TaskID == task.TaskID || successor.Participant.Revision <= current["mio"].Participant.Revision ||
+				successor.Task.Activity == nil || successor.Task.Activity.Kind != domaintask.ActivityKindEvaluating {
+				t.Fatalf("rest expiry current=%+v; want a new higher-revision canonical evaluating Task", successor)
+			}
 			if pending {
 				saved, err := runtime.store.Load(ctx, "mio")
 				if err != nil {
 					t.Fatal(err)
 				}
-				decision := runtime.selectRoutineActivity("mio", saved, clock, agentroutine.Presence{})
-				if decision.Plan.Kind != agentroutine.ActivityDiary || !decision.Plan.Resuming || decision.Plan.IntentID != before.Pending.ID {
-					t.Fatalf("expired retry did not return the exact saved diary: %+v", decision)
+				if saved.Pending == nil || saved.Pending.ID != before.Pending.ID || saved.Pending.TaskID != before.Pending.TaskID {
+					t.Fatalf("expiry changed the saved diary reservation: %+v", saved.Pending)
+				}
+				progress, err := decodeRoutineProgress(saved.Pending.Output)
+				if err != nil || len(progress.Actors) != 1 || string(progress.Actors[0].TaskID) != saved.Pending.TaskID {
+					t.Fatalf("saved exact diary checkpoint=%+v err=%v", progress, err)
+				}
+				resume, found, err := runtime.idleSource(nil)(ctx, "mio")
+				if err != nil || !found || !strings.Contains(resume.ID, string(agentroutine.ActivityDiary)) {
+					t.Fatalf("expired diary selection=%q found=%t err=%v; want exact saved Diary activity", resume.ID, found, err)
+				}
+				if err := resume.Run(ctx, make(chan struct{})); err != nil {
+					t.Fatalf("dispatch and resume saved diary after rest expiry: %v", err)
+				}
+				runs, err := tasks.ListRuns(ctx, domaintask.RunFilter{TaskID: progress.Actors[0].TaskID})
+				if err != nil || len(runs) != 2 || runs[0].RunID != progress.Actors[0].RunID ||
+					runs[1].RunID == runs[0].RunID || runs[1].StartReason != domaintask.RunStartReasonCheckpointResume ||
+					runs[1].Status != domaintask.RunStatusSucceeded {
+					t.Fatalf("saved diary Run lifecycle=%+v err=%v; want a fresh completed checkpoint Run", runs, err)
+				}
+				diaryTask, err := tasks.Get(ctx, progress.Actors[0].TaskID)
+				if err != nil || diaryTask.Status != domaintask.StatusSucceeded {
+					t.Fatalf("saved diary Task=%+v err=%v; want the same canonical Task completed", diaryTask, err)
+				}
+				completed, err := runtime.store.Load(ctx, "mio")
+				if err != nil || completed.Pending != nil || completed.LastFinishedIntentID != saved.Pending.ID {
+					t.Fatalf("completed diary state=%+v err=%v; want saved intent finished and no Pending", completed, err)
+				}
+				rebound, err := tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rebound["mio"].Task.TaskID == task.TaskID || rebound["mio"].Task.Activity == nil ||
+					rebound["mio"].Task.Activity.Kind != domaintask.ActivityKindEvaluating ||
+					rebound["mio"].Participant.Revision <= successor.Participant.Revision {
+					t.Fatalf("resumed diary current=%+v; want newer canonical successor after exact Task completion", rebound["mio"])
+				}
+			} else {
+				next, found, err := runtime.idleSource(nil)(ctx, "mio")
+				if err != nil || !found || !strings.Contains(next.ID, string(agentroutine.ActivityRelax)) {
+					t.Fatalf("post-cooldown selection=%q found=%t err=%v; want normal Relax work", next.ID, found, err)
+				}
+				if err := next.Run(ctx, make(chan struct{})); err != nil {
+					t.Fatalf("run post-cooldown normal Relax work: %v", err)
+				}
+				state, err := runtime.store.Load(ctx, "mio")
+				if err != nil || state.Pending != nil || state.LastFinishedIntentID == "" {
+					t.Fatalf("post-cooldown Relax lifecycle state=%+v err=%v; want completed normal activity", state, err)
+				}
+				afterRelax, err := tasks.SnapshotCurrentActivities(ctx, []string{"mio"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rest := afterRelax["mio"]
+				if rest.Task.TaskID == task.TaskID || rest.Task.Activity == nil || rest.Task.Activity.Kind != domaintask.ActivityKindRest ||
+					!rest.Task.Activity.Passive || rest.Task.Timing == nil || rest.Task.Timing.DeadlineAt == nil || !rest.Task.Timing.DeadlineAt.After(clock) {
+					t.Fatalf("post-cooldown current=%+v; want new non-evaluating Rest Task with a future deadline", rest)
 				}
 			}
 		})
