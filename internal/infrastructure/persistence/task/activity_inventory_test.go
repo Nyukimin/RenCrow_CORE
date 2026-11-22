@@ -136,3 +136,47 @@ func TestTaskActivityInventoryAuthorizationReceivesPublicationProof(t *testing.T
 		t.Fatalf("inventory page=%#v checks=%d err=%v", page, checks, err)
 	}
 }
+
+func TestTaskActivityInventoryExcludedStatusPreservesFilteredPagination(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewJSONLStoreWithOptions(t.TempDir(), OpenOptions{Index: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close: %v", err)
+		}
+	})
+	now := time.Date(2026, 11, 21, 1, 2, 3, 0, time.UTC)
+	statuses := []domaintask.Status{domaintask.StatusQueued, domaintask.StatusSucceeded, domaintask.StatusFailed, domaintask.StatusCancelled}
+	statusByID := make(map[modulecore.TaskID]domaintask.Status, len(statuses))
+	var want []modulecore.TaskID
+	for n, status := range statuses {
+		item := indexedTestTask(n+1, now.Add(time.Duration(n)*time.Second))
+		item.Status = status
+		if err := store.SaveTask(ctx, item); err != nil {
+			t.Fatalf("save status %s: %v", status, err)
+		}
+		statusByID[item.TaskID] = status
+		if status != domaintask.StatusSucceeded {
+			want = append(want, item.TaskID)
+		}
+	}
+	sort.Slice(want, func(i, j int) bool { return want[i] > want[j] })
+	filter := domaintask.TaskActivityInventoryFilter{ExcludeStatus: domaintask.StatusSucceeded, Limit: 2}
+	page, err := store.ListTaskActivityInventory(ctx, filter, func(context.Context, domaintask.TaskReadAuthorizationInput) error { return nil })
+	if err != nil || len(page.Items) != 2 || page.Items[0].TaskID != want[0] || page.Items[1].TaskID != want[1] || page.NextCursor == "" {
+		t.Fatalf("first unfinished page = %+v, err=%v", page, err)
+	}
+	for _, item := range page.Items {
+		if statusByID[item.TaskID] == domaintask.StatusSucceeded {
+			t.Fatalf("succeeded Task was included in unfinished inventory: %+v", item)
+		}
+	}
+	filter.BeforeTaskID = page.NextCursor
+	page, err = store.ListTaskActivityInventory(ctx, filter, func(context.Context, domaintask.TaskReadAuthorizationInput) error { return nil })
+	if err != nil || len(page.Items) != 1 || page.Items[0].TaskID != want[2] || page.NextCursor != "" {
+		t.Fatalf("second unfinished page = %+v, err=%v", page, err)
+	}
+}

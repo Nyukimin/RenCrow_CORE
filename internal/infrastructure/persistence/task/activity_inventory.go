@@ -168,8 +168,11 @@ func (s *transactionStore) taskActivityInventoryCandidates(ctx context.Context, 
 }
 
 func validInventoryFilter(filter domaintask.TaskActivityInventoryFilter) bool {
-	if filter.Status != "" {
-		switch filter.Status {
+	for _, status := range []domaintask.Status{filter.Status, filter.ExcludeStatus} {
+		if status == "" {
+			continue
+		}
+		switch status {
 		case domaintask.StatusQueued, domaintask.StatusRunning, domaintask.StatusWaiting, domaintask.StatusBlocked,
 			domaintask.StatusFailed, domaintask.StatusSucceeded, domaintask.StatusCancelled, domaintask.StatusSuperseded:
 		default:
@@ -223,6 +226,9 @@ func reauthorizeInventoryTasks(ctx context.Context, selected []domaintask.Task, 
 
 func inventoryTaskMatches(item domaintask.Task, filter domaintask.TaskActivityInventoryFilter) bool {
 	if filter.Status != "" && item.Status != filter.Status {
+		return false
+	}
+	if filter.ExcludeStatus != "" && item.Status == filter.ExcludeStatus {
 		return false
 	}
 	if filter.Assignee != "" {

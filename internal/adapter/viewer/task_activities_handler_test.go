@@ -18,9 +18,11 @@ import (
 )
 
 type taskActivitiesReaderStub struct {
-	current   map[string]domaintask.CurrentActivitySummary
-	page      domaintask.TaskActivityInventoryPage
-	listCalls int
+	current    map[string]domaintask.CurrentActivitySummary
+	page       domaintask.TaskActivityInventoryPage
+	pages      []domaintask.TaskActivityInventoryPage
+	listCalls  int
+	lastFilter domaintask.TaskActivityInventoryFilter
 }
 
 func (s *taskActivitiesReaderStub) SnapshotCurrentActivitiesAuthorized(context.Context, []string, domaintask.TaskReadAuthorizationCheck) (map[string]domaintask.CurrentActivitySummary, error) {
@@ -29,9 +31,18 @@ func (s *taskActivitiesReaderStub) SnapshotCurrentActivitiesAuthorized(context.C
 
 func (s *taskActivitiesReaderStub) ListTaskActivityInventory(_ context.Context, filter domaintask.TaskActivityInventoryFilter, authorize domaintask.TaskReadAuthorizationCheck) (domaintask.TaskActivityInventoryPage, error) {
 	s.listCalls++
+	s.lastFilter = filter
 	page := s.page
-	page.Items = nil
-	for _, item := range s.page.Items {
+	if len(s.pages) > 0 {
+		index := s.listCalls - 1
+		if index >= len(s.pages) {
+			index = len(s.pages) - 1
+		}
+		page = s.pages[index]
+	}
+	pageItems := page.Items
+	page.Items = make([]domaintask.TaskActivityInventoryRow, 0, len(pageItems))
+	for _, item := range pageItems {
 		if filter.BeforeTaskID != "" && item.TaskID >= filter.BeforeTaskID {
 			continue
 		}
@@ -41,10 +52,75 @@ func (s *taskActivitiesReaderStub) ListTaskActivityInventory(_ context.Context, 
 		}
 		page.Items = append(page.Items, item)
 	}
-	if filter.BeforeTaskID != "" {
+	if len(s.pages) == 0 && filter.BeforeTaskID != "" {
 		page.NextCursor = ""
 	}
 	return page, nil
+}
+
+func TestTaskActivitiesUnfinishedPaginationKeepsCurrentOverlayBehindSourceFrontier(t *testing.T) {
+	queued := domaintask.TaskActivityInventoryRow{TaskID: taskActivityTestID("002"), Title: "queued", Status: domaintask.StatusQueued}
+	currentRow := domaintask.TaskActivityInventoryRow{TaskID: taskActivityTestID("001"), Title: "current", Status: domaintask.StatusRunning}
+	current := map[modulecore.TaskID]taskActivityCurrentListRow{currentRow.TaskID: {Task: currentRow}}
+	reader := &taskActivitiesReaderStub{pages: []domaintask.TaskActivityInventoryPage{
+		{Items: []domaintask.TaskActivityInventoryRow{}, NextCursor: taskActivityTestID("004")},
+		{Items: []domaintask.TaskActivityInventoryRow{queued}},
+	}}
+	handler := &taskActivitiesHandler{reader: reader}
+	query, err := parseTaskActivitiesQuery(&url.URL{RawQuery: "view=unfinished&limit=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, cursor, err := handler.listTaskActivities(context.Background(), query, current)
+	if err != nil || len(items) != 1 || items[0].TaskID != queued.TaskID || cursor != string(queued.TaskID) {
+		t.Fatalf("first page = %v cursor=%q err=%v", items, cursor, err)
+	}
+	query.BeforeTaskID = modulecore.TaskID(cursor)
+	items, cursor, err = handler.listTaskActivities(context.Background(), query, current)
+	if err != nil || len(items) != 1 || items[0].TaskID != currentRow.TaskID || cursor != "" {
+		t.Fatalf("current overlay continuation = %v cursor=%q err=%v", items, cursor, err)
+	}
+}
+
+func TestTaskActivitiesBoundedScanDoesNotEmitCurrentRowsBehindFrontier(t *testing.T) {
+	currentRow := domaintask.TaskActivityInventoryRow{TaskID: taskActivityTestID("001"), Title: "old current", Status: domaintask.StatusRunning}
+	frontierRow := domaintask.TaskActivityInventoryRow{TaskID: taskActivityTestID("006"), Title: "frontier task", Status: domaintask.StatusQueued}
+	current := map[modulecore.TaskID]taskActivityCurrentListRow{currentRow.TaskID: {Task: currentRow}}
+	pages := make([]domaintask.TaskActivityInventoryPage, taskActivitiesPageScanLimit)
+	for index := range pages {
+		pages[index] = domaintask.TaskActivityInventoryPage{Items: []domaintask.TaskActivityInventoryRow{}, NextCursor: taskActivityTestID([]string{"010", "009", "008", "007", "006"}[index])}
+	}
+	pages[len(pages)-1].Items = []domaintask.TaskActivityInventoryRow{frontierRow}
+	reader := &taskActivitiesReaderStub{pages: pages}
+	handler := &taskActivitiesHandler{reader: reader}
+	query, err := parseTaskActivitiesQuery(&url.URL{RawQuery: "view=unfinished&limit=2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, cursor, err := handler.listTaskActivities(context.Background(), query, current)
+	if err != nil || len(items) != 1 || items[0].TaskID != frontierRow.TaskID || cursor != string(taskActivityTestID("006")) {
+		t.Fatalf("bounded scan page = %v cursor=%q err=%v", items, cursor, err)
+	}
+	query.BeforeTaskID = modulecore.TaskID(cursor)
+	reader.pages = []domaintask.TaskActivityInventoryPage{{Items: []domaintask.TaskActivityInventoryRow{}}}
+	reader.listCalls = 0
+	items, cursor, err = handler.listTaskActivities(context.Background(), query, current)
+	if err != nil || len(items) != 1 || items[0].TaskID != currentRow.TaskID || cursor != "" {
+		t.Fatalf("bounded scan continuation = %v cursor=%q err=%v", items, cursor, err)
+	}
+}
+
+func TestTaskActivitiesUnfinishedViewExcludesSucceededAtInventorySource(t *testing.T) {
+	reader := &taskActivitiesReaderStub{current: taskActivityCurrentFixture(), page: domaintask.TaskActivityInventoryPage{Items: []domaintask.TaskActivityInventoryRow{}}}
+	handler := NewTaskActivitiesHandler(reader, nil, "owner-user", []byte("owner-token"))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, taskActivitiesRequest("?view=unfinished&limit=25", "127.0.0.1:41000"))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if reader.lastFilter.ExcludeStatus != domaintask.StatusSucceeded || reader.lastFilter.Limit != 200 {
+		t.Fatalf("unfinished inventory filter = %+v", reader.lastFilter)
+	}
 }
 
 type taskActivitiesGoalStub struct {
@@ -121,6 +197,13 @@ func TestTaskActivitiesHandlerEncryptsFilteredTaskIDCursorAndReturnsOwnerProject
 	decoded, err := decodeTaskActivitiesCursor(got.NextCursor, []byte("owner-token"), query, "owner-user")
 	if err != nil || decoded != string(item.TaskID) {
 		t.Fatalf("cursor decode=%q err=%v", decoded, err)
+	}
+	unfinishedQuery, err := parseTaskActivitiesQuery(&url.URL{RawQuery: "view=unfinished&limit=2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeTaskActivitiesCursor(got.NextCursor, []byte("owner-token"), unfinishedQuery, "owner-user"); err == nil {
+		t.Fatal("all-view cursor was accepted by unfinished view")
 	}
 }
 

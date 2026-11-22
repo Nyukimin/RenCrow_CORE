@@ -12,11 +12,12 @@ import (
 // TaskActivityInventoryFilter selects a bounded, keyset-paginated page of
 // safe Task summaries for the authenticated owner viewer.
 type TaskActivityInventoryFilter struct {
-	BeforeTaskID modulecore.TaskID
-	Status       Status
-	Assignee     string
-	Category     ActivityKind
-	Limit        int
+	BeforeTaskID  modulecore.TaskID
+	Status        Status
+	ExcludeStatus Status
+	Assignee      string
+	Category      ActivityKind
+	Limit         int
 }
 
 // TaskActivityInventoryRow contains only the fields needed to render the

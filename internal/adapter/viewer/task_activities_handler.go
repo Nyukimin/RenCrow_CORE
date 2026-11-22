@@ -58,13 +58,14 @@ type taskActivitiesHandler struct {
 }
 
 type taskActivitiesQuery struct {
-	View         string
-	Assignee     string
-	Status       domaintask.Status
-	Category     domaintask.ActivityKind
-	Limit        int
-	Cursor       string
-	BeforeTaskID modulecore.TaskID
+	View          string
+	Assignee      string
+	Status        domaintask.Status
+	ExcludeStatus domaintask.Status
+	Category      domaintask.ActivityKind
+	Limit         int
+	Cursor        string
+	BeforeTaskID  modulecore.TaskID
 }
 
 type taskActivitiesCursor struct {
@@ -216,8 +217,11 @@ func parseTaskActivitiesQuery(raw *url.URL) (taskActivitiesQuery, error) {
 	if query.View == "" {
 		query.View = "all"
 	}
-	if query.View != "all" && query.View != "current" && query.View != "history" {
+	if query.View != "all" && query.View != "current" && query.View != "history" && query.View != "unfinished" {
 		return taskActivitiesQuery{}, errors.New("invalid view")
+	}
+	if query.View == "unfinished" {
+		query.ExcludeStatus = domaintask.StatusSucceeded
 	}
 	query.Assignee = values.Get("assignee")
 	if query.Assignee != "" && !taskActivityActorAllowed(query.Assignee) {
@@ -225,7 +229,7 @@ func parseTaskActivitiesQuery(raw *url.URL) (taskActivitiesQuery, error) {
 	}
 	query.Status = domaintask.Status(values.Get("status"))
 	query.Category = domaintask.ActivityKind(values.Get("category"))
-	filter := domaintask.TaskActivityInventoryFilter{Status: query.Status, Category: query.Category, Assignee: query.Assignee, Limit: 1}
+	filter := domaintask.TaskActivityInventoryFilter{Status: query.Status, ExcludeStatus: query.ExcludeStatus, Category: query.Category, Assignee: query.Assignee, Limit: 1}
 	if !validTaskActivitiesFilter(filter) {
 		return taskActivitiesQuery{}, errors.New("invalid filters")
 	}
@@ -271,14 +275,14 @@ func (h *taskActivitiesHandler) listTaskActivities(ctx context.Context, query ta
 	items := make([]domaintask.TaskActivityInventoryRow, 0, query.Limit)
 	seen := make(map[modulecore.TaskID]struct{}, len(current))
 	for id, snapshot := range current {
-		if query.View == "all" && (before == "" || id < before) && currentTaskActivityMatches(snapshot, query) {
+		if (query.View == "all" || query.View == "unfinished") && (before == "" || id < before) && currentTaskActivityMatches(snapshot, query) {
 			items = append(items, snapshot.Task)
 			seen[id] = struct{}{}
 		}
 	}
 	for scan := 0; scan < taskActivitiesPageScanLimit; scan++ {
 		page, err := h.reader.ListTaskActivityInventory(ctx, domaintask.TaskActivityInventoryFilter{
-			BeforeTaskID: before, Status: query.Status, Assignee: query.Assignee,
+			BeforeTaskID: before, Status: query.Status, ExcludeStatus: query.ExcludeStatus, Assignee: query.Assignee,
 			Category: query.Category, Limit: 200,
 		}, h.authorizeTaskRead)
 		if err != nil {
@@ -310,25 +314,38 @@ func (h *taskActivitiesHandler) listTaskActivities(ctx context.Context, query ta
 			seen[item.TaskID] = struct{}{}
 		}
 		sort.Slice(items, func(i, j int) bool { return items[i].TaskID > items[j].TaskID })
-		if len(items) >= query.Limit {
-			moreItems := len(items) > query.Limit || page.NextCursor != ""
-			items = items[:query.Limit]
-			if moreItems {
-				return items, string(items[len(items)-1].TaskID), nil
-			}
-			return items, "", nil
-		}
 		if page.NextCursor != "" {
 			if err := page.NextCursor.Validate(); err != nil || (before != "" && page.NextCursor >= before) || (priorID != "" && page.NextCursor > priorID) {
 				return nil, "", errors.New("Task activity inventory cursor did not progress")
 			}
 		}
 		if page.NextCursor == "" {
+			if len(items) > query.Limit {
+				items = items[:query.Limit]
+				return items, string(items[len(items)-1].TaskID), nil
+			}
 			return items, "", nil
+		}
+		if len(items) >= query.Limit && page.NextCursor <= items[query.Limit-1].TaskID {
+			items = items[:query.Limit]
+			return items, string(items[len(items)-1].TaskID), nil
 		}
 		before = page.NextCursor
 	}
-	return items, string(before), nil
+	// The source scan is bounded. Rows older than the scan frontier must remain
+	// for the next request; emitting them now with a newer cursor would skip them
+	// on continuation.
+	frontier := before
+	eligible := items[:0]
+	for _, item := range items {
+		if frontier == "" || item.TaskID >= frontier {
+			eligible = append(eligible, item)
+		}
+	}
+	if len(eligible) > query.Limit {
+		eligible = eligible[:query.Limit]
+	}
+	return eligible, string(frontier), nil
 }
 
 func taskActivitiesCurrentSnapshot(current map[string]domaintask.CurrentActivitySummary) ([]taskActivitiesCurrentDTO, map[modulecore.TaskID]taskActivityCurrentListRow, bool) {
@@ -363,6 +380,9 @@ func taskActivitiesCurrentSnapshot(current map[string]domaintask.CurrentActivity
 
 func currentTaskActivityMatches(row taskActivityCurrentListRow, query taskActivitiesQuery) bool {
 	if query.Status != "" && row.Task.Status != query.Status {
+		return false
+	}
+	if query.ExcludeStatus != "" && row.Task.Status == query.ExcludeStatus {
 		return false
 	}
 	if query.Category != "" && (row.Task.Activity == nil || row.Task.Activity.Kind != query.Category) {
@@ -415,7 +435,7 @@ func currentTaskActivityItems(current map[string]domaintask.CurrentActivitySumma
 		if query.Assignee != "" && query.Assignee != actorID && query.Assignee != item.Assignee {
 			continue
 		}
-		if query.Status != "" && item.Status != query.Status || query.Category != "" && (item.Activity == nil || item.Activity.Kind != query.Category) {
+		if query.Status != "" && item.Status != query.Status || query.ExcludeStatus != "" && item.Status == query.ExcludeStatus || query.Category != "" && (item.Activity == nil || item.Activity.Kind != query.Category) {
 			continue
 		}
 		items = append(items, item.TaskActivityInventoryRow)
