@@ -35,6 +35,22 @@ func newRealLifecycle(t *testing.T) (*taskLifecycle, *taskmanager.Manager) {
 	return newTaskLifecycle(manager), manager
 }
 
+func TestRootTaskIsAssignedBeforeRoutingInPersistentStore(t *testing.T) {
+	ctx := context.Background()
+	lifecycle, manager := newRealLifecycle(t)
+	for _, actor := range []string{taskLifecycleMio, taskLifecycleShiro} {
+		id := modulecore.NewTaskID()
+		created, err := lifecycle.createRootForAssignee(ctx, ProcessMessageRequest{RootTaskID: id.String(), UserMessage: "pending conversation"}, actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := manager.Get(ctx, id)
+		if err != nil || created.Assignee != actor || stored.Assignee != actor || stored.OwnerID != actor || stored.Status != domaintask.StatusQueued {
+			t.Fatalf("root for %s = %+v, stored=%+v, err=%v", actor, created, stored, err)
+		}
+	}
+}
+
 func TestTaskLifecycleRefusesToRecreateAnExistingRootTask(t *testing.T) {
 	ctx := context.Background()
 	lifecycle, manager := newRealLifecycle(t)

@@ -37,7 +37,7 @@ func TestTaskLifecycleCreatesFixedRootAndBoundedUserIntent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createRoot: %v", err)
 	}
-	if created.TaskID != rootID || created.OwnerID != "mio" || created.Route != domaintask.RouteGeneral || created.Status != domaintask.StatusQueued {
+	if created.TaskID != rootID || created.OwnerID != "mio" || created.Assignee != "mio" || created.Route != domaintask.RouteGeneral || created.Status != domaintask.StatusQueued {
 		t.Fatalf("root = %#v", created)
 	}
 	if got, want := []rune(created.Title), []rune(message)[:160]; string(got) != string(want) {

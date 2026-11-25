@@ -472,6 +472,7 @@ func (l *taskLifecycle) createRootForAssignee(ctx context.Context, req ProcessMe
 		TaskID:   rootTaskID,
 		Title:    title,
 		OwnerID:  owner,
+		Assignee: owner,
 		Route:    domaintask.RouteGeneral,
 		Status:   domaintask.StatusQueued,
 		Priority: domaintask.PriorityNormal,
