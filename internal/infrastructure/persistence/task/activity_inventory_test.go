@@ -180,3 +180,29 @@ func TestTaskActivityInventoryExcludedStatusPreservesFilteredPagination(t *testi
 		t.Fatalf("second unfinished page = %+v, err=%v", page, err)
 	}
 }
+
+func TestTaskActivityInventoryOpenOnlyPreservesFailedRecords(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewJSONLStoreWithOptions(t.TempDir(), OpenOptions{Index: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, 11, 21, 1, 2, 3, 0, time.UTC)
+	for n, status := range []domaintask.Status{domaintask.StatusQueued, domaintask.StatusFailed, domaintask.StatusCancelled} {
+		item := indexedTestTask(n+1, now.Add(time.Duration(n)*time.Second))
+		item.Status = status
+		if err := store.SaveTask(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	authorize := func(context.Context, domaintask.TaskReadAuthorizationInput) error { return nil }
+	open, err := store.ListTaskActivityInventory(ctx, domaintask.TaskActivityInventoryFilter{OpenOnly: true, Limit: 10}, authorize)
+	if err != nil || len(open.Items) != 1 || open.Items[0].Status != domaintask.StatusQueued {
+		t.Fatalf("open inventory=%+v err=%v", open, err)
+	}
+	failed, err := store.ListTaskActivityInventory(ctx, domaintask.TaskActivityInventoryFilter{Status: domaintask.StatusFailed, Limit: 10}, authorize)
+	if err != nil || len(failed.Items) != 1 || failed.Items[0].Status != domaintask.StatusFailed {
+		t.Fatalf("failed inventory=%+v err=%v", failed, err)
+	}
+}

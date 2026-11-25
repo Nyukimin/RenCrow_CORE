@@ -15,6 +15,7 @@ type TaskActivityInventoryFilter struct {
 	BeforeTaskID  modulecore.TaskID
 	Status        Status
 	ExcludeStatus Status
+	OpenOnly      bool
 	Assignee      string
 	Category      ActivityKind
 	Limit         int
