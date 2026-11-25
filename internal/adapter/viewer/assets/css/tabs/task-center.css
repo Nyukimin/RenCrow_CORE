@@ -123,9 +123,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .task-center__filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 280px); gap: 14px; padding: 16px 0 10px; }
 .task-center__filters .task-center__field { gap: 5px; }
 .task-center__filters .task-center__field input, .task-center__filters .task-center__field select { min-height: 42px; }
-.task-center__list-state { min-height: 24px; margin: 4px 0 12px; color: var(--tc-muted); font-size: 13px; }
-.task-center__list-state.is-error { color: #ffd2d2; font-weight: 620; }
-.task-center__list-state.is-recovered { color: #c8f0df; font-weight: 620; }
+.task-center__list-state, .task-center__cancellation-state { min-height: 24px; margin: 4px 0 12px; color: var(--tc-muted); font-size: 13px; }
+.task-center__list-state.is-error, .task-center__cancellation-state.is-error { color: #ffd2d2; font-weight: 620; }
+.task-center__list-state.is-recovered, .task-center__cancellation-state.is-recovered { color: #c8f0df; font-weight: 620; }
 .task-center__items { display: grid; gap: 12px; }
 .task-center__item { border: 1px solid rgba(157, 179, 210, 0.16); border-radius: 17px; background: linear-gradient(135deg, rgba(32, 44, 63, 0.75), rgba(18, 27, 41, 0.84)); }
 .task-center__item[open] { border-color: rgba(134, 202, 255, 0.3); }
