@@ -23,6 +23,26 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+func TestGameCreateRequestPreservesSingleSessionCondition(t *testing.T) {
+	body, err := json.Marshal(map[string]any{
+		"request_id": modulecore.NewRequestID(), "title": "one game", "route": "GAME",
+		"game_spec": map[string]any{"game_id": "herzog_zwei"},
+		"timing":    map[string]any{"completion_condition": map[string]any{"kind": "count", "target_count": 1, "count_unit": "game"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, tasksCreatePath, bytes.NewReader(body))
+	decoded, err := decodeTaskCreateRequest(httptest.NewRecorder(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, _, err := decoded.taskInput("ren")
+	if err != nil || draft.Timing == nil || draft.Timing.CompletionCondition == nil || draft.Timing.CompletionCondition.TargetCount != 1 {
+		t.Fatalf("draft=%+v err=%v", draft, err)
+	}
+}
+
 func TestOnlineGameTaskCreateIsIdempotentWhileCanonicalWriterIsHeld(t *testing.T) {
 	root := t.TempDir()
 	taskRoot := filepath.Join(root, "tasks")
@@ -78,6 +98,7 @@ func TestOnlineGameTaskCreateIsIdempotentWhileCanonicalWriterIsHeld(t *testing.T
 		OwnerID: "ren", Assignee: "aka", Priority: domaintask.PriorityNormal,
 		Plan:     "Play Herzog Zwei with the canonical four-agent roster.",
 		GameSpec: &domaintask.GameSpec{GameID: "herzog_zwei", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 120, Mode: "realtime"},
+		Timing:   &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "count", TargetCount: 1, CountUnit: "game"}},
 	}
 
 	lookupBefore := postTaskCreateJSON(t, client, server.URL+tasksCreateLookupPath, token, request)
@@ -114,7 +135,7 @@ func TestOnlineGameTaskCreateIsIdempotentWhileCanonicalWriterIsHeld(t *testing.T
 	}
 
 	gotTask, err := tasks.Get(context.Background(), created.TaskID)
-	if err != nil || gotTask.Status != domaintask.StatusQueued || gotTask.Route != domaintask.RouteGAME || gotTask.OwnerID != "ren" {
+	if err != nil || gotTask.Status != domaintask.StatusQueued || gotTask.Route != domaintask.RouteGAME || gotTask.OwnerID != "ren" || gotTask.Timing == nil || gotTask.Timing.CompletionCondition == nil || gotTask.Timing.CompletionCondition.TargetCount != 1 {
 		t.Fatalf("stored Task=%+v err=%v; want queued owner-owned GAME Task awaiting enqueue", gotTask, err)
 	}
 	shared, err := taskStore.GetContext(context.Background(), created.TaskID)

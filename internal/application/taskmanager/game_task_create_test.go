@@ -108,6 +108,29 @@ func TestEnsureGameTaskCreatedRejectsMissingIdentityAndNonGameInput(t *testing.T
 	}
 }
 
+func TestEnsureGameTaskCreatedAcceptsOneSessionCompletionRule(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	t.Cleanup(func() { _ = manager.Close() })
+	draft, shared := gameTaskCreateInput(t, "one game", "play one session")
+	draft.Timing = &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "count", TargetCount: 1, CountUnit: "game"}}
+	created, err := manager.EnsureGameTaskCreated(ctx, modulecore.NewRequestID(), "ren", draft, shared)
+	if err != nil || created.Timing == nil || created.Timing.CompletionCondition == nil || created.Timing.CompletionCondition.TargetCount != 1 {
+		t.Fatalf("single session Task=%+v err=%v", created, err)
+	}
+	draft.Timing.CompletionCondition.TargetCount = 2
+	if created.Timing.CompletionCondition.TargetCount != 1 {
+		t.Fatal("created Task shares the caller's completion condition")
+	}
+	if _, err := manager.EnsureGameTaskCreated(ctx, modulecore.NewRequestID(), "ren", draft, shared); err == nil {
+		t.Fatal("one session owner accepted a two-game completion condition")
+	}
+}
+
 func gameTaskCreateInput(t *testing.T, title, plan string) (domaintask.Task, domaintask.SharedRoleContext) {
 	t.Helper()
 	spec, err := domaintask.NormalizeGameSpec(domaintask.GameSpec{GameID: "herzog_zwei", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 120, Mode: "realtime"})

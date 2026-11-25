@@ -7,6 +7,76 @@ import (
 	"time"
 )
 
+func TestTaskTimingCompletionConditionJSONRoundTrip(t *testing.T) {
+	input := `{"completion_condition":{"kind":"count","target_count":3,"count_unit":"game"}}`
+	var timing TaskTiming
+	if err := json.Unmarshal([]byte(input), &timing); err != nil {
+		t.Fatal(err)
+	}
+	if err := timing.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(timing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	condition, ok := result["completion_condition"]
+	if !ok {
+		t.Fatalf("completion condition was lost on round trip: %s", encoded)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(condition, &decoded); err != nil || decoded["kind"] != "count" || decoded["target_count"] != float64(3) || decoded["count_unit"] != "game" {
+		t.Fatalf("completion condition changed: %s error=%v", condition, err)
+	}
+}
+
+func TestTaskCompletionConditionValidation(t *testing.T) {
+	cases := []struct {
+		name      string
+		condition TaskCompletionCondition
+		valid     bool
+	}{
+		{"unspecified", TaskCompletionCondition{Kind: "unspecified"}, true},
+		{"until complete", TaskCompletionCondition{Kind: "until_complete", Criteria: "verified output"}, true},
+		{"count", TaskCompletionCondition{Kind: "count", TargetCount: 3, CountUnit: "game"}, true},
+		{"duration", TaskCompletionCondition{Kind: "duration", DurationSeconds: 1800}, true},
+		{"missing criteria", TaskCompletionCondition{Kind: "until_complete"}, false},
+		{"missing count unit", TaskCompletionCondition{Kind: "count", TargetCount: 3}, false},
+		{"zero count", TaskCompletionCondition{Kind: "count", CountUnit: "game"}, false},
+		{"zero duration", TaskCompletionCondition{Kind: "duration"}, false},
+		{"conflicting fields", TaskCompletionCondition{Kind: "duration", DurationSeconds: 1, CountUnit: "game"}, false},
+		{"unknown kind", TaskCompletionCondition{Kind: "unknown"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			timing := TaskTiming{CompletionCondition: &tc.condition}
+			if err := timing.Validate(); (err == nil) != tc.valid {
+				t.Fatalf("Validate() = %v, want valid=%v", err, tc.valid)
+			}
+		})
+	}
+}
+
+func TestTaskTimingDoesNotAdmitUnenforcedStopRules(t *testing.T) {
+	now := time.Now()
+	if !(TaskTiming{CompletionCondition: &TaskCompletionCondition{Kind: "unspecified"}}).Ready(now) {
+		t.Fatal("explicitly unspecified condition changed the legacy start gate")
+	}
+	for _, condition := range []TaskCompletionCondition{
+		{Kind: "until_complete", Criteria: "verified output"},
+		{Kind: "count", TargetCount: 3, CountUnit: "game"},
+		{Kind: "duration", DurationSeconds: 1800},
+	} {
+		if (TaskTiming{CompletionCondition: &condition}).Ready(now) {
+			t.Fatalf("unenforced %s rule admitted for execution", condition.Kind)
+		}
+	}
+}
+
 func TestTaskTimingJSONIncludesAllSevenFields(t *testing.T) {
 	data, err := json.Marshal(TaskTiming{})
 	if err != nil {
@@ -19,6 +89,9 @@ func TestTaskTimingJSONIncludesAllSevenFields(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"allowed_windows":[]`) {
 		t.Errorf("empty allowed_windows must be an array: %s", data)
+	}
+	if strings.Contains(string(data), `"completion_condition"`) {
+		t.Errorf("legacy timing should omit the new optional condition: %s", data)
 	}
 	timing := TaskTiming{Recurrence: &TaskRecurrence{Frequency: TaskRecurrenceNone}}
 	data, err = json.Marshal(timing)

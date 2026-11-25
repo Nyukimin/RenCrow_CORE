@@ -269,6 +269,10 @@ func cloneTransactionContext(value domaintask.SharedRoleContext) domaintask.Shar
 }
 
 func cloneTaskTiming(value modulecore.TaskTiming) modulecore.TaskTiming {
+	if value.CompletionCondition != nil {
+		condition := *value.CompletionCondition
+		value.CompletionCondition = &condition
+	}
 	if value.AllowedWindows != nil {
 		value.AllowedWindows = append(make([]modulecore.TaskTimeWindow, 0, len(value.AllowedWindows)), value.AllowedWindows...)
 	}

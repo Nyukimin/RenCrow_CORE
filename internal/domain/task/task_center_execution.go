@@ -334,6 +334,13 @@ func (task Task) ValidateStartTiming(now time.Time) error {
 	if task.Timing == nil {
 		return nil
 	}
+	condition := task.Timing.CompletionCondition
+	if task.Route == RouteGAME && condition != nil && condition.Kind == "count" && condition.TargetCount == 1 && condition.CountUnit == "game" {
+		if !task.Timing.ScheduleReady(now) {
+			return errors.New("Task timing does not admit a start at the current time")
+		}
+		return nil
+	}
 	if !task.Timing.Ready(now) {
 		return errors.New("Task timing does not admit a start at the current time")
 	}

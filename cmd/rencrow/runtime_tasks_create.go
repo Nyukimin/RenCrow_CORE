@@ -51,6 +51,7 @@ type taskCreateRequest struct {
 	WorkstreamID      modulecore.WorkstreamID `json:"workstream_id,omitempty"`
 	GoalID            modulecore.GoalID       `json:"goal_id,omitempty"`
 	SupersedesTaskID  modulecore.TaskID       `json:"supersedes_task_id,omitempty"`
+	Timing            *modulecore.TaskTiming  `json:"timing,omitempty"`
 	GameSpec          *domaintask.GameSpec    `json:"game_spec"`
 }
 
@@ -162,7 +163,7 @@ func (request taskCreateRequest) taskInput(authenticatedOwner string) (domaintas
 		ParentTaskID: request.ParentTaskID, DependencyTaskIDs: append([]modulecore.TaskID(nil), request.DependencyTaskIDs...),
 		OriginSessionID: request.OriginSessionID, OriginThreadID: request.OriginThreadID, OriginTurnID: request.OriginTurnID,
 		OriginMessageID: request.OriginMessageID, WorkstreamID: request.WorkstreamID, GoalID: request.GoalID,
-		SupersedesTaskID: request.SupersedesTaskID, ReadOnly: request.ReadOnly,
+		SupersedesTaskID: request.SupersedesTaskID, ReadOnly: request.ReadOnly, Timing: request.Timing,
 	}
 	shared := domaintask.SharedRoleContext{
 		GameSpec: request.GameSpec, UserIntent: draft.Title, ModuleID: draft.ModuleID, ModuleRoot: draft.ModuleRoot,
