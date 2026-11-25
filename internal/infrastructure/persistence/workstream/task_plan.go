@@ -45,7 +45,7 @@ func taskCenterInternalArtifactTypes() []string {
 		taskPlanOperationArtifactType, taskPlanReservationArtifactType, taskExecutionResultArtifactType,
 		taskMeetingOccurrenceArtifactType, taskMeetingOccurrenceReservationArtifactType,
 		taskMeetingMinutesArtifactType, taskMeetingMinutesReservationArtifactType,
-		gameProjectPlanReceiptArtifactType, gameProjectPlanReservationArtifactType,
+		gameProjectPlanReceiptArtifactType, gameProjectPlanReservationArtifactType, gameDesignReceiptType,
 	}
 }
 
@@ -1333,18 +1333,16 @@ func findGameProjectPlanReceipt(ctx context.Context, queryer interface {
 }
 
 func validateGameProjectPlanReceipt(artifact domainworkstream.Artifact, indexedWorkstreamID string, receipt domainworkstream.ProjectPlanOperationReceipt) error {
-	stageKeys := domainworkstream.GameProjectStageKeys()
 	registration := receipt.Registration
 	if receipt.Version != 1 || receipt.ActorKind != string(tool.ActorKindUser) || receipt.ActorID == "" || receipt.ActorID != receipt.AuthenticatedUserID ||
 		receipt.Operation != "game_project_register" || !validTaskPlanKey(receipt.IdempotencyKey) || !validTaskCenterSHA256(receipt.InputHash) || registration.WorkstreamID == "" ||
 		artifact.WorkstreamID != registration.WorkstreamID || indexedWorkstreamID != registration.WorkstreamID || modulecore.WorkstreamID(registration.WorkstreamID).Validate() != nil || registration.InputSHA256 != receipt.InputHash ||
-		len(registration.GoalIDs) != len(stageKeys) || len(registration.StageKeys) != len(stageKeys) || registration.RegisteredAt.IsZero() {
+		len(registration.GoalIDs) != len(registration.StageKeys) || !domainworkstream.ValidGameProjectStageKeys(registration.StageKeys) || registration.RegisteredAt.IsZero() {
 		return errors.New("game project registration receipt is malformed")
 	}
 	seenGoalIDs := make(map[string]struct{}, len(registration.GoalIDs))
-	for i, stageKey := range stageKeys {
-		goalID := registration.GoalIDs[i]
-		if registration.StageKeys[i] != stageKey || modulecore.GoalID(goalID).Validate() != nil {
+	for _, goalID := range registration.GoalIDs {
+		if modulecore.GoalID(goalID).Validate() != nil {
 			return errors.New("game project registration receipt stage identity is malformed")
 		}
 		if _, exists := seenGoalIDs[goalID]; exists {

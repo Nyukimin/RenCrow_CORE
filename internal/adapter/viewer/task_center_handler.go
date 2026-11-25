@@ -201,6 +201,33 @@ func (h *taskCenterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusOK
 		}
 		writeTaskCenterJSON(w, status, result)
+	case "game-project-design":
+		if !taskCenterMethod(w, r, http.MethodPost) || !taskCenterNoQuery(w, queryValues) {
+			return
+		}
+		service, ok := h.service.(interface {
+			EnsureGameProjectDesign(context.Context, string) (domainworkstream.GameProjectDesignResult, error)
+		})
+		if !ok {
+			writeTaskCenterError(w, http.StatusServiceUnavailable, "task_center_unsupported")
+			return
+		}
+		var input struct {
+			WorkstreamID string `json:"workstream_id"`
+		}
+		if !decodeTaskCenterJSON(w, r, &input) {
+			return
+		}
+		result, err := service.EnsureGameProjectDesign(r.Context(), input.WorkstreamID)
+		if err != nil {
+			writeTaskCenterDomainError(w, err)
+			return
+		}
+		status := http.StatusCreated
+		if result.Replayed {
+			status = http.StatusOK
+		}
+		writeTaskCenterJSON(w, status, result)
 	case "game-project-plan":
 		if !taskCenterMethod(w, r, http.MethodGet) {
 			return

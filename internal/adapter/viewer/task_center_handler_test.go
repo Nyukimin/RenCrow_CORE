@@ -209,6 +209,21 @@ func TestTaskCenterGameProjectHTTPUsesCenterSQLiteOwnerAndShowsPublicRows(t *tes
 	if registration.Registration.WorkstreamID == "" || len(registration.Registration.GoalIDs) != len(stages) {
 		t.Fatalf("registration=%+v", registration)
 	}
+	designBody, err := json.Marshal(map[string]string{"workstream_id": registration.Registration.WorkstreamID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	design := serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/game-project-design", string(designBody), "owner-token", "RenCrow_Viewer", "task-center")
+	if design.Code != http.StatusOK {
+		t.Fatalf("design recovery status=%d body=%s", design.Code, design.Body.String())
+	}
+	var designResult domainworkstream.GameProjectDesignResult
+	if err := json.Unmarshal(design.Body.Bytes(), &designResult); err != nil {
+		t.Fatal(err)
+	}
+	if !designResult.Replayed || designResult.Goal.GoalID != registration.Registration.GoalIDs[2] {
+		t.Fatalf("design recovery=%+v", designResult)
+	}
 	get := serveTaskCenterRequest(handler, http.MethodGet, "/api/v1/task-center/game-project-plan?idempotency_key=http-game-plan", "", "owner-token", "RenCrow_Viewer", "task-center")
 	if get.Code != http.StatusOK {
 		t.Fatalf("GET status=%d body=%s", get.Code, get.Body.String())
@@ -337,6 +352,7 @@ func TestTaskCenterHandlerGameProjectPlanUsesUserScopeAndSupportsReceiptRecovery
 		Stages: []domainworkstream.GameProjectStage{
 			{Key: "idea", Title: "Ideas", SuccessCriteria: []string{"select a concept"}, Verification: []string{"review the concept"}},
 			{Key: "specification", Title: "Specification", SuccessCriteria: []string{"freeze requirements"}, Verification: []string{"check acceptance criteria"}},
+			{Key: "design", Title: "Design", SuccessCriteria: []string{"define visual direction"}, Verification: []string{"review design"}},
 			{Key: "prototype", Title: "Prototype", SuccessCriteria: []string{"prove the core loop"}, Verification: []string{"play the prototype"}},
 			{Key: "test", Title: "Test", SuccessCriteria: []string{"record test results"}, Verification: []string{"check evidence"}},
 			{Key: "review", Title: "Review", SuccessCriteria: []string{"record independent review"}, Verification: []string{"review findings"}},
@@ -344,7 +360,7 @@ func TestTaskCenterHandlerGameProjectPlanUsesUserScopeAndSupportsReceiptRecovery
 			{Key: "post_implementation_qa", Title: "QA", SuccessCriteria: []string{"verify final build"}, Verification: []string{"run QA checks"}},
 		},
 	}
-	registration := domainworkstream.ProjectPlanRegistration{WorkstreamID: "ws_game_project", GoalIDs: []string{"gol_1", "gol_2", "gol_3", "gol_4", "gol_5", "gol_6", "gol_7"}, StageKeys: domainworkstream.GameProjectStageKeys()}
+	registration := domainworkstream.ProjectPlanRegistration{WorkstreamID: "ws_game_project", GoalIDs: []string{"gol_1", "gol_2", "gol_3", "gol_4", "gol_5", "gol_6", "gol_7", "gol_8"}, StageKeys: domainworkstream.GameProjectStageKeys()}
 	service := &taskCenterHandlerServiceStub{gamePlanFound: true, gamePlanResult: domainworkstream.ProjectPlanMutationResult{Registration: registration, ReceiptRef: "receipt-1"}}
 	handler := NewTaskCenterHandler(service, "local-user", []byte("owner-token"), "")
 	body, err := json.Marshal(input)

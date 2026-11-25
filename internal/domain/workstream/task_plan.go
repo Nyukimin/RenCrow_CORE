@@ -30,10 +30,31 @@ const (
 	ProjectDomainContent           = "content"
 )
 
-var gameProjectStageOrder = [...]string{"idea", "specification", "prototype", "test", "review", "implementation", "post_implementation_qa"}
+var gameProjectStageOrder = [...]string{"idea", "specification", "design", "prototype", "test", "review", "implementation", "post_implementation_qa"}
+var legacyGameProjectStageOrder = [...]string{"idea", "specification", "prototype", "test", "review", "implementation", "post_implementation_qa"}
 
 func GameProjectStageKeys() []string {
 	return append([]string(nil), gameProjectStageOrder[:]...)
+}
+
+// ValidGameProjectStageKeys also accepts the original order for receipt recovery.
+func ValidGameProjectStageKeys(keys []string) bool {
+	for _, order := range [][]string{gameProjectStageOrder[:], legacyGameProjectStageOrder[:]} {
+		if len(keys) != len(order) {
+			continue
+		}
+		match := true
+		for i := range order {
+			if keys[i] != order[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // GameProjectStage is one pre-registered, non-executable Workstream Goal.
@@ -64,11 +85,15 @@ func (submission GameProjectSubmission) Validate() error {
 	if submission.IdempotencyKey == "" || len(submission.IdempotencyKey) > 128 || strings.TrimSpace(submission.IdempotencyKey) != submission.IdempotencyKey {
 		return errors.New("game project idempotency_key is required and must be at most 128 characters")
 	}
-	if len(submission.Stages) != len(gameProjectStageOrder) {
-		return fmt.Errorf("game project requires exactly %d ordered stages", len(gameProjectStageOrder))
+	keys := make([]string, len(submission.Stages))
+	for i, stage := range submission.Stages {
+		keys[i] = stage.Key
+	}
+	if !ValidGameProjectStageKeys(keys) {
+		return errors.New("game project requires a valid ordered stage sequence")
 	}
 	for i, stage := range submission.Stages {
-		if stage.Key != gameProjectStageOrder[i] || strings.TrimSpace(stage.Title) == "" || len([]rune(stage.Title)) > 160 || strings.TrimSpace(stage.Description) != stage.Description || len([]rune(stage.Description)) > 4000 {
+		if strings.TrimSpace(stage.Title) == "" || len([]rune(stage.Title)) > 160 || strings.TrimSpace(stage.Description) != stage.Description || len([]rune(stage.Description)) > 4000 {
 			return fmt.Errorf("game project stage %d is invalid", i)
 		}
 		if !validProjectPlanTextList(stage.SuccessCriteria) || !validProjectPlanTextList(stage.Verification) {

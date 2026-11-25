@@ -260,6 +260,30 @@ func TestGameProjectReceiptRejectsCorruptRegistrationEvidence(t *testing.T) {
 	}
 }
 
+func TestSQLiteLegacyGameProjectReceiptRecovery(t *testing.T) {
+	store := taskPlanTestStore(t, filepath.Join(t.TempDir(), "legacy-game.db"))
+	scope := taskPlanTestUserScope(t, "legacy-game")
+	ctx := tool.WithToolExecutionScope(context.Background(), scope)
+	request := domainworkstream.GameProjectSubmission{Name: "Legacy", IdempotencyKey: "legacy-key"}
+	for _, key := range domainworkstream.GameProjectStageKeys() {
+		if key != "design" {
+			request.Stages = append(request.Stages, domainworkstream.GameProjectStage{Key: key, Title: key, SuccessCriteria: []string{"done"}, Verification: []string{"check"}})
+		}
+	}
+	created, err := store.SubmitGameProjectPlan(ctx, scope, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, found, err := store.GameProjectPlanReceipt(ctx, scope, request.IdempotencyKey)
+	if err != nil || !found || !reflect.DeepEqual(created.Registration, recovered.Registration) {
+		t.Fatalf("recovery found=%v err=%v", found, err)
+	}
+	replayed, err := store.SubmitGameProjectPlan(ctx, scope, request)
+	if err != nil || !replayed.Replayed || !reflect.DeepEqual(created.Registration, replayed.Registration) {
+		t.Fatalf("replay=%+v err=%v", replayed, err)
+	}
+}
+
 func TestSQLiteGameProjectRegistrationSerializesConcurrentSameKeySubmissions(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "concurrent-game-project.db")
 	storeA := taskPlanTestStore(t, databasePath)
@@ -330,7 +354,7 @@ func TestSQLiteGameProjectRegistrationSerializesConcurrentSameKeySubmissions(t *
 	}
 	goals, err := storeA.ListGoals(context.Background(), 100)
 	if err != nil || len(goals) != len(request.Stages) {
-		t.Fatalf("public Goals=%d err=%v; want exactly one seven-stage bundle", len(goals), err)
+		t.Fatalf("public Goals=%d err=%v; want exactly one stage bundle", len(goals), err)
 	}
 }
 

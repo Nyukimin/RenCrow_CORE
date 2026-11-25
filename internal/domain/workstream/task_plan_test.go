@@ -55,6 +55,21 @@ func TestGameProjectSubmissionRequiresCompleteOrderedDraftPlan(t *testing.T) {
 	}
 }
 
+func TestGameProjectStageOrderSupportsDesignAndLegacy(t *testing.T) {
+	current := validGameProjectSubmission()
+	if len(current.Stages) != 8 || current.Stages[2].Key != "design" {
+		t.Fatal("design must follow specification")
+	}
+	if err := current.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	legacy := validGameProjectSubmission()
+	legacy.Stages = append(legacy.Stages[:2], legacy.Stages[3:]...)
+	if err := legacy.Validate(); err != nil {
+		t.Fatalf("legacy request: %v", err)
+	}
+}
+
 func TestTaskPlanValidateScopeAndNativeReferences(t *testing.T) {
 	valid := validTaskPlan()
 	if err := valid.Validate(); err != nil {

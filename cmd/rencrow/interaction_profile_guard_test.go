@@ -1030,6 +1030,7 @@ func TestTaskCenterInteractionProfileIsExact(t *testing.T) {
 		{name: "result acceptance", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/result/acceptance", want: http.StatusNoContent},
 		{name: "submit", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/requests", want: http.StatusNoContent},
 		{name: "game project submission", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/game-project-plans", want: http.StatusNoContent},
+		{name: "game design extension", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/game-project-design", want: http.StatusNoContent},
 		{name: "claim", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/claims", want: http.StatusNoContent},
 		{name: "accept result", client: "RenCrow_Viewer", profile: "task-center", method: http.MethodPost, path: "/api/v1/task-center/result/accept", want: http.StatusNoContent},
 		{name: "wrong client", client: "RenCrow_CMD", profile: "task-center", method: http.MethodGet, path: "/api/v1/task-center/capabilities", want: http.StatusForbidden},
