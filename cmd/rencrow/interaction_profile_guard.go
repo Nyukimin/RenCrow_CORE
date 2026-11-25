@@ -110,11 +110,12 @@ func taskCenterInteractionAllowed(method, path string) bool {
 			"/api/v1/task-center/request",
 			"/api/v1/task-center/claim",
 			"/api/v1/task-center/result",
-			"/api/v1/task-center/result/acceptance":
+			"/api/v1/task-center/result/acceptance",
+			"/api/v1/task-center/task-cancellation":
 			return true
 		}
 	case http.MethodPost:
-		return path == "/api/v1/task-center/requests" || path == "/api/v1/task-center/claims" || path == "/api/v1/task-center/result/accept" || path == "/api/v1/task-center/game-project-plans" || path == "/api/v1/task-center/game-project-design"
+		return path == "/api/v1/task-center/requests" || path == "/api/v1/task-center/claims" || path == "/api/v1/task-center/result/accept" || path == "/api/v1/task-center/game-project-plans" || path == "/api/v1/task-center/game-project-design" || path == "/api/v1/task-center/task-cancellation"
 	}
 	return false
 }

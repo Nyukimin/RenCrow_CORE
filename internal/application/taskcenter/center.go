@@ -8,6 +8,7 @@ import (
 
 	tool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Center composes the existing native Goal service with independent,
@@ -163,6 +164,20 @@ func (c *Center) Capabilities(ctx context.Context) (Capabilities, error) {
 		return Capabilities{}, err
 	}
 	return dailyOnlyCapabilities(scope, c.hasVisibleDailyDefinitions(scope.scope)), nil
+}
+
+func (c *Center) InspectUserTaskCancellation(ctx context.Context, taskID modulecore.TaskID) (UserTaskCancellationResult, error) {
+	if c == nil || c.managed == nil {
+		return UserTaskCancellationResult{}, ErrUnsupported
+	}
+	return c.managed.InspectUserTaskCancellation(ctx, taskID)
+}
+
+func (c *Center) CancelUserOriginTask(ctx context.Context, taskID modulecore.TaskID) (UserTaskCancellationResult, error) {
+	if c == nil || c.managed == nil {
+		return UserTaskCancellationResult{}, ErrUnsupported
+	}
+	return c.managed.CancelUserOriginTask(ctx, taskID)
 }
 
 func (c *Center) hasVisibleDailyDefinitions(scope tool.ToolExecutionScope) bool {

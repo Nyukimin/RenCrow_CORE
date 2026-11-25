@@ -12,44 +12,60 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskcenter"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/taskexecution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	persistworkstream "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type taskCenterHandlerServiceStub struct {
-	capabilities   taskcenter.Capabilities
-	capContext     context.Context
-	listResult     taskcenter.ListResult
-	item           taskcenter.Item
-	mutation       taskcenter.MutationResult
-	receiptFound   bool
-	receiptErr     error
-	getErr         error
-	listQuery      taskcenter.ListQuery
-	listContext    context.Context
-	dailyQuery     taskcenter.DailyQuery
-	dailyContext   context.Context
-	dailyResult    taskcenter.DailyListResult
-	dailyCalls     int
-	submitCalls    int
-	submitInput    taskcenter.SubmitInput
-	submitCtx      context.Context
-	claimCalls     int
-	getCalls       int
-	acceptCalls    int
-	acceptInput    taskcenter.AcceptResultInput
-	acceptCtx      context.Context
-	resultView     taskcenter.ResultView
-	resultCtx      context.Context
-	resultGoalID   string
-	gamePlanResult domainworkstream.ProjectPlanMutationResult
-	gamePlanFound  bool
-	gamePlanErr    error
-	gamePlanInput  domainworkstream.GameProjectSubmission
-	gamePlanCtx    context.Context
-	gamePlanCalls  int
+	capabilities        taskcenter.Capabilities
+	capContext          context.Context
+	listResult          taskcenter.ListResult
+	item                taskcenter.Item
+	mutation            taskcenter.MutationResult
+	receiptFound        bool
+	receiptErr          error
+	getErr              error
+	listQuery           taskcenter.ListQuery
+	listContext         context.Context
+	dailyQuery          taskcenter.DailyQuery
+	dailyContext        context.Context
+	dailyResult         taskcenter.DailyListResult
+	dailyCalls          int
+	submitCalls         int
+	submitInput         taskcenter.SubmitInput
+	submitCtx           context.Context
+	claimCalls          int
+	getCalls            int
+	acceptCalls         int
+	acceptInput         taskcenter.AcceptResultInput
+	acceptCtx           context.Context
+	resultView          taskcenter.ResultView
+	resultCtx           context.Context
+	resultGoalID        string
+	gamePlanResult      domainworkstream.ProjectPlanMutationResult
+	gamePlanFound       bool
+	gamePlanErr         error
+	gamePlanInput       domainworkstream.GameProjectSubmission
+	gamePlanCtx         context.Context
+	gamePlanCalls       int
+	cancellationResult  taskcenter.UserTaskCancellationResult
+	cancellationTaskID  modulecore.TaskID
+	cancellationCalls   int
+	cancellationContext context.Context
+}
+
+func (s *taskCenterHandlerServiceStub) InspectUserTaskCancellation(ctx context.Context, taskID modulecore.TaskID) (taskcenter.UserTaskCancellationResult, error) {
+	s.cancellationContext, s.cancellationTaskID = ctx, taskID
+	return s.cancellationResult, nil
+}
+func (s *taskCenterHandlerServiceStub) CancelUserOriginTask(ctx context.Context, taskID modulecore.TaskID) (taskcenter.UserTaskCancellationResult, error) {
+	s.cancellationCalls++
+	s.cancellationContext, s.cancellationTaskID = ctx, taskID
+	return s.cancellationResult, nil
 }
 
 func (s *taskCenterHandlerServiceStub) Capabilities(ctx context.Context) (taskcenter.Capabilities, error) {
@@ -521,4 +537,49 @@ func serveTaskCenterRequest(handler http.Handler, method, target, body, token, c
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestTaskCenterTaskCancellationUsesTrustedIdentityAndRechecksAfterPost(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	service := &taskCenterHandlerServiceStub{cancellationResult: taskcenter.UserTaskCancellationResult{
+		TaskID: taskID, Status: domaintask.StatusQueued, Cancellable: true,
+	}}
+	handler := NewTaskCenterHandler(service, "local-user", []byte("owner-token"), "")
+	get := serveTaskCenterRequest(handler, http.MethodGet, "/api/v1/task-center/task-cancellation?task_id="+string(taskID), "", "owner-token", "RenCrow_Viewer", "task-center")
+	if get.Code != http.StatusOK || service.cancellationTaskID != taskID {
+		t.Fatalf("GET status=%d body=%s task=%s", get.Code, get.Body.String(), service.cancellationTaskID)
+	}
+	scope, found := tool.ToolExecutionScopeFromContext(service.cancellationContext)
+	if !found || scope.ActorID != "local-user" || scope.AuthenticatedUserID != "local-user" {
+		t.Fatalf("GET trusted scope=%+v found=%v", scope, found)
+	}
+	service.cancellationResult = taskcenter.UserTaskCancellationResult{TaskID: taskID, Status: domaintask.StatusCancelled, Cancelled: true}
+	post := serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/task-cancellation", `{"task_id":"`+string(taskID)+`","user_id":"attacker"}`, "owner-token", "RenCrow_Viewer", "task-center")
+	if post.Code != http.StatusBadRequest || service.cancellationCalls != 0 {
+		t.Fatalf("spoof body POST status=%d calls=%d body=%s", post.Code, service.cancellationCalls, post.Body.String())
+	}
+	post = serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/task-cancellation", `{"task_id":"`+string(taskID)+`"}`, "owner-token", "RenCrow_Viewer", "task-center")
+	if post.Code != http.StatusOK || service.cancellationCalls != 1 {
+		t.Fatalf("POST status=%d calls=%d body=%s", post.Code, service.cancellationCalls, post.Body.String())
+	}
+	var result taskcenter.UserTaskCancellationResult
+	if err := json.Unmarshal(post.Body.Bytes(), &result); err != nil || result.Status != domaintask.StatusCancelled || !result.Cancelled {
+		t.Fatalf("POST result=%+v err=%v", result, err)
+	}
+}
+
+func TestTaskCenterTaskCancellationReturnsUnsupportedReason(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	service := &taskCenterHandlerServiceStub{cancellationResult: taskcenter.UserTaskCancellationResult{
+		TaskID: taskID, Status: domaintask.StatusQueued, Reason: "dedicated_owner_required",
+	}}
+	handler := NewTaskCenterHandler(service, "local-user", []byte("owner-token"), "")
+	post := serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/task-cancellation", `{"task_id":"`+string(taskID)+`"}`, "owner-token", "RenCrow_Viewer", "task-center")
+	if post.Code != http.StatusConflict || !strings.Contains(post.Body.String(), "dedicated_owner_required") {
+		t.Fatalf("unsupported POST status=%d body=%s", post.Code, post.Body.String())
+	}
+	unauthorized := serveTaskCenterRequest(handler, http.MethodPost, "/api/v1/task-center/task-cancellation", `{"task_id":"`+string(taskID)+`"}`, "", "RenCrow_Viewer", "task-center")
+	if unauthorized.Code != http.StatusUnauthorized || service.cancellationCalls != 1 {
+		t.Fatalf("unauthorized POST status=%d calls=%d body=%s", unauthorized.Code, service.cancellationCalls, unauthorized.Body.String())
+	}
 }

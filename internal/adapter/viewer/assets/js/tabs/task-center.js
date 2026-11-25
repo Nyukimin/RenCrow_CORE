@@ -84,6 +84,8 @@
     intervalSeconds: $('taskCenterIntervalSeconds'), duration: $('taskCenterDuration'), submit: $('taskCenterSubmit'),
     mutationPanel: $('taskCenterMutationPanel'), mutationMessage: $('taskCenterMutationMessage'),
     mutationReceipt: $('taskCenterMutationReceipt'), recovery: $('taskCenterRecovery'), recoverButton: $('taskCenterRecoverButton'),
+    cancellationForm: $('taskCenterCancellationForm'), cancellationTaskID: $('taskCenterCancellationTaskID'),
+    cancellationInspect: $('taskCenterCancellationInspect'), cancellationSubmit: $('taskCenterCancellationSubmit'), cancellationState: $('taskCenterCancellationState'),
   };
 
   if (Object.values(elements).some((value) => value === null)) return;
@@ -94,6 +96,7 @@
     busy: false, pendingMutation: null, updatedAt: '', listErrorMessage: '', listRecoveryMessage: '', hasListSuccess: false,
     dailyDefinitions: [], dailyAvailability: 'unknown', dailyIssues: [], dailyObservedAt: '', dailyKinds: new Set(),
     detailControllers: new Set(), kindInputDraft: Object.create(null),
+    cancellationPreview: null, cancellationBusy: false,
   };
 
   class TaskCenterAPIError extends Error {
@@ -2467,6 +2470,59 @@
     elements.weekdays.hidden = frequency !== 'weekly';
     elements.intervalField.hidden = frequency !== 'interval';
   }
+
+  async function inspectUserTaskCancellation() {
+    const taskID = elements.cancellationTaskID.value.trim();
+    state.cancellationPreview = null;
+    if (!taskID || !state.token) return;
+    state.cancellationBusy = true;
+    elements.cancellationInspect.disabled = elements.cancellationSubmit.disabled = true;
+    elements.cancellationState.textContent = 'ownerへTaskの現在状態を確認中…';
+    try {
+      const result = await apiJSON(apiURL('/task-cancellation', {task_id: taskID}));
+      if (elements.cancellationTaskID.value.trim() !== taskID) return;
+      state.cancellationPreview = result;
+      elements.cancellationSubmit.disabled = result.cancellable !== true;
+      elements.cancellationState.textContent = result.cancellable === true
+        ? `取消可能です。対象 ${result.task_id} · 状態 ${result.status} · Runなしをownerが確認しました。`
+        : result.reason === 'already_cancelled'
+          ? `Task ${result.task_id} は取消済みです。owner状態を再読しました。`
+          : `取消不可です。対象 ${result.task_id} · 状態 ${result.status} · ${cleanText(result.reason, '理由未確認')}`;
+    } catch (error) {
+      elements.cancellationState.textContent = `取消可否を取得できませんでした（${cleanText(error && error.code, 'owner error')}）。状態は未確認です。`;
+    } finally {
+      state.cancellationBusy = false;
+      elements.cancellationInspect.disabled = !state.token;
+    }
+  }
+
+  async function submitUserTaskCancellation(event) {
+    event.preventDefault();
+    const taskID = elements.cancellationTaskID.value.trim();
+    if (!state.cancellationPreview || state.cancellationPreview.cancellable !== true || state.cancellationPreview.task_id !== taskID) {
+      elements.cancellationState.textContent = '取消前に、入力したTask IDの現在状態を確認してください。'; return;
+    }
+    if (!window.confirm(`Task ${taskID} を取消します。対象Task IDを確認してください。`)) return;
+    state.cancellationBusy = true;
+    elements.cancellationSubmit.disabled = elements.cancellationInspect.disabled = true;
+    try {
+      const result = await apiJSON(apiURL('/task-cancellation'), {method: 'POST', body: {task_id: taskID}});
+      elements.cancellationState.textContent = result.cancelled ? `Task ${taskID} の取消をownerが記録しました。状態を再読しています…` : 'Taskは取消されませんでした。owner状態を再読しています…';
+    } catch (error) {
+      elements.cancellationState.textContent = `取消結果を確認できませんでした（${cleanText(error && error.code, 'owner error')}）。`;
+    } finally {
+      state.cancellationBusy = false;
+      await inspectUserTaskCancellation();
+    }
+  }
+
+  elements.cancellationInspect.addEventListener('click', () => { void inspectUserTaskCancellation(); });
+  elements.cancellationForm.addEventListener('submit', (event) => { void submitUserTaskCancellation(event); });
+  elements.cancellationTaskID.addEventListener('input', () => {
+    state.cancellationPreview = null;
+    elements.cancellationSubmit.disabled = true;
+    elements.cancellationState.textContent = 'Task IDが変更されました。取消前にowner状態を再確認してください。';
+  });
 
   elements.connectForm.addEventListener('submit', (event) => {
     event.preventDefault();

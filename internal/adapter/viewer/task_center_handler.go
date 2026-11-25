@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/google/uuid"
 )
 
@@ -37,6 +38,11 @@ type TaskCenterService interface {
 type TaskCenterProjectPlanService interface {
 	SubmitGameProjectPlan(context.Context, domainworkstream.GameProjectSubmission) (domainworkstream.ProjectPlanMutationResult, error)
 	GameProjectPlanReceipt(context.Context, string) (domainworkstream.ProjectPlanMutationResult, bool, error)
+}
+
+type TaskCenterUserTaskCancellationService interface {
+	InspectUserTaskCancellation(context.Context, modulecore.TaskID) (taskcenter.UserTaskCancellationResult, error)
+	CancelUserOriginTask(context.Context, modulecore.TaskID) (taskcenter.UserTaskCancellationResult, error)
 }
 
 type taskCenterHandler struct {
@@ -253,6 +259,54 @@ func (h *taskCenterHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		result.Replayed = true
 		writeTaskCenterJSON(w, http.StatusOK, result)
+	case "task-cancellation":
+		service, ok := h.service.(TaskCenterUserTaskCancellationService)
+		if !ok {
+			writeTaskCenterError(w, http.StatusServiceUnavailable, "task_center_unsupported")
+			return
+		}
+		if r.Method == http.MethodGet {
+			values, valid := taskCenterQueryValues(queryValues, map[string]bool{"task_id": true})
+			if !valid || !taskCenterRequiredValue(values, "task_id", 128) {
+				writeTaskCenterError(w, http.StatusBadRequest, "invalid_request")
+				return
+			}
+			taskID := modulecore.TaskID(values.Get("task_id"))
+			if taskID.Validate() != nil {
+				writeTaskCenterError(w, http.StatusBadRequest, "invalid_request")
+				return
+			}
+			result, err := service.InspectUserTaskCancellation(r.Context(), taskID)
+			if err != nil {
+				writeTaskCenterDomainError(w, err)
+				return
+			}
+			writeTaskCenterJSON(w, http.StatusOK, result)
+		} else if r.Method == http.MethodPost {
+			if !taskCenterNoQuery(w, queryValues) {
+				return
+			}
+			var input struct {
+				TaskID modulecore.TaskID `json:"task_id"`
+			}
+			if !decodeTaskCenterJSON(w, r, &input) || input.TaskID.Validate() != nil {
+				writeTaskCenterError(w, http.StatusBadRequest, "invalid_request")
+				return
+			}
+			result, err := service.CancelUserOriginTask(r.Context(), input.TaskID)
+			if err != nil {
+				writeTaskCenterDomainError(w, err)
+				return
+			}
+			if !result.Cancelled {
+				writeTaskCenterJSON(w, http.StatusConflict, map[string]any{"error": "task_not_cancellable", "result": result})
+				return
+			}
+			writeTaskCenterJSON(w, http.StatusOK, result)
+		} else {
+			w.Header().Set("Allow", "GET, POST")
+			writeTaskCenterError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		}
 	case "claims":
 		if !taskCenterMethod(w, r, http.MethodPost) {
 			return

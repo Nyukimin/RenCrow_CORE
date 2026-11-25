@@ -2253,7 +2253,11 @@ TaskCenter page／API clientは`X-RenCrow-Client: RenCrow_Viewer`と`X-RenCrow-I
 | `GET /api/v1/task-center/result/acceptance` | 同じGoalとidempotency keyによる結果受理の回復 |
 | `POST /api/v1/task-center/game-project-plans` | ゲーム案件1件の公開Workstreamと、企画から実装後QAまでのdraft GoalをSQLite transactionで登録 |
 | `GET /api/v1/task-center/game-project-plan` | 同じ認証済みuserとidempotency keyによる登録receiptの回復 |
+| `GET /api/v1/task-center/task-cancellation?task_id=…` | Task本文を返さず、指定Taskの取消可否、現在status、制限理由をowner transaction内で確認 |
+| `POST /api/v1/task-center/task-cancellation` | bodyの`task_id`だけを受け、対象Taskをtransaction内で再検証してlegacy user-origin Taskの取消を一度だけ記録 |
 | `POST /api/v1/task-center/game-project-design` | `{ "workstream_id": "..." }`で登録済みゲーム企画へデザインGoalを一度だけ追加。同じ認証済み作成者のみ。再送は現在のGoalを返し、状態や成果を更新しない |
+
+Task cancellationはTask Center bearer tokenと`RenCrow_Viewer`／`task-center` profileで認証されたlocal userに限ります。user IDはbodyから受け取らず、認証contextから決定します。origin session/thread/turn/messageとpublication provenanceをTask owner transaction内で確認し、canonical Sessionの現在publication bindingも照合します。証拠不足やowner不一致は拒否し、Session reader障害はunavailableとして扱います。取消対象はGoal／Workstream/private accessがなく、専用owner metadataを持たず、user-origin identityがあり、queuedかつRunなしのlegacy Taskに限ります。Task履歴は削除せず、status・終了時刻・summaryを保存します。再送は取消済み状態を返し、Startが先行した場合やRunがある場合は取消しません。Task Center画面はTask IDを明示させ、owner状態確認と確認dialogを経て操作します。
 
 ゲーム案件の作成bodyは`name`、`description`、`idempotency_key`と、順序固定の`stages`（`idea`、`specification`、`design`、`prototype`、`test`、`review`、`implementation`、`post_implementation_qa`）を含みます。従来の`design`を含まない7段階の要求とreceiptも受け付けます。各stageは`title`、`description`、`success_criteria`、`verification`を持ちます。認証済みuserの信頼済みcontextからownerを決め、公開範囲を許可されたuserだけが作成できます。新規作成は201、同一key・同一入力の再送は200、異なる入力の同一key再利用は409、未登録receiptのGETは404です。応答は登録時点のWorkstream ID・Goal ID・stage順・入力hash・登録時刻を示すreceiptです。Workstream／Goalの現在状態ではなく、状態確認は`GET /viewer/workstreams`で行います。
 

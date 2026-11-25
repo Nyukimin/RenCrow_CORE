@@ -25,16 +25,18 @@ import (
 const taskCenterListDescriptionMaxRunes = 240
 
 type Service struct {
-	store           TaskPlanStore
-	policy          taskexecution.Policy
-	actors          []string
-	kinds           []Kind
-	actorSet        map[string]struct{}
-	kindSet         map[string]Kind
-	policyRevision  string
-	now             func() time.Time
-	receiptVerifier HandoffReceiptVerifier
-	nativeExecution *NativeExecution
+	store                            TaskPlanStore
+	policy                           taskexecution.Policy
+	actors                           []string
+	kinds                            []Kind
+	actorSet                         map[string]struct{}
+	kindSet                          map[string]Kind
+	policyRevision                   string
+	now                              func() time.Time
+	receiptVerifier                  HandoffReceiptVerifier
+	nativeExecution                  *NativeExecution
+	userTaskCancellationOwner        UserTaskCancellationOwner
+	userTaskCancellationPublications UserTaskCancellationPublicationReader
 }
 
 func NewService(store TaskPlanStore, policy taskexecution.Policy, actors []string, kinds []Kind, clock func() time.Time) (*Service, error) {

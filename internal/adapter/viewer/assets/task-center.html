@@ -132,6 +132,17 @@
           <button id="taskCenterMore" class="task-center__button task-center__button--more" type="button" hidden>次のページを読み込む</button>
         </section>
 
+        <section class="task-center__list-panel" aria-labelledby="taskCenterCancelTitle">
+          <div class="task-center__section-heading"><div><p class="task-center__eyebrow">OWNER VALIDATED</p><h2 id="taskCenterCancelTitle">Task IDを指定して取消状態を確認</h2></div></div>
+          <p class="task-center__muted">認証済みlocal ownerとして、queued・Runなし・Goal未紐付けのlegacy user-origin Taskだけを取消できます。</p>
+          <form id="taskCenterCancellationForm" class="task-center__connect-form">
+            <label class="task-center__field" for="taskCenterCancellationTaskID"><span>Task ID</span><input id="taskCenterCancellationTaskID" maxlength="128" autocomplete="off" required></label>
+            <button id="taskCenterCancellationInspect" class="task-center__button task-center__button--quiet" type="button">取消可否を確認</button>
+            <button id="taskCenterCancellationSubmit" class="task-center__button task-center__button--primary" type="submit" disabled>このTaskを取消</button>
+          </form>
+          <p id="taskCenterCancellationState" class="task-center__list-state" role="status" aria-live="polite">Task IDを入力してowner状態を確認してください。</p>
+        </section>
+
         <details id="taskCenterAddDetails" class="task-center__add-panel">
           <summary>
             <span>

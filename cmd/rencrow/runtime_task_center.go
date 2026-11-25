@@ -163,6 +163,12 @@ func buildTaskCenterRuntime(cfg *config.Config, deps *Dependencies, workstreamSt
 		deps.taskCenterUnavailableReason = "task_center_unavailable"
 		return
 	}
+	if cancellationOwner, ok := any(deps.taskManager).(taskcenter.UserTaskCancellationOwner); ok {
+		service.WithUserTaskCancellationOwner(cancellationOwner)
+	}
+	if publications, ok := deps.sessionRepository.(taskcenter.UserTaskCancellationPublicationReader); ok {
+		service.WithUserTaskCancellationPublicationReader(publications)
+	}
 	// Native receipt/result recovery does not need a currently connected effect
 	// owner. Keep the coordinator available for historical reads and acceptance;
 	// executor availability remains false when the kind handler is absent.

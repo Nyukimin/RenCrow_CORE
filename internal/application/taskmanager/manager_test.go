@@ -1436,3 +1436,140 @@ func TestManagerConcurrentStartsHonorGlobalParallelLimit(t *testing.T) {
 		t.Fatalf("running Runs = %#v for Tasks %#v, want one matching pair", runs, running)
 	}
 }
+
+func TestCancelUserOriginTaskIsAtomicIdempotentAndPreservesTaskHistory(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	authorize := func(context.Context, domaintask.Task) error { return nil }
+	created, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "legacy user request", Route: domaintask.RouteGeneral, OwnerID: "mio", Assignee: "mio",
+		OriginSessionID: modulecore.NewSessionID(), CreatedAt: time.Now().UTC(),
+	}, domaintask.SharedRoleContext{UserIntent: "preserve this record"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eligible, err := manager.InspectUserTaskCancellation(context.Background(), created.TaskID, authorize)
+	if err != nil || !eligible.Cancellable || eligible.Status != domaintask.StatusQueued {
+		t.Fatalf("eligibility=%+v err=%v", eligible, err)
+	}
+	cancelled, err := manager.CancelUserOriginTask(context.Background(), created.TaskID, authorize)
+	if err != nil || !cancelled.Cancelled || cancelled.Status != domaintask.StatusCancelled || cancelled.Replayed {
+		t.Fatalf("cancel=%+v err=%v", cancelled, err)
+	}
+	replayed, err := manager.CancelUserOriginTask(context.Background(), created.TaskID, authorize)
+	if err != nil || !replayed.Cancelled || !replayed.Replayed || replayed.Status != domaintask.StatusCancelled {
+		t.Fatalf("replay=%+v err=%v", replayed, err)
+	}
+	stored, err := manager.Get(context.Background(), created.TaskID)
+	if err != nil || stored.Title != created.Title || stored.OriginSessionID != created.OriginSessionID ||
+		stored.Status != domaintask.StatusCancelled || stored.Summary != userTaskCancellationSummary || stored.FinishedAt == nil {
+		t.Fatalf("stored Task=%+v err=%v", stored, err)
+	}
+	shared, err := manager.Context(context.Background(), created.TaskID)
+	if err != nil || shared.UserIntent != "preserve this record" {
+		t.Fatalf("stored context=%+v err=%v", shared, err)
+	}
+}
+
+func TestCancelUserOriginTaskRejectsRunAndNonUserOrigin(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	authorize := func(context.Context, domaintask.Task) error { return nil }
+	makeTask := func(origin bool) domaintask.Task {
+		t.Helper()
+		task := domaintask.Task{Title: "task", Route: domaintask.RouteGeneral, OwnerID: "mio", Assignee: "mio", CreatedAt: time.Now().UTC()}
+		if origin {
+			task.OriginSessionID = modulecore.NewSessionID()
+		}
+		created, createErr := manager.Create(context.Background(), task, domaintask.SharedRoleContext{})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return created
+	}
+	withRun := makeTask(true)
+	if _, err := manager.Start(context.Background(), withRun.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	state, err := manager.CancelUserOriginTask(context.Background(), withRun.TaskID, authorize)
+	if err != nil || state.Cancelled || state.Reason != "task_has_run" {
+		t.Fatalf("running Task cancel=%+v err=%v", state, err)
+	}
+	withoutOrigin := makeTask(false)
+	state, err = manager.InspectUserTaskCancellation(context.Background(), withoutOrigin.TaskID, authorize)
+	if err != nil || state.Cancellable || state.Reason != "user_origin_missing" {
+		t.Fatalf("unproven Task eligibility=%+v err=%v", state, err)
+	}
+	goalBound, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "goal task", Route: domaintask.RouteGeneral, Assignee: "mio", OriginSessionID: modulecore.NewSessionID(), GoalID: modulecore.NewGoalID(),
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = manager.InspectUserTaskCancellation(context.Background(), goalBound.TaskID, authorize)
+	if err != nil || state.Cancellable || state.Reason != "private_or_goal_bound" {
+		t.Fatalf("Goal-bound Task eligibility=%+v err=%v", state, err)
+	}
+}
+
+func TestCancelUserOriginTaskSerializesWithStart(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	authorize := func(context.Context, domaintask.Task) error { return nil }
+	task, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "legacy request", Route: domaintask.RouteGeneral, Assignee: "mio", OriginSessionID: modulecore.NewSessionID(),
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	startResult := make(chan error, 1)
+	cancelResult := make(chan struct {
+		state UserTaskCancellationState
+		err   error
+	}, 1)
+	go func() {
+		<-start
+		_, err := manager.Start(context.Background(), task.TaskID)
+		startResult <- err
+	}()
+	go func() {
+		<-start
+		state, err := manager.CancelUserOriginTask(context.Background(), task.TaskID, authorize)
+		cancelResult <- struct {
+			state UserTaskCancellationState
+			err   error
+		}{state: state, err: err}
+	}()
+	close(start)
+	startErr := <-startResult
+	cancel := <-cancelResult
+	if cancel.err != nil {
+		t.Fatal(cancel.err)
+	}
+	current, err := manager.Get(context.Background(), task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startErr == nil {
+		if current.Status != domaintask.StatusRunning || cancel.state.Cancelled || cancel.state.Reason != "task_has_run" {
+			t.Fatalf("start won but current=%s cancel=%+v", current.Status, cancel.state)
+		}
+		return
+	}
+	if !cancel.state.Cancelled || current.Status != domaintask.StatusCancelled {
+		t.Fatalf("cancel won but start error=%v current=%s cancel=%+v", startErr, current.Status, cancel.state)
+	}
+}
