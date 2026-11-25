@@ -328,6 +328,16 @@ func TaskCenterDraftMatchesStored(expected, stored Task) bool {
 
 func IsTaskCenterTyped(task Task) bool { return task.TaskCenterExecution != nil }
 
+// SupportsGameCompletionCondition identifies the rules enforced by the GAME
+// owner's single-session terminal receipt, not an arbitrary outcome claim.
+func SupportsGameCompletionCondition(condition *modulecore.TaskCompletionCondition) bool {
+	if condition == nil || condition.Validate() != nil {
+		return false
+	}
+	return condition.Kind == "count" && condition.TargetCount == 1 && condition.CountUnit == "game" ||
+		condition.Kind == "until_complete" && condition.Criteria == "game_session_completed"
+}
+
 // ValidateStartTiming applies explicit schedule conditions without inventing
 // defaults for legacy Tasks whose timing snapshot is nil.
 func (task Task) ValidateStartTiming(now time.Time) error {
@@ -335,7 +345,7 @@ func (task Task) ValidateStartTiming(now time.Time) error {
 		return nil
 	}
 	condition := task.Timing.CompletionCondition
-	if task.Route == RouteGAME && condition != nil && condition.Kind == "count" && condition.TargetCount == 1 && condition.CountUnit == "game" {
+	if task.Route == RouteGAME && SupportsGameCompletionCondition(condition) {
 		if !task.Timing.ScheduleReady(now) {
 			return errors.New("Task timing does not admit a start at the current time")
 		}

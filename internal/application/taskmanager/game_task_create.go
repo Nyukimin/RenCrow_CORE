@@ -177,7 +177,7 @@ func normalizeGameTaskCreateOperation(
 	if draft.Timing != nil {
 		timing := draft.Timing
 		condition := timing.CompletionCondition
-		if timing.Validate() != nil || condition == nil || condition.Kind != "count" || condition.TargetCount != 1 || condition.CountUnit != "game" ||
+		if timing.Validate() != nil || !domaintask.SupportsGameCompletionCondition(condition) ||
 			timing.Timezone != "" || timing.ScheduledStartAt != nil || timing.NotBefore != nil || len(timing.AllowedWindows) != 0 || timing.DeadlineAt != nil || timing.Recurrence != nil || timing.EstimatedDurationSeconds != nil {
 			return gameTaskCreateOperationRequest{}, "", "", errors.New("GAME Task creation supports only one completed game session")
 		}

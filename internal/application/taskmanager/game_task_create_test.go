@@ -131,6 +131,26 @@ func TestEnsureGameTaskCreatedAcceptsOneSessionCompletionRule(t *testing.T) {
 	}
 }
 
+func TestEnsureGameTaskCreatedAcceptsVerifiedSessionCompletion(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	t.Cleanup(func() { _ = manager.Close() })
+	draft, shared := gameTaskCreateInput(t, "complete game", "play until session completes")
+	draft.Timing = &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "until_complete", Criteria: "game_session_completed"}}
+	created, err := manager.EnsureGameTaskCreated(ctx, modulecore.NewRequestID(), "ren", draft, shared)
+	if err != nil || created.Timing == nil || created.Timing.CompletionCondition == nil || created.Timing.CompletionCondition.Criteria != "game_session_completed" {
+		t.Fatalf("verified completion Task=%+v err=%v", created, err)
+	}
+	draft.Timing.CompletionCondition.Criteria = "unsupported"
+	if _, err := manager.EnsureGameTaskCreated(ctx, modulecore.NewRequestID(), "ren", draft, shared); err == nil {
+		t.Fatal("unverifiable session criteria were accepted")
+	}
+}
+
 func gameTaskCreateInput(t *testing.T, title, plan string) (domaintask.Task, domaintask.SharedRoleContext) {
 	t.Helper()
 	spec, err := domaintask.NormalizeGameSpec(domaintask.GameSpec{GameID: "herzog_zwei", Personas: []string{"aka", "ao", "kin", "gin"}, Turns: 120, Mode: "realtime"})

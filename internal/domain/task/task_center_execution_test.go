@@ -158,6 +158,19 @@ func TestGameTaskAdmitsOneCompletedSessionCondition(t *testing.T) {
 	}
 }
 
+func TestGameTaskAdmitsVerifiedUntilGameCompletes(t *testing.T) {
+	task := validTask()
+	task.Route = RouteGAME
+	task.Timing = &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "until_complete", Criteria: "game_session_completed"}}
+	if err := task.ValidateStartTiming(time.Now()); err != nil {
+		t.Fatalf("verified session completion should be supported: %v", err)
+	}
+	task.Timing.CompletionCondition.Criteria = "arbitrary unsupported outcome"
+	if err := task.ValidateStartTiming(time.Now()); err == nil {
+		t.Fatal("unverified completion criteria must not be admitted")
+	}
+}
+
 func TestTaskCenterIdentityHashesPreCreationBlankIDsAndMatchesOwnerGeneratedState(t *testing.T) {
 	draft, shared, input := typedDraftWithoutOwnerIDs(t)
 	key := modulecore.NewRequestID()

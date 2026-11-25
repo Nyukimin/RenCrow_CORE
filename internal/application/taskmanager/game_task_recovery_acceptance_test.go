@@ -146,6 +146,36 @@ func TestOneGameCompletionRequiresVerifiedSessionReceipt(t *testing.T) {
 	}
 }
 
+func TestUntilGameCompleteRequiresVerifiedSessionReceipt(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	t.Cleanup(func() { _ = manager.Close() })
+	draft, shared := gameTaskCreateInput(t, "complete game", "play until session completes")
+	draft.Timing = &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "until_complete", Criteria: "game_session_completed"}}
+	task, err := manager.EnsureGameTaskCreated(ctx, modulecore.NewRequestID(), "ren", draft, shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _ := beginAcceptanceGameTask(t, manager, task)
+	now := time.Now().UTC()
+	running := acceptanceReceipt(task, *shared.GameSpec, "session-one", domaintask.GameExecutionRunning, now)
+	if _, err := manager.RecordGameLaunchReceipt(ctx, task.TaskID, running); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Succeed(ctx, task.TaskID, "unverified"); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("unverified session completion error=%v", err)
+	}
+	completed := acceptanceReceipt(task, *shared.GameSpec, running.SessionID, domaintask.GameExecutionCompleted, now.Add(2*time.Second))
+	finished, err := manager.FinalizeGameTaskRun(ctx, task.TaskID, run.RunID, task.Assignee, completed, "verified session completed")
+	if err != nil || finished.Status != domaintask.StatusSucceeded {
+		t.Fatalf("finished=%+v err=%v", finished, err)
+	}
+}
+
 func TestGameTaskRecoveryAcceptanceKeepsLaunchKeyAcrossStoreRestart(t *testing.T) {
 	ctx := context.Background()
 	storeRoot := t.TempDir()
