@@ -140,6 +140,37 @@ func TestTaskTimingReadyLeavesLegacyUnknownAndChecksExplicitSnapshot(t *testing.
 	}
 }
 
+func TestGameTaskAdmitsOneCompletedSessionCondition(t *testing.T) {
+	task := validTask()
+	task.Route = RouteGAME
+	task.Timing = &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "count", TargetCount: 1, CountUnit: "game"}}
+	if err := task.ValidateStartTiming(time.Now()); err != nil {
+		t.Fatalf("single GAME session should be supported by the game owner: %v", err)
+	}
+	task.Timing.CompletionCondition.TargetCount = 2
+	if err := task.ValidateStartTiming(time.Now()); err == nil {
+		t.Fatal("multiple games must not be admitted as one session")
+	}
+	task.Route = RouteCHAT
+	task.Timing.CompletionCondition.TargetCount = 1
+	if err := task.ValidateStartTiming(time.Now()); err == nil {
+		t.Fatal("a non-game owner must not claim GAME session support")
+	}
+}
+
+func TestGameTaskAdmitsVerifiedUntilGameCompletes(t *testing.T) {
+	task := validTask()
+	task.Route = RouteGAME
+	task.Timing = &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "until_complete", Criteria: "game_session_completed"}}
+	if err := task.ValidateStartTiming(time.Now()); err != nil {
+		t.Fatalf("verified session completion should be supported: %v", err)
+	}
+	task.Timing.CompletionCondition.Criteria = "arbitrary unsupported outcome"
+	if err := task.ValidateStartTiming(time.Now()); err == nil {
+		t.Fatal("unverified completion criteria must not be admitted")
+	}
+}
+
 func TestTaskCenterIdentityHashesPreCreationBlankIDsAndMatchesOwnerGeneratedState(t *testing.T) {
 	draft, shared, input := typedDraftWithoutOwnerIDs(t)
 	key := modulecore.NewRequestID()

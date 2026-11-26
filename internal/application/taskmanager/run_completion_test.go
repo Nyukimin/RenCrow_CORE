@@ -493,6 +493,34 @@ func TestManagerCompleteRunWaitingReleasesSlotAndSupportsCheckpointResume(t *tes
 	}
 }
 
+func TestCanStartReportsTimingWaitAsAdmissionDenial(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, err := manager.Create(ctx, domaintask.Task{Title: "later", Assignee: "Mio", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour)
+	for name, timing := range map[string]*modulecore.TaskTiming{
+		"scheduled":              {Timezone: "UTC", NotBefore: &future},
+		"unsupported completion": {CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "duration", DurationSeconds: 60}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := task
+			candidate.Timing = timing
+			allowed, reason, err := manager.CanStart(ctx, candidate)
+			if err != nil || allowed || reason == "" {
+				t.Fatalf("CanStart = %t, %q, %v; want a reasoned admission denial", allowed, reason, err)
+			}
+		})
+	}
+}
+
 func TestManagerCompleteRunRollsBackOnNotificationFailure(t *testing.T) {
 	ctx := context.Background()
 	base, err := taskpersistence.NewJSONLStore(t.TempDir())

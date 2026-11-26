@@ -354,6 +354,10 @@ func cloneRuntimeTaskTiming(timing *modulecore.TaskTiming) *modulecore.TaskTimin
 		return nil
 	}
 	copyTiming := *timing
+	if timing.CompletionCondition != nil {
+		condition := *timing.CompletionCondition
+		copyTiming.CompletionCondition = &condition
+	}
 	copyTiming.AllowedWindows = append([]modulecore.TaskTimeWindow(nil), timing.AllowedWindows...)
 	if timing.Recurrence != nil {
 		recurrence := *timing.Recurrence

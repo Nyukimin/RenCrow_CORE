@@ -1192,6 +1192,19 @@ func (s *Service) authorizeSubmittedGoal(scope tool.ToolExecutionScope, dataScop
 			}
 		}
 	}
+	if goal.TaskPlan.Assignee == domainworkstream.TaskPlanAssigneeUnassigned {
+		eligible := false
+		for _, actorID := range s.actors {
+			allowed, err := s.allowed(goal.TaskPlan.KindID, actorID, goal.TaskPlan.SubsetAllowedAgents)
+			if err != nil {
+				return fmt.Errorf("%w: cannot determine eligible agents: %v", ErrInvalid, err)
+			}
+			eligible = eligible || allowed
+		}
+		if !eligible {
+			return fmt.Errorf("%w: shared task has no eligible agent", ErrInvalid)
+		}
+	}
 	if goal.TaskPlan.Assignee != domainworkstream.TaskPlanAssigneeUnassigned {
 		if !registeredAgent(s.actorSet, goal.TaskPlan.Assignee) {
 			return ErrForbidden

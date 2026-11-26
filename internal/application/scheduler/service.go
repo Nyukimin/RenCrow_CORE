@@ -275,6 +275,10 @@ func cloneTaskTiming(timing *modulecore.TaskTiming) *modulecore.TaskTiming {
 		return nil
 	}
 	cloned := *timing
+	if timing.CompletionCondition != nil {
+		condition := *timing.CompletionCondition
+		cloned.CompletionCondition = &condition
+	}
 	cloned.ScheduledStartAt = cloneTimePtr(timing.ScheduledStartAt)
 	cloned.NotBefore = cloneTimePtr(timing.NotBefore)
 	cloned.DeadlineAt = cloneTimePtr(timing.DeadlineAt)

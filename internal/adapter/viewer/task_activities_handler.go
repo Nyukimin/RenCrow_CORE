@@ -282,7 +282,7 @@ func (h *taskActivitiesHandler) listTaskActivities(ctx context.Context, query ta
 	}
 	for scan := 0; scan < taskActivitiesPageScanLimit; scan++ {
 		page, err := h.reader.ListTaskActivityInventory(ctx, domaintask.TaskActivityInventoryFilter{
-			BeforeTaskID: before, Status: query.Status, ExcludeStatus: query.ExcludeStatus, Assignee: query.Assignee,
+			BeforeTaskID: before, Status: query.Status, ExcludeStatus: query.ExcludeStatus, OpenOnly: query.View == "unfinished", Assignee: query.Assignee,
 			Category: query.Category, Limit: 200,
 		}, h.authorizeTaskRead)
 		if err != nil {
@@ -379,6 +379,9 @@ func taskActivitiesCurrentSnapshot(current map[string]domaintask.CurrentActivity
 }
 
 func currentTaskActivityMatches(row taskActivityCurrentListRow, query taskActivitiesQuery) bool {
+	if query.View == "unfinished" && domaintask.IsTerminal(row.Task.Status) {
+		return false
+	}
 	if query.Status != "" && row.Task.Status != query.Status {
 		return false
 	}
@@ -435,7 +438,7 @@ func currentTaskActivityItems(current map[string]domaintask.CurrentActivitySumma
 		if query.Assignee != "" && query.Assignee != actorID && query.Assignee != item.Assignee {
 			continue
 		}
-		if query.Status != "" && item.Status != query.Status || query.ExcludeStatus != "" && item.Status == query.ExcludeStatus || query.Category != "" && (item.Activity == nil || item.Activity.Kind != query.Category) {
+		if query.View == "unfinished" && domaintask.IsTerminal(item.Status) || query.Status != "" && item.Status != query.Status || query.ExcludeStatus != "" && item.Status == query.ExcludeStatus || query.Category != "" && (item.Activity == nil || item.Activity.Kind != query.Category) {
 			continue
 		}
 		items = append(items, item.TaskActivityInventoryRow)

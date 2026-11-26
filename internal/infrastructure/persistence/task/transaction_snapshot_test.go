@@ -157,7 +157,8 @@ func TestTransactionSnapshotDefensiveCopiesProductionMetadata(t *testing.T) {
 
 func TestCloneTaskTimingPreservesNilAndPresentEmptyCollections(t *testing.T) {
 	timing := modulecore.TaskTiming{
-		AllowedWindows: []modulecore.TaskTimeWindow{},
+		CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "count", TargetCount: 3, CountUnit: "game"},
+		AllowedWindows:      []modulecore.TaskTimeWindow{},
 		Recurrence: &modulecore.TaskRecurrence{
 			Frequency: "daily",
 			Times:     []string{},
@@ -165,11 +166,42 @@ func TestCloneTaskTimingPreservesNilAndPresentEmptyCollections(t *testing.T) {
 		},
 	}
 	cloned := cloneTaskTiming(timing)
+	cloned.CompletionCondition.TargetCount = 4
+	if timing.CompletionCondition.TargetCount != 3 {
+		t.Fatal("completion condition is shared across transaction snapshot")
+	}
 	if cloned.AllowedWindows == nil || cloned.Recurrence == nil || cloned.Recurrence.Times == nil || cloned.Recurrence.Weekdays == nil {
 		t.Fatal("present empty timing collections became nil in a transaction snapshot")
 	}
 	if nilClone := cloneTaskTiming(modulecore.TaskTiming{}); nilClone.AllowedWindows != nil || nilClone.Recurrence != nil {
 		t.Fatal("nil timing collections changed during clone")
+	}
+}
+
+func TestTaskCompletionConditionSurvivesReopen(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	store, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := snapshotTestTask(time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC))
+	item.Timing = &modulecore.TaskTiming{CompletionCondition: &modulecore.TaskCompletionCondition{Kind: "duration", DurationSeconds: 1800}}
+	if err := store.SaveTask(ctx, item); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	stored, err := store.GetTask(ctx, item.TaskID)
+	if err != nil || stored.Timing == nil || stored.Timing.CompletionCondition == nil || stored.Timing.CompletionCondition.DurationSeconds != 1800 {
+		t.Fatalf("stored task=%+v error=%v", stored, err)
 	}
 }
 

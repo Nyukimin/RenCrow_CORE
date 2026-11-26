@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -18,13 +19,51 @@ const (
 // TaskTiming is the shared, pure time-condition projection for a task.
 // Nil optional fields mean explicitly unspecified for a newly planned item.
 type TaskTiming struct {
-	Timezone                 string           `json:"timezone"`
-	ScheduledStartAt         *time.Time       `json:"scheduled_start_at"`
-	NotBefore                *time.Time       `json:"not_before"`
-	AllowedWindows           []TaskTimeWindow `json:"allowed_windows"`
-	DeadlineAt               *time.Time       `json:"deadline_at"`
-	Recurrence               *TaskRecurrence  `json:"recurrence"`
-	EstimatedDurationSeconds *int64           `json:"estimated_duration_seconds"`
+	Timezone                 string                   `json:"timezone"`
+	ScheduledStartAt         *time.Time               `json:"scheduled_start_at"`
+	NotBefore                *time.Time               `json:"not_before"`
+	AllowedWindows           []TaskTimeWindow         `json:"allowed_windows"`
+	DeadlineAt               *time.Time               `json:"deadline_at"`
+	Recurrence               *TaskRecurrence          `json:"recurrence"`
+	EstimatedDurationSeconds *int64                   `json:"estimated_duration_seconds"`
+	CompletionCondition      *TaskCompletionCondition `json:"completion_condition,omitempty"`
+}
+
+// TaskCompletionCondition records the owner's intended stop rule. It does not
+// start a timer or claim that an execution has satisfied the rule.
+type TaskCompletionCondition struct {
+	Kind            string `json:"kind"`
+	Criteria        string `json:"criteria,omitempty"`
+	TargetCount     int64  `json:"target_count,omitempty"`
+	CountUnit       string `json:"count_unit,omitempty"`
+	DurationSeconds int64  `json:"duration_seconds,omitempty"`
+}
+
+func (c TaskCompletionCondition) Validate() error {
+	if c.Criteria != strings.TrimSpace(c.Criteria) || c.CountUnit != strings.TrimSpace(c.CountUnit) {
+		return errors.New("completion condition text must be trimmed")
+	}
+	switch c.Kind {
+	case "unspecified":
+		if c.Criteria != "" || c.TargetCount != 0 || c.CountUnit != "" || c.DurationSeconds != 0 {
+			return errors.New("unspecified completion condition must not have parameters")
+		}
+	case "until_complete":
+		if c.Criteria == "" || c.TargetCount != 0 || c.CountUnit != "" || c.DurationSeconds != 0 {
+			return errors.New("until_complete requires only completion criteria")
+		}
+	case "count":
+		if c.TargetCount <= 0 || c.CountUnit == "" || c.Criteria != "" || c.DurationSeconds != 0 {
+			return errors.New("count requires a positive target and count unit")
+		}
+	case "duration":
+		if c.DurationSeconds <= 0 || c.Criteria != "" || c.TargetCount != 0 || c.CountUnit != "" {
+			return errors.New("duration requires a positive activity duration")
+		}
+	default:
+		return errors.New("invalid completion condition kind")
+	}
+	return nil
 }
 
 // MarshalJSON keeps the windows field an array when no windows are specified.
@@ -63,6 +102,11 @@ type TaskRecurrence struct {
 }
 
 func (t TaskTiming) Validate() error {
+	if t.CompletionCondition != nil {
+		if err := t.CompletionCondition.Validate(); err != nil {
+			return fmt.Errorf("completion_condition: %w", err)
+		}
+	}
 	if t.EstimatedDurationSeconds != nil && *t.EstimatedDurationSeconds < 0 {
 		return errors.New("estimated_duration_seconds must not be negative")
 	}
@@ -119,9 +163,23 @@ func (t TaskTiming) Validate() error {
 	return nil
 }
 
-// Ready reports whether schedule, not-before, and window conditions admit a
-// start at now. Deadline handling is left to the owning execution contract.
+// Ready reports whether generic execution can start now, including its ability
+// to enforce the completion condition. Deadline handling belongs to the owner.
 func (t TaskTiming) Ready(now time.Time) bool {
+	if t.Validate() != nil || now.IsZero() {
+		return false
+	}
+	// Generic execution cannot yet verify explicit completion rules. Keep such
+	// tasks out of executable queues until their owner supports the rule.
+	if t.CompletionCondition != nil && t.CompletionCondition.Kind != "unspecified" {
+		return false
+	}
+	return t.ScheduleReady(now)
+}
+
+// ScheduleReady checks only start-time constraints. Callers must separately
+// establish that their execution owner can enforce any completion condition.
+func (t TaskTiming) ScheduleReady(now time.Time) bool {
 	if t.Validate() != nil || now.IsZero() {
 		return false
 	}

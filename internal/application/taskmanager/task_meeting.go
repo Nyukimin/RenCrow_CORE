@@ -1029,6 +1029,10 @@ func cloneTaskMeetingRootProof(value domaintask.TaskMeetingRootProof) domaintask
 }
 
 func cloneTaskMeetingTiming(value modulecore.TaskTiming) modulecore.TaskTiming {
+	if value.CompletionCondition != nil {
+		condition := *value.CompletionCondition
+		value.CompletionCondition = &condition
+	}
 	value.AllowedWindows = append([]modulecore.TaskTimeWindow(nil), value.AllowedWindows...)
 	if value.ScheduledStartAt != nil {
 		copied := *value.ScheduledStartAt

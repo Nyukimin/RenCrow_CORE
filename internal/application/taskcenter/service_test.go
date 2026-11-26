@@ -18,6 +18,28 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+func TestSubmitSharedTaskRequiresAnEligibleAgent(t *testing.T) {
+	store, err := persistworkstream.NewSQLiteStore(filepath.Join(t.TempDir(), "task-center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	policy := taskCenterTestPolicy("mio")
+	revision, err := policy.CanonicalHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store, policy, []string{"mio", "other"}, []Kind{{ID: "research", Label: "Research", ExecutorAvailable: true, IntrinsicAllowedAgents: []string{"other"}}}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := taskCenterServiceTestScope(t, "no-eligible-agent")
+	input := SubmitInput{Title: "shared work", Description: "research", KindID: "research", SuccessCriteria: []string{"answer"}, Verification: []string{"verify"}, Assignee: domainworkstream.TaskPlanAssigneeUnassigned, IdempotencyKey: "no-eligible-agent", ExpectedPolicyRevision: revision}
+	if _, err := service.Submit(tool.WithToolExecutionScope(context.Background(), scope), input); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("shared task without an eligible agent error = %v, want invalid", err)
+	}
+}
+
 func TestSubmitReceiptReplaySurvivesPolicyChange(t *testing.T) {
 	store, err := persistworkstream.NewSQLiteStore(filepath.Join(t.TempDir(), "task-center.db"))
 	if err != nil {

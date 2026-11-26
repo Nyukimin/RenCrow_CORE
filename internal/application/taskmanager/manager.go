@@ -1448,7 +1448,7 @@ func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintas
 		return false, "", fmt.Errorf("passive current activity Tasks do not execute Runs: %w", domaintask.ErrCurrentActivityInvalid)
 	}
 	if err := candidate.ValidateStartTiming(m.now()); err != nil {
-		return false, "", err
+		return false, err.Error(), nil
 	}
 	for _, dependencyID := range candidate.DependencyTaskIDs {
 		dependency, err := m.store.GetTask(ctx, dependencyID)

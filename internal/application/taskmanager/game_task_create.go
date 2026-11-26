@@ -168,11 +168,24 @@ func normalizeGameTaskCreateOperation(
 	}
 	if draft.Status != "" || !draft.CreatedAt.IsZero() || !draft.UpdatedAt.IsZero() || draft.StartedAt != nil || draft.FinishedAt != nil ||
 		draft.RoutingEventID != "" || draft.AssignmentEventID != "" || draft.ExpectedCriteriaRevision != "" || draft.NativeResumeClaims != nil ||
-		draft.CoderRoles != nil || draft.Timing != nil || draft.InterruptPolicy != "" ||
+		draft.CoderRoles != nil || draft.InterruptPolicy != "" ||
 		draft.OriginPublication != nil || draft.AcceptedOPSClaim != nil || draft.Production != nil || draft.Autonomous != nil || draft.PrivateAccess != nil ||
 		draft.TaskCenterExecution != nil || draft.NativePlanningInvocation != nil || draft.TaskMeetingInvocation != nil || draft.TaskMeetingResult != nil ||
 		draft.Summary != "" || draft.WaitingReason != "" || draft.NextActions != nil || draft.Evidence != nil || draft.Artifacts != nil {
 		return gameTaskCreateOperationRequest{}, "", "", errors.New("GAME Task creation draft contains owner-managed fields")
+	}
+	if draft.Timing != nil {
+		timing := draft.Timing
+		condition := timing.CompletionCondition
+		if timing.Validate() != nil || !domaintask.SupportsGameCompletionCondition(condition) ||
+			timing.Timezone != "" || timing.ScheduledStartAt != nil || timing.NotBefore != nil || len(timing.AllowedWindows) != 0 || timing.DeadlineAt != nil || timing.Recurrence != nil || timing.EstimatedDurationSeconds != nil {
+			return gameTaskCreateOperationRequest{}, "", "", errors.New("GAME Task creation supports only one completed game session")
+		}
+		copiedTiming := *timing
+		copiedCondition := *condition
+		copiedTiming.CompletionCondition = &copiedCondition
+		copiedTiming.AllowedWindows = nil
+		draft.Timing = &copiedTiming
 	}
 	draft.Title = strings.TrimSpace(draft.Title)
 	draft.OwnerID = ownerID

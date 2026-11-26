@@ -225,6 +225,9 @@ func reauthorizeInventoryTasks(ctx context.Context, selected []domaintask.Task, 
 }
 
 func inventoryTaskMatches(item domaintask.Task, filter domaintask.TaskActivityInventoryFilter) bool {
+	if filter.OpenOnly && domaintask.IsTerminal(item.Status) {
+		return false
+	}
 	if filter.Status != "" && item.Status != filter.Status {
 		return false
 	}

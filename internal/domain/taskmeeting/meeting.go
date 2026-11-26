@@ -2421,6 +2421,10 @@ func (meeting Meeting) clone() Meeting {
 
 func cloneTiming(timing modulecore.TaskTiming) modulecore.TaskTiming {
 	copy := timing
+	if timing.CompletionCondition != nil {
+		condition := *timing.CompletionCondition
+		copy.CompletionCondition = &condition
+	}
 	if timing.ScheduledStartAt != nil {
 		value := *timing.ScheduledStartAt
 		copy.ScheduledStartAt = &value

@@ -1614,25 +1614,27 @@ func TestDistributedWorkerTerminalFailurePersistsFailedTaskAndRun(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) != 3 {
-		t.Fatalf("persisted Tasks=%+v, want root execution, delegated worker execution, and passive Evaluating successor", tasks)
+	if len(tasks) != 4 {
+		t.Fatalf("persisted Tasks=%+v, want root, delegated worker, and one passive successor per actor", tasks)
 	}
 	executionTaskID := worker.sentMessages[0].TaskID
-	var executionTask, rootTask, successor domaintask.Task
+	var executionTask, rootTask domaintask.Task
+	successors := make(map[string]domaintask.Task)
 	for _, task := range tasks {
 		if task.TaskID == executionTaskID {
 			executionTask = task
 		} else if task.Activity != nil && task.Activity.Kind == domaintask.ActivityKindEvaluating {
-			successor = task
+			if _, exists := successors[task.Assignee]; exists {
+				t.Fatalf("duplicate passive successor for %s", task.Assignee)
+			}
+			successors[task.Assignee] = task
 		} else {
 			rootTask = task
 		}
 	}
 	if executionTask.TaskID != executionTaskID || executionTask.Status != domaintask.StatusFailed || executionTask.Activity == nil ||
-		executionTask.Activity.Kind != domaintask.ActivityKindWork || rootTask.TaskID == "" || rootTask.ParentTaskID != "" || rootTask.Status != domaintask.StatusFailed || successor.TaskID == "" ||
-		successor.Status != domaintask.StatusRunning || successor.Activity == nil ||
-		successor.Activity.Kind != domaintask.ActivityKindEvaluating || !successor.Activity.Passive {
-		t.Fatalf("root=%+v execution=%+v successor=%+v, want failed root and worker execution Tasks plus passive Evaluating successor", rootTask, executionTask, successor)
+		executionTask.Activity.Kind != domaintask.ActivityKindWork || rootTask.TaskID == "" || rootTask.ParentTaskID != "" || rootTask.Status != domaintask.StatusFailed || rootTask.Assignee != "mio" {
+		t.Fatalf("root=%+v execution=%+v, want failed assigned root and worker execution Tasks", rootTask, executionTask)
 	}
 	runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{})
 	if err != nil {
@@ -1646,12 +1648,18 @@ func TestDistributedWorkerTerminalFailurePersistsFailedTaskAndRun(t *testing.T) 
 			t.Fatalf("run %s status=%s", run.RunID, run.Status)
 		}
 	}
-	if successorRuns, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
-		t.Fatalf("Evaluating successor Runs=%+v err=%v, want none", successorRuns, err)
+	current, err := owner.SnapshotCurrentActivities(context.Background(), []string{"mio", "shiro"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	current, err := owner.SnapshotCurrentActivities(context.Background(), []string{"shiro"})
-	if err != nil || current["shiro"].Task.TaskID != successor.TaskID {
-		t.Fatalf("current Shiro activity=%+v err=%v, want passive successor", current, err)
+	for _, actor := range []string{"mio", "shiro"} {
+		successor := successors[actor]
+		if successor.TaskID == "" || successor.Status != domaintask.StatusRunning || successor.Activity == nil || !successor.Activity.Passive || current[actor].Task.TaskID != successor.TaskID {
+			t.Fatalf("current %s activity=%+v successor=%+v, want passive successor", actor, current[actor], successor)
+		}
+		if successorRuns, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: successor.TaskID}); err != nil || len(successorRuns) != 0 {
+			t.Fatalf("%s Evaluating successor Runs=%+v err=%v, want none", actor, successorRuns, err)
+		}
 	}
 	for _, msg := range worker.sentMessages {
 		if _, err := owner.Get(context.Background(), msg.TaskID); err != nil {

@@ -112,7 +112,7 @@ func taskCreateRequestFromCLI(requestID modulecore.RequestID, draft domaintask.T
 		ReadOnly: draft.ReadOnly, ParentTaskID: draft.ParentTaskID, DependencyTaskIDs: append([]modulecore.TaskID(nil), draft.DependencyTaskIDs...),
 		OriginSessionID: draft.OriginSessionID, OriginThreadID: draft.OriginThreadID, OriginTurnID: draft.OriginTurnID,
 		OriginMessageID: draft.OriginMessageID, WorkstreamID: draft.WorkstreamID, GoalID: draft.GoalID,
-		SupersedesTaskID: draft.SupersedesTaskID, GameSpec: shared.GameSpec,
+		SupersedesTaskID: draft.SupersedesTaskID, GameSpec: shared.GameSpec, Timing: draft.Timing,
 	}
 }
 

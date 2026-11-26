@@ -118,8 +118,21 @@ func TestTaskActivitiesUnfinishedViewExcludesSucceededAtInventorySource(t *testi
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if reader.lastFilter.ExcludeStatus != domaintask.StatusSucceeded || reader.lastFilter.Limit != 200 {
+	if reader.lastFilter.ExcludeStatus != domaintask.StatusSucceeded || !reader.lastFilter.OpenOnly || reader.lastFilter.Limit != 200 {
 		t.Fatalf("unfinished inventory filter = %+v", reader.lastFilter)
+	}
+}
+
+func TestUnfinishedActivityViewExcludesAllTerminalTasks(t *testing.T) {
+	query, err := parseTaskActivitiesQuery(&url.URL{RawQuery: "view=unfinished"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []domaintask.Status{domaintask.StatusSucceeded, domaintask.StatusFailed, domaintask.StatusCancelled, domaintask.StatusSuperseded} {
+		row := taskActivityCurrentListRow{Task: domaintask.TaskActivityInventoryRow{Status: status}}
+		if currentTaskActivityMatches(row, query) {
+			t.Errorf("unfinished view included terminal status %s", status)
+		}
 	}
 }
 
