@@ -2229,6 +2229,7 @@ BOARD wireは既存v1のcontexts、threads、send、inbox、receipt、processing
 - `/viewer/board/task-overview?view=daily|instant`：定期ジョブ定義と単発Taskを独立して取得します。`limit`（既定50、1〜100）とopaque `cursor`に対応し、`observed_at`、`availability`、`partial`、`items`を返します。定期ジョブの担当者は任意の`assignee`で投影し、不明な場合は推測で埋めません。
 - `/viewer/board/registered-schedules?source=scheduler|workstream|cron`：アプリ登録予定、Workstreamの個別予定、CORE実行ユーザーのcronを情報源別に返します。`limit`（既定50、1〜100）とopaque `cursor`に対応します。未取得を空一覧の成功とは扱わず、取得状態と継続cursorを返します。システムcronや他ユーザーのcronは対象外です。
 - `/viewer/board/system-jobs`：queryなしで、許可されたRenCrowのlaunchd定義・ロード状態・実行状態を安全化して返します。非対応OSは`unsupported`、取得できない範囲は`partial`または`unavailable`として区別します。plistの実行引数や環境変数、credentialを返しません。
+- `/viewer/board/conversation-history?date=YYYY-MM-DD`：JST日付に保存された住人同士の確定会話を`items: [{id, at, turns: [{actor_id, text}]}]`で返します。COREの日常活動DBの`agent_routine`由来の`morning_chat`／`conversation`本文だけを読み、参加者別のコピーはsource IDで重複排除して新しい順に並べます。ユーザー会話・Worker promptや別sourceの参照は含めません。日付は必須・一つだけで、追加queryを拒否します。取得成功で記録がない日は`items: []`、保存元の未設定・読取失敗・壊れた会話・コピー不一致・2 MiB超過は503とし、空の成功へ丸めません。本文は認証済みownerだけに返し、`Cache-Control: no-store`を付けます。
 
 各APIの認証・query検査とinteraction profile許可は両方必要です。runtimeへの登録も含めて回帰検査し、既存のTask Activitiesだけが成功する状態をBOARD全体の成功とは扱いません。
 

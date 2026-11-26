@@ -36,6 +36,11 @@ func registerRuntimeTaskActivitiesRoute(mux *http.ServeMux, cfg *config.Config, 
 		userID = deps.taskCenterUserID
 	}
 	_, token := viewerEventsCMDOwnerCredentials(cfg)
+	var conversations viewer.BoardConversationHistoryReader
+	if deps != nil && deps.agentRoutine != nil {
+		conversations = deps.agentRoutine
+	}
+	mux.HandleFunc("GET "+viewer.BoardConversationHistoryPath, viewer.NewBoardConversationHistoryHandler(conversations, token))
 	mux.HandleFunc("GET /viewer/board/task-activities", viewer.NewTaskActivitiesHandler(reader, goals, userID, token, publications))
 	mux.HandleFunc("GET /viewer/board/system-jobs", viewer.NewSystemJobsHandler(newSystemJobsReader(), userID, token))
 	var taskOverviewCenter *taskcenter.Center
