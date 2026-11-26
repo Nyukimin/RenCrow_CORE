@@ -827,12 +827,24 @@ func TestBoardStudioReadOnlyProfileOnlyAllowsAuthenticatedProjectionPath(t *test
 	}{
 		{name: "board studio read", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/agent-work", want: http.StatusNoContent},
 		{name: "board Task activities read", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-activities", want: http.StatusNoContent},
+		{name: "board Task overview read", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-overview", want: http.StatusNoContent},
+		{name: "board system jobs read", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/system-jobs", want: http.StatusNoContent},
+		{name: "board registered schedules read", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/registered-schedules", want: http.StatusNoContent},
 		{name: "board profile cannot read public heartbeat", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/living/heartbeat", want: http.StatusForbidden},
 		{name: "board profile cannot write", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodPost, path: "/viewer/board/agent-work", want: http.StatusForbidden},
 		{name: "board profile cannot write Task activities", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodPost, path: "/viewer/board/task-activities", want: http.StatusForbidden},
+		{name: "board profile cannot write Task overview", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodPost, path: "/viewer/board/task-overview", want: http.StatusForbidden},
+		{name: "board profile cannot write system jobs", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodPost, path: "/viewer/board/system-jobs", want: http.StatusForbidden},
+		{name: "board profile cannot write registered schedules", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodPost, path: "/viewer/board/registered-schedules", want: http.StatusForbidden},
 		{name: "board profile cannot claim another path", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-activities/extra", want: http.StatusForbidden},
+		{name: "board profile cannot claim Task overview subpath", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-overview/extra", want: http.StatusForbidden},
+		{name: "board profile cannot claim system jobs subpath", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/system-jobs/extra", want: http.StatusForbidden},
+		{name: "board profile cannot claim registered schedules subpath", client: "RenCrow_BOARD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/registered-schedules/extra", want: http.StatusForbidden},
 		{name: "other client cannot claim board profile", client: "RenCrow_CMD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/agent-work", want: http.StatusForbidden},
 		{name: "other client cannot read Task activities", client: "RenCrow_CMD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-activities", want: http.StatusForbidden},
+		{name: "other client cannot read Task overview", client: "RenCrow_CMD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/task-overview", want: http.StatusForbidden},
+		{name: "other client cannot read system jobs", client: "RenCrow_CMD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/system-jobs", want: http.StatusForbidden},
+		{name: "other client cannot read registered schedules", client: "RenCrow_CMD", profile: "board-studio-readonly", method: http.MethodGet, path: "/viewer/board/registered-schedules", want: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

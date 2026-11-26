@@ -2222,6 +2222,16 @@ receiptはCORE発行のrequest／turn／trace／message等の相関、BOARD参�
 
 BOARD wireは既存v1のcontexts、threads、send、inbox、receipt、processing-claim、ACK、message statusと認証済みSSEを使用します。接続identityの読取としてGET /api/v1/connectionを追加し、currentなscoped非admin Bearer本人のprincipal_idとjournal_instance_idだけを返します。既存contexts／flat inbox／senderとrecipientの双方が取得できるreceiptでは、期待principalとjournal継続性を観測できないための追加です。GETはidentity初期化を行いません。COREはX-BOARD-Journal-Instance-IDとX-BOARD-Principal-IDを後続要求へ付けます。両header無は既存peer互換、片方だけ・形式不正は400 connection_identity_precondition_invalid、認証後の期待tuple不一致は409 connection_identity_mismatchとし現在値を開示しません。BOARDはSend／新thread／claim／ACKのcanonical mutation lock内で現在credentialと期待tupleをcommit前に検証します。COREはprecondition無しへfallbackせず、mismatchを未commit証明や再pin許可にしません。各操作でchannel／thread／reply_to／mentions／recipient／ACL契約を維持し、旧管理routeへfallbackしません。CORE起点requestへのreplyはreply_to、expected peer、context、causation照合後に終端化し、新たなMio生成を起動しません。詳細は[アーキテクチャ](04_アーキテクチャ概要.md#board-communication)と[安全方針](07_安全・自動実行・データ方針.md#board-communication)を参照します。
 
+## BOARD Studio参照一覧のowner projection
+
+以下のGET-only APIは、direct loopback、configured owner Bearer、`RenCrow_BOARD` client、`board-studio-readonly` profileをすべて要求します。BOARDが受け取った情報を表示するための参照経路であり、Taskや予定の作成・実行・停止を行いません。
+
+- `/viewer/board/task-overview?view=daily|instant`：定期ジョブ定義と単発Taskを独立して取得します。`limit`（既定50、1〜100）とopaque `cursor`に対応し、`observed_at`、`availability`、`partial`、`items`を返します。定期ジョブの担当者は任意の`assignee`で投影し、不明な場合は推測で埋めません。
+- `/viewer/board/registered-schedules?source=scheduler|workstream|cron`：アプリ登録予定、Workstreamの個別予定、CORE実行ユーザーのcronを情報源別に返します。`limit`（既定50、1〜100）とopaque `cursor`に対応します。未取得を空一覧の成功とは扱わず、取得状態と継続cursorを返します。システムcronや他ユーザーのcronは対象外です。
+- `/viewer/board/system-jobs`：queryなしで、許可されたRenCrowのlaunchd定義・ロード状態・実行状態を安全化して返します。非対応OSは`unsupported`、取得できない範囲は`partial`または`unavailable`として区別します。plistの実行引数や環境変数、credentialを返しません。
+
+各APIの認証・query検査とinteraction profile許可は両方必要です。runtimeへの登録も含めて回帰検査し、既存のTask Activitiesだけが成功する状態をBOARD全体の成功とは扱いません。
+
 ## BOARD Studio Task Activities owner projection
 
 `GET /viewer/board/task-activities`はBOARD Studio専用のdirect-loopback読み取りAPIです。`RenCrow_BOARD` client、`board-studio-readonly` profile、既存owner Bearer認証をすべて要求します。認証済みconfigured userのTask summaryだけを返し、browserへCORE tokenを渡しません。

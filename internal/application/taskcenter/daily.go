@@ -206,6 +206,7 @@ type DailyDefinitionDescriptor struct {
 	ResourceType   string             `json:"resource_type"`
 	DataScope      string             `json:"data_scope"`
 	UserID         string             `json:"-"`
+	Assignee       string             `json:"assignee,omitempty"`
 	Implementation DailyAxis          `json:"implementation"`
 	SourceRefs     []DailyResourceRef `json:"source_refs"`
 }

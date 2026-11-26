@@ -69,7 +69,7 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 	"board-studio-readonly": {
 		client: "RenCrow_BOARD",
 		allow: func(method, path string) bool {
-			return method == http.MethodGet && (path == "/viewer/board/agent-work" || path == "/viewer/board/task-activities")
+			return method == http.MethodGet && (path == "/viewer/board/agent-work" || path == "/viewer/board/task-activities" || path == "/viewer/board/task-overview" || path == "/viewer/board/system-jobs" || path == "/viewer/board/registered-schedules")
 		},
 	},
 	"cmd-control": {

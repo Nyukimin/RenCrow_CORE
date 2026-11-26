@@ -741,7 +741,8 @@ func validateDailySourceDescriptor(descriptor DailySourceDescriptor) error {
 	seen := make(map[string]struct{}, len(descriptor.Definitions))
 	for _, definition := range descriptor.Definitions {
 		if definition.SourceID != descriptor.SourceID || !dailyCanonicalID(definition.DefinitionID) || !dailyCanonicalID(definition.KindID) ||
-			!dailySafeLabel(definition.Label) || !dailySafeReference(definition.OwnerRef) || !dailyCanonicalID(definition.ResourceType) {
+			!dailySafeLabel(definition.Label) || !dailySafeReference(definition.OwnerRef) || !dailyCanonicalID(definition.ResourceType) ||
+			(definition.Assignee != "" && !dailyCanonicalID(definition.Assignee)) {
 			return ErrInvalid
 		}
 		if _, exists := seen[definition.DefinitionID]; exists {
