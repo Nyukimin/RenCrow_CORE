@@ -18,6 +18,8 @@ type taskPin struct {
 	hasOriginPublication   bool
 	privateAccess          domaintask.TaskPrivateAccess
 	hasPrivateAccess       bool
+	researchBinding        domaintask.ResearchExecutionBinding
+	hasResearchBinding     bool
 	workstreamID           modulecore.WorkstreamID
 	goalID                 modulecore.GoalID
 	taskCenterExecution    domaintask.TaskCenterExecution
@@ -54,6 +56,10 @@ func pinOfTask(value domaintask.Task) taskPin {
 		pin.hasPrivateAccess = true
 		pin.workstreamID = value.WorkstreamID
 		pin.goalID = value.GoalID
+	}
+	if value.ResearchBinding != nil {
+		pin.researchBinding = *value.ResearchBinding
+		pin.hasResearchBinding = true
 	}
 	if value.OriginPublication != nil {
 		pin.originPublication = *value.OriginPublication
@@ -99,6 +105,11 @@ func checkTaskPinTransition(previous taskPin, next domaintask.Task) error {
 	if previous.hasPrivateAccess != nextHasPrivateAccess ||
 		(previous.hasPrivateAccess && (previous.privateAccess != *next.PrivateAccess || previous.workstreamID != next.WorkstreamID || previous.goalID != next.GoalID)) {
 		return domaintask.ErrPrivateTaskAccessImmutable
+	}
+	nextHasResearchBinding := next.ResearchBinding != nil
+	if previous.hasResearchBinding != nextHasResearchBinding ||
+		(previous.hasResearchBinding && previous.researchBinding != *next.ResearchBinding) {
+		return domaintask.ErrResearchExecutionBindingImmutable
 	}
 	return nil
 }

@@ -124,6 +124,9 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.LLMGateway.BaseURL) != "" && c.LLMGateway.TimeoutSec < 1 {
 		return fmt.Errorf("llm_gateway.timeout_sec must be >= 1")
 	}
+	if err := c.validateResearchSemanticIndexConfig(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.Games.ObserverURL) != "" {
 		if err := validateCatalogEndpoint("games.observer_url", c.Games.ObserverURL, false); err != nil {
 			return err
@@ -969,6 +972,35 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	return nil
+}
+
+func (c *Config) validateResearchSemanticIndexConfig() error {
+	index := c.Research.SemanticIndex
+	serviceRef := index.ServiceRef
+	if serviceRef != "" {
+		if len(serviceRef) > 128 || strings.TrimSpace(serviceRef) != serviceRef {
+			return fmt.Errorf("research.semantic_index.service_ref must be a normalized identifier of at most 128 bytes")
+		}
+		for i := range serviceRef {
+			ch := serviceRef[i]
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-' || ch == '.') {
+				return fmt.Errorf("research.semantic_index.service_ref must contain only ASCII letters, digits, '.', '_' or '-'")
+			}
+		}
+	}
+	if !index.Enabled {
+		return nil
+	}
+	if !c.Research.Enabled {
+		return fmt.Errorf("research.semantic_index.enabled requires research.enabled")
+	}
+	if !c.LLMGateway.Enabled || strings.TrimSpace(c.LLMGateway.BaseURL) == "" {
+		return fmt.Errorf("research.semantic_index.enabled requires the configured LLM Gateway")
+	}
+	if serviceRef == "" {
+		return fmt.Errorf("research.semantic_index.service_ref is required when enabled=true")
+	}
 	return nil
 }
 

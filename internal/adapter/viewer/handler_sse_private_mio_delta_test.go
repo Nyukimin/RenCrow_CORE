@@ -204,6 +204,56 @@ func TestPrivateMioSSEWritesOrdinaryCanonicalFinalWithoutGuardTicket(t *testing.
 	}
 }
 
+func TestPrivateMioSSEResearchFinalStillRequiresExactOwnerEnvelope(t *testing.T) {
+	hub := NewEventHub(8)
+	requestCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/viewer/events?from=now", nil).WithContext(requestCtx)
+	writer := newBlockingSSEWriter()
+	done := make(chan struct{})
+	go func() {
+		hub.HandleSSEWithFilterAndPrivateMioDeltas(writer, request, func(context.Context, orchestrator.OrchestratorEvent) (bool, error) {
+			return true, nil
+		}, "ren")
+		close(done)
+	}()
+	waitForPrivateMioDeltaSubscriber(t, hub, "ren")
+
+	foreign := privateMioFinalTestEvent("foreign research final")
+	foreign.Route = "RESEARCH"
+	foreign.ChannelAddress = "cmd:other"
+	foreign.EventSeq = 1
+	if published, err := hub.PublishLive(foreign); err != nil || !published {
+		t.Fatalf("PublishLive(foreign) published=%t err=%v", published, err)
+	}
+	marker := orchestrator.NewEventWithTraceID(foreign.TraceID, "metrics.latency", "mio", "user", "after foreign research final", "CHAT", string(foreign.TaskID), string(foreign.SessionID), "viewer", "cmd:ren")
+	marker.EventSeq = 2
+	marker.TurnID = foreign.TurnID
+	marker.MessageID = foreign.MessageID
+	marker.RunID = foreign.RunID
+	if published, err := hub.PublishLive(marker); err != nil || !published {
+		t.Fatalf("PublishLive(marker) published=%t err=%v", published, err)
+	}
+	select {
+	case <-writer.entered:
+		close(writer.unblock)
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("SSE handler did not continue after rejecting the foreign Research final")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler did not stop after cancellation")
+	}
+	body := writer.String()
+	if strings.Contains(body, `"content":"foreign research final"`) || !strings.Contains(body, `"content":"after foreign research final"`) {
+		t.Fatalf("foreign Research final was written or following event was lost: %s", body)
+	}
+}
+
 func TestPrivateMioSSEDropsGuardedFinalRevokedBeforeWriterClaim(t *testing.T) {
 	hub := NewEventHub(8)
 	requestCtx, cancel := context.WithCancel(context.Background())

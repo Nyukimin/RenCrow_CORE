@@ -338,6 +338,111 @@ func TestTaskLifecycleAttachedActivationRejectsSavedRouteAndActorMismatch(t *tes
 	}
 }
 
+func TestTaskLifecycleFinalizesFromMatchingResearchProjection(t *testing.T) {
+	for _, tc := range []struct {
+		resultStatus string
+		wantTask     domaintask.Status
+		wantRun      domaintask.RunStatus
+	}{
+		{resultStatus: "succeeded", wantTask: domaintask.StatusSucceeded, wantRun: domaintask.RunStatusSucceeded},
+		{resultStatus: "partial", wantTask: domaintask.StatusFailed, wantRun: domaintask.RunStatusFailed},
+		{resultStatus: "failed", wantTask: domaintask.StatusFailed, wantRun: domaintask.RunStatusFailed},
+		{resultStatus: "waiting_input", wantTask: domaintask.StatusWaiting, wantRun: domaintask.RunStatusWaiting},
+		{resultStatus: "cancelled", wantTask: domaintask.StatusCancelled, wantRun: domaintask.RunStatusCancelled},
+	} {
+		t.Run(tc.resultStatus, func(t *testing.T) {
+			ctx := context.Background()
+			manager := newRecordingTaskLifecycleManager()
+			lifecycle := newTaskLifecycle(manager)
+			taskID := modulecore.NewTaskID()
+			run := seedRunningTask(manager, taskID, domaintask.RouteCHAT, taskLifecycleMio)
+			task := manager.tasks[taskID]
+			task.ResearchResult = &domaintask.ResearchResultProjection{
+				SchemaVersion: domaintask.ResearchResultSchema, TaskID: taskID, ExecutionRunID: run.RunID,
+				ResearchRunID: "run_research_1", ActorID: taskLifecycleMio, DataScope: "public",
+				ResultDigest: strings.Repeat("a", 64), Status: tc.resultStatus, ReceiptState: "none",
+				Missing: []string{"manual_seed"},
+			}
+			manager.tasks[taskID] = task
+			if err := lifecycle.finish(ctx, taskID, taskID, "typed terminal response", nil); err != nil {
+				t.Fatalf("finish() error = %v", err)
+			}
+			gotTask := manager.tasks[taskID]
+			gotRun := manager.runs[run.RunID]
+			if gotTask.Status != tc.wantTask || gotRun.Status != tc.wantRun {
+				t.Fatalf("final state Task=%s Run=%s, want Task=%s Run=%s", gotTask.Status, gotRun.Status, tc.wantTask, tc.wantRun)
+			}
+		})
+	}
+}
+
+func TestTaskLifecycleResearchWaitPropagatesFromChildToRoot(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	rootID, childID := modulecore.NewTaskID(), modulecore.NewTaskID()
+	seedRunningTask(manager, rootID, domaintask.RouteCHAT, taskLifecycleMio)
+	childRun := seedRunningTask(manager, childID, domaintask.RouteCHAT, taskLifecycleMio)
+	child := manager.tasks[childID]
+	child.ParentTaskID = rootID
+	child.ResearchResult = &domaintask.ResearchResultProjection{
+		SchemaVersion: domaintask.ResearchResultSchema, TaskID: childID, ExecutionRunID: childRun.RunID,
+		ResearchRunID: "run_research_child", ActorID: taskLifecycleMio, DataScope: "public",
+		ResultDigest: strings.Repeat("b", 64), Status: "waiting_input", ReceiptState: "none", Missing: []string{"manual_seed"},
+	}
+	manager.tasks[childID] = child
+	if err := lifecycle.finish(ctx, rootID, childID, "waiting research receipt", nil); err != nil {
+		t.Fatalf("finish child Research: %v", err)
+	}
+	if manager.tasks[childID].Status != domaintask.StatusWaiting || manager.tasks[rootID].Status != domaintask.StatusWaiting {
+		t.Fatalf("waiting child/root statuses = %s/%s", manager.tasks[childID].Status, manager.tasks[rootID].Status)
+	}
+}
+
+func TestTaskLifecycleLegacyResearchIncompleteErrorUsesMatchingProjection(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	taskID := modulecore.NewTaskID()
+	run := seedRunningTask(manager, taskID, domaintask.RouteCHAT, taskLifecycleMio)
+	task := manager.tasks[taskID]
+	task.ResearchResult = &domaintask.ResearchResultProjection{
+		SchemaVersion: domaintask.ResearchResultSchema, TaskID: taskID, ExecutionRunID: run.RunID,
+		ResearchRunID: "run_research_wait", ActorID: taskLifecycleMio, DataScope: "public",
+		ResultDigest: strings.Repeat("c", 64), Status: "waiting_input", ReceiptState: "none", Missing: []string{"manual_seed"},
+	}
+	manager.tasks[taskID] = task
+	executionErr := &domainagent.WebResearchIncompleteError{Result: domainagent.WebResearchRunResult{RunID: "run_research_wait", Status: "waiting_input"}}
+	if err := lifecycle.finish(ctx, taskID, taskID, "manual seed required", executionErr); err != nil {
+		t.Fatalf("finish legacy Research wait: %v", err)
+	}
+	if manager.tasks[taskID].Status != domaintask.StatusWaiting || manager.runs[run.RunID].Status != domaintask.RunStatusWaiting {
+		t.Fatalf("legacy waiting outcome statuses = Task %s Run %s", manager.tasks[taskID].Status, manager.runs[run.RunID].Status)
+	}
+}
+
+func TestTaskLifecycleLegacyResearchIncompleteErrorMustMatchProjectionStatus(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	taskID := modulecore.NewTaskID()
+	run := seedRunningTask(manager, taskID, domaintask.RouteCHAT, taskLifecycleMio)
+	task := manager.tasks[taskID]
+	task.ResearchResult = &domaintask.ResearchResultProjection{
+		SchemaVersion: domaintask.ResearchResultSchema, TaskID: taskID, ExecutionRunID: run.RunID,
+		ResearchRunID: "run_research_partial", ActorID: taskLifecycleMio, DataScope: "public",
+		ResultDigest: strings.Repeat("d", 64), Status: "partial", ReceiptState: "none", Missing: []string{"analysis"},
+	}
+	manager.tasks[taskID] = task
+	executionErr := &domainagent.WebResearchIncompleteError{Result: domainagent.WebResearchRunResult{RunID: "run_research_partial", Status: "waiting_input"}}
+	if err := lifecycle.finish(ctx, taskID, taskID, "Research incomplete", executionErr); err != nil {
+		t.Fatalf("finish mismatched legacy Research result: %v", err)
+	}
+	if manager.tasks[taskID].Status != domaintask.StatusFailed || manager.runs[run.RunID].Status != domaintask.RunStatusFailed {
+		t.Fatalf("mismatched Research status was treated as waiting: Task=%s Run=%s", manager.tasks[taskID].Status, manager.runs[run.RunID].Status)
+	}
+}
+
 func lifecycleTestRun(taskID modulecore.TaskID, assignee string, startedAt time.Time) domaintask.Run {
 	return domaintask.Run{
 		RunID:       modulecore.NewRunID(),

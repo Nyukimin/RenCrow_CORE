@@ -29,6 +29,34 @@ func (u *UseCase) WithFetchCache(cache FetchCache) *UseCase {
 	return u
 }
 
+// ResearchFetchPacing exposes WebGather's existing cache and host-rate state
+// to Research before it starts a fetch. The refresh result is true only for a
+// cached rate_limited failure; ordinary cache entries keep their usual path.
+func (u *UseCase) ResearchFetchPacing(ctx context.Context, req modulewebgather.FetchRequest) (time.Duration, bool, error) {
+	if u == nil || u.cache == nil {
+		return 0, false, nil
+	}
+	req = normalizeRequest(req)
+	refreshRateLimited := false
+	if !req.Refresh {
+		cached, hit, err := u.cache.Get(ctx, req, u.now())
+		if err != nil {
+			return 0, false, modulewebgather.WrapError(modulewebgather.ErrCacheError, "failed to read web gather fetch cache", err)
+		}
+		if hit {
+			if cached.Status != "failed" || cached.ErrorCode != modulewebgather.ErrRateLimited {
+				return 0, false, nil
+			}
+			refreshRateLimited = true
+		}
+	}
+	delay, err := u.cache.RateDelay(ctx, req.URL, u.now(), defaultRateMinInterval)
+	if err != nil {
+		return 0, false, modulewebgather.WrapError(modulewebgather.ErrCacheError, "failed to read web gather rate state", err)
+	}
+	return delay, refreshRateLimited, nil
+}
+
 func NewUseCase(fetcher modulewebgather.FetchProvider, extractor modulewebgather.Extractor, staging modulewebgather.StagingWriter) *UseCase {
 	u := &UseCase{
 		fetcher:   fetcher,
@@ -174,6 +202,8 @@ func (u *UseCase) FetchURL(ctx context.Context, req modulewebgather.FetchRequest
 		ContentType:      artifact.ContentType,
 		Title:            doc.Title,
 		TextPreview:      modulewebgather.TextPreview(doc.Text, 240),
+		TextExcerpt:      modulewebgather.TextPreview(doc.Text, 4000),
+		TextTruncated:    len([]rune(doc.Text)) > 4000,
 		ExtractedText:    doc.Text,
 		RawHash:          rawHash,
 		RawBytes:         artifact.RawBytes,

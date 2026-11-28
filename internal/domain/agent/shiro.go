@@ -103,6 +103,7 @@ func (s *ShiroAgent) ExecutePrivateWork(ctx context.Context, input conversation.
 	}
 
 	private := *s
+	private.llmProvider = privateWebResearch(s.llmProvider, capabilities)
 	private.conversation = nil
 	private.lightMemory = nil
 	private.mcpClient = nil

@@ -377,6 +377,83 @@ func liveJournalSchemaStatements() []string {
 			ON live_board_publication_attempt(work_id, attempt_ordinal)`,
 		`CREATE INDEX IF NOT EXISTS live_board_publication_claim_fence_order_idx
 			ON live_board_publication_claim_fence(work_id, prior_attempt_ordinal, created_at)`,
+		`CREATE TABLE IF NOT EXISTS live_research_board_publication (
+			operation_id TEXT PRIMARY KEY NOT NULL,
+			owner_id TEXT NOT NULL,
+			principal_id TEXT NOT NULL,
+			journal_instance_id TEXT NOT NULL,
+			destination_ref TEXT NOT NULL,
+			data_scope TEXT NOT NULL CHECK(data_scope IN ('public','user')),
+			channel_id TEXT NOT NULL,
+			thread_id TEXT NOT NULL,
+			new_thread INTEGER NOT NULL CHECK(new_thread IN (0,1)),
+			title TEXT NOT NULL,
+			recipients_json TEXT NOT NULL,
+			content_digest TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL,
+			prepared_bytes BLOB NOT NULL,
+			payload_sha256 TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('pending','leased','completed')),
+			lease_token TEXT NOT NULL DEFAULT '',
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			version INTEGER NOT NULL CHECK(version >= 1),
+			attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			CHECK((state='leased' AND lease_token<>'' AND lease_expires_at<>'') OR (state<>'leased' AND lease_token='' AND lease_expires_at=''))
+		)`,
+		`CREATE TABLE IF NOT EXISTS live_research_board_publication_attempt (
+			operation_id TEXT NOT NULL,
+			attempt_ordinal INTEGER NOT NULL CHECK(attempt_ordinal >= 1),
+			payload_sha256 TEXT NOT NULL,
+			prepared_bytes BLOB NOT NULL,
+			started_at TEXT NOT NULL,
+			PRIMARY KEY(operation_id, attempt_ordinal),
+			FOREIGN KEY(operation_id) REFERENCES live_research_board_publication(operation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS live_research_board_publication_attempt_append_only_update
+			BEFORE UPDATE ON live_research_board_publication_attempt
+			BEGIN
+				SELECT RAISE(ABORT, 'live_research_board_publication_attempt is append-only');
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS live_research_board_publication_attempt_append_only_delete
+			BEFORE DELETE ON live_research_board_publication_attempt
+			BEGIN
+				SELECT RAISE(ABORT, 'live_research_board_publication_attempt is append-only');
+			END`,
+		`CREATE TABLE IF NOT EXISTS live_research_board_publication_outcome (
+			operation_id TEXT PRIMARY KEY NOT NULL,
+			owner_id TEXT NOT NULL,
+			principal_id TEXT NOT NULL,
+			journal_instance_id TEXT NOT NULL,
+			destination_ref TEXT NOT NULL,
+			data_scope TEXT NOT NULL CHECK(data_scope IN ('public','user')),
+			content_digest TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL,
+			attempt_ordinal INTEGER NOT NULL CHECK(attempt_ordinal >= 1),
+			payload_sha256 TEXT NOT NULL,
+			message_id TEXT NOT NULL,
+			thread_id TEXT NOT NULL,
+			stored_at TEXT NOT NULL,
+			status TEXT NOT NULL CHECK(status='stored'),
+			channel_id TEXT NOT NULL,
+			sender_principal_id TEXT NOT NULL,
+			recipients_json TEXT NOT NULL,
+			body_digest TEXT NOT NULL,
+			completed_at TEXT NOT NULL,
+			FOREIGN KEY(operation_id) REFERENCES live_research_board_publication(operation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+			FOREIGN KEY(operation_id, attempt_ordinal) REFERENCES live_research_board_publication_attempt(operation_id, attempt_ordinal) ON UPDATE RESTRICT ON DELETE RESTRICT
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS live_research_board_publication_outcome_append_only_update
+			BEFORE UPDATE ON live_research_board_publication_outcome
+			BEGIN
+				SELECT RAISE(ABORT, 'live_research_board_publication_outcome is append-only');
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS live_research_board_publication_outcome_append_only_delete
+			BEFORE DELETE ON live_research_board_publication_outcome
+			BEGIN
+				SELECT RAISE(ABORT, 'live_research_board_publication_outcome is append-only');
+			END`,
 		`CREATE TABLE IF NOT EXISTS live_operation_receipt (
 			operation_id TEXT PRIMARY KEY NOT NULL,
 			operation_kind TEXT NOT NULL,

@@ -58,6 +58,9 @@ const (
 	// WebSearch can only be dispatched through the existing policy-checked
 	// web search route.
 	MioRetrievalSourceWebSearch MioRetrievalSourceKind = "web_search"
+	// Research selects the single bounded research.run service. Its query is
+	// only an intent marker; the runtime normalizes the original user message.
+	MioRetrievalSourceResearch MioRetrievalSourceKind = "research"
 )
 
 // IsRegistered reports whether kind is one of the semantic categories CORE
@@ -69,7 +72,8 @@ func (kind MioRetrievalSourceKind) IsRegistered() bool {
 		MioRetrievalSourceKnowledgeMemory,
 		MioRetrievalSourceCatalog,
 		MioRetrievalSourceGlossary,
-		MioRetrievalSourceWebSearch:
+		MioRetrievalSourceWebSearch,
+		MioRetrievalSourceResearch:
 		return true
 	default:
 		return false

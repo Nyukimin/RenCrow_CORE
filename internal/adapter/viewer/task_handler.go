@@ -57,6 +57,9 @@ func HandleTasksWithPublicVisibility(store TaskStore, visibility PublicTaskVisib
 		// Session is revoked or rebound.
 		visibleItems := filterPublicTasks(r.Context(), visibility, items)
 		visibleItems = filterPublicTasks(r.Context(), visibility, visibleItems)
+		for index := range visibleItems {
+			visibleItems[index] = projectResearchTaskSummary(visibleItems[index])
+		}
 		writeMonitorJSON(w, map[string]any{"items": visibleItems})
 	}
 }
@@ -116,8 +119,16 @@ func HandleTaskDetailWithPublicVisibility(store TaskStore, visibility PublicTask
 		// SharedRoleContext may contain Task-owned private execution state. The
 		// public Task detail projection exposes only the non-private context.
 		shared.PrivateText = nil
+		value = projectResearchTaskSummary(value)
 		writeMonitorJSON(w, map[string]any{"task": value, "context": shared, "runs": runs})
 	}
+}
+
+func projectResearchTaskSummary(task domaintask.Task) domaintask.Task {
+	if task.ResearchResult != nil {
+		task.Summary = task.ResearchResult.TaskSummary()
+	}
+	return task
 }
 
 func HandleTaskNotifications(store TaskStore) http.HandlerFunc {
@@ -188,6 +199,12 @@ func filterPublicTasks(ctx context.Context, visibility PublicTaskVisibility, tas
 
 func publicTaskVisible(ctx context.Context, visibility PublicTaskVisibility, task domaintask.Task) bool {
 	if visibility == nil {
+		return false
+	}
+	if task.ResearchBinding != nil {
+		return false
+	}
+	if task.ResearchResult != nil && (task.ResearchResult.DataScope != "public" || task.ResearchResult.Validate(task) != nil) {
 		return false
 	}
 	visible, err := visibility(ctx, task)

@@ -74,6 +74,17 @@ type MioRetrievalResult struct {
 	Items         []MioRetrievalItem              `json:"items,omitempty"`
 	Qualification MioRetrievalSourceQualification `json:"-"`
 	Provenance    []MioRetrievalProvenance        `json:"-"`
+	Research      *MioResearchTerminal            `json:"research,omitempty"`
+}
+
+// MioResearchTerminal is the source-owned terminal status and receipts. It is
+// carried on the fenced draft and never passed back to an LLM continuation.
+type MioResearchTerminal struct {
+	RunID    string   `json:"run_id"`
+	Status   string   `json:"status"`
+	Missing  []string `json:"missing,omitempty"`
+	Receipts []string `json:"receipts,omitempty"`
+	Report   string   `json:"report,omitempty"`
 }
 
 // MioChatDraft is an opaque, turn-local handoff from route selection to the
@@ -81,6 +92,7 @@ type MioRetrievalResult struct {
 // returned as a typed request for owner-mediated continuation.
 type MioChatDraft struct {
 	outcome                MioTurnOutcome
+	researchTerminal       *MioResearchTerminal
 	failure                error
 	ready                  bool
 	turnID                 string
@@ -195,22 +207,33 @@ func (m *MioAgent) ChatWithDraft(ctx context.Context, t conversation.TurnInput, 
 			return "", fmt.Errorf("%w: prepared chat turn is no longer valid: %v", errMioChatDraftUnavailable, err)
 		}
 	}
-	if draft.outcome.Kind == MioTurnOutcomeRetrieve {
+	if draft.outcome.Kind == MioTurnOutcomeRetrieve && draft.researchTerminal == nil {
 		return "", fmt.Errorf("%w: retrieve outcome requires orchestrator continuation", errMioChatDraftUnavailable)
 	}
-	if !draft.ready || draft.outcome.Kind != MioTurnOutcomeAnswer || strings.TrimSpace(draft.outcome.Text) == "" {
+	if draft.researchTerminal != nil && draft.outcome.Kind != MioTurnOutcomeRetrieve {
+		return "", fmt.Errorf("%w: Research terminal does not match pending retrieval", errMioChatDraftUnavailable)
+	}
+	if !draft.ready || (draft.outcome.Kind != MioTurnOutcomeAnswer && draft.researchTerminal == nil) ||
+		(draft.researchTerminal == nil && strings.TrimSpace(draft.outcome.Text) == "") {
 		return "", fmt.Errorf("%w: CHAT reply is empty", errMioChatDraftUnavailable)
 	}
 	userMessage := t.MessageText()
-	response := conversation.StripLeadingSpeakerLabels(draft.outcome.Text, draft.speaker)
+	response := ""
+	if draft.researchTerminal != nil {
+		response = mioResearchTerminalResponse(*draft.researchTerminal)
+	} else {
+		response = conversation.StripLeadingSpeakerLabels(draft.outcome.Text, draft.speaker)
+	}
 	if strings.TrimSpace(response) == "" {
 		return "", fmt.Errorf("%w: CHAT reply is empty after speaker-label filtering", errMioChatDraftUnavailable)
 	}
-	if violatesAttributionInChat(response, draft.latestOther) {
+	if draft.researchTerminal == nil && violatesAttributionInChat(response, draft.latestOther) {
 		return "", fmt.Errorf("%w: CHAT reply failed attribution validation", errMioChatDraftUnavailable)
 	}
-	response = enforceExactSharedRecallAnswer(userMessage, response, draft.recallPack)
-	response = conversation.StripLeadingSpeakerLabels(response, draft.speaker)
+	if draft.researchTerminal == nil {
+		response = enforceExactSharedRecallAnswer(userMessage, response, draft.recallPack)
+		response = conversation.StripLeadingSpeakerLabels(response, draft.speaker)
+	}
 	m.rememberExpression(response)
 	if draft.generation.Content != "" {
 		reportGenerationMetrics(ctx, draft.generation)
@@ -225,6 +248,59 @@ func (m *MioAgent) ChatWithDraft(ctx context.Context, t conversation.TurnInput, 
 		}
 	}
 	return response, nil
+}
+
+// AdoptResearchTerminal binds a source-owned Research status to the existing
+// prepared CHAT draft. The final response is rendered from this receipt without
+// a language-model continuation.
+func (m *MioAgent) AdoptResearchTerminal(ctx context.Context, t conversation.TurnInput, draft *MioChatDraft, terminal MioResearchTerminal) error {
+	if draft == nil || ctx == nil || draft.turnID != string(t.TurnID()) || draft.sessionID != t.SessionID() ||
+		draft.messageID != string(t.UserMessageID()) || draft.messageHash != sha256.Sum256([]byte(t.MessageText())) {
+		return fmt.Errorf("%w: Research terminal does not match prepared CHAT draft", errMioChatDraftUnavailable)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !draft.ready || draft.outcome.Kind != MioTurnOutcomeRetrieve || len(draft.outcome.Requests) != 1 ||
+		draft.outcome.Requests[0].SourceKind != MioRetrievalSourceResearch || terminal.RunID == "" {
+		return fmt.Errorf("%w: Research terminal has no matching request", errMioChatDraftUnavailable)
+	}
+	switch terminal.Status {
+	case "succeeded", "partial", "failed", "waiting_input", "cancelled":
+	default:
+		return fmt.Errorf("%w: invalid Research terminal status", errMioChatDraftUnavailable)
+	}
+	if draft.guard != nil {
+		if err := draft.guard.Validate(); err != nil {
+			return err
+		}
+	}
+	terminal.Missing = append([]string(nil), terminal.Missing...)
+	terminal.Receipts = append([]string(nil), terminal.Receipts...)
+	draft.researchTerminal = &terminal
+	return nil
+}
+
+func mioResearchTerminalResponse(result MioResearchTerminal) string {
+	receiptText := ""
+	if len(result.Receipts) > 0 {
+		receiptText = " Verified receipt digests: " + strings.Join(result.Receipts, ", ") + "."
+	}
+	if result.Status == "succeeded" && strings.TrimSpace(result.Report) != "" {
+		return strings.TrimSpace(result.Report) + "\n\nResearch receipt: run " + result.RunID + ", status " + result.Status + "." + receiptText
+	}
+	if result.Status == "waiting_input" {
+		response := "Research is waiting for required input. Research receipt: run " + result.RunID + ", status waiting_input."
+		if len(result.Missing) > 0 {
+			response += " Needed input: " + strings.Join(result.Missing, ", ") + "."
+		}
+		return response + receiptText
+	}
+	response := "Research receipt: run " + result.RunID + ", status " + result.Status + "." + receiptText
+	if len(result.Missing) > 0 {
+		response += " Missing required outputs: " + strings.Join(result.Missing, ", ") + "."
+	}
+	return response
 }
 
 // ContinueChatDraft runs one fixed-CHAT continuation after the source owner

@@ -1622,6 +1622,36 @@ Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCORE�
 
 採用済みの`RenCrow_Tools` CLI `rencrow-news analyze`は、実装時にCORE所有の考察portへ接続します。具体的なHTTP method、path、interaction profile、request／response、非同期job相関を追加する場合は、CLI実装より先にこのPublic API正本へ記載します。それまではCLIを任意のLLM、RenCrow_LLM Gateway、物理Backendへ直接接続して代替しません。`RenCrow_CMD`にはニュース専用commandを追加しません。
 
+## RenCrow Research local owner（段階的配備・限定受入）
+
+`POST /v1/research/owner`はloopback接続と既存local_agent_ops bearerに限る内部business-task owner。新しい汎用Public APIではない。最大64KiBのstrict JSONと、operationごとの閉じたfield集合を検査する。認証済みUserでTaskを開始し、Agent identityを偽装しない。
+
+|operation|入力|応答|
+|---|---|---|
+|run|versioned requestとopaque operation_key|rencrow.research.admission.v1。completed/pendingと受理receipt、存在すればresultを区別|
+|lookup|同じoperation_keyと正規化request|同admission response。read-onlyで再実行しない|
+|status|exactly-oneのrun_id/watch_id|runは同Result、watchはwatch-management response。外部取得なし|
+|seed|run_id/url/origin=google_browser_manual|waiting_inputの同Result。本文取得なし|
+|resume|exact run_id|stable Research IDと新CORE execution_run_idの同Result|
+|recall|RecallRequest|rencrow.research.recall.v1。外部取得なし|
+|watch|WatchRequest|rencrow.research.watch.v1。登録のみ|
+|watch_status|exact watch_id|rencrow.research.watch-management.v1。payload/cursor/lease secretなし|
+|watch_disable|exact watch_id|rencrow.research.watch-management.v1。Ownerのverified disabled state|
+|refresh_due|追加fieldなし|rencrow.research.due.v1。readonly due list、最大20件|
+|doctor|追加fieldなし|rencrow.research.doctor.v1。configured_unprobed、live取得なし|
+
+bodyからactor/scope/物理DB/path/command/backendを選べない。operationを跨ぐfield混在と未知field/trailing JSONは400。Agentの`research.status`は`run_id`/`watch_id`のちょうど一方を受ける。`refresh_due`はCLIから明示実行するbounded batchの読み取り専用due listingであり、schedulerではない。source-level相互排他は既存SourceFetcherと同じOwner leaseを使う。全障害回復の実機受入は未完了。run/resumeの業務終端はResult.statusで判定し、HTTP200だけを完了としない。必須工程やOwner照合が不足すればpartial/failed。Task ownerのreceipt不足もmissingへ記録する。受付・認証・Task admission失敗は非200で返す。初回同期runの応答不明時は同一key・requestによるlookupで照合する。異なる内容の同一keyは拒否し、lookupから取得や保存を再実行しない。
+
+local document collectionは既存L1 stagingをowner/scopeで検索した後、各候補を同一namespace/event IDで再読し、保存済みの原文/hash・canonical元URL/最終URL・source policyを照合した完全な本文だけを採用する。`request.document_refs`は最大20件のcanonical document/event IDを指定し、Queryによる本文照合を保ったまま既存storeのscope付きexact lookupを使う。新しい取得や保存は行わず、読取権限・policyに合わない候補、scan上限超過、欠落はmissingとして残す。正当に再読できたitemが一部あり後続readに失敗した場合は、そのitemを保持しつつmissing/unavailableを記録してpartialとする。時間窓には保存済み`TimeBasis`（`published_at`または`fetched_at`）を使い、取得時刻はUTCで保持する。staging metadataに取得時点のprimary判定がないため、local readでprimaryへ昇格しない。
+
+BOARDの`ResearchConfig.BoardDestinations`は既存接続を指す管理登録で、既定は空。要求が指定できるのは登録済みdestination refのみで、owner/principal/channel/thread/recipientは管理値と既存authenticated connectionから解決する。送信は既存Ownerとdurable publication journalのtyped receipt／再照合経路に限定され、source-onlyの実装記述は実送信・配備受入を意味しない。
+
+Continuationは現在のTask、最新Run、immutable owner provenance、Engine frozen request/result、policy revisionが一致しない場合にfail closedする。Task/Run開始後にEngineの最初のjournal保存が失敗し、Task側に新しいfailed Runだけが残るような不確定回復状態を安全に対応付けられない場合、自動再開はせずunavailable/conflictとして扱う。旧Runを閉じたり新しいRunで同じ処理を推測再実行したりしない。この狭い障害回復経路の受入は未完了。
+
+### 専門解析の限定Port
+
+CORE内部のResearch Engine `AnalysisPort` は、管理設定から注入されたGateway base URL／logical alias／HTTP clientだけを使い、loopbackまたはRFC1918/IPv6 ULAのprivate Gatewayとroot base pathを受理します。要求に任意URL、model、Agent identityはありません。信頼済み`task_id`／`run_id`／`trace_id`／`request_id`と目的・言語、および収集artifact全体の段落分割をGatewayの`POST /v1/research/analyze`へ渡します。COREが段落ID、document ID、Unicode rune offset、document SHA-256の対応を作り、Gateway/modelは段落IDとclaim文だけを提案します。`document_understanding`が返すclaimsとunresolvedを、2回目の`claim_evidence_check`が出典paragraph ID付きで判定します。COREは両応答のparagraph IDを元collectionへ照合し、`supported`かつ有効なsource位置を持つclaimだけをverifiedにします。未確認・矛盾・未対応claimが残る場合はcoverage incompleteとしてEngineのpartial結果にし、モデル生成reportを受け入れず、Engineがverified claim/evidenceから決定的にreportを描画します。
+
 ## X Bookmark Viewer API
 
 `GET /viewer/x-bookmarks`はX Bookmark専用の読み取り専用HTML画面です。Debug Viewerの

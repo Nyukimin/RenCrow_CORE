@@ -318,7 +318,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	needsSearch := !movieCatalogMatched && !personRelatedCatalogMatched && !dataToolMatched && needsWebSearch(userMessage)
 
 	// Web検索を実行してコンテキストに追加
-	if needsSearch && m.toolRunner != nil {
+	if needsSearch && m.toolRunner != nil && !hasWebResearch(m.llmProvider) {
 		searchResult, err := m.executeWebSearch(ctx, searchQuery)
 		if err == nil && searchResult != "" {
 			messages = append(messages, llm.Message{

@@ -40,6 +40,7 @@ import (
 	packagevalidationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/packagevalidation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
+	coreresearch "github.com/Nyukimin/RenCrow_CORE/internal/application/research"
 	sandboxapp "github.com/Nyukimin/RenCrow_CORE/internal/application/sandbox"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	skillapp "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
@@ -371,6 +372,8 @@ type Dependencies struct {
 	gmailIntake                         *gmailapp.GmailIntake                       // scheduled Gmail source intake
 	gmailDiaryWriter                    interface{ Close() error }                  // dedicated Lumina diary BOARD client
 	advisorCloser                       interface{ Close() error }                  // advisor SQLite store, when configured
+	researchOwner                       http.HandlerFunc                            // authenticated loopback Research business-task owner
+	researchCloser                      interface{ Close() error }                  // Tools-owned Research artifact store
 	durableStoreWorkflow                orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
 	durableStoreCloser                  interface{ Close() error }                  // workflow decision SQLite store
 	conversationArchiveCloser           interface{ Close() error }                  // CORE-owned L2 archive and request receipts
@@ -413,6 +416,7 @@ type Dependencies struct {
 	webGatherDeps                       func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
 
 	boardCommunicationActorBoots map[string]*boardCommunicationBoot
+	boardCommunicationRootBoot   *boardCommunicationBoot
 	agentHeartbeat               *agentheartbeat.Scheduler
 	agentRoutine                 *agentRoutineRuntime
 	gameBridgeStore              *viewer.GameBridgeStore
@@ -617,6 +621,11 @@ func (d *Dependencies) Shutdown() {
 	if d.advisorCloser != nil {
 		if err := d.advisorCloser.Close(); err != nil {
 			log.Printf("Failed to close advisor store: %v", err)
+		}
+	}
+	if d.researchCloser != nil {
+		if err := d.researchCloser.Close(); err != nil {
+			log.Printf("Failed to close Research artifact store: %v", err)
 		}
 	}
 	if d.durableStoreCloser != nil {
@@ -1076,6 +1085,38 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	mcpClient := mcp.NewMCPClient()
 	log.Printf("MCPClient initialized with %d servers", len(mcpClient.ListServers()))
 	conversationRuntime := buildConversationRuntime(cfg, llmRuntime.Primary, toolRuntime.ChatRunnerV2, toolRuntime.WorkerRunnerV2, storageOwners)
+	var researchDocuments coreresearch.ResearchDocumentStore
+	if conversationRuntime.L1Store != nil {
+		researchDocuments = conversationRuntime.L1Store
+	}
+	deps.researchCloser = conversationRuntime.ResearchCloser
+	semanticEmbeddings, err := buildResearchSemanticEmbeddingPort(cfg)
+	if err != nil {
+		log.Fatalf("Research semantic index initialization failed: %v", err)
+	}
+	var semanticSourcePolicy coreresearch.SourcePolicy
+	if cfg.Research.SemanticIndex.Enabled {
+		semanticSourcePolicy = configuredResearchSourcePolicy(cfg.Research)
+	}
+	researchIndexBuilder, err := buildResearchDocumentIndexBuilder(cfg, researchDocuments, semanticEmbeddings, semanticSourcePolicy)
+	if err != nil {
+		log.Fatalf("Research semantic index initialization failed: %v", err)
+	}
+	if err := connectResearchRecall(conversationRuntime.ResearchEngine, toolRuntime, researchDocuments, cfg, semanticEmbeddings, semanticSourcePolicy); err != nil {
+		log.Fatalf("Research recall initialization failed: %v", err)
+	}
+	var researchResultRecorder *coreresearch.ResultRecorder
+	if conversationRuntime.ResearchEngine != nil {
+		researchResultRecorder = &coreresearch.ResultRecorder{Store: conversationRuntime.ResearchEngine.Ports.Store, Tasks: deps.taskManager}
+		toolRuntime.WorkerRunnerV2.WithResearchResultRecorder(researchResultRecorder)
+		if toolRuntime.ChatRunnerV2 != nil {
+			toolRuntime.ChatRunnerV2.WithResearchResultRecorder(researchResultRecorder)
+		}
+	}
+	deps.researchOwner, err = newResearchOwnerHandler(cfg, conversationRuntime.ResearchEngine, deps.taskManager, researchResultRecorder, researchIndexBuilder)
+	if err != nil {
+		log.Fatalf("Research owner initialization failed: %v", err)
+	}
 	deps.combinedChatProcessorEligible = runtimeCombinedChatAdmissionEnabled(
 		cfg, classifier, conversationRuntime.Engine, llmRuntime.Chat != nil, cfg.Distributed.Enabled,
 	)
@@ -1088,7 +1129,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	}
 	glossaryRuntime := buildGlossaryRuntime(cfg, selectedGlossaryOwner)
 	deps.mioRetrieval = newRuntimeMioRetrieval(glossaryRuntime.IndexedLookup, conversationRuntime.CategoryRecallRegistry).
-		withPreparedUserMemoryOwner(conversationRuntime.L1Store, conversationRuntime.PreparedRecallRuntime)
+		withPreparedUserMemoryOwner(conversationRuntime.L1Store, conversationRuntime.PreparedRecallRuntime).
+		withWebQueries(toolRuntime.WorkerRuntimeRunnerV2)
 	// Conversation runtime may attach late-bound web_gather adapters to the
 	// production Worker runner. Build the Agent snapshot only after every
 	// runtime Tool has been registered so awareness and execution stay equal.
@@ -1112,6 +1154,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		advisorRuntime.Service,
 		advisorRuntime.Policy,
 	)
+	applyRuntimeAgentWebResearch(agents, toolRuntime, llmRuntime.Coder1, llmRuntime.Coder2, llmRuntime.Coder3, llmRuntime.Coder4)
 	sessionRuntime := buildSessionRuntime(cfg)
 	if storageOwners.SessionRepository != nil {
 		sessionRuntime.SessionRepo = storageOwners.SessionRepository
@@ -2232,6 +2275,9 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		cfg, deps, canonicalEventStore, sessionRuntime.SessionRepo, agents.Mio, llmRuntime.Conversation,
 		responderWiring,
 	)
+	if err := connectResearchBoardOwner(cfg, deps, conversationRuntime.ResearchEngine); err != nil {
+		log.Fatalf("Research BOARD destination configuration failed: %v", err)
+	}
 	startAgentHeartbeatScheduler(cfg, deps)
 
 	log.Println("Dependency injection complete")

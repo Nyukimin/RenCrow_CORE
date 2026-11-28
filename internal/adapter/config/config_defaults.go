@@ -20,6 +20,9 @@ func defaultOwnerStorage(currentStorage, sqlitePath string) string {
 
 // setDefaults はデフォルト値を設定
 func (c *Config) setDefaults() {
+	if strings.TrimSpace(c.Research.SemanticIndex.ServiceRef) == "" {
+		c.Research.SemanticIndex.ServiceRef = DefaultResearchSemanticIndexServiceRef
+	}
 	if strings.TrimSpace(c.ConversationRuntime.Version) == "" {
 		c.ConversationRuntime.Version = "legacy"
 	}

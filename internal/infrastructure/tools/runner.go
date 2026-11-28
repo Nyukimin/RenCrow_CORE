@@ -385,11 +385,12 @@ type KnowledgeMemorySearcher interface {
 
 // ToolRunner はツール実行の実装（V1 + V2 対応）
 type ToolRunner struct {
-	tools    map[string]ToolFunc
-	toolsV2  map[string]ToolFuncV2
-	metadata map[string]tool.ToolMetadata
-	config   ToolRunnerConfig
-	harness  *toolharness.Harness
+	tools                  map[string]ToolFunc
+	toolsV2                map[string]ToolFuncV2
+	metadata               map[string]tool.ToolMetadata
+	config                 ToolRunnerConfig
+	harness                *toolharness.Harness
+	researchResultRecorder ResearchResultRecorder
 }
 
 // ToolRunnerConfig はToolRunnerの設定

@@ -569,6 +569,91 @@ CREATE TABLE IF NOT EXISTS prompt_injection_event (
 	FOREIGN KEY(trace_id) REFERENCES recall_trace(trace_id)
 );
 CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_event(trace_id, order_index);
+CREATE TABLE IF NOT EXISTS l1_research_watch (
+	watch_id TEXT PRIMARY KEY,
+	owner_id TEXT NOT NULL,
+	scope TEXT NOT NULL,
+	payload_json TEXT NOT NULL,
+	payload_digest TEXT NOT NULL,
+	source_refs_json TEXT NOT NULL,
+	cadence_ns INTEGER NOT NULL,
+	next_due_at TIMESTAMP NOT NULL,
+	last_attempt_at TIMESTAMP,
+	last_success_at TIMESTAMP,
+	cursor_json TEXT NOT NULL DEFAULT '{}',
+	enabled INTEGER NOT NULL,
+	lease_token TEXT NOT NULL DEFAULT '',
+	lease_until TIMESTAMP,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL,
+	UNIQUE(scope, owner_id, payload_digest)
+);
+CREATE INDEX IF NOT EXISTS idx_l1_research_watch_due
+	ON l1_research_watch(scope, owner_id, enabled, next_due_at, lease_until);
+CREATE TABLE IF NOT EXISTS l1_research_watch_refresh (
+	scope TEXT NOT NULL,
+	owner_id TEXT NOT NULL,
+	watch_id TEXT NOT NULL,
+	plan_id TEXT NOT NULL,
+	lease_token TEXT NOT NULL,
+	plan_json TEXT NOT NULL,
+	plan_digest TEXT NOT NULL,
+	original_execution_json TEXT NOT NULL,
+	current_invocation_json TEXT NOT NULL,
+	source_policy_revision TEXT NOT NULL,
+	previous_cursor TEXT NOT NULL,
+	state TEXT NOT NULL,
+	attempt_digest TEXT NOT NULL DEFAULT '',
+	attempt_ref TEXT NOT NULL DEFAULT '',
+	retry_at TIMESTAMP,
+	committed_cursor TEXT NOT NULL DEFAULT '',
+	checkpoint_digest TEXT NOT NULL DEFAULT '',
+	execution_digest TEXT NOT NULL DEFAULT '',
+	receipt_json TEXT NOT NULL DEFAULT '',
+	updated_at TIMESTAMP NOT NULL,
+	PRIMARY KEY(scope, owner_id, watch_id)
+);
+CREATE TABLE IF NOT EXISTS l1_public_acquisition_lease (
+	canonical_url TEXT PRIMARY KEY,
+	lease_token TEXT NOT NULL,
+	lease_until TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS l1_research_vector_generation (
+	generation_key TEXT PRIMARY KEY,
+	scope TEXT NOT NULL,
+	owner_id TEXT NOT NULL,
+	document_id TEXT NOT NULL,
+	event_id TEXT NOT NULL,
+	raw_hash TEXT NOT NULL,
+	parser_revision TEXT NOT NULL,
+	chunker_revision TEXT NOT NULL,
+	model_revision TEXT NOT NULL,
+	dimension INTEGER NOT NULL,
+	chunk_count INTEGER NOT NULL,
+	complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
+	created_at TIMESTAMP NOT NULL,
+	UNIQUE(scope, owner_id, document_id, raw_hash, parser_revision, chunker_revision, model_revision)
+);
+CREATE TABLE IF NOT EXISTS l1_research_vector_chunk (
+	generation_key TEXT NOT NULL,
+	chunk_index INTEGER NOT NULL,
+	rune_start INTEGER NOT NULL,
+	rune_end INTEGER NOT NULL,
+	chunk_sha256 TEXT NOT NULL,
+	vector_blob BLOB NOT NULL,
+	PRIMARY KEY(generation_key, chunk_index),
+	FOREIGN KEY(generation_key) REFERENCES l1_research_vector_generation(generation_key) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS l1_research_vector_active (
+	scope TEXT NOT NULL,
+	owner_id TEXT NOT NULL,
+	document_id TEXT NOT NULL,
+	generation_key TEXT NOT NULL,
+	updated_at TIMESTAMP NOT NULL,
+	PRIMARY KEY(scope, owner_id, document_id),
+	FOREIGN KEY(generation_key) REFERENCES l1_research_vector_generation(generation_key)
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to initialize l1 sqlite schema: %w", err)

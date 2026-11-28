@@ -275,6 +275,7 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeAcceptsEveryRegisteredSourceKin
 		domainagent.MioRetrievalSourceCatalog,
 		domainagent.MioRetrievalSourceGlossary,
 		domainagent.MioRetrievalSourceWebSearch,
+		domainagent.MioRetrievalSourceResearch,
 	}
 	for _, sourceKind := range registered {
 		t.Run(string(sourceKind), func(t *testing.T) {
@@ -341,6 +342,10 @@ func TestLLMClassifier_ClassifyWithMioTurnOutcomeRejectsInvalidV3Responses(t *te
 		{name: "empty requests", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{}})},
 		{name: "missing requests", response: `{"schema_version":3,"route":"CHAT","outcome":{"kind":"retrieve"}}`},
 		{name: "more than two requests", response: tooManyRequests},
+		{name: "Research cannot be mixed with retrieval requests", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{
+			map[string]any{"source_kind": "research", "query": "research this", "references": []string{}, "information_needed": "research status"},
+			validMioRetrievalRequest(),
+		}})},
 		{name: "query empty", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": "", "references": []string{}, "information_needed": "reason"}}})},
 		{name: "query whitespace", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": " \n ", "references": []string{}, "information_needed": "reason"}}})},
 		{name: "query over rune limit", response: marshalMioTurnOutcome(t, "CHAT", map[string]any{"kind": "retrieve", "requests": []any{map[string]any{"source_kind": "conversation_memory", "query": largeQuery, "references": []string{}, "information_needed": "reason"}}})},

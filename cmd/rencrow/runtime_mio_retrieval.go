@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
@@ -16,6 +18,7 @@ import (
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	researchcontract "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/contract"
 )
 
 const (
@@ -29,6 +32,7 @@ type runtimeMioRetrieval struct {
 	userMemoryStore *l1sqlite.L1SQLiteStore
 	preparedRecall  *conversationpersistence.PreparedRecallRuntime
 	now             func() time.Time
+	webQueries      domaintool.RunnerV2
 }
 
 func newRuntimeMioRetrieval(glossary runtimeGlossaryLookupExecutor, catalog domainconversation.CategoryRecallRegistry) *runtimeMioRetrieval {
@@ -38,6 +42,13 @@ func newRuntimeMioRetrieval(glossary runtimeGlossaryLookupExecutor, catalog doma
 func (r *runtimeMioRetrieval) withClock(now func() time.Time) *runtimeMioRetrieval {
 	if r != nil && now != nil {
 		r.now = now
+	}
+	return r
+}
+
+func (r *runtimeMioRetrieval) withWebQueries(runner domaintool.RunnerV2) *runtimeMioRetrieval {
+	if r != nil {
+		r.webQueries = runner
 	}
 	return r
 }
@@ -77,11 +88,69 @@ func (r *runtimeMioRetrieval) Retrieve(ctx context.Context, input domainconversa
 		return r.retrieveGlossary(ctx, userID, query, request.SourceKind)
 	case domainagent.MioRetrievalSourceCatalog:
 		return r.retrieveCatalog(ctx, userID, query, request.SourceKind)
+	case domainagent.MioRetrievalSourceWebSearch:
+		return r.retrieveWebQuery(ctx, query)
+	case domainagent.MioRetrievalSourceResearch:
+		return r.retrieveResearch(ctx, input, request)
 	default:
 		// The remaining registered sources are not implemented here yet. They
 		// stay typed and fail closed until their own read owners are wired.
 		return unavailable, nil
 	}
+}
+
+func (r *runtimeMioRetrieval) retrieveResearch(ctx context.Context, input domainconversation.TurnInput, request domainagent.MioRetrievalRequest) (domainagent.MioRetrievalResult, error) {
+	unavailable := runtimeMioRetrievalResult(request.SourceKind, domainagent.MioRetrievalStatusUnavailable)
+	if r == nil || r.webQueries == nil || input.Validate() != nil || strings.TrimSpace(input.MessageText()) == "" {
+		return unavailable, nil
+	}
+	normalized, err := toolloop.NormalizeResearchRequest(input.MessageText())
+	if err != nil {
+		return unavailable, nil
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return unavailable, nil
+	}
+	var requestObject map[string]any
+	if err := json.Unmarshal(encoded, &requestObject); err != nil {
+		return unavailable, nil
+	}
+	response, err := r.webQueries.ExecuteV2(ctx, "research.run", map[string]any{"request": requestObject})
+	if err != nil || response == nil {
+		return unavailable, err
+	}
+	var result researchcontract.Result
+	recorded := response.Error == nil
+	value := response.Result
+	if response.Error != nil {
+		value = response.Error.Details["research_result"]
+		recorded, _ = response.Error.Details["research_result_recorded"].(bool)
+	}
+	switch typed := value.(type) {
+	case researchcontract.Result:
+		result = typed
+	case *researchcontract.Result:
+		if typed != nil {
+			result = *typed
+		}
+	default:
+		return unavailable, nil
+	}
+	if !recorded || result.SchemaVersion != researchcontract.ResultSchema || result.RunID == "" ||
+		(result.Status != "succeeded" && result.Status != "partial" && result.Status != "failed" && result.Status != "waiting_input" && result.Status != "cancelled") {
+		return unavailable, nil
+	}
+	terminal := &domainagent.MioResearchTerminal{
+		RunID: result.RunID, Status: result.Status, Missing: append([]string(nil), result.Missing...),
+		Report: result.Report,
+	}
+	for _, receipt := range result.Receipts {
+		if receipt.Digest != "" {
+			terminal.Receipts = append(terminal.Receipts, receipt.Digest)
+		}
+	}
+	return domainagent.MioRetrievalResult{SourceKind: request.SourceKind, Status: domainagent.MioRetrievalStatusFound, Research: terminal}, nil
 }
 
 func (r *runtimeMioRetrieval) retrieveUserMemory(ctx context.Context, input domainconversation.TurnInput, request domainagent.MioRetrievalRequest, query string) (domainagent.MioRetrievalResult, error) {

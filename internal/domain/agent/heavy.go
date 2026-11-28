@@ -65,6 +65,7 @@ func (h *HeavyAgent) ExecutePrivateWork(ctx context.Context, input conversation.
 	}
 
 	private := *h
+	private.llmProvider = privateWebResearch(h.llmProvider, capabilities)
 	private.conversationEngine = nil
 	return private.Generate(ctx, input)
 }
