@@ -1,6 +1,10 @@
 package worker
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestLooksLikeNonExecutable(t *testing.T) {
 	if !LooksLikeNonExecutable("# 設計文書\n\nこれはシステムの設計についての説明です。") {
@@ -130,5 +134,44 @@ func TestShortFailureReason(t *testing.T) {
 	got := ShortFailureReason(long)
 	if len(got) != 160 || got[157:] != "..." {
 		t.Fatalf("short reason len=%d suffix=%q", len(got), got[157:])
+	}
+}
+
+func TestShortFailureReasonPreservesUTF8ForRetry(t *testing.T) {
+	for _, text := range []string{
+		strings.Repeat("取得できませんでした。", 30),
+		strings.Repeat("🙂日本語", 30),
+		strings.Repeat("a", 156) + strings.Repeat("失敗", 20),
+	} {
+		for _, route := range []string{"WILD", "RESEARCH", "PLAN", "OPS"} {
+			ok, kind, reason := VerifyAutonomousAttempt(route, AutonomousContract{}, AutonomousAttemptResult{Response: "実行できませんでした", FailureKind: "provider_unavailable", FailureReason: text + " エラー"})
+			if ok || kind != "provider_unavailable" {
+				t.Fatalf("%s operational failure accepted: ok=%v kind=%s", route, ok, kind)
+			}
+			if !utf8.ValidString(reason) || len(reason) > 160 || !strings.HasSuffix(reason, "...") {
+				t.Fatalf("%s retry reason corrupt or unbounded: bytes=%d valid=%v reason=%q", route, len(reason), utf8.ValidString(reason), reason)
+			}
+			retry := BuildExecutorRetryMessage("元の依頼", route, "verification_failed", reason, 1)
+			if !utf8.ValidString(retry) {
+				t.Fatalf("%s retry instruction is invalid UTF-8", route)
+			}
+		}
+	}
+}
+
+func TestReportRoutesDoNotRetryFailureNarratives(t *testing.T) {
+	for _, route := range []string{"WILD", "RESEARCH", "PLAN", "ANALYZE"} {
+		ok, kind, _ := VerifyAutonomousAttempt(route, AutonomousContract{}, AutonomousAttemptResult{Response: "失敗談・判断。取得失敗の出典は欠測として報告。"})
+		if !ok || kind != "" {
+			t.Fatalf("%s report delivery rejected because of prose: ok=%v kind=%s", route, ok, kind)
+		}
+		ok, _, _ = VerifyAutonomousAttempt(route, AutonomousContract{}, AutonomousAttemptResult{Response: "正常に見える本文", FailureKind: "provider_unavailable", FailureReason: "upstream HTTP 503"})
+		if ok {
+			t.Fatalf("%s typed execution failure accepted", route)
+		}
+		ok, _, _ = VerifyAutonomousAttempt(route, AutonomousContract{}, AutonomousAttemptResult{})
+		if ok {
+			t.Fatalf("%s empty report accepted", route)
+		}
 	}
 }

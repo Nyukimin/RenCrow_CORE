@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	researchcontract "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/contract"
 )
 
 type runtimeWebResearchProvider struct {
@@ -38,11 +40,16 @@ func (p *runtimeWebResearchProvider) Chat(_ context.Context, request llm.ChatReq
 }
 
 type runtimeWebQueryRunner struct {
-	calls int
-	actor string
+	calls    int
+	actor    string
+	metadata []tool.ToolMetadata
+	response *tool.ToolResponse
 }
 
 func (r *runtimeWebQueryRunner) ListTools(context.Context) ([]tool.ToolMetadata, error) {
+	if r.metadata != nil {
+		return r.metadata, nil
+	}
 	return []tool.ToolMetadata{{ToolID: "web_gather.fetch", Category: "query", Parameters: map[string]any{"type": "object"}}}, nil
 }
 
@@ -50,11 +57,14 @@ func (r *runtimeWebQueryRunner) ExecuteV2(ctx context.Context, _ string, _ map[s
 	r.calls++
 	scope, _ := tool.ToolExecutionScopeFromContext(ctx)
 	r.actor = scope.ActorID
+	if r.response != nil {
+		return r.response, nil
+	}
 	return tool.NewSuccess("verified body https://example.org"), nil
 }
 
 func TestRuntimeWebResearchWiringUsesSelectedProvidersAndActualQueryRunner(t *testing.T) {
-	for _, name := range []string{"mio", "shiro-chat", "shiro", "midori", "aka", "ao", "kin", "gin"} {
+	for _, name := range []string{"mio", "shiro-chat", "shiro", "kuro", "midori", "aka", "ao", "kin", "gin"} {
 		t.Run(name, func(t *testing.T) {
 			provider := &runtimeWebResearchProvider{}
 			role := "coder"
@@ -63,6 +73,8 @@ func TestRuntimeWebResearchWiringUsesSelectedProvidersAndActualQueryRunner(t *te
 				role = "chat"
 			case "shiro", "shiro-chat":
 				role = "chatworker"
+			case "kuro":
+				role = "heavy"
 			case "midori":
 				role = "wild"
 			}
@@ -79,6 +91,8 @@ func TestRuntimeWebResearchWiringUsesSelectedProvidersAndActualQueryRunner(t *te
 				agents.ShiroChat = agent.NewMioAgent(wrapped, nil, nil, nil, nil, nil)
 			case "shiro":
 				agents.Shiro = agent.NewShiroAgent(wrapped, nil, nil, "shiro", nil)
+			case "kuro":
+				agents.Heavy = agent.NewHeavyAgent(wrapped, "kuro")
 			case "midori":
 				agents.Wild = agent.NewWildAgent(wrapped, "midori")
 			default:
@@ -98,6 +112,8 @@ func TestRuntimeWebResearchWiringUsesSelectedProvidersAndActualQueryRunner(t *te
 				_, err = agents.ShiroChat.Chat(ctx, input)
 			case "shiro":
 				_, err = agents.Shiro.Execute(ctx, input)
+			case "kuro":
+				_, err = agents.Heavy.Generate(ctx, input)
 			case "midori":
 				_, err = agents.Wild.Generate(ctx, input)
 			default:
@@ -134,15 +150,55 @@ func TestRuntimeWebResearchWiringUsesSelectedProvidersAndActualQueryRunner(t *te
 	}
 }
 
-func TestRuntimeWebResearchKeepsKuroNativeToolRuntime(t *testing.T) {
+func TestRuntimeWebResearchPreservesKuroGenerationForOrdinaryPrompt(t *testing.T) {
 	provider := &runtimeWebResearchProvider{}
-	kuro := agent.NewHeavyAgent(provider, "kuro")
+	wrapped := wrapPrimaryLLMProvider(&config.Config{}, "heavy", enforceThinkingPolicyForRole("heavy", provider), nil)
+	kuro := agent.NewHeavyAgent(wrapped, "kuro")
 	runner := &runtimeWebQueryRunner{}
 	applyRuntimeAgentWebResearch(agentRuntime{Heavy: kuro}, toolRuntime{WorkerRuntimeRunnerV2: runner})
-	if _, err := kuro.Generate(context.Background(), runtimeClassifierTestTurn(t, "検索して")); err != nil {
+	scope, err := tool.NewToolExecutionScope("request", tool.ActorKindAgent, "kuro", "", []string{tool.DataScopePublic}, tool.AuthenticationSourceAgentOrchestrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := tool.WithToolExecutionScope(context.Background(), scope)
+	if _, err := kuro.Generate(ctx, runtimeClassifierTestTurn(t, "短い挨拶を一文で書いて")); err != nil {
 		t.Fatal(err)
 	}
 	if provider.chatCalls != 0 || runner.calls != 0 || len(provider.final.Messages) == 0 {
-		t.Fatal("CORE duplicated or replaced Kuro's native tool execution")
+		t.Fatal("ordinary Kuro generation unexpectedly entered the pre-run Web research path")
+	}
+}
+
+func TestRuntimeWebResearchStopsIncompleteKuroRun(t *testing.T) {
+	provider := &runtimeWebResearchProvider{}
+	wrapped := wrapPrimaryLLMProvider(&config.Config{}, "heavy", enforceThinkingPolicyForRole("heavy", provider), nil)
+	kuro := agent.NewHeavyAgent(wrapped, "kuro")
+	result := researchcontract.Result{
+		SchemaVersion: researchcontract.ResultSchema,
+		RunID:         "run_kuro_incomplete",
+		Status:        "partial",
+		Stages:        []researchcontract.Stage{},
+		Missing:       []string{"manual_seed"},
+		Errors:        []researchcontract.Fault{},
+		Artifacts:     []researchcontract.ArtifactRef{},
+		Receipts:      []researchcontract.Receipt{},
+	}
+	runner := &runtimeWebQueryRunner{
+		metadata: []tool.ToolMetadata{{ToolID: "research.run", Category: "query", Parameters: map[string]any{"type": "object"}}},
+		response: tool.NewError(tool.ErrInternalError, "Research run completed with missing required outputs", map[string]any{"research_result": result}),
+	}
+	applyRuntimeAgentWebResearch(agentRuntime{Heavy: kuro}, toolRuntime{WorkerRuntimeRunnerV2: runner})
+	scope, err := tool.NewToolExecutionScope("request-incomplete", tool.ActorKindAgent, "kuro", "", []string{tool.DataScopePublic}, tool.AuthenticationSourceAgentOrchestrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := tool.WithToolExecutionScope(context.Background(), scope)
+	_, err = kuro.Generate(ctx, runtimeClassifierTestTurn(t, "https://example.org を取得して"))
+	var incomplete *agent.WebResearchIncompleteError
+	if !errors.As(err, &incomplete) || runner.calls != 1 || runner.actor != "kuro" || provider.chatCalls != 0 || len(provider.final.Messages) != 0 {
+		t.Fatalf("incomplete Research result must fail Kuro closed before final generation: calls=%d actor=%s chats=%d final=%#v err=%v", runner.calls, runner.actor, provider.chatCalls, provider.final, err)
+	}
+	if incomplete.Result.RunID != result.RunID || incomplete.Result.Status != result.Status || len(incomplete.Result.Missing) != 1 || incomplete.Result.Missing[0] != "manual_seed" {
+		t.Fatalf("Kuro lost typed incomplete Research outcome: %+v", incomplete.Result)
 	}
 }

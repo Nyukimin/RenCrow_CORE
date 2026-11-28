@@ -132,6 +132,28 @@ func TestReadThreadAndInboxCanonicalDTOs(t *testing.T) {
 		}
 	})
 
+	t.Run("thread page message with mention_delivery", func(t *testing.T) {
+		client, _ := newFakeClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/api/v1/threads/thread-alpha" {
+				t.Errorf("ReadThread did not use the canonical page route")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"thread":{"id":"thread-alpha","space":"channel-alpha","title":"Alpha","summary":"summary","status":"open","decision":"","participants":["ren","peer-alpha"],"created_at":"2026-11-05T03:04:05Z","updated_at":"2026-11-05T03:05:05Z","messages":[{"id":"message-alpha","seq":41,"by":"peer-alpha","at":"2026-11-05T03:05:00Z","body":"synthetic thread message","mentions":["ren"],"recipients":["ren"],"channel_id":"channel-alpha","thread_id":"thread-alpha","mention_delivery":true}]},"next_cursor":"","correlation_id":"synthetic"}`)
+		}))
+		defer client.Close()
+		page, err := client.ReadThread(context.Background(), "thread-alpha", PageRequest{Limit: 3})
+		requireAvailable(t, "ReadThread", err)
+		if len(page.Thread.Messages) != 1 {
+			t.Fatal("ReadThread did not decode the canonical BOARD thread page")
+		}
+		message := page.Thread.Messages[0]
+		if message.ID != "message-alpha" || message.By != "peer-alpha" ||
+			message.Body != "synthetic thread message" || len(message.Mentions) != 1 || message.Mentions[0] != "ren" ||
+			!message.MentionDelivery {
+			t.Fatal("ReadThread rejected a canonical BOARD message carrying mention_delivery")
+		}
+	})
+
 	t.Run("flat inbox page", func(t *testing.T) {
 		client, _ := newFakeClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet || r.URL.Path != "/api/v1/inbox" ||

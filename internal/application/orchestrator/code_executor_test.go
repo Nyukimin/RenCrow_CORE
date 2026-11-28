@@ -121,6 +121,75 @@ func TestCodeExecutor_CODE2_WithProposal_ExecutesPatch(t *testing.T) {
 	}
 }
 
+func TestCodeExecutor_ReadOnlyProposalWithCommandsDoesNotReachWorker(t *testing.T) {
+	testProposal := proposal.NewProposal(
+		"Inspect the request",
+		`[{"type":"file_edit","action":"create","target":"must-not-exist.txt","content":"must not execute"}]`,
+		"Low risk",
+		"Low cost",
+	)
+	coder2 := &mockCoderAgentWithProposal{proposal: testProposal}
+	workerService := &recordingCodeWorkerExecutionService{}
+	executor := NewDefaultCodeExecutor(nil, coder2, nil, nil, workerService, nil, noopEventEmitter)
+
+	taskID := modulecore.NewTaskID()
+	req := newOrchestratorTestCodeExecutionRequest(t, taskID, "/code2 "+codeDiagnosticNoWriteDirective+"\n診断結果だけ報告してください", routing.RouteCODE2, "sess-1", "test", "chat-1")
+	_, err := executor.ExecuteCode(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "diagnostic-only request") {
+		t.Fatalf("diagnostic-only request with executable commands should be rejected, err=%v", err)
+	}
+	if workerService.calls != 0 {
+		t.Fatalf("diagnostic-only proposal reached Worker %d times, want 0", workerService.calls)
+	}
+}
+
+func TestCodeExecutor_ScopedEditMayLeaveOtherFilesUnchanged(t *testing.T) {
+	testProposal := proposal.NewProposal(
+		"修正対象の関数だけを更新する",
+		`[{"type":"file_edit","action":"create","target":"scoped-edit.txt","content":"allowed"}]`,
+		"Low risk",
+		"Low cost",
+	)
+	coder2 := &mockCoderAgentWithProposal{proposal: testProposal}
+	workerService := &recordingCodeWorkerExecutionService{}
+	executor := NewDefaultCodeExecutor(nil, coder2, nil, nil, workerService, nil, noopEventEmitter)
+
+	req := newOrchestratorTestCodeExecutionRequest(t, modulecore.NewTaskID(), "この関数だけ修正、他は変更しない", routing.RouteCODE2, "sess-1", "test", "chat-1")
+	if _, err := executor.ExecuteCode(context.Background(), req); err != nil {
+		t.Fatalf("scoped edit was rejected: %v", err)
+	}
+	if workerService.calls != 1 {
+		t.Fatalf("scoped edit reached Worker %d times, want 1", workerService.calls)
+	}
+}
+
+func TestHasCodeDiagnosticNoWriteDirective(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{name: "standalone marker", message: codeDiagnosticNoWriteDirective + "\nreport status", want: true},
+		{name: "code1 route prefix", message: "/code1 " + codeDiagnosticNoWriteDirective + "\nreport status", want: true},
+		{name: "code2 route prefix", message: "/code2 " + codeDiagnosticNoWriteDirective + "\nreport status", want: true},
+		{name: "code3 route prefix", message: "/code3 " + codeDiagnosticNoWriteDirective + "\nreport status", want: true},
+		{name: "code4 route prefix", message: "/code4 " + codeDiagnosticNoWriteDirective + "\nreport status", want: true},
+		{name: "route on separate line", message: "/code2\n" + codeDiagnosticNoWriteDirective + "\nreport status", want: true},
+		{name: "ordinary scoped restriction", message: "この関数だけ修正、他は変更しない", want: false},
+		{name: "natural language command ban", message: "ファイルAを修正、コマンド実行は禁止", want: false},
+		{name: "marker later in request", message: "調査してください\n" + codeDiagnosticNoWriteDirective, want: false},
+		{name: "nearby route prefix", message: "/code10 " + codeDiagnosticNoWriteDirective, want: false},
+		{name: "marker with extra first-line text", message: "/code2 " + codeDiagnosticNoWriteDirective + " and report", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := hasCodeDiagnosticNoWriteDirective(test.message); got != test.want {
+				t.Fatalf("hasCodeDiagnosticNoWriteDirective(%q) = %t, want %t", test.message, got, test.want)
+			}
+		})
+	}
+}
+
 func TestCodeExecutor_ModuleRegistryInjectsContextAndWorkspace(t *testing.T) {
 	workspaceRoot := "/workspace/RenCrow"
 	t.Setenv("RENCROW_WORKSPACE_ROOT", workspaceRoot)
@@ -580,18 +649,22 @@ func codeExecutorEventIndex(events []codeExecutorEvent, eventType, from, to stri
 }
 
 type recordingCodeWorkerExecutionService struct {
-	calls     int
-	taskID    modulecore.TaskID
-	proposal  *proposal.Proposal
-	workspace string
-	err       error
+	calls        int
+	begins       int
+	observations int
+	taskID       modulecore.TaskID
+	proposal     *proposal.Proposal
+	workspace    string
+	err          error
 }
 
 func (s *recordingCodeWorkerExecutionService) ExecuteObservation(_ context.Context, _ []service.ObservationAction) ([]service.ObservationActionResult, error) {
+	s.observations++
 	return []service.ObservationActionResult{coderloop.NewObservationActionResult("shell_command", "cat fixture.txt", "observed", nil)}, nil
 }
 
 func (s *recordingCodeWorkerExecutionService) BeginCoderTaskExecution(_ context.Context, taskID modulecore.TaskID) (service.CoderTaskExecutionSession, error) {
+	s.begins++
 	return &recordingCoderLoopSession{worker: s, taskID: taskID}, nil
 }
 
@@ -626,6 +699,7 @@ func (s *recordingCoderLoopSession) RecordLoopFailure(_ context.Context, reason 
 }
 
 func (s *recordingCoderLoopSession) ExecuteObservation(ctx context.Context, actions []service.ObservationAction) ([]service.ObservationActionResult, error) {
+	s.worker.observations++
 	results := make([]service.ObservationActionResult, len(actions))
 	for index, action := range actions {
 		results[index] = coderloop.NewObservationActionResult(action.Action, action.Target, "observed", nil)

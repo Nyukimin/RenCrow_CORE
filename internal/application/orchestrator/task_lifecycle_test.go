@@ -1076,6 +1076,23 @@ func (m *recordingTaskLifecycleManager) ListRuns(_ context.Context, filter domai
 	return items, nil
 }
 
+func (m *recordingTaskLifecycleManager) ReadTaskRuns(ctx context.Context, ids []modulecore.TaskID) (map[modulecore.TaskID]domaintask.Task, map[modulecore.TaskID][]domaintask.Run, error) {
+	tasks := make(map[modulecore.TaskID]domaintask.Task)
+	runs := make(map[modulecore.TaskID][]domaintask.Run)
+	for _, id := range ids {
+		task, err := m.Get(ctx, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		tasks[id] = task
+		runs[id], err = m.ListRuns(ctx, domaintask.RunFilter{TaskID: id})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return tasks, runs, nil
+}
+
 func (m *recordingTaskLifecycleManager) RecordRouting(_ context.Context, taskID modulecore.TaskID, route domaintask.Route, eventID modulecore.EventID) (domaintask.Task, error) {
 	m.calls = append(m.calls, "RecordRouting")
 	task, ok := m.tasks[taskID]
@@ -1200,3 +1217,43 @@ func (p *recordingTaskLifecycleEventPort) ReleaseResponseMessageID(taskID string
 }
 
 var _ taskLifecycleEventPort = (*recordingTaskLifecycleEventPort)(nil)
+
+// Separate reads can lose the admission to a pending writer between Task and
+// Run. Identity binding must use the owner's existing atomic read session.
+type snapshotIdentityManager struct {
+	*recordingTaskLifecycleManager
+	snapshotCalls int
+}
+
+func (m *snapshotIdentityManager) Get(context.Context, modulecore.TaskID) (domaintask.Task, error) {
+	return domaintask.Task{}, fmt.Errorf("separate read lost admission to pending writer")
+}
+func (m *snapshotIdentityManager) ReadTaskRuns(_ context.Context, ids []modulecore.TaskID) (map[modulecore.TaskID]domaintask.Task, map[modulecore.TaskID][]domaintask.Run, error) {
+	m.snapshotCalls++
+	tasks := map[modulecore.TaskID]domaintask.Task{}
+	runs := map[modulecore.TaskID][]domaintask.Run{}
+	for _, id := range ids {
+		tasks[id] = m.tasks[id]
+		for _, r := range m.runs {
+			if r.TaskID == id {
+				runs[id] = append(runs[id], r)
+			}
+		}
+	}
+	return tasks, runs, nil
+}
+func TestTaskLifecycleBindsIdentityFromOneOwnerSnapshot(t *testing.T) {
+	base := newRecordingTaskLifecycleManager()
+	id := modulecore.NewTaskID()
+	run := lifecycleTestRun(id, "mio", time.Now().UTC())
+	base.tasks[id] = domaintask.Task{TaskID: id, Assignee: "mio"}
+	base.runs[run.RunID] = run
+	manager := &snapshotIdentityManager{recordingTaskLifecycleManager: base}
+	activation := &taskLifecycleActivation{lifecycle: newTaskLifecycle(manager), events: newRecordingTaskLifecycleEventPort()}
+	if err := activation.bindExecutionIdentity(context.Background(), id, "mio", false); err != nil {
+		t.Fatal(err)
+	}
+	if manager.snapshotCalls != 1 {
+		t.Fatalf("snapshot calls=%d, want one", manager.snapshotCalls)
+	}
+}

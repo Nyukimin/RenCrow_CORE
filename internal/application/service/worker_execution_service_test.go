@@ -1321,6 +1321,76 @@ func TestExecuteProposal_WithAutoCommit(t *testing.T) {
 	}
 }
 
+func TestExecuteProposal_EmptyPatchDoesNotTestOrCommitDirtyWorkspace(t *testing.T) {
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	trackedFile := filepath.Join(workspace, "tracked.txt")
+	if err := os.WriteFile(trackedFile, []byte("committed baseline\n"), 0o644); err != nil {
+		t.Fatalf("create tracked baseline: %v", err)
+	}
+	runGit(t, workspace, "add", "-A")
+	runGit(t, workspace, "commit", "-m", "initial commit")
+
+	gitOutput := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workspace
+		output, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %v failed: %v", args, err)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	headBefore := gitOutput("rev-parse", "HEAD")
+	stagedFile := filepath.Join(workspace, "staged.txt")
+	if err := os.WriteFile(stagedFile, []byte("keep staged\n"), 0o644); err != nil {
+		t.Fatalf("create staged change: %v", err)
+	}
+	runGit(t, workspace, "add", "staged.txt")
+	if err := os.WriteFile(trackedFile, []byte("keep unstaged\n"), 0o644); err != nil {
+		t.Fatalf("create unstaged change: %v", err)
+	}
+	statusBefore := gitOutput("status", "--porcelain", "--untracked-files=all")
+	if statusBefore == "" {
+		t.Fatal("test fixture must contain staged and unstaged changes")
+	}
+
+	manager, task, _, ctx := newWorkerProposalAdmissionFixture(t)
+	cfg := config.WorkerConfig{
+		Workspace:           workspace,
+		AutoCommit:          true,
+		CommitMessagePrefix: "[Worker]",
+		CommandTimeout:      10,
+		GitTimeout:          10,
+		StopOnError:         true,
+		ProtectedPatterns:   []string{".env*"},
+		ActionOnProtected:   "error",
+	}
+	configurePassedTestImpactHelper(t, &cfg)
+	worker := NewWorkerExecutionService(cfg, manager)
+	p := proposal.NewProposal("No change diagnostic", "[]", "No file changes", "No-op")
+
+	result, err := worker.ExecuteProposal(ctx, task.TaskID, p)
+	if err != nil {
+		t.Fatalf("empty patch should succeed for its bound owner: %v", err)
+	}
+	if result == nil || !result.Success || result.ExecutedCmds != 0 || result.FailedCmds != 0 || len(result.Results) != 0 {
+		t.Fatalf("empty patch result=%#v, want successful zero-command result", result)
+	}
+	if result.TestStatus != "not_run" || result.TestReceipt != "" || result.GitCommit != "" ||
+		!strings.Contains(result.Summary, "tests and auto-commit were not run") {
+		t.Fatalf("empty patch verification/commit disclosure=%#v", result)
+	}
+	if headAfter := gitOutput("rev-parse", "HEAD"); headAfter != headBefore {
+		t.Fatalf("empty patch changed HEAD from %s to %s", headBefore, headAfter)
+	}
+	if statusAfter := gitOutput("status", "--porcelain", "--untracked-files=all"); statusAfter != statusBefore {
+		t.Fatalf("empty patch changed staged/working-tree state from %q to %q", statusBefore, statusAfter)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "Tmp")); !os.IsNotExist(err) {
+		t.Fatalf("empty patch launched test-impact helper or created artifacts: stat err=%v", err)
+	}
+}
+
 func TestExecuteProposal_ParallelWithMixedTypes(t *testing.T) {
 	tmpDir := t.TempDir()
 	testimpact.InitWorkspace(t, tmpDir)

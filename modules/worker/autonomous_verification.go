@@ -3,6 +3,7 @@ package worker
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 type AutonomousContract struct {
@@ -10,18 +11,31 @@ type AutonomousContract struct {
 }
 
 type AutonomousAttemptResult struct {
-	Response     string
-	TTSAudioFile string
-	PlaybackCode int
+	Response      string
+	FailureKind   string
+	FailureReason string
+	TTSAudioFile  string
+	PlaybackCode  int
 }
 
 func VerifyAutonomousAttempt(route string, contract AutonomousContract, last AutonomousAttemptResult) (bool, string, string) {
+	if last.FailureKind != "" {
+		return false, last.FailureKind, ShortFailureReason(fallbackString(last.FailureReason, last.FailureKind))
+	}
 	if strings.TrimSpace(last.Response) == "" {
 		return false, "verification_failed", "empty response"
 	}
 
 	if IsTTSCapability(contract) {
 		return VerifyTTSAttempt(last)
+	}
+	// These routes deliver reports or generated text. A report may discuss
+	// failures (or quote an error) without the execution itself having failed.
+	// Operational errors remain owned by Execute and its typed failure fields;
+	// this check does not certify the claims or external work in the report.
+	switch normalizeRuntimeRoute(route) {
+	case "WILD", "RESEARCH", "PLAN", "ANALYZE":
+		return true, "", ""
 	}
 
 	if isCodeRouteName(route) {
@@ -112,5 +126,9 @@ func ShortFailureReason(content string) string {
 	if len(text) <= 160 {
 		return text
 	}
-	return text[:157] + "..."
+	end := 157
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end] + "..."
 }

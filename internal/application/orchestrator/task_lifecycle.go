@@ -40,6 +40,7 @@ type TaskLifecycleManager interface {
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	Start(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
+	ReadTaskRuns(context.Context, []modulecore.TaskID) (map[modulecore.TaskID]domaintask.Task, map[modulecore.TaskID][]domaintask.Run, error)
 	Wait(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Succeed(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Fail(context.Context, modulecore.TaskID, string, []string) (domaintask.Task, error)
@@ -280,10 +281,13 @@ func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, tas
 	if err != nil {
 		return err
 	}
-	task, err := a.lifecycle.manager.Get(ctx, taskID)
+	// Read Task and Run from one owner snapshot. Independent admitted reads
+	// can otherwise race the persistence worker between identity checks.
+	tasks, taskRuns, err := a.lifecycle.manager.ReadTaskRuns(ctx, []modulecore.TaskID{taskID})
 	if err != nil {
 		return fmt.Errorf("resolve execution task %s: %w", taskID, err)
 	}
+	task := tasks[taskID]
 	if task.TaskID != taskID {
 		return fmt.Errorf("execution task identity mismatch: got %s want %s", task.TaskID, taskID)
 	}
@@ -294,7 +298,13 @@ func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, tas
 	if taskActor != canonicalActor {
 		return fmt.Errorf("execution task %s assignee mismatch: saved=%s want=%s", taskID, taskActor, canonicalActor)
 	}
-	run, err := a.lifecycle.activeRunForTask(ctx, taskID)
+	active := make([]domaintask.Run, 0, 1)
+	for _, run := range taskRuns[taskID] {
+		if run.Status == domaintask.RunStatusRunning {
+			active = append(active, run)
+		}
+	}
+	run, err := selectActiveTaskRun(taskID, active)
 	if err != nil {
 		return fmt.Errorf("resolve execution Run for task %s: %w", taskID, err)
 	}
@@ -342,6 +352,10 @@ func (l *taskLifecycle) activeRunForTask(ctx context.Context, taskID modulecore.
 	if err != nil {
 		return domaintask.Run{}, fmt.Errorf("list active task runs: %w", err)
 	}
+	return selectActiveTaskRun(taskID, runs)
+}
+
+func selectActiveTaskRun(taskID modulecore.TaskID, runs []domaintask.Run) (domaintask.Run, error) {
 	if len(runs) != 1 {
 		return domaintask.Run{}, fmt.Errorf("task %s must have exactly one active run, got %d", taskID, len(runs))
 	}

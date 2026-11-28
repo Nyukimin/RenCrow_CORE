@@ -4,10 +4,10 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 )
 
-// applyRuntimeAgentWebResearch connects query execution to Agent generation,
-// using the same late-bound Runner that supplies the capability snapshot.
-// Kuro retains its existing native Codex tool runtime; Shiro's native coding
-// and Worker Tool loop retain their own execution/permission owners.
+// applyRuntimeAgentWebResearch connects the shared pre-run gather to Agent
+// generation, using the same late-bound Runner that supplies the capability
+// snapshot. It preserves Kuro's native Codex generation and Shiro's native
+// coding and Worker Tool execution/permission owners.
 func applyRuntimeAgentWebResearch(agents agentRuntime, runtime toolRuntime, coders ...*coderAdapter) {
 	if runtime.WorkerRuntimeRunnerV2 == nil {
 		return
@@ -24,6 +24,9 @@ func applyRuntimeAgentWebResearch(agents agentRuntime, runtime toolRuntime, code
 	}
 	if agents.Wild != nil {
 		agents.Wild.WithWebResearch(research)
+	}
+	if agents.Heavy != nil {
+		agents.Heavy.WithWebResearch(research)
 	}
 	for _, coder := range coders {
 		if coder != nil && coder.domainCoder != nil {

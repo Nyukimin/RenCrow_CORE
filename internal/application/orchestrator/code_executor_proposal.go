@@ -215,7 +215,22 @@ func (e *DefaultCodeExecutor) validateGeneratedProposal(
 	p *proposal.Proposal,
 ) error {
 	if p != nil && p.IsValid() {
-		return nil
+		if !req.noWriteDiagnostic {
+			return nil
+		}
+		commands, parseErr := patch.ParsePatch(p.Patch())
+		if parseErr == nil && len(commands) == 0 {
+			return nil
+		}
+		reason := "diagnostic-only request proposal contains patch commands"
+		if parseErr != nil {
+			reason = "diagnostic-only request proposal has an invalid patch: " + parseErr.Error()
+		}
+		sessionID, channel, chatID := turnInputMetadata(req.Input)
+		route := req.Input.Route()
+		e.emit("agent.response", target.name, "shiro", "diagnostic-only request proposal was rejected: "+reason, route.String(), req.TaskID, sessionID, channel, chatID)
+		e.emitProposalFailure(req, target, reason)
+		return fmt.Errorf("%s proposal generation failed: %s", target.name, reason)
 	}
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	route := req.Input.Route()

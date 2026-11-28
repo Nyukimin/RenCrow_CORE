@@ -87,6 +87,11 @@ func (w *workerExecutionService) executeProposal(
 		return nil, err
 	}
 	commands = w.normalizeParsedCommands(commands)
+	if len(commands) == 0 {
+		result := patch.NewPatchExecutionResult().WithSummary("No patch commands; tests and auto-commit were not run.")
+		result.TestStatus = "not_run"
+		return result, nil
+	}
 
 	w.showExecutionSummaryIfEnabled(taskID, commands)
 	if err := w.validateCommandsBeforeExecution(commands); err != nil {

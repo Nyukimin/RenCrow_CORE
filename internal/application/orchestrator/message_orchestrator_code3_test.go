@@ -176,7 +176,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE2_ReadOnlyDiagnosticNoChangeSucc
 		SessionID:   newMockCanonicalSessionID("viewer", "viewer"),
 		Channel:     "viewer",
 		ChatID:      "viewer",
-		UserMessage: "/code2 診断です。ファイル変更やコマンド実行はせず、Worker/Coder経路に届いたことだけ短く報告してください。",
+		UserMessage: "/code2 " + codeDiagnosticNoWriteDirective + "\n診断です。ファイル変更やコマンド実行はせず、Worker/Coder経路に届いたことだけ短く報告してください。",
 	})
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)

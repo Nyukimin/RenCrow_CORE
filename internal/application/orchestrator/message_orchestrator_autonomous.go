@@ -193,8 +193,10 @@ func autonomousContractFromDomain(c domaincontract.Contract) moduleworker.Autono
 
 func autonomousAttemptFromApp(last autonomousapp.AttemptResult) moduleworker.AutonomousAttemptResult {
 	return moduleworker.AutonomousAttemptResult{
-		Response:     last.Response,
-		TTSAudioFile: last.TTSAudioFile,
-		PlaybackCode: last.PlaybackCode,
+		Response:      last.Response,
+		FailureKind:   last.FailureKind,
+		FailureReason: last.FailureReason,
+		TTSAudioFile:  last.TTSAudioFile,
+		PlaybackCode:  last.PlaybackCode,
 	}
 }
