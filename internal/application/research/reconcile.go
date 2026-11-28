@@ -17,8 +17,15 @@ func (a *Adapters) Reconcile(ctx context.Context, req engine.CommitRequest) (eng
 		return engine.ReconcileResult{}, errors.New("research staging reconciliation unavailable")
 	}
 	doc := req.Document
-	if !doc.Complete || !doc.RetentionAllowed || doc.ContentState != "fetched" || digestBytes([]byte(doc.Text)) != req.Digest || doc.ExtractedHash != req.Digest || req.IdempotencyKey != IdempotencyKey(firstNonEmpty(req.ResearchRunID, req.Envelope.RunID), req.Target.Target, req.Target.DestinationRef, req.Digest) {
+	if !doc.Complete || !doc.RetentionAllowed || doc.ContentState != "fetched" || digestBytes([]byte(doc.Text)) != req.Digest || doc.ExtractedHash != req.Digest {
 		return engine.ReconcileResult{}, errors.New("invalid reconciliation binding")
+	}
+	expectedIdempotencyKey, keyErr := c.CommitIdempotencyKey(firstNonEmpty(req.ResearchRunID, req.Envelope.RunID), req.Target, req.Digest, doc)
+	if keyErr != nil || req.IdempotencyKey != expectedIdempotencyKey {
+		return engine.ReconcileResult{}, errors.New("invalid reconciliation idempotency key")
+	}
+	if doc.LocalOrigin != nil {
+		return a.reconcileLocalMaterial(ctx, req, *doc)
 	}
 	if !validResearchDocumentIdentity(*doc) {
 		return engine.ReconcileResult{}, errors.New("unsupported research document source identity or content scope")

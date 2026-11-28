@@ -186,3 +186,53 @@ func TestLocalDocumentRetrieverUsesFetchedAtOnlyWhenPublicationTimeIsAbsent(t *t
 		t.Fatalf("revoked retention rights were treated as readable: %+v err=%v", blocked, err)
 	}
 }
+
+func TestLocalDocumentRetrieverPreservesL1ReceiptAndRoutesStructuredTargets(t *testing.T) {
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "research.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	legacyText := "Existing L1 document remains available in the same run."
+	insertLocalRecallFixture(t, store, "legacy-document", "kb:research", localRecallEvent(legacyText), "public", "", legacyText, now, time.Time{}, true)
+	pdf := localPDFTestDocument("spec-ledger", "revision-v1")
+	code := localCodeTestDocument([]c.CodeFunctionRange{{Name: "HandleLedger", QualifiedName: "fixture.HandleLedger", StartLine: 2, EndLine: 2}})
+	owner := &structuredMaterialOwnerStub{allowed: true, byTarget: map[string]engine.LocalDocumentResult{
+		"documents": {Items: []engine.LocalDocumentItem{{Document: pdf}}},
+		"code":      {Items: []engine.LocalDocumentItem{{Document: code}}},
+	}}
+	reader := NewLocalDocumentRetriever(store, func(context.Context, c.Candidate) (bool, bool) { return true, true }).WithStructuredMaterialOwner(owner)
+	envelope := c.Envelope{DataScope: "public"}
+	window := &c.TimeWindow{Since: now.Add(-time.Hour), Until: now.Add(time.Hour)}
+	documents, err := reader.ReadDocuments(context.Background(), envelope, engine.LocalDocumentRequest{
+		Target: "documents", Query: "Existing L1 document", DocumentRefs: []string{"legacy-document", "spec-ledger@revision-v1"}, TimeWindow: window, Limit: 4,
+	})
+	if err != nil || documents.Code != "" || len(documents.Items) != 2 || len(documents.Missing) != 0 {
+		t.Fatalf("combined L1 and PDF local documents = %+v err=%v", documents, err)
+	}
+	var l1Found, pdfFound bool
+	for _, item := range documents.Items {
+		switch item.Document.ID {
+		case "legacy-document":
+			l1Found = item.Receipt.Owner == "core.l1_staging" && item.Receipt.AuditRef != "" && item.Receipt.LocalIdentity == ""
+		case pdf.ID:
+			pdfFound = item.Receipt == (c.Receipt{}) && item.Document.LocalOrigin != nil && item.Document.LocalOrigin.Kind == "pdf"
+		}
+	}
+	if !l1Found || !pdfFound || len(owner.reads) != 1 || owner.reads[0].Target != "documents" || len(owner.reads[0].DocumentRefs) != 2 ||
+		owner.reads[0].DocumentRefs[0] != "legacy-document" || owner.reads[0].DocumentRefs[1] != "spec-ledger@revision-v1" || owner.reads[0].TimeWindow == nil {
+		t.Fatalf("L1 receipt or exact PDF request binding was lost: l1=%t pdf=%t ownerRequests=%+v", l1Found, pdfFound, owner.reads)
+	}
+
+	codeResult, err := reader.ReadDocuments(context.Background(), envelope, engine.LocalDocumentRequest{
+		Target: "code", RepoRef: "repo-fixture", Revision: strings.Repeat("a", 40), Query: "HandleLedger", Limit: 4,
+	})
+	if err != nil || codeResult.Code != "" || len(codeResult.Items) != 1 || codeResult.Items[0].Document.LocalOrigin == nil ||
+		codeResult.Items[0].Document.LocalOrigin.Kind != "code" || codeResult.Items[0].Receipt != (c.Receipt{}) {
+		t.Fatalf("exact CodeGraph local target = %+v err=%v", codeResult, err)
+	}
+	if len(owner.reads) != 2 || owner.reads[1].Target != "code" || owner.reads[1].RepoRef != "repo-fixture" || owner.reads[1].Revision != strings.Repeat("a", 40) {
+		t.Fatalf("exact repository identity was not passed to the local owner: %+v", owner.reads)
+	}
+}

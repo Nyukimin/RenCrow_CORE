@@ -172,32 +172,15 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(owner.config.Research.StructuredIndex.CodeGraph.TimeoutSeconds)*time.Second)
 	defer cancel()
-	repository, ok := owner.trustedRepository(request.RepoRef, request.Revision, envelope, envelope.OwnerID)
-	if !ok {
-		return []c.Hit{}, true, nil
-	}
-	requestIdentity := c.CodeGraphBuildRequest{SchemaVersion: c.CodeGraphRequestSchema, RepositoryRef: repository.Ref, Revision: request.Revision}
-	_, _, canonicalDigest, err := c.CanonicalizeCodeGraphBuildRequest(requestIdentity)
+	current, found, err := owner.readCurrentCodeGraph(ctx, envelope, request.RepoRef, request.Revision)
 	if err != nil {
 		return []c.Hit{}, true, err
 	}
-	operationKey, digest, err := owner.codeGraphOperationIdentity(requestIdentity, repository, canonicalDigest)
-	if err != nil {
-		return []c.Hit{}, true, err
-	}
-	snapshot, err := owner.createCodeGraphSnapshot(ctx, repository, request.Revision)
-	if err != nil {
-		return []c.Hit{}, true, errors.New("registered CodeGraph source snapshot is unavailable")
-	}
-	defer removeResearchCodeGraphSnapshot(snapshot.Root)
-	operation, found, err := owner.readStructuredOperation(ctx, envelope.OwnerID, operationKey, digest)
-	if err != nil || !found || operation.State != "completed" || operation.Result == nil || operation.Result.Status != "indexed" ||
-		!operation.Result.ReadbackVerified || operation.Result.RepositoryRef != repository.Ref || operation.Result.Revision != request.Revision ||
-		operation.Result.Project != snapshot.PortSnapshot.Project || operation.Result.SnapshotHash != snapshot.PortSnapshot.SourceHash ||
-		!validResearchCodeGraphReceipt(operation.Result.CodeGraph, owner.config.Research.StructuredIndex.CodeGraph, snapshot.PortSnapshot) {
+	if !found {
 		return []c.Hit{}, true, nil
 	}
-	symbols, err := owner.codeGraph.SearchFunctions(ctx, snapshot.PortSnapshot.Project, query, min(limit, researchCodeGraphSearchMax))
+	defer removeResearchCodeGraphSnapshot(current.Snapshot.Root)
+	symbols, err := owner.codeGraph.SearchFunctions(ctx, current.Snapshot.PortSnapshot.Project, query, min(limit, researchCodeGraphSearchMax))
 	if err != nil {
 		return []c.Hit{}, true, errors.New("CodeGraph function search is unavailable")
 	}
@@ -206,7 +189,7 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 	var recallErr error
 	unverifiedCandidate := false
 	for _, symbol := range symbols {
-		verified, ok := verifyResearchCodeGraphSymbol(ctx, repository, request.Revision, symbol, snapshot.Files, query)
+		verified, ok := verifyResearchCodeGraphSymbol(ctx, current.Repository, request.Revision, symbol, current.Snapshot.Files, query)
 		if !ok {
 			unverifiedCandidate = true
 			continue
@@ -216,7 +199,7 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 			continue
 		}
 		seen[key] = struct{}{}
-		hits = append(hits, researchCodeGraphFunctionHit(repository.Ref, request.Revision, operation.Result.CodeGraph.BackendVersion, symbol, verified.fileBytes, verified.excerpt))
+		hits = append(hits, researchCodeGraphFunctionHit(current.Repository.Ref, request.Revision, current.Result.CodeGraph.BackendVersion, symbol, verified.fileBytes, verified.excerpt))
 		if len(hits) >= limit {
 			break
 		}
@@ -224,7 +207,7 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 		if traceFunction == "" {
 			traceFunction = symbol.Name
 		}
-		relations, traceErr := owner.codeGraph.TraceCalls(ctx, snapshot.PortSnapshot.Project, traceFunction, "both", 1, min(limit, researchCodeGraphSearchMax))
+		relations, traceErr := owner.codeGraph.TraceCalls(ctx, current.Snapshot.PortSnapshot.Project, traceFunction, "both", 1, min(limit, researchCodeGraphSearchMax))
 		if traceErr != nil {
 			recallErr = errors.Join(recallErr, errors.New("CodeGraph call trace is unavailable"))
 			continue
@@ -234,13 +217,13 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 				unverifiedCandidate = true
 				continue
 			}
-			caller, callerOK := owner.verifyCodeGraphEndpoint(ctx, snapshot.PortSnapshot.Project, repository, request.Revision, snapshot.Files, relation.CallerName, relation.CallerQualified)
-			callee, calleeOK := owner.verifyCodeGraphEndpoint(ctx, snapshot.PortSnapshot.Project, repository, request.Revision, snapshot.Files, relation.CalleeName, relation.CalleeQualified)
+			caller, callerOK := owner.verifyCodeGraphEndpoint(ctx, current.Snapshot.PortSnapshot.Project, current.Repository, request.Revision, current.Snapshot.Files, relation.CallerName, relation.CallerQualified)
+			callee, calleeOK := owner.verifyCodeGraphEndpoint(ctx, current.Snapshot.PortSnapshot.Project, current.Repository, request.Revision, current.Snapshot.Files, relation.CalleeName, relation.CalleeQualified)
 			if !callerOK || !calleeOK || (!strings.Contains(caller.source, query) && !strings.Contains(callee.source, query)) {
 				unverifiedCandidate = true
 				continue
 			}
-			edgeLocator := fmt.Sprintf("%s@%s:CALLS:%s:%d->%s:%d", repository.Ref, request.Revision,
+			edgeLocator := fmt.Sprintf("%s@%s:CALLS:%s:%d->%s:%d", current.Repository.Ref, request.Revision,
 				caller.symbol.Path, caller.symbol.StartLine, callee.symbol.Path, callee.symbol.StartLine)
 			for _, endpoint := range []verifiedResearchCodeGraphSymbol{caller, callee} {
 				edgeKey := "edge:" + edgeLocator + ":" + endpoint.symbol.Path + fmt.Sprint(":", endpoint.symbol.StartLine)
@@ -248,8 +231,8 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 					continue
 				}
 				seen[edgeKey] = struct{}{}
-				hits = append(hits, researchCodeGraphCallEndpointHit(repository.Ref, request.Revision,
-					operation.Result.CodeGraph.BackendVersion, edgeLocator, endpoint))
+				hits = append(hits, researchCodeGraphCallEndpointHit(current.Repository.Ref, request.Revision,
+					current.Result.CodeGraph.BackendVersion, edgeLocator, endpoint))
 				if len(hits) >= limit {
 					break
 				}

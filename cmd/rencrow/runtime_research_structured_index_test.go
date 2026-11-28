@@ -160,6 +160,23 @@ func TestResearchStructuredPDFOwnerPersistsOriginalAndReadsExactPage(t *testing.
 	if err != nil || !unavailable || len(wrongOwnerHits) != 0 {
 		t.Fatalf("wrong PDF owner must be unavailable: hits=%+v unavailable=%t err=%v", wrongOwnerHits, unavailable, err)
 	}
+	localMaterial, err := owner.ReadLocalMaterial(context.Background(), contract.Envelope{OwnerID: "ren", DataScope: "user"}, engine.LocalDocumentRequest{
+		Target: "documents", Query: "Ledger Records", DocumentRefs: []string{documentRef + "@" + revision}, Limit: 4,
+	})
+	if err != nil || localMaterial.Code != "" || len(localMaterial.Missing) != 0 || len(localMaterial.Items) != 1 {
+		t.Fatalf("complete PageIndex section material = %+v err=%v", localMaterial, err)
+	}
+	pdfDocument := localMaterial.Items[0].Document
+	expectedSection := "Chapter Two - Ledger Records\nLedger Records: the second clause identifies the verified call site.\n\nEnd of the retained ledger section."
+	if localMaterial.Items[0].Receipt != (contract.Receipt{}) || pdfDocument.Text != expectedSection || pdfDocument.OriginalHash != strings.TrimPrefix(originalHash, "sha256:") ||
+		pdfDocument.ExtractedHash != researchDigest([]byte(expectedSection)) || pdfDocument.ContentScope != "pdf_pages:2-3" ||
+		pdfDocument.LocalOrigin == nil || pdfDocument.LocalOrigin.PDF == nil || pdfDocument.LocalOrigin.PDF.OriginalHash != strings.TrimPrefix(originalHash, "sha256:") ||
+		pdfDocument.IndependentSource != "pdf:"+documentRef {
+		t.Fatalf("PageIndex material lost source hash, complete page text, range, or stable independence: %+v", pdfDocument)
+	}
+	if err := owner.VerifyLocalMaterial(context.Background(), contract.Envelope{OwnerID: "ren", DataScope: "user"}, pdfDocument); err != nil {
+		t.Fatalf("exact current PDF source failed local material verification: %v", err)
+	}
 	store.corrupt(registered.Result.SourceArtifact.Hash)
 	wrongHits, unavailable, err = owner.RecallPageIndexDocuments(context.Background(), contract.Envelope{OwnerID: "ren", DataScope: "user"}, request, request.Query, 4)
 	if err == nil || !unavailable || len(wrongHits) != 0 {
@@ -202,6 +219,70 @@ func TestResearchStructuredPDFTimeWindowOnlyRejectsSelectedPDFs(t *testing.T) {
 	hits, unavailable, err = owner.RecallPageIndexDocuments(context.Background(), contract.Envelope{OwnerID: "ren", DataScope: "user"}, request, request.Query, 4)
 	if err == nil || !unavailable || len(hits) != 0 || pageIndex.builds != 0 || pageIndex.reads != 0 {
 		t.Fatalf("selected PDF with unsupported time filter should remain unavailable: hits=%+v unavailable=%t err=%v builds=%d reads=%d", hits, unavailable, err, pageIndex.builds, pageIndex.reads)
+	}
+}
+
+func TestResearchLocalPDFReadDoesNotDegradeUnselectedL1WhenBackendIsDisabled(t *testing.T) {
+	cfg, _, _ := researchOwnerFixture(t)
+	pageIndex := &structuredPageIndexFake{}
+	cfg.Research.StructuredIndex = config.ResearchStructuredIndexConfig{
+		CodeGraph: config.ResearchCodeGraphConfig{Enabled: true},
+	}
+	owner := &researchStructuredIndexOwner{config: cfg, ownerID: "ren", pageIndex: pageIndex}
+	envelope := contract.Envelope{OwnerID: "ren", DataScope: "user"}
+	since := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	result, err := owner.ReadLocalMaterial(context.Background(), envelope, engine.LocalDocumentRequest{
+		Target: "documents", Query: "existing retained source", DocumentRefs: []string{"l1-event-id"},
+		TimeWindow: &contract.TimeWindow{Since: since, Until: since.Add(time.Hour)}, Limit: 4,
+	})
+	if err != nil || result.Code != "" || len(result.Items) != 0 || len(result.Missing) != 0 || pageIndex.builds != 0 || pageIndex.reads != 0 {
+		t.Fatalf("unselected L1 source became unavailable because PageIndex is disabled: result=%+v err=%v builds=%d reads=%d", result, err, pageIndex.builds, pageIndex.reads)
+	}
+
+	cfg.Research.StructuredIndex.TrustedPDFs = []config.ResearchTrustedPDFConfig{{
+		DocumentRef: "trusted-pdf", Revision: "revision-v1", OriginalSHA256: "sha256:" + strings.Repeat("b", 64),
+		DataScope: "user", OwnerID: "ren", RightsBasis: "owner-authorized-retention", RetentionAllowed: true,
+	}}
+	selected, err := owner.ReadLocalMaterial(context.Background(), envelope, engine.LocalDocumentRequest{
+		Target: "documents", Query: "ledger", DocumentRefs: []string{"trusted-pdf@revision-v1"}, Limit: 4,
+	})
+	if err != nil || selected.Code != "unavailable" || len(selected.Missing) == 0 || pageIndex.builds != 0 || pageIndex.reads != 0 {
+		t.Fatalf("explicit trusted PDF remained silently available while its backend is disabled: result=%+v err=%v reads=%d", selected, err, pageIndex.reads)
+	}
+}
+
+func TestResearchStructuredPDFSelectionUsesExactVersionAcrossConfiguredRevisions(t *testing.T) {
+	cfg, _, _ := researchOwnerFixture(t)
+	cfg.Research.StructuredIndex.TrustedPDFs = []config.ResearchTrustedPDFConfig{
+		{DocumentRef: "spec", Revision: "v1", OriginalSHA256: "sha256:" + strings.Repeat("a", 64), DataScope: "user", OwnerID: "ren", RightsBasis: "owner-authorized-retention", RetentionAllowed: true},
+		{DocumentRef: "spec", Revision: "v2", OriginalSHA256: "sha256:" + strings.Repeat("b", 64), DataScope: "user", OwnerID: "ren", RightsBasis: "owner-authorized-retention", RetentionAllowed: true},
+		{DocumentRef: "outside", Revision: "v1", OriginalSHA256: "sha256:" + strings.Repeat("c", 64), DataScope: "public", RightsBasis: "public-owner-registration", RetentionAllowed: true},
+	}
+	owner := &researchStructuredIndexOwner{config: cfg, ownerID: "ren"}
+	envelope := contract.Envelope{OwnerID: "ren", DataScope: "user"}
+	for _, test := range []struct {
+		name            string
+		ref             string
+		wantRevision    string
+		wantUnavailable bool
+		wantSelected    int
+	}{
+		{name: "version one ignores sibling revision", ref: "spec@v1", wantRevision: "v1", wantSelected: 1},
+		{name: "version two selected exactly", ref: "spec@v2", wantRevision: "v2", wantSelected: 1},
+		{name: "unknown version unavailable", ref: "spec@v3", wantUnavailable: true},
+		{name: "scope outside unavailable", ref: "outside@v1", wantUnavailable: true},
+		{name: "bare ref ambiguous across versions", ref: "spec", wantUnavailable: true},
+		{name: "unrelated L1 ref remains unselected", ref: "l1-event-id"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selected, unavailable := owner.selectTrustedPDFs(envelope, []string{test.ref})
+			if len(selected) != test.wantSelected || unavailable != test.wantUnavailable {
+				t.Fatalf("select %q = %+v unavailable=%t", test.ref, selected, unavailable)
+			}
+			if len(selected) == 1 && selected[0].Revision != test.wantRevision {
+				t.Fatalf("select %q returned revision %q, want %q", test.ref, selected[0].Revision, test.wantRevision)
+			}
+		})
 	}
 }
 
@@ -335,6 +416,21 @@ func TestResearchStructuredCodeGraphBuildAndRecallRequireExactCommitSources(t *t
 	if !foundFunction || foundEndpoints != 2 {
 		t.Fatalf("function/call endpoint evidence = function=%t endpoints=%d hits=%+v", foundFunction, foundEndpoints, hits)
 	}
+	localCode, err := owner.ReadLocalMaterial(context.Background(), envelope, engine.LocalDocumentRequest{
+		Target: "code", RepoRef: "repo-fixture", Revision: firstRevision, Query: "HandleLedger", Limit: 8,
+	})
+	if err != nil || localCode.Code != "" || len(localCode.Missing) != 0 || len(localCode.Items) != 1 {
+		t.Fatalf("complete same-commit source file material = %+v err=%v", localCode, err)
+	}
+	codeDocument := localCode.Items[0].Document
+	if localCode.Items[0].Receipt != (contract.Receipt{}) || codeDocument.Text != string(firstSource) || codeDocument.OriginalHash != researchDigest(firstSource) ||
+		codeDocument.ExtractedHash != researchDigest(firstSource) || codeDocument.IndependentSource != "repo:repo-fixture" ||
+		codeDocument.LocalOrigin == nil || codeDocument.LocalOrigin.Code == nil || len(codeDocument.LocalOrigin.Code.Functions) != 2 || len(codeDocument.LocalOrigin.Code.Calls) != 1 {
+		t.Fatalf("CodeGraph material was excerpted or lost source provenance: %+v", codeDocument)
+	}
+	if err := owner.VerifyLocalMaterial(context.Background(), envelope, codeDocument); err != nil {
+		t.Fatalf("exact CodeGraph source file failed current source verification: %v", err)
+	}
 	secondSource := []byte("package fixture\nfunc StoreLedger() {\n\treturn\n}\n")
 	if err := os.WriteFile(filepath.Join(repositoryPath, "worker.go"), secondSource, 0600); err != nil {
 		t.Fatal(err)
@@ -359,6 +455,12 @@ func TestResearchStructuredCodeGraphBuildAndRecallRequireExactCommitSources(t *t
 	newHits, unavailable, err = owner.RecallCodeGraph(context.Background(), envelope, missingRequest, request.Query, 8)
 	if err != nil || !unavailable || len(newHits) != 0 {
 		t.Fatalf("deleted function candidate from old graph lines became evidence for the new commit: hits=%+v unavailable=%t err=%v", newHits, unavailable, err)
+	}
+	deletedMaterial, err := owner.ReadLocalMaterial(context.Background(), envelope, engine.LocalDocumentRequest{
+		Target: "code", RepoRef: "repo-fixture", Revision: secondRevision, Query: "HandleLedger", Limit: 8,
+	})
+	if err != nil || deletedMaterial.Code != "unavailable" || len(deletedMaterial.Items) != 0 || len(deletedMaterial.Missing) == 0 {
+		t.Fatalf("function deleted from the exact new commit remained complete local material: result=%+v err=%v", deletedMaterial, err)
 	}
 
 	cfg.Research.Repositories = append(cfg.Research.Repositories, config.ResearchRepositoryConfig{

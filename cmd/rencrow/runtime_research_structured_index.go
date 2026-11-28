@@ -99,6 +99,11 @@ type researchPageIndexPayload struct {
 	Nodes          []engine.PageIndexNode    `json:"nodes"`
 }
 
+type trustedResearchPageIndex struct {
+	Source  researchTrustedPDF
+	Payload researchPageIndexPayload
+}
+
 type researchStructuredOperationResponse struct {
 	SchemaVersion string                         `json:"schema_version"`
 	State         string                         `json:"state"`
@@ -461,55 +466,17 @@ func (owner *researchStructuredIndexOwner) RecallPageIndexDocuments(ctx context.
 	hits := make([]c.Hit, 0, min(limit, len(selected)))
 	var recallErr error
 	for _, trusted := range selected {
-		if !trusted.RetentionAllowed {
-			unavailable = true
-			continue
-		}
-		source, _, err := owner.readTrustedPDF(ctx, envelope.OwnerID, trusted)
+		indexed, found, err := owner.readCurrentPageIndex(ctx, envelope, trusted)
 		if err != nil {
 			unavailable = true
 			recallErr = errors.Join(recallErr, err)
 			continue
 		}
-		if !source.ReadbackVerified {
+		if !found {
 			unavailable = true
 			continue
 		}
-		document := c.PageIndexDocumentRef{DocumentRef: trusted.DocumentRef, Revision: trusted.Revision}
-		operationKey, digest, err := owner.pageIndexOperationIdentity(document, trusted)
-		if err != nil {
-			unavailable = true
-			continue
-		}
-		operation, found, err := owner.readStructuredOperation(ctx, envelope.OwnerID, operationKey, digest)
-		if err != nil || !found || operation.State != "completed" || operation.Result == nil ||
-			operation.Result.Status != "indexed" || !operation.Result.ReadbackVerified || operation.Result.IndexArtifact == nil ||
-			operation.Result.OriginalSHA256 != trusted.OriginalSHA256 || operation.Result.RightsBasis != trusted.RightsBasis ||
-			operation.Result.RetentionAllowed != trusted.RetentionAllowed || !validResearchPageIndexMetadata(operation.Result.PageIndex, owner.config.Research.StructuredIndex.PageIndex.RuntimeManifestSHA256) {
-			unavailable = true
-			continue
-		}
-		artifactBytes, err := owner.store.Get(ctx, *operation.Result.IndexArtifact)
-		if err != nil || len(artifactBytes) == 0 || len(artifactBytes) > 16<<20 ||
-			researchSHA256(artifactBytes) != "sha256:"+operation.Result.IndexArtifact.Hash ||
-			!validResearchStoredArtifact(*operation.Result.IndexArtifact, "sha256:"+operation.Result.IndexArtifact.Hash) {
-			unavailable = true
-			continue
-		}
-		var payload researchPageIndexPayload
-		if decodeResearchStructuredJSON(artifactBytes, &payload) != nil || payload.SchemaVersion != researchPDFIndexPayloadSchema ||
-			payload.DocumentRef != trusted.DocumentRef || payload.Revision != trusted.Revision || payload.OriginalSHA256 != trusted.OriginalSHA256 ||
-			payload.DataScope != trusted.DataScope || payload.OwnerID != trusted.OwnerID || payload.RightsBasis != trusted.RightsBasis ||
-			payload.PageIndex != *operation.Result.PageIndex || !validResearchPageIndexNodes(payload.Nodes, payload.PageIndex.PageCount) {
-			unavailable = true
-			continue
-		}
-		canonicalPayload, marshalErr := json.Marshal(payload)
-		if marshalErr != nil || !bytes.Equal(canonicalPayload, artifactBytes) {
-			unavailable = true
-			continue
-		}
-		hit, ok, readErr := owner.readPageIndexEvidence(ctx, trusted, source.rawPDF, payload, query)
+		hit, ok, readErr := owner.readPageIndexEvidence(ctx, trusted, indexed.Source.rawPDF, indexed.Payload, query)
 		if readErr != nil {
 			unavailable = true
 			continue
@@ -522,6 +489,51 @@ func (owner *researchStructuredIndexOwner) RecallPageIndexDocuments(ctx context.
 		}
 	}
 	return hits, unavailable, recallErr
+}
+
+func (owner *researchStructuredIndexOwner) readCurrentPageIndex(ctx context.Context, envelope c.Envelope, trusted config.ResearchTrustedPDFConfig) (trustedResearchPageIndex, bool, error) {
+	indexed := trustedResearchPageIndex{}
+	if !trusted.RetentionAllowed {
+		return indexed, false, nil
+	}
+	source, state, err := owner.readTrustedPDF(ctx, envelope.OwnerID, trusted)
+	if err != nil {
+		return indexed, false, err
+	}
+	if state != "registered" || !source.ReadbackVerified {
+		return indexed, false, nil
+	}
+	document := c.PageIndexDocumentRef{DocumentRef: trusted.DocumentRef, Revision: trusted.Revision}
+	operationKey, digest, err := owner.pageIndexOperationIdentity(document, trusted)
+	if err != nil {
+		return indexed, false, nil
+	}
+	operation, found, err := owner.readStructuredOperation(ctx, envelope.OwnerID, operationKey, digest)
+	if err != nil || !found || operation.State != "completed" || operation.Result == nil ||
+		operation.Result.Status != "indexed" || !operation.Result.ReadbackVerified || operation.Result.IndexArtifact == nil ||
+		operation.Result.OriginalSHA256 != trusted.OriginalSHA256 || operation.Result.RightsBasis != trusted.RightsBasis ||
+		operation.Result.RetentionAllowed != trusted.RetentionAllowed || !validResearchPageIndexMetadata(operation.Result.PageIndex, owner.config.Research.StructuredIndex.PageIndex.RuntimeManifestSHA256) {
+		return indexed, false, nil
+	}
+	artifactBytes, err := owner.store.Get(ctx, *operation.Result.IndexArtifact)
+	if err != nil || len(artifactBytes) == 0 || len(artifactBytes) > 16<<20 ||
+		researchSHA256(artifactBytes) != "sha256:"+operation.Result.IndexArtifact.Hash ||
+		!validResearchStoredArtifact(*operation.Result.IndexArtifact, "sha256:"+operation.Result.IndexArtifact.Hash) {
+		return indexed, false, nil
+	}
+	var payload researchPageIndexPayload
+	if decodeResearchStructuredJSON(artifactBytes, &payload) != nil || payload.SchemaVersion != researchPDFIndexPayloadSchema ||
+		payload.DocumentRef != trusted.DocumentRef || payload.Revision != trusted.Revision || payload.OriginalSHA256 != trusted.OriginalSHA256 ||
+		payload.DataScope != trusted.DataScope || payload.OwnerID != trusted.OwnerID || payload.RightsBasis != trusted.RightsBasis ||
+		payload.PageIndex != *operation.Result.PageIndex || !validResearchPageIndexNodes(payload.Nodes, payload.PageIndex.PageCount) {
+		return indexed, false, nil
+	}
+	canonicalPayload, err := json.Marshal(payload)
+	if err != nil || !bytes.Equal(canonicalPayload, artifactBytes) {
+		return indexed, false, nil
+	}
+	indexed.Source, indexed.Payload = source, payload
+	return indexed, true, nil
 }
 
 func (owner *researchStructuredIndexOwner) selectTrustedPDFs(envelope c.Envelope, refs []string) ([]config.ResearchTrustedPDFConfig, bool) {
@@ -539,26 +551,56 @@ func (owner *researchStructuredIndexOwner) selectTrustedPDFs(envelope c.Envelope
 		}
 	} else {
 		for _, requested := range refs {
-			matched := false
+			var exactScoped []config.ResearchTrustedPDFConfig
+			var bareScoped []config.ResearchTrustedPDFConfig
+			matchedConfiguredRef := false
 			for _, document := range configured {
-				if document.DataScope != envelope.DataScope || document.OwnerID != envelope.OwnerID {
-					if requested == document.DocumentRef || strings.HasPrefix(requested, document.DocumentRef+"@") {
-						unavailable = true
-					}
+				isBareRef := requested == document.DocumentRef
+				isExactRevision := requested == document.DocumentRef+"@"+document.Revision
+				isConfiguredRef := isBareRef || isExactRevision || strings.HasPrefix(requested, document.DocumentRef+"@")
+				if !isConfiguredRef {
 					continue
 				}
-				if requested == document.DocumentRef || requested == document.DocumentRef+"@"+document.Revision {
-					selected = append(selected, document)
-					matched = true
+				matchedConfiguredRef = true
+				if document.DataScope != envelope.DataScope || document.OwnerID != envelope.OwnerID {
+					continue
 				}
-				if requested == document.DocumentRef+"@"+document.Revision || strings.HasPrefix(requested, document.DocumentRef+"@") {
-					matched = true
-					if requested != document.DocumentRef+"@"+document.Revision {
-						unavailable = true
-					}
+				if isBareRef {
+					bareScoped = append(bareScoped, document)
+				}
+				if isExactRevision {
+					exactScoped = append(exactScoped, document)
 				}
 			}
-			if !matched {
+			if len(exactScoped) == 1 {
+				selected = append(selected, exactScoped[0])
+				continue
+			}
+			if len(exactScoped) > 1 {
+				unavailable = true
+				continue
+			}
+			if len(bareScoped) == 1 && requested == bareScoped[0].DocumentRef {
+				// A bare ref is only unambiguous when the owner has one matching
+				// version in this scope. Exact ref@revision requests always win
+				// independently of other allowlisted versions.
+				versionCount := 0
+				for _, document := range configured {
+					if document.DocumentRef == bareScoped[0].DocumentRef {
+						versionCount++
+					}
+				}
+				if versionCount == 1 {
+					selected = append(selected, bareScoped[0])
+				} else {
+					unavailable = true
+				}
+				continue
+			}
+			if matchedConfiguredRef {
+				unavailable = true
+			}
+			if len(bareScoped) == 0 && len(exactScoped) == 0 && !matchedConfiguredRef {
 				// Non-PDF document refs remain owned by the existing L1 recall path.
 				continue
 			}

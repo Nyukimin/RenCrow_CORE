@@ -218,6 +218,14 @@ func connectResearchRecall(
 			CodeGraphEnabled: cfg.Research.StructuredIndex.CodeGraph.Enabled,
 		}
 	}
+	if len(structuredOwners) > 0 && structuredOwners[0] != nil {
+		if localDocuments, ok := e.Ports.LocalDocuments.(*coreresearch.LocalDocumentRetriever); ok {
+			localDocuments.WithStructuredMaterialOwner(structuredOwners[0])
+		}
+		if owner, ok := e.Ports.Owner.(*coreresearch.Adapters); ok {
+			owner.WithStructuredMaterialOwner(structuredOwners[0])
+		}
+	}
 	if !cfg.Research.SemanticIndex.Enabled {
 		if structured.Owner != nil {
 			e.Ports.Recall = coreresearch.NewLocalRecallWithStructured(knowledge, documents, repos, structured)

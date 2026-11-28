@@ -342,6 +342,8 @@ func researchRunSchema() map[string]any {
 				"source_kinds":   researchStringArraySchema(), "seed_urls": researchStringArraySchema(),
 				"provider": map[string]any{"type": "string"}, "retrieval_targets": researchStringArraySchema(),
 				"document_refs": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 512}},
+				"repo_ref":      map[string]any{"type": "string", "minLength": 1, "maxLength": 512, "pattern": `^[A-Za-z0-9_.-]+$`, "not": map[string]any{"enum": []any{".", ".."}}},
+				"revision":      map[string]any{"type": "string", "pattern": `^[0-9a-f]{40}$`},
 				"time_window":   map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"since": map[string]any{"type": "string", "format": "date-time"}, "until": map[string]any{"type": "string", "format": "date-time"}}, "required": []any{"since", "until"}},
 				"outputs": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
 					"report":   map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"required": map[string]any{"type": "boolean"}, "format": map[string]any{"type": "string", "enum": []any{"", "markdown"}}}},
@@ -351,10 +353,20 @@ func researchRunSchema() map[string]any {
 				"limits":   map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"search_calls": map[string]any{"type": "integer", "minimum": 0, "maximum": 6}, "candidates": map[string]any{"type": "integer", "minimum": 0, "maximum": 20}, "fetch_attempts": map[string]any{"type": "integer", "minimum": 0, "maximum": 12}, "max_documents": map[string]any{"type": "integer", "minimum": 0, "maximum": 8}, "deadline_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 180}, "analysis_calls": map[string]any{"type": "integer", "minimum": 0, "maximum": 6}}},
 				"language": map[string]any{"type": "string"}, "cost_profile": map[string]any{"type": "string", "enum": []any{"", "zero_incremental_cost"}},
 			}, "required": []any{"schema_version", "mode"},
-			"allOf": []any{map[string]any{
-				"if":   map[string]any{"required": []any{"document_refs"}},
-				"then": map[string]any{"properties": map[string]any{"mode": map[string]any{"enum": []any{"collect", "investigate"}}, "retrieval_targets": map[string]any{"type": "array", "contains": map[string]any{"const": "documents"}}}, "required": []any{"retrieval_targets"}},
-			}},
+			"allOf": []any{
+				map[string]any{
+					"if":   map[string]any{"required": []any{"document_refs"}},
+					"then": map[string]any{"properties": map[string]any{"mode": map[string]any{"enum": []any{"collect", "investigate"}}, "retrieval_targets": map[string]any{"type": "array", "contains": map[string]any{"const": "documents"}}}, "required": []any{"retrieval_targets"}},
+				},
+				map[string]any{
+					"if":   map[string]any{"required": []any{"repo_ref"}},
+					"then": map[string]any{"properties": map[string]any{"retrieval_targets": map[string]any{"type": "array", "contains": map[string]any{"const": "code"}}}, "required": []any{"revision", "retrieval_targets"}},
+				},
+				map[string]any{
+					"if":   map[string]any{"required": []any{"revision"}},
+					"then": map[string]any{"properties": map[string]any{"retrieval_targets": map[string]any{"type": "array", "contains": map[string]any{"const": "code"}}}, "required": []any{"repo_ref", "retrieval_targets"}},
+				},
+			},
 			"oneOf": []any{
 				map[string]any{"properties": map[string]any{"mode": map[string]any{"enum": []any{"search_only", "collect", "investigate"}}, "objective": map[string]any{"type": "string", "minLength": 1, "maxLength": 2000}}, "required": []any{"objective", "cost_profile"}},
 				map[string]any{"properties": map[string]any{"mode": map[string]any{"const": "refresh"}}, "required": []any{"watch_id"}},

@@ -48,12 +48,13 @@ type SourcePolicy func(context.Context, c.Candidate) (retentionAllowed bool, pri
 // the research engine ports. Unsupported research targets are intentionally
 // left unavailable.
 type Adapters struct {
-	searcher     Searcher
-	fetcher      Fetcher
-	staging      L1StagingStore
-	leases       AcquisitionLeaseStore
-	sourcePolicy SourcePolicy
-	now          func() time.Time
+	searcher           Searcher
+	fetcher            Fetcher
+	staging            L1StagingStore
+	leases             AcquisitionLeaseStore
+	sourcePolicy       SourcePolicy
+	localMaterialOwner StructuredMaterialOwner
+	now                func() time.Time
 }
 
 func NewAdapters(searcher Searcher, fetcher Fetcher, staging L1StagingStore) *Adapters {
@@ -78,6 +79,13 @@ func (a *Adapters) WithAcquisitionLeaseStore(leases AcquisitionLeaseStore) *Adap
 func (a *Adapters) WithSourcePolicy(policy SourcePolicy) *Adapters {
 	if a != nil {
 		a.sourcePolicy = policy
+	}
+	return a
+}
+
+func (a *Adapters) WithStructuredMaterialOwner(owner StructuredMaterialOwner) *Adapters {
+	if a != nil {
+		a.localMaterialOwner = owner
 	}
 	return a
 }
@@ -357,11 +365,15 @@ func (a *Adapters) Commit(ctx context.Context, req engine.CommitRequest) (c.Rece
 	if !isSHA256(req.Digest) || req.Digest != contentHash || !isSHA256(doc.ExtractedHash) || doc.ExtractedHash != contentHash {
 		return c.Receipt{}, errors.New("research document digest does not match complete extracted text")
 	}
+	expectedIdempotencyKey, keyErr := c.CommitIdempotencyKey(firstNonEmpty(req.ResearchRunID, req.Envelope.RunID), req.Target, contentHash, &doc)
+	if strings.TrimSpace(req.Envelope.RunID) == "" || keyErr != nil || req.IdempotencyKey != expectedIdempotencyKey {
+		return c.Receipt{}, errors.New("research idempotency key does not match the engine run and commit input")
+	}
+	if doc.LocalOrigin != nil {
+		return a.commitLocalMaterial(ctx, req, doc, contentHash)
+	}
 	if !validResearchDocumentIdentity(doc) {
 		return c.Receipt{}, errors.New("research document source identity or content scope is unsupported")
-	}
-	if strings.TrimSpace(req.Envelope.RunID) == "" || req.IdempotencyKey != IdempotencyKey(firstNonEmpty(req.ResearchRunID, req.Envelope.RunID), req.Target.Target, req.Target.DestinationRef, contentHash) {
-		return c.Receipt{}, errors.New("research idempotency key does not match the engine run and commit input")
 	}
 	finalURL, err := canonicalHTTPURL(firstNonEmpty(doc.FinalURL, doc.OriginalURL))
 	if err != nil {
@@ -499,6 +511,12 @@ func (a *Adapters) Verify(ctx context.Context, envelope c.Envelope, receipt c.Re
 	item, found, err := a.staging.FindStagingItemByNamespaceEventID(ctx, namespace, receipt.AuditRef)
 	if err != nil {
 		return c.Receipt{}, err
+	}
+	if found && item.Kind == l1sqlite.L1StagingKindSearchResult {
+		return a.verifyLocalMaterialReceipt(ctx, envelope, receipt, item)
+	}
+	if receipt.LocalIdentity != "" {
+		return c.Receipt{}, errors.New("local material receipt identity is unsupported for a nonlocal staging item")
 	}
 	if !found || item.ID != receipt.CanonicalID || item.Namespace != namespace || item.EventID != receipt.AuditRef || item.Kind != l1sqlite.L1StagingKindExternalFetch || item.RawHash != receipt.Digest || item.RawText == "" || digestBytes([]byte(item.RawText)) != receipt.Digest {
 		return c.Receipt{}, errors.New("research receipt does not match the canonical staging record")

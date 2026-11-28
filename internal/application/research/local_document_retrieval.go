@@ -16,17 +16,74 @@ import (
 // Engine collection. It shares LocalRecall's scoped search and exact-read
 // validation; it never performs network access or writes staging records.
 type LocalDocumentRetriever struct {
-	documents    ResearchDocumentStore
-	sourcePolicy SourcePolicy
+	documents       ResearchDocumentStore
+	sourcePolicy    SourcePolicy
+	structuredOwner StructuredMaterialOwner
+}
+
+// StructuredMaterialOwner reads complete source material from a current,
+// owner-verified PageIndex or CodeGraph snapshot and revalidates that source
+// before CORE stores it. Newly read material has no staging receipt yet.
+type StructuredMaterialOwner interface {
+	ReadLocalMaterial(context.Context, c.Envelope, engine.LocalDocumentRequest) (engine.LocalDocumentResult, error)
+	VerifyLocalMaterial(context.Context, c.Envelope, c.Document) error
 }
 
 func NewLocalDocumentRetriever(documents ResearchDocumentStore, sourcePolicy SourcePolicy) *LocalDocumentRetriever {
 	return &LocalDocumentRetriever{documents: documents, sourcePolicy: sourcePolicy}
 }
 
+func (r *LocalDocumentRetriever) WithStructuredMaterialOwner(owner StructuredMaterialOwner) *LocalDocumentRetriever {
+	if r != nil {
+		r.structuredOwner = owner
+	}
+	return r
+}
+
 var _ engine.LocalDocumentPort = (*LocalDocumentRetriever)(nil)
 
 func (r *LocalDocumentRetriever) ReadDocuments(ctx context.Context, envelope c.Envelope, request engine.LocalDocumentRequest) (engine.LocalDocumentResult, error) {
+	target := request.Target
+	if target == "" {
+		target = "documents"
+	}
+	if target != "documents" && target != "code" {
+		return engine.LocalDocumentResult{}, errors.New("invalid local research document target")
+	}
+	request.Target = target
+	if target == "code" {
+		if r == nil || r.structuredOwner == nil {
+			return engine.LocalDocumentResult{Items: []engine.LocalDocumentItem{}, Missing: []string{"code"}, Code: "unavailable"}, nil
+		}
+		if request.RepoRef == "" || request.Revision == "" {
+			return engine.LocalDocumentResult{Items: []engine.LocalDocumentItem{}, Missing: []string{"code"}, Code: "unavailable"}, nil
+		}
+		return r.structuredOwner.ReadLocalMaterial(ctx, envelope, request)
+	}
+
+	result, err := r.readStagedDocuments(ctx, envelope, request)
+	if err != nil || r == nil || r.structuredOwner == nil {
+		return result, err
+	}
+	structured, structuredErr := r.structuredOwner.ReadLocalMaterial(ctx, envelope, request)
+	if structuredErr != nil {
+		result.Missing = appendMissing(result.Missing, "documents")
+		if result.Code == "" {
+			result.Code = "unavailable"
+		}
+		return result, nil
+	}
+	result.Items = append(result.Items, structured.Items...)
+	for _, missing := range structured.Missing {
+		result.Missing = appendMissing(result.Missing, missing)
+	}
+	if structured.Code != "" {
+		result.Code = structured.Code
+	}
+	return result, nil
+}
+
+func (r *LocalDocumentRetriever) readStagedDocuments(ctx context.Context, envelope c.Envelope, request engine.LocalDocumentRequest) (engine.LocalDocumentResult, error) {
 	query := strings.TrimSpace(request.Query)
 	if ctx == nil || request.Limit < 1 || request.Limit > l1sqlite.L1ResearchRecallMaxLimit || query == "" || len([]rune(query)) > localRecallMaxQueryRunes || !utf8.ValidString(query) || len(request.DocumentRefs) > l1sqlite.L1ResearchRecallMaxLimit {
 		return engine.LocalDocumentResult{}, errors.New("invalid local research document request")

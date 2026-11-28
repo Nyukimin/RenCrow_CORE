@@ -1651,6 +1651,10 @@ bodyからactor/scope/物理DB/path/command/backendを選べない。operation�
 
 local document collectionは既存L1 stagingをowner/scopeで検索した後、各候補を同一namespace/event IDで再読し、保存済みの原文/hash・canonical元URL/最終URL・source policyを照合した完全な本文だけを採用する。`request.document_refs`は最大20件のcanonical document/event IDを指定し、Queryによる本文照合を保ったまま既存storeのscope付きexact lookupを使う。新しい取得や保存は行わず、読取権限・policyに合わない候補、scan上限超過、欠落はmissingとして残す。正当に再読できたitemが一部あり後続readに失敗した場合は、そのitemを保持しつつmissing/unavailableを記録してpartialとする。時間窓には保存済み`TimeBasis`（`published_at`または`fetched_at`）を使い、取得時刻はUTCで保持する。staging metadataに取得時点のprimary判定がないため、local readでprimaryへ昇格しない。
 
+構造索引を有効にした`run`は`retrieval_targets`の`documents`／`code`から原資料も読める。`document_refs`は登録PDFのrefまたはexactな`ref@revision`を受理し、コードは任意pathではなく登録済み`repo_ref`と40桁commitの`revision`を一緒に指定する。両field省略時は旧requestのwireとdigestを維持し、コードの版指定が不足した実行はunavailableとする。PDFは選択した1節の最大32ページの本文で、全文取得とは区別する。コードは最大8MiBのUTF-8実ファイル（snapshot全体は最大64MiB）を読み、対象コードを実行しない。原PDFのhash・ページ範囲、またはrepo・commit・path・原ファイルhash・関数範囲は`Document.local_origin`に保持し、解析本文内のrune offsetとは区別する。
+
+新しいローカル原資料は保存前のreceiptを持たない。必須`knowledge_staging`は既存Ownerのcommit／verify／応答不明時のreconcileを通し、現在の登録・scope・権利・版・原文hashとexactな保存行を再照合する。`Receipt.local_identity`はこの原資料の同一性を示す補助値で、Owner発行の`audit_ref`と`canonical_id`を置き換えない。コードの検索語に依存する関数・CALLS注釈を保存identityに含めず、同じファイル・版の再検索で別行を増やさない。`documents_fetched`はcollection全体、`fetch_attempts`は外部取得試行、`local_documents_reused`は既存L1再利用、`local_materials_acquired`は新たに読んだPDF／コード資料を数える。索引receipt、抜粋、保存先の未確認を取得・保存成功に数えない。
+
 BOARDの`ResearchConfig.BoardDestinations`は既存接続を指す管理登録で、既定は空。要求が指定できるのは登録済みdestination refのみで、owner/principal/channel/thread/recipientは管理値と既存authenticated connectionから解決する。送信は既存Ownerとdurable publication journalのtyped receipt／再照合経路に限定され、source-onlyの実装記述は実送信・配備受入を意味しない。
 
 Continuationは現在のTask、最新Run、immutable owner provenance、Engine frozen request/result、policy revisionが一致しない場合にfail closedする。Task/Run開始後にEngineの最初のjournal保存が失敗し、Task側に新しいfailed Runだけが残るような不確定回復状態を安全に対応付けられない場合、自動再開はせずunavailable/conflictとして扱う。旧Runを閉じたり新しいRunで同じ処理を推測再実行したりしない。この狭い障害回復経路の受入は未完了。

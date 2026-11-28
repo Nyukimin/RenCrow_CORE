@@ -8,6 +8,10 @@ github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261127
 github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261127221148-b00f705d2539/go.mod h1:cUIJrzjMElvadkI/LIrPD/CLzOJkBCnUj8R/QXob4+c=
 github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128021017-4dac8a679b7c h1:BoAWNDdJFAlQHgEZ88uy/0mpOTfnx0ezxCInp0wFRhA=
 github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128021017-4dac8a679b7c/go.mod h1:cUIJrzjMElvadkI/LIrPD/CLzOJkBCnUj8R/QXob4+c=
+github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128081513-3602a9fe0df9 h1:b4cNtnpKfgY8ZZ/2TbQPDexP4h6zr8PoUmB0bi4DuEk=
+github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128081513-3602a9fe0df9/go.mod h1:cUIJrzjMElvadkI/LIrPD/CLzOJkBCnUj8R/QXob4+c=
+github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128102636-ae70a5a29200 h1:VjywAFyszgRzVLyKs5OwWXZ+bt54tXEK1L+5rTDlMsE=
+github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128102636-ae70a5a29200/go.mod h1:cUIJrzjMElvadkI/LIrPD/CLzOJkBCnUj8R/QXob4+c=
 github.com/PuerkitoBio/goquery v1.12.0 h1:pAcL4g3WRXekcB9AU/y1mbKez2dbY2AajVhtkO8RIBo=
 github.com/PuerkitoBio/goquery v1.12.0/go.mod h1:802ej+gV2y7bbIhOIoPY5sT183ZW0YFofScC4q/hIpQ=
 github.com/alecthomas/assert/v2 v2.10.0 h1:jjRCHsj6hBJhkmhznrCzoNpbA3zqy0fYiUcYZP/GkPY=
@@ -240,5 +244,3 @@ modernc.org/strutil v1.2.1 h1:UneZBkQA+DX2Rp35KcM69cSsNES9ly8mQWD71HKlOA0=
 modernc.org/strutil v1.2.1/go.mod h1:EHkiggD70koQxjVdSBM3JKM7k6L0FbGE5eymy9i3B9A=
 modernc.org/token v1.1.0 h1:Xl7Ap9dKaEs5kLoOQeQmPWevfnk/DM5qcLcYlA8ys6Y=
 modernc.org/token v1.1.0/go.mod h1:UGzOrNV1mAFSEB63lOFHIpNRUVMvYTc6yu1SMY/XTDM=
-github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128081513-3602a9fe0df9 h1:b4cNtnpKfgY8ZZ/2TbQPDexP4h6zr8PoUmB0bi4DuEk=
-github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128081513-3602a9fe0df9/go.mod h1:cUIJrzjMElvadkI/LIrPD/CLzOJkBCnUj8R/QXob4+c=

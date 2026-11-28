@@ -320,6 +320,9 @@ func TestResearchRunSchemaAcceptsNormalizedEngineRequests(t *testing.T) {
 		{SchemaVersion: contract.RequestSchema, Mode: "search_only", Objective: "Find sources"},
 		{SchemaVersion: contract.RequestSchema, Mode: "collect", Objective: "Collect registered sources"},
 		{SchemaVersion: contract.RequestSchema, Mode: "investigate", Objective: "Investigate the topic"},
+		{SchemaVersion: contract.RequestSchema, Mode: "collect", Objective: "Read a historical code target", RetrievalTargets: []string{"code"}},
+		{SchemaVersion: contract.RequestSchema, Mode: "collect", Objective: "Read a pinned code target", RetrievalTargets: []string{"code"}, RepoRef: "repo-core", Revision: "0123456789abcdef0123456789abcdef01234567"},
+		{SchemaVersion: contract.RequestSchema, Mode: "collect", Objective: "Compare a retained PDF and implementation", RetrievalTargets: []string{"documents", "code"}, DocumentRefs: []string{"pdf-ref@pdf-rev"}, RepoRef: "repo-core", Revision: "0123456789abcdef0123456789abcdef01234567"},
 		{SchemaVersion: contract.RequestSchema, Mode: "refresh", WatchID: "rw_12345"},
 	}
 	for _, request := range cases {
@@ -417,6 +420,13 @@ func TestResearchRunSchemaStillRejectsInvalidRequests(t *testing.T) {
 		{"schema_version": contract.RequestSchema, "mode": "collect", "objective": "topic", "cost_profile": "zero_incremental_cost", "document_refs": []any{"canonical-id"}},
 		{"schema_version": contract.RequestSchema, "mode": "search_only", "objective": "topic", "cost_profile": "zero_incremental_cost", "retrieval_targets": []any{"documents"}, "document_refs": []any{"canonical-id"}},
 		{"schema_version": contract.RequestSchema, "mode": "refresh", "watch_id": "rw_valid-watch-id", "document_refs": []any{"canonical-id"}},
+		{"schema_version": contract.RequestSchema, "mode": "collect", "objective": "topic", "cost_profile": "zero_incremental_cost", "repo_ref": "repo-core", "retrieval_targets": []any{"code"}},
+		{"schema_version": contract.RequestSchema, "mode": "collect", "objective": "topic", "cost_profile": "zero_incremental_cost", "revision": "0123456789abcdef0123456789abcdef01234567", "retrieval_targets": []any{"code"}},
+		{"schema_version": contract.RequestSchema, "mode": "collect", "objective": "topic", "cost_profile": "zero_incremental_cost", "repo_ref": "repo-core", "revision": "0123456789abcdef0123456789abcdef01234567", "retrieval_targets": []any{"documents"}},
+		{"schema_version": contract.RequestSchema, "mode": "collect", "objective": "topic", "cost_profile": "zero_incremental_cost", "repo_ref": "/tmp/repo", "revision": "0123456789abcdef0123456789abcdef01234567", "retrieval_targets": []any{"code"}},
+		{"schema_version": contract.RequestSchema, "mode": "collect", "objective": "topic", "cost_profile": "zero_incremental_cost", "repo_ref": "repo-core", "revision": "main", "retrieval_targets": []any{"code"}},
+		{"schema_version": contract.RequestSchema, "mode": "refresh", "watch_id": "rw_valid-watch-id", "repo_ref": "repo-core", "revision": "0123456789abcdef0123456789abcdef01234567"},
+		{"schema_version": contract.RequestSchema, "mode": "collect", "objective": "topic", "cost_profile": "zero_incremental_cost", "repo_path": "/tmp/repo", "retrieval_targets": []any{"code"}},
 	}
 	for i, instance := range invalid {
 		if err := schema.Validate(map[string]any{"request": instance}); err == nil {
