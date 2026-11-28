@@ -4,10 +4,15 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domainstore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -16,22 +21,55 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-const structuredRFCResearchRequest = `{"schema_version":"rencrow.research.request.v1","mode":"collect","objective":"RFC1149原文を取得し、knowledge_stagingへ保存する","source_kinds":["web"],"seed_urls":["https://www.rfc-editor.org/rfc/rfc1149"],"outputs":{"report":{"required":true,"format":"markdown"},"save":[{"target":"knowledge_staging","required":true}],"evidence":{"min_documents":1,"min_independent_sources":1,"require_primary_for_material_claims":true}},"limits":{"search_calls":1,"candidates":3,"fetch_attempts":2,"max_documents":1,"deadline_seconds":30},"cost_profile":"zero_incremental_cost"}`
+const structuredRFCResearchRequest = `{"schema_version":"rencrow.research.request.v1","mode":"collect","objective":"RFC1149原文を取得し、knowledge_stagingへ保存する。今日のニュース依頼でもコード実行でもなく、deep diveは要求しない","source_kinds":["web"],"seed_urls":["https://www.rfc-editor.org/rfc/rfc1149"],"outputs":{"report":{"required":true,"format":"markdown"},"save":[{"target":"knowledge_staging","required":true}],"evidence":{"min_documents":1,"min_independent_sources":1,"require_primary_for_material_claims":true}},"limits":{"search_calls":1,"candidates":3,"fetch_attempts":2,"max_documents":1,"deadline_seconds":30},"cost_profile":"zero_incremental_cost"}`
+
+type storageLikeDurableStoreWorkflow struct {
+	matcherCalls int
+	handleCalls  int
+}
+
+func (w *storageLikeDurableStoreWorkflow) CanHandle(appstore.Input) bool {
+	w.matcherCalls++
+	return true
+}
+
+func (w *storageLikeDurableStoreWorkflow) Handle(context.Context, appstore.Input) (domainstore.WorkflowResult, bool, error) {
+	w.handleCalls++
+	return domainstore.WorkflowResult{}, true, nil
+}
 
 func TestVersionedResearchRequestKeepsExplicitViewerRecipientOwner(t *testing.T) {
 	searcher := &mockDCISearcher{trigger: true}
-	for _, actor := range []string{taskLifecycleShiro, taskLifecycleKuro, taskLifecycleMidori} {
+	for _, actor := range []string{taskLifecycleMio, taskLifecycleShiro, taskLifecycleKuro, taskLifecycleMidori} {
 		t.Run(actor, func(t *testing.T) {
 			req := ProcessMessageRequest{Channel: "viewer", To: actor, UserMessage: structuredRFCResearchRequest}
+			workflow := &storageLikeDurableStoreWorkflow{}
 			if shouldHandleExplicitDCI(searcher, req.UserMessage) {
 				t.Fatal("versioned Research request was classified as DCI")
 			}
-			rootActor, direct := directViewerRootAssignee(req, nil, searcher)
-			if !direct || rootActor != actor {
+			rootActor, direct := directViewerRootAssignee(req, workflow, searcher)
+			if actor == taskLifecycleMio {
+				if direct {
+					t.Fatalf("Mio recipient unexpectedly selected a direct root %q", rootActor)
+				}
+			} else if !direct || rootActor != actor {
 				t.Fatalf("direct root = %q, %v; want recipient %q", rootActor, direct, actor)
 			}
-			if !directViewerExecutionActor(req, routing.RouteCHAT, actor) {
+			if actor != taskLifecycleMio && !directViewerExecutionActor(req, routing.RouteCHAT, actor) {
 				t.Fatalf("explicit recipient %q was not retained as the CHAT executor", actor)
+			}
+			if workflow.matcherCalls != 0 || workflow.handleCalls != 0 {
+				t.Fatalf("typed Research reached durable store matcher/handler: matcher=%d handler=%d", workflow.matcherCalls, workflow.handleCalls)
+			}
+			mio := &mockMioAgent{}
+			input := newOrchestratorTestTurnInput(t, req.UserMessage, req.Channel, "viewer:"+actor)
+			decision, err := newRouteDecisionCoordinator(mio).DecideWithChatDraft(context.Background(), input, req, modulecore.NewTaskID(), true)
+			wantRoute := routing.RouteCHAT
+			if actor == taskLifecycleMio {
+				wantRoute = routing.RouteRESEARCH
+			}
+			if err != nil || decision.Decision.Route != wantRoute || mio.decideCalls != 0 {
+				t.Fatalf("recipient %s route=%s err=%v Mio decisions=%d; want route %s", actor, decision.Decision.Route, err, mio.decideCalls, wantRoute)
 			}
 		})
 	}
@@ -39,11 +77,10 @@ func TestVersionedResearchRequestKeepsExplicitViewerRecipientOwner(t *testing.T)
 
 func TestVersionedResearchRequestRemainsOnNormalResearchDispatch(t *testing.T) {
 	searcher := &mockDCISearcher{trigger: true, result: validDCISearchResult("RFC1149", "rfc1149.txt", "RFC source", 1)}
-	var decidedText, gatheredText string
+	var gatheredText string
 	mio := &mockMioAgent{
 		decideFunc: func(_ context.Context, input conversation.TurnInput) (routing.Decision, error) {
-			decidedText = input.MessageText()
-			return routing.NewDecision(routing.RouteRESEARCH, 1, "typed Research request"), nil
+			return routing.NewDecision(routing.RouteCODE, 1, "generic classifier must not reinterpret typed Research"), nil
 		},
 		chatFunc: func(_ context.Context, input conversation.TurnInput) (string, error) {
 			gatheredText = input.MessageText()
@@ -52,6 +89,15 @@ func TestVersionedResearchRequestRemainsOnNormalResearchDispatch(t *testing.T) {
 	}
 	manager := newRecordingTaskLifecycleManager()
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	workflow := &storageLikeDurableStoreWorkflow{}
+	orch.SetDurableStoreWorkflow(workflow)
+	dailyReaderCalls := 0
+	orch.SetDailyNewsBriefReader(domainnews.ReaderFunc(func(context.Context, time.Time) (domainnews.DailyNewsBrief, error) {
+		dailyReaderCalls++
+		return domainnews.DailyNewsBrief{}, nil
+	}))
+	orch.SetHeavyWorkerPolicy(domainai.HeavyWorkerPolicy{Enabled: true})
+	orch.SetMusicWorkflowRouting("ren", true, true, true, true)
 	orch.SetTaskLifecycleManager(manager)
 	orch.SetDCISearcher(searcher)
 	req := defaultReq()
@@ -64,11 +110,74 @@ func TestVersionedResearchRequestRemainsOnNormalResearchDispatch(t *testing.T) {
 	if searcher.calls != 0 {
 		t.Fatalf("DCI calls = %d, want 0 for a versioned Research request", searcher.calls)
 	}
-	if mio.decideCalls != 1 || decidedText != structuredRFCResearchRequest || gatheredText != structuredRFCResearchRequest {
-		t.Fatalf("normal Research dispatch lost request: decide calls=%d decided=%q gathered=%q", mio.decideCalls, decidedText, gatheredText)
+	if mio.decideCalls != 0 || dailyReaderCalls != 0 || gatheredText != structuredRFCResearchRequest {
+		t.Fatalf("normal Research dispatch lost request or used generic routing: decide=%d daily=%d gathered=%q", mio.decideCalls, dailyReaderCalls, gatheredText)
 	}
 	if resp.Route != routing.RouteRESEARCH || resp.Response != "research response" {
 		t.Fatalf("Research response = %#v", resp)
+	}
+	if workflow.matcherCalls != 0 || workflow.handleCalls != 0 {
+		t.Fatalf("typed Research reached durable store matcher/handler: matcher=%d handler=%d", workflow.matcherCalls, workflow.handleCalls)
+	}
+
+	t.Run("distributed orchestrator", func(t *testing.T) {
+		searcher := &mockDCISearcher{trigger: true, result: validDCISearchResult("RFC1149", "rfc1149.txt", "RFC source", 1)}
+		var gatheredText string
+		mio := &distMockMioAgent{
+			routeResponse: string(routing.RouteCODE),
+			chatFunc: func(_ context.Context, input conversation.TurnInput) (string, error) {
+				gatheredText = input.MessageText()
+				return "research response", nil
+			},
+		}
+		router := transport.NewMessageRouter()
+		defer router.Stop()
+		orch := NewDistributedOrchestrator(&distMockSessionRepo{}, mio, router, session.NewCentralMemory(), nil)
+		attachCanonicalTestTaskOwner(t, orch)
+		workflow := &storageLikeDurableStoreWorkflow{}
+		orch.SetDurableStoreWorkflow(workflow)
+		dailyReaderCalls := 0
+		orch.SetDailyNewsBriefReader(domainnews.ReaderFunc(func(context.Context, time.Time) (domainnews.DailyNewsBrief, error) {
+			dailyReaderCalls++
+			return domainnews.DailyNewsBrief{}, nil
+		}))
+		orch.SetHeavyWorkerPolicy(domainai.HeavyWorkerPolicy{Enabled: true})
+		orch.SetMusicWorkflowRouting("ren", true, true, true, true)
+		orch.SetDCISearcher(searcher)
+		req := defaultReq()
+		req.UserMessage = structuredRFCResearchRequest
+
+		resp, err := orch.ProcessMessage(context.Background(), req)
+		if err != nil {
+			t.Fatalf("distributed ProcessMessage: %v", err)
+		}
+		if searcher.calls != 0 || mio.decideCalls != 0 || dailyReaderCalls != 0 || resp.Route != routing.RouteRESEARCH || gatheredText != structuredRFCResearchRequest || resp.Response != "research response" {
+			t.Fatalf("distributed Research dispatch: DCI=%d decide=%d daily=%d route=%s gathered=%q response=%q", searcher.calls, mio.decideCalls, dailyReaderCalls, resp.Route, gatheredText, resp.Response)
+		}
+		if workflow.matcherCalls != 0 || workflow.handleCalls != 0 {
+			t.Fatalf("typed Research reached durable store matcher/handler: matcher=%d handler=%d", workflow.matcherCalls, workflow.handleCalls)
+		}
+	})
+}
+
+func TestOrdinaryDurableStoreIntentStillUsesMatchedWorkflow(t *testing.T) {
+	decisions := 0
+	mio := &mockMioAgent{decideFunc: func(context.Context, conversation.TurnInput) (routing.Decision, error) {
+		decisions++
+		return routing.NewDecision(routing.RouteCHAT, 1, "should not run"), nil
+	}}
+	workflow := &storageLikeDurableStoreWorkflow{}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetDurableStoreWorkflow(workflow)
+	req := defaultReq()
+	req.UserMessage = "ゲームDBを実装して"
+
+	resp, err := orch.ProcessMessage(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	if decisions != 0 || workflow.matcherCalls != 1 || workflow.handleCalls != 1 || resp.Capability != durableStoreCapability {
+		t.Fatalf("ordinary durable workflow changed: decisions=%d matcher=%d handler=%d capability=%q", decisions, workflow.matcherCalls, workflow.handleCalls, resp.Capability)
 	}
 }
 
@@ -81,13 +190,18 @@ func TestMalformedVersionedResearchRequestFailsBeforeDCIOrAgentEffects(t *testin
 	orch.SetEventListener(listener)
 	req := defaultReq()
 	req.UserMessage = `{"schema_version":"rencrow.research.request.v1","mode":"unsupported","objective":"RFC1149原文"}`
+	workflow := &storageLikeDurableStoreWorkflow{}
+	if candidate := newDurableStoreCandidate(req, workflow); candidate != nil {
+		t.Fatal("malformed versioned Research request became a durable store candidate")
+	}
+	orch.SetDurableStoreWorkflow(workflow)
 
 	_, err := orch.ProcessMessage(context.Background(), req)
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "research") {
 		t.Fatalf("ProcessMessage error = %v, want Research contract validation error", err)
 	}
-	if searcher.calls != 0 || mio.decideCalls != 0 || len(listener.events) != 0 {
-		t.Fatalf("invalid Research request caused effects: DCI=%d MioDecide=%d events=%#v", searcher.calls, mio.decideCalls, listener.events)
+	if searcher.calls != 0 || mio.decideCalls != 0 || len(listener.events) != 0 || workflow.matcherCalls != 0 || workflow.handleCalls != 0 {
+		t.Fatalf("invalid Research request caused effects: DCI=%d MioDecide=%d matcher=%d handler=%d events=%#v", searcher.calls, mio.decideCalls, workflow.matcherCalls, workflow.handleCalls, listener.events)
 	}
 
 	t.Run("distributed orchestrator", func(t *testing.T) {
@@ -96,6 +210,8 @@ func TestMalformedVersionedResearchRequestFailsBeforeDCIOrAgentEffects(t *testin
 		router := transport.NewMessageRouter()
 		defer router.Stop()
 		orch := NewDistributedOrchestrator(&distMockSessionRepo{}, mio, router, session.NewCentralMemory(), nil)
+		workflow := &storageLikeDurableStoreWorkflow{}
+		orch.SetDurableStoreWorkflow(workflow)
 		orch.SetDCISearcher(searcher)
 		listener := &distRecordingEventListener{}
 		orch.SetEventListener(listener)
@@ -106,8 +222,8 @@ func TestMalformedVersionedResearchRequestFailsBeforeDCIOrAgentEffects(t *testin
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "research") {
 			t.Fatalf("ProcessMessage error = %v, want Research contract validation error", err)
 		}
-		if searcher.calls != 0 || mio.decideCalls != 0 || len(listener.events) != 0 {
-			t.Fatalf("invalid Research request caused distributed effects: DCI=%d MioDecide=%d events=%#v", searcher.calls, mio.decideCalls, listener.events)
+		if searcher.calls != 0 || mio.decideCalls != 0 || len(listener.events) != 0 || workflow.matcherCalls != 0 || workflow.handleCalls != 0 {
+			t.Fatalf("invalid Research request caused distributed effects: DCI=%d MioDecide=%d matcher=%d handler=%d events=%#v", searcher.calls, mio.decideCalls, workflow.matcherCalls, workflow.handleCalls, listener.events)
 		}
 	})
 }

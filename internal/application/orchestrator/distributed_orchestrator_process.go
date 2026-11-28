@@ -225,7 +225,8 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 		return ensureProcessResponseIdentity(resp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID), nil
 	}
-	durableResult, durableHandled, durableErr := evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
+	durableCandidate := newDurableStoreCandidate(req, o.durableStoreWorkflow)
+	durableResult, durableHandled, durableErr := evaluateDurableStore(ctx, durableCandidate)
 	if durableHandled {
 		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=durable store workflow"); err != nil {
@@ -253,10 +254,14 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	var (
 		decision              routing.Decision
 		pinnedViewerRecipient bool
+		typedResearchRequest  bool
 	)
 	if recipient, direct := directViewerRecipientForChat(req); direct {
 		decision = directViewerRecipientDecision(recipient)
 		pinnedViewerRecipient = true
+	} else if typedDecision, typed := typedResearchRouteDecision(req); typed {
+		decision = typedDecision
+		typedResearchRequest = true
 	} else {
 		var err error
 		decision, err = o.mio.DecideAction(ctx, input)
@@ -266,13 +271,13 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 		decision, pinnedViewerRecipient = pinSelectedViewerRecipientDecision(decision, req)
 	}
-	if !pinnedViewerRecipient {
+	if !pinnedViewerRecipient && !typedResearchRequest {
 		decision = o.applyMusicWorkflowIntentRoute(ctx, req, decision)
 	}
 	log.Printf("[DistributedOrch] routing decision: route=%s confidence=%.2f reason=%q",
 		decision.Route, decision.Confidence, decision.Reason)
 
-	if !pinnedViewerRecipient && canHeavyPolicyElevate(decision.Route) {
+	if !pinnedViewerRecipient && !typedResearchRequest && canHeavyPolicyElevate(decision.Route) {
 		heavyReq := heavyWorkerRequestFromMessage(taskID.String(), req.UserMessage)
 		if heavyReq.UserRequestedDeepDive {
 			evaluated := domainai.EvaluateHeavyWorker(heavyReq, o.heavyPolicy)

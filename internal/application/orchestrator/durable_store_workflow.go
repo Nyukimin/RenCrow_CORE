@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainstore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -23,6 +24,11 @@ type durableStoreIntentMatcher interface {
 	CanHandle(appstore.Input) bool
 }
 
+type durableStoreCandidate struct {
+	workflow DurableStoreWorkflow
+	input    appstore.Input
+}
+
 func (o *MessageOrchestrator) SetDurableStoreWorkflow(workflow DurableStoreWorkflow) {
 	o.durableStoreWorkflow = workflow
 }
@@ -31,11 +37,22 @@ func (o *DistributedOrchestrator) SetDurableStoreWorkflow(workflow DurableStoreW
 	o.durableStoreWorkflow = workflow
 }
 
-func evaluateDurableStore(ctx context.Context, workflow DurableStoreWorkflow, req ProcessMessageRequest) (domainstore.WorkflowResult, bool, error) {
-	if workflow == nil || strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
+func newDurableStoreCandidate(req ProcessMessageRequest, workflow DurableStoreWorkflow) *durableStoreCandidate {
+	if workflow == nil || strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") || toolloop.IsVersionedResearchRequest(req.UserMessage) {
+		return nil
+	}
+	input := durableStoreInput(req)
+	if matcher, ok := workflow.(durableStoreIntentMatcher); ok && !matcher.CanHandle(input) {
+		return nil
+	}
+	return &durableStoreCandidate{workflow: workflow, input: input}
+}
+
+func evaluateDurableStore(ctx context.Context, candidate *durableStoreCandidate) (domainstore.WorkflowResult, bool, error) {
+	if candidate == nil {
 		return domainstore.WorkflowResult{}, false, nil
 	}
-	result, handled, err := workflow.Handle(ctx, durableStoreInput(req))
+	result, handled, err := candidate.workflow.Handle(ctx, candidate.input)
 	if err != nil {
 		return domainstore.WorkflowResult{}, handled, fmt.Errorf("durable store workflow failed: %w", err)
 	}

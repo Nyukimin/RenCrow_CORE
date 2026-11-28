@@ -22,6 +22,7 @@ func TestIsDailyNewsBriefRequest(t *testing.T) {
 		{message: "今朝のニュースを検索して", want: false},
 		{message: "最新のニュースを検索して", want: false},
 		{message: "/chat 今朝のニュース", want: false},
+		{message: structuredRFCResearchRequest, want: false},
 	}
 	for _, tt := range tests {
 		if got := isDailyNewsBriefRequest(tt.message); got != tt.want {

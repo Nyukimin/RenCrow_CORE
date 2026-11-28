@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
@@ -20,7 +21,7 @@ const dailyNewsBriefIntent = "daily_news_brief"
 // prepared morning brief must not depend on the general LLM route classifier.
 func isDailyNewsBriefRequest(message string) bool {
 	message = strings.TrimSpace(message)
-	if message == "" || strings.HasPrefix(message, "/") {
+	if message == "" || strings.HasPrefix(message, "/") || toolloop.IsVersionedResearchRequest(message) {
 		return false
 	}
 	for _, qualifier := range []string{"検索", "調べて", "調査して", "最新", "速報", "今起きている", "今起きてる"} {

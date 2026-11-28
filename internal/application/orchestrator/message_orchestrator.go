@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	moduleapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moduleregistry"
@@ -847,11 +846,8 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		}
 		return resp, nil
 	}
-	durableStoreCandidate := o.durableStoreWorkflow != nil && !strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/")
-	if matcher, ok := o.durableStoreWorkflow.(durableStoreIntentMatcher); ok {
-		durableStoreCandidate = durableStoreCandidate && matcher.CanHandle(durableStoreInput(req))
-	}
-	if durableStoreCandidate {
+	durableCandidate := newDurableStoreCandidate(req, o.durableStoreWorkflow)
+	if durableCandidate != nil {
 		ctx, err = synchronousPersistenceBeforeEffect(ctx, "durable store workflow")
 		if err != nil {
 			endPreRouteChecks()
@@ -861,8 +857,8 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	var durableResult domaindurablestore.WorkflowResult
 	var durableHandled bool
 	var durableErr error
-	if durableStoreCandidate {
-		durableResult, durableHandled, durableErr = evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
+	if durableCandidate != nil {
+		durableResult, durableHandled, durableErr = evaluateDurableStore(ctx, durableCandidate)
 	}
 	if durableHandled {
 		endPreRouteChecks()

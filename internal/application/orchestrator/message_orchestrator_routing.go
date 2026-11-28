@@ -64,6 +64,9 @@ func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, inpu
 	if recipient, ok := directViewerRecipientForChat(req); ok {
 		return routeDecisionResult{Decision: directViewerRecipientDecision(recipient), Context: ctx}, nil
 	}
+	if decision, ok := typedResearchRouteDecision(req); ok {
+		return routeDecisionResult{Decision: decision, Context: ctx}, nil
+	}
 	var decision routing.Decision
 	var chatDraft *domainagent.MioChatDraft
 	var err error
@@ -197,11 +200,8 @@ func directViewerRootAssignee(req ProcessMessageRequest, workflow DurableStoreWo
 	if !direct || isDailyNewsBriefRequest(req.UserMessage) || shouldHandleExplicitDCI(dciSearcher, req.UserMessage) {
 		return "", false
 	}
-	if workflow != nil {
-		matcher, ok := workflow.(durableStoreIntentMatcher)
-		if !ok || matcher.CanHandle(durableStoreInput(req)) {
-			return "", false
-		}
+	if newDurableStoreCandidate(req, workflow) != nil {
+		return "", false
 	}
 	return recipient, true
 }

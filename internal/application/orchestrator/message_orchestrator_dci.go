@@ -37,6 +37,13 @@ func validateVersionedResearchRequest(message string) error {
 	return nil
 }
 
+func typedResearchRouteDecision(req ProcessMessageRequest) (routing.Decision, bool) {
+	if !toolloop.IsVersionedResearchRequest(req.UserMessage) {
+		return routing.Decision{}, false
+	}
+	return routing.NewDecision(routing.RouteRESEARCH, 1, "typed Research request"), true
+}
+
 func explicitDCIExecutionContext(ctx context.Context, input domainconversation.TurnInput, taskID modulecore.TaskID, lifecycle *taskLifecycle) (context.Context, error) {
 	if lifecycle == nil || lifecycle.manager == nil {
 		return nil, fmt.Errorf("DCI requires a configured canonical Task lifecycle")
