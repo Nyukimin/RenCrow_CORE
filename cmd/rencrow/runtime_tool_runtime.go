@@ -40,6 +40,8 @@ type toolRuntime struct {
 	MusicCatalogLookup            *runtimeMusicCatalogLookup
 	MusicArtifactPlayback         tools.MusicArtifactPlaybackGateway
 	MusicPlaybackLinkReady        bool
+	MovieGateway                  tools.MovieGateway
+	MoviePlaybackLinkReady        bool
 	MusicGenerationReady          bool
 	MusicRemixReady               bool
 	MusicControlReady             bool
@@ -311,6 +313,12 @@ func buildToolRuntimeWithCapabilities(
 	}
 	cancelMusicProbe()
 	workerToolRunnerCfg.MusicPlaybackLinkReady = musicPlaybackLinkReady(cfg, &workerToolRunnerCfg)
+	movieProbeCtx, cancelMovieProbe := context.WithTimeout(context.Background(), 4*time.Second)
+	if err := configureRuntimeMovieTools(movieProbeCtx, cfg.Movie, &workerToolRunnerCfg); err != nil {
+		log.Printf("RenCrow_Movie Tools unavailable: %v", err)
+	}
+	cancelMovieProbe()
+	workerToolRunnerCfg.MoviePlaybackLinkReady = moviePlaybackLinkReady(cfg, &workerToolRunnerCfg)
 
 	chatToolRunnerV2 := tools.NewToolRunner(chatToolRunnerCfg)
 	workerToolRunnerV2 := tools.NewToolRunner(workerToolRunnerCfg)
@@ -445,6 +453,8 @@ func buildToolRuntimeWithCapabilities(
 		MusicCatalogLookup:            musicCatalogLookup,
 		MusicArtifactPlayback:         workerToolRunnerCfg.MusicArtifactPlayback,
 		MusicPlaybackLinkReady:        workerToolRunnerCfg.MusicPlaybackLinkReady,
+		MovieGateway:                  workerToolRunnerCfg.Movie,
+		MoviePlaybackLinkReady:        workerToolRunnerCfg.MoviePlaybackLinkReady,
 		MusicGenerationReady:          workerToolRunnerCfg.MusicGeneration != nil,
 		MusicRemixReady:               workerToolRunnerCfg.MusicRemix != nil,
 		MusicControlReady:             workerToolRunnerCfg.MusicControl != nil,

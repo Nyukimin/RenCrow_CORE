@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
-<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion-db-capability-catalog-atlas">
+<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20261128-private-mio-owner-media">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/llm-ops.css?v=20260915-llm-ops-tab">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
@@ -1906,6 +1906,13 @@
           <input id="attachInput" type="file" multiple accept="image/*,video/*,audio/*,application/pdf,text/*,.txt,.md,.json,.csv,.yaml,.yml,.mp4,.mov,.webm,.m4v,.mp3,.wav,.m4a,.ogg" hidden>
           <input id="cameraInput" type="file" accept="image/*,video/*,audio/*" capture="environment" hidden>
         </div>
+        <div id="mioOwnerAuthControls" class="mio-owner-auth-row" aria-label="Private Mio connection">
+          <label for="mioOwnerCredential">Private Mio</label>
+          <input id="mioOwnerCredential" type="password" autocomplete="off" spellcheck="false" aria-label="Mio owner credential">
+          <button id="mioOwnerConnect" type="button">Connect</button>
+          <button id="mioOwnerLogout" type="button" hidden>Log out</button>
+          <span id="mioOwnerAuthStatus" class="stt-state" role="status" aria-live="polite">Public conversation</span>
+        </div>
         <div class="input-status-row">
           <span id="viewerPresenceState" class="stt-state conn-off">CORE: connecting</span>
           <span id="micState" class="stt-state">Mic: off</span>
@@ -1982,7 +1989,7 @@
 <script src="/viewer/assets/js/tabs/charimage.js?v=20261023-charimage-tab" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/stt_utterance_utils.js?v=20261015-stt-relay-align35" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35-movie-tab-map" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20261128-private-mio-owner-media" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>

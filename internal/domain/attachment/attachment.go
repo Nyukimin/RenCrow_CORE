@@ -110,7 +110,7 @@ func SummaryLine(a Attachment) string {
 	if kind == "" {
 		kind = "file"
 	}
-	line := "- " + kind + ": " + a.Filename + " (" + a.ContentType + ", " + formatBytes(a.SizeBytes) + ", path=" + a.Path + ")"
+	line := "- " + kind + ": " + a.Filename + " (id=" + a.ID + ", " + a.ContentType + ", " + formatBytes(a.SizeBytes) + ", path=" + a.Path + ")"
 	if preview := compactPreview(a.ExtractedText, 600); preview != "" {
 		line += " 本文プレビュー: " + preview
 		if a.ExtractionTruncated {

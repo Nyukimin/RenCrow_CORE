@@ -14,6 +14,7 @@ import (
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -63,8 +64,9 @@ const (
 )
 
 // viewerSessionIdentity keeps the public Viewer transport identity separate
-// from the authenticated CMD user's private transport namespace. The owner ID
-// remains the authenticated user; CMD is not an Agent or Session owner.
+// from the authenticated Viewer user's established private transport namespace.
+// The owner ID remains the authenticated user; a client marker is not an Agent
+// or Session owner.
 func viewerSessionIdentity(ctx context.Context) (domainconversation.ChannelAddress, string, string, error) {
 	chatID := publicViewerChatID
 	ownerID := ""
@@ -328,28 +330,28 @@ func buildViewerBridgeHandlers(
 				}
 				defer release()
 			}
-			// AuthenticatedViewerOwnerID intentionally accepts only the HTTP User
-			// scope installed by Viewer ingress. Capture that owner before deriving
-			// Mio's Agent execution scope; later code verifies it still matches the
-			// owner carried by the delegated proof.
-			authenticatedCMDOwnerID := ""
-			authenticatedCMDUser := false
-			if deps != nil && deps.eventHub != nil && req.To == "mio" &&
-				req.Provenance.OperationSource == "RenCrow_CMD" && req.Provenance.InteractionProfile == "cmd-chat" {
+			// AuthenticatedViewerOwnerID accepts only the HTTP User scope installed
+			// after Viewer ingress validates the configured owner Bearer. Capture
+			// that proof before deriving Mio's Agent scope; publication gates below
+			// continue to bind it to the unchanged canonical owner/session binding.
+			authenticatedMioOwnerID := ""
+			authenticatedMioViewerUser := false
+			if deps != nil && deps.eventHub != nil && req.To == "mio" && isAuthenticatedMioViewerProvenance(req.Provenance) {
 				var authErr error
-				authenticatedCMDOwnerID, authenticatedCMDUser, authErr = viewer.AuthenticatedViewerOwnerID(ctx)
+				authenticatedMioOwnerID, authenticatedMioViewerUser, authErr = viewer.AuthenticatedViewerOwnerID(ctx)
 				if authErr != nil {
 					return "", authErr
 				}
 			}
-			// The typed owner scope is supplied by the Viewer ingress only after
-			// validating the configured loopback CMD Bearer. Derivation preserves
-			// that validated scope while keeping anonymous clients public-only.
+			// The typed owner scope is supplied by Viewer ingress only after
+			// validating the configured loopback owner Bearer. Derivation preserves
+			// that scope while keeping anonymous clients public-only.
 			trustedCtx, scopeErr := domaintool.DeriveAgentToolExecutionScope(ctx, req.TraceID, string(req.To), "chat", "", false)
 			if scopeErr != nil {
 				return "", scopeErr
 			}
 			ctx = trustedCtx
+			ctx = domainattachment.WithTrustedRequestAttachments(ctx, req.Attachments)
 			_, chatID, _, identityErr := viewerSessionIdentity(ctx)
 			if identityErr != nil {
 				return "", identityErr
@@ -372,9 +374,9 @@ func buildViewerBridgeHandlers(
 			}
 			var deltaPublisher *mioDeltaPublicationQueue
 			if ownerID != "" && deps != nil && deps.eventHub != nil && req.To == "mio" &&
-				req.Provenance.OperationSource == "RenCrow_CMD" && req.Provenance.InteractionProfile == "cmd-chat" {
-				if authenticatedCMDUser && authenticatedCMDOwnerID == ownerID {
-					deltaPublisher = newMioDeltaPublicationQueue(authenticatedCMDOwnerID, deps.eventHub)
+				isAuthenticatedMioViewerProvenance(req.Provenance) {
+				if authenticatedMioViewerUser && authenticatedMioOwnerID == ownerID {
+					deltaPublisher = newMioDeltaPublicationQueue(authenticatedMioOwnerID, deps.eventHub)
 					processReq = orchestrator.WithMioAnswerDeltaAdmission(processReq, func(delta orchestrator.MioAnswerDelta, qualification domainconversation.PreparedChatTurnPublicationGuard) (func(bool), error) {
 						return deltaPublisher.Admit(ctx, delta, qualification)
 					}, deltaPublisher.CloseAndWait)
@@ -415,7 +417,7 @@ func buildViewerBridgeHandlers(
 			}
 
 			// Keep the established generic failure signal for public Mio turns and
-			// other recipients. The private CMD→Mio owner exception above carries
+			// other recipients. The authenticated Viewer→Mio owner exception above carries
 			// its exact accepted publication binding and stronger envelope.
 			_, chatID, _, identityErr := viewerSessionIdentity(ctx)
 			if identityErr != nil {
@@ -607,7 +609,7 @@ func publishRuntimeViewerTerminalError(
 	rootTaskID, sessionID string,
 	recipient modulechat.ViewerRecipient,
 	provenance viewer.RequestProvenance,
-	requireCMDProvenance bool,
+	requireAuthenticatedViewerProvenance bool,
 	processingErr error,
 ) error {
 	if relay == nil || processingErr == nil {
@@ -626,8 +628,8 @@ func publishRuntimeViewerTerminalError(
 		ownerID, authenticated, authErr := viewer.AuthenticatedViewerOwnerID(ctx)
 		if authErr != nil || !authenticated || ownerID != binding.OwnerID() ||
 			address.ExternalConversationID() != "cmd:"+ownerID ||
-			requireCMDProvenance && (provenance.OperationSource != "RenCrow_CMD" || provenance.InteractionProfile != "cmd-chat") {
-			return errors.New("terminal Viewer error owner does not match authenticated CMD ingress")
+			requireAuthenticatedViewerProvenance && !isAuthenticatedMioViewerProvenance(provenance) {
+			return errors.New("terminal Viewer error owner does not match authenticated Mio Viewer ingress")
 		}
 	} else if binding.Audience() != domainconversation.SessionAudiencePublic || binding.OwnerID() != "" ||
 		address.ExternalConversationID() != publicViewerChatID {
@@ -647,6 +649,14 @@ func publishRuntimeViewerTerminalError(
 		event.Timing = &snapshot
 	}
 	return relay.OnEvent(event)
+}
+
+// isAuthenticatedMioViewerProvenance narrows an already validated HTTP User
+// scope to the two supported Mio ingress contracts; client metadata alone is
+// never an authentication proof.
+func isAuthenticatedMioViewerProvenance(provenance viewer.RequestProvenance) bool {
+	return (provenance.OperationSource == "RenCrow_CMD" && provenance.InteractionProfile == "cmd-chat") ||
+		(provenance.OperationSource == "RenCrow_CORE" && provenance.InteractionProfile == "core-viewer")
 }
 
 func pinViewerForegroundPresence(deps *Dependencies, r *http.Request, request viewer.ForegroundPinRequest) (viewer.ForegroundPinLease, error) {

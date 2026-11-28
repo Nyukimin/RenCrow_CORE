@@ -19,12 +19,18 @@ import (
 )
 
 const (
-	musicGatewayRequestTimeout = 8 * time.Second
-	maxMusicGatewayResponse    = 128 << 10
-	maxMusicPlanRequest        = 96 << 10
-	maxMusicControlRequest     = 96 << 10
-	maxMusicGenerationRequest  = 8 << 10
-	maxMusicArtifactBytes      = 64 << 20
+	musicGatewayRequestTimeout   = 8 * time.Second
+	maxMusicGatewayResponse      = 128 << 10
+	maxMusicPlanRequest          = 96 << 10
+	maxMusicControlRequest       = 96 << 10
+	maxMusicGenerationRequest    = 8 << 10
+	maxMusicArtifactBytes        = 64 << 20
+	maxMusicAnalysisResult       = 2 << 20
+	maxMusicAnalysisResponse     = maxMusicAnalysisResult + (16 << 10)
+	maxMusicSourceSearchResponse = 1 << 20
+	maxMusicAudioImportBytes     = 10 << 20
+	musicAnalysisRequestTimeout  = 4*time.Minute + 10*time.Second
+	musicAudioImportTimeout      = 4*time.Minute + 10*time.Second
 )
 
 // MusicGatewayClientConfig binds one local Music endpoint, operator actor, and
@@ -69,6 +75,10 @@ var _ MusicPlanGateway = (*MusicProjectGatewayClient)(nil)
 var _ MusicGenerationGateway = (*MusicProjectGatewayClient)(nil)
 var _ MusicRemixGateway = (*MusicProjectGatewayClient)(nil)
 var _ MusicArtifactPlaybackGateway = (*MusicProjectGatewayClient)(nil)
+var _ MusicArtifactMetadataGateway = (*MusicProjectGatewayClient)(nil)
+var _ MusicAnalysisGateway = (*MusicProjectGatewayClient)(nil)
+var _ MusicSourceSearchGateway = (*MusicProjectGatewayClient)(nil)
+var _ MusicAudioImportGateway = (*MusicProjectGatewayClient)(nil)
 
 func NewMusicProjectGatewayClient(cfg MusicGatewayClientConfig) (*MusicProjectGatewayClient, error) {
 	endpoint, err := parseMusicGatewayEndpoint(cfg.Endpoint)
@@ -123,7 +133,7 @@ func (c *MusicProjectGatewayClient) ProbeCapabilities(ctx context.Context) (Musi
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/music/capabilities", nil, "", http.StatusOK, true, &capabilities); err != nil {
 		return MusicCapabilities{}, err
 	}
-	if capabilities.Capabilities == nil || capabilities.ActorID != c.actorID {
+	if capabilities.Capabilities == nil || capabilities.ActorID != c.actorID || (capabilities.Profile != "s0-local" && capabilities.Profile != "audio-studio") {
 		return MusicCapabilities{}, errors.New("music capabilities response does not confirm the configured actor")
 	}
 	return capabilities, nil
@@ -407,57 +417,94 @@ func (c *MusicProjectGatewayClient) OpenMusicArtifact(ctx context.Context, artif
 	return response, nil
 }
 
+func (c *MusicProjectGatewayClient) GetMusicArtifact(ctx context.Context, artifactID string) (MusicArtifact, error) {
+	if err := validateMusicArtifactID(artifactID); err != nil {
+		return MusicArtifact{}, err
+	}
+	var artifact MusicArtifact
+	path := "/v1/music/artifacts/" + url.PathEscape(artifactID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, "", http.StatusOK, false, &artifact); err != nil {
+		return MusicArtifact{}, err
+	}
+	if err := validateMusicArtifactMetadata(artifact); err != nil {
+		return MusicArtifact{}, err
+	}
+	if artifact.ID != artifactID {
+		return MusicArtifact{}, errors.New("music artifact response ID does not match the requested artifact")
+	}
+	return artifact, nil
+}
+
 func (c *MusicProjectGatewayClient) doJSON(ctx context.Context, method, path string, body []byte, idempotencyKey string, expectedStatus int, allowUnknown bool, target any) error {
+	return c.doJSONWithPolicy(ctx, c.client, method, path, "", body, "application/json", idempotencyKey, []int{expectedStatus}, maxMusicGatewayResponse, allowUnknown, target)
+}
+
+func (c *MusicProjectGatewayClient) doJSONWithPolicy(ctx context.Context, client *http.Client, method, path, rawQuery string, body []byte, contentType, idempotencyKey string, expectedStatuses []int, responseLimit int64, allowUnknown bool, target any) error {
+	_, err := c.doJSONResponseWithPolicy(ctx, client, method, path, rawQuery, body, contentType, idempotencyKey, expectedStatuses, responseLimit, allowUnknown, target)
+	return err
+}
+
+func (c *MusicProjectGatewayClient) doJSONResponseWithPolicy(ctx context.Context, client *http.Client, method, path, rawQuery string, body []byte, contentType, idempotencyKey string, expectedStatuses []int, responseLimit int64, allowUnknown bool, target any) (int, error) {
 	endpoint := *c.endpoint
 	endpoint.Path = path
+	endpoint.RawQuery = rawQuery
 	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build music gateway request: %w", err)
+		return 0, fmt.Errorf("build music gateway request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("X-RenCrow-Music-Expected-Actor", c.actorID)
 	if method == http.MethodPost {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 		// The gateway key makes the operation idempotent at the service boundary;
 		// keep the transport from replaying a POST after an ambiguous network error.
 		req.GetBody = nil
 	}
-	response, err := c.client.Do(req)
+	response, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("music gateway request failed: %w", err)
+		return 0, fmt.Errorf("music gateway request failed: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != expectedStatus {
-		return musicGatewayStatusError(response)
+	if !containsHTTPStatus(expectedStatuses, response.StatusCode) {
+		return 0, musicGatewayStatusError(response)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		return errors.New("music gateway response is not JSON")
+		return 0, errors.New("music gateway response is not JSON")
 	}
-	if response.ContentLength > maxMusicGatewayResponse {
-		return errors.New("music gateway response exceeds the configured limit")
+	if response.ContentLength > responseLimit {
+		return 0, errors.New("music gateway response exceeds the configured limit")
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxMusicGatewayResponse+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
 	if err != nil {
-		return fmt.Errorf("read music gateway response: %w", err)
+		return 0, fmt.Errorf("read music gateway response: %w", err)
 	}
-	if len(data) > maxMusicGatewayResponse {
-		return errors.New("music gateway response exceeds the configured limit")
+	if int64(len(data)) > responseLimit {
+		return 0, errors.New("music gateway response exceeds the configured limit")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if !allowUnknown {
 		decoder.DisallowUnknownFields()
 	}
 	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("decode music gateway response: %w", err)
+		return 0, fmt.Errorf("decode music gateway response: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("music gateway response contains trailing JSON")
+		return 0, errors.New("music gateway response contains trailing JSON")
 	}
-	return nil
+	return response.StatusCode, nil
+}
+
+func containsHTTPStatus(statuses []int, actual int) bool {
+	for _, status := range statuses {
+		if status == actual {
+			return true
+		}
+	}
+	return false
 }
 
 func musicGatewayStatusError(response *http.Response) error {
@@ -824,6 +871,28 @@ func validateMusicArtifact(artifact MusicArtifact) error {
 	}
 	if artifact.SourceArtifactID != "" && validateMusicArtifactID(artifact.SourceArtifactID) != nil {
 		return errors.New("music artifact response has an invalid source artifact ID")
+	}
+	return nil
+}
+
+// validateMusicArtifactMetadata preserves the original 48 kHz stereo contract
+// for generated/remix artifacts and validates native imported FLAC separately.
+func validateMusicArtifactMetadata(artifact MusicArtifact) error {
+	if artifact.Kind != "imported_audio" {
+		return validateMusicArtifact(artifact)
+	}
+	if validateMusicArtifactID(artifact.ID) != nil || validateMusicProjectID(artifact.ProjectID) != nil ||
+		!musicArtifactSHA256Pattern.MatchString(artifact.SHA256) || artifact.SizeBytes < 4 || artifact.SizeBytes > maxMusicAudioImportBytes ||
+		artifact.MediaType != "audio/flac" || artifact.Format != "flac" || artifact.DurationFrames < 1 ||
+		artifact.SampleRate < 8000 || artifact.SampleRate > 384000 || artifact.Channels < 1 || artifact.Channels > 8 || len(artifact.StaleReason) > 512 ||
+		artifact.DurationFrames > int64(artifact.SampleRate)*180 {
+		return errors.New("imported Music artifact response does not match the native FLAC contract")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, artifact.CreatedAt); err != nil {
+		return errors.New("imported Music artifact response has an invalid creation time")
+	}
+	if artifact.SourceArtifactID != "" && validateMusicArtifactID(artifact.SourceArtifactID) != nil {
+		return errors.New("imported Music artifact response has an invalid source artifact ID")
 	}
 	return nil
 }

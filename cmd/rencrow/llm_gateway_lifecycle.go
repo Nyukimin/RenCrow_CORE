@@ -45,6 +45,11 @@ func ensureLLMGateway(cfg *config.Config) llmGatewayStartupStatus {
 		status.Ready = true
 		return status
 	}
+	if cfg.LLMGateway.AutoStart != nil && !*cfg.LLMGateway.AutoStart {
+		status.Warning = "RenCrow_LLM is unavailable; CORE auto-start is disabled and the Gateway must be managed by its supervisor"
+		log.Printf("SYSTEM WARNING: %s (base_url=%s)", status.Warning, status.BaseURL)
+		return status
+	}
 
 	parsed, err := url.Parse(status.BaseURL)
 	if err != nil || !isLoopbackLLMHost(parsed.Hostname()) {

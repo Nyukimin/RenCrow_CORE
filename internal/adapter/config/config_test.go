@@ -3279,8 +3279,25 @@ func TestLLMGatewayDefaultsAndValidation(t *testing.T) {
 	if cfg.LLMGateway.TimeoutSec != 600 {
 		t.Fatalf("timeout_sec=%d, want 600", cfg.LLMGateway.TimeoutSec)
 	}
+	if cfg.LLMGateway.AutoStart != nil {
+		t.Fatalf("auto_start=%v, want omitted legacy default", *cfg.LLMGateway.AutoStart)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
+func TestLoadConfigReadsLLMGatewayAutoStartFalse(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  host: 127.0.0.1\n  port: 18790\nllm_gateway:\n  auto_start: false\n"), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.LLMGateway.AutoStart == nil || *cfg.LLMGateway.AutoStart {
+		t.Fatalf("auto_start=%v, want explicit false", cfg.LLMGateway.AutoStart)
 	}
 }
 

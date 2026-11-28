@@ -47,6 +47,9 @@ type Config struct {
 	// === Optional RenCrow_Music project gateway ===
 	Music MusicConfig `yaml:"music"`
 
+	// === Optional authenticated RenCrow_Movie gateway ===
+	Movie MovieConfig `yaml:"movie"`
+
 	// === RenCrow_TRADE private Owner API bridge ===
 	Trade TradeConfig `yaml:"trade"`
 

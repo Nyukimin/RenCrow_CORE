@@ -41,8 +41,14 @@ func TestWithCMDMioOwnerAuthenticationEnforcesTheIngressContract(t *testing.T) {
 		{name: "cmd profile mismatch", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CMD", profile: "cmd-control", remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusForbidden},
 		{name: "owner credential unavailable", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CMD", profile: "cmd-chat", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusServiceUnavailable},
 		{name: "valid owner bearer uses configured identity", body: `{"message":"hello","user_id":"attacker"}`, client: "RenCrow_CMD", profile: "cmd-chat", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusNoContent, wantOwner: true},
+		{name: "native COREViewer valid bearer uses configured identity", body: `{"message":"hello","user_id":"attacker"}`, client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusNoContent, wantOwner: true},
+		{name: "native COREViewer invalid bearer is not anonymous", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer wrong-token"}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusUnauthorized},
+		{name: "native COREViewer forged profile cannot use bearer", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CORE", profile: "core-viewer-forged", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusForbidden},
+		{name: "native COREViewer bearer is loopback only", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer " + token}, remoteAddr: "192.0.2.10:1234", ownerID: "ren", wantStatus: http.StatusForbidden},
+		{name: "native COREViewer cannot authenticate another recipient", body: `{"message":"hello","to":"shiro"}`, client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusForbidden},
 		{name: "portal mio stays public", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_PORTAL", profile: "portal-chat", remoteAddr: "192.0.2.10:1234", ownerID: "ren", wantStatus: http.StatusNoContent},
 		{name: "cmd non mio stays public", body: `{"message":"hello","to":"shiro"}`, client: "RenCrow_CMD", profile: "cmd-chat", remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusNoContent},
+		{name: "native COREViewer without bearer keeps public scope", body: `{"message":"hello","to":"mio"}`, client: "RenCrow_CORE", profile: "core-viewer", remoteAddr: "127.0.0.1:1234", ownerID: "ren", wantStatus: http.StatusNoContent},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var nextCalls int
@@ -90,6 +96,73 @@ func TestWithCMDMioOwnerAuthenticationEnforcesTheIngressContract(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWithCOREViewerOwnerAuthenticationProtectsMioReadPaths(t *testing.T) {
+	const token = "viewer-send-owner-token-0123456789"
+	for _, tt := range []struct {
+		name       string
+		path       string
+		client     string
+		profile    string
+		authority  []string
+		remoteAddr string
+		wantStatus int
+		wantOwner  bool
+	}{
+		{name: "valid native event stream credential reaches the configured owner scope", path: "/viewer/events?to=mio", client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusNoContent, wantOwner: true},
+		{name: "valid native Music credential reaches the configured owner scope", path: "/viewer/music/artifacts/art_opaque/download?to=mio", client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusNoContent, wantOwner: true},
+		{name: "valid native Movie credential reaches the configured owner scope", path: "/viewer/movie/jobs/job_opaque/download?to=mio", client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusNoContent, wantOwner: true},
+		{name: "invalid native credential is rejected", path: "/viewer/events?to=mio", client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer invalid"}, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusUnauthorized},
+		{name: "native private stream without credential is rejected", path: "/viewer/events?to=mio", client: "RenCrow_CORE", profile: "core-viewer", remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusUnauthorized},
+		{name: "forged native profile is rejected", path: "/viewer/events?to=mio", client: "RenCrow_CORE", profile: "core-viewer-forged", authority: []string{"Bearer " + token}, remoteAddr: "127.0.0.1:1234", wantStatus: http.StatusForbidden},
+		{name: "remote native credential is rejected", path: "/viewer/events?to=mio", client: "RenCrow_CORE", profile: "core-viewer", authority: []string{"Bearer " + token}, remoteAddr: "192.0.2.10:1234", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotScope domaintool.ToolExecutionScope
+			var scopeFound bool
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotScope, scopeFound = domaintool.ToolExecutionScopeFromContext(r.Context())
+				w.WriteHeader(http.StatusNoContent)
+			})
+			request := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			request.RemoteAddr = tt.remoteAddr
+			request.Host = "127.0.0.1:18790"
+			request.Header.Set("X-RenCrow-Client", tt.client)
+			request.Header.Set("X-RenCrow-Interaction-Profile", tt.profile)
+			for _, value := range tt.authority {
+				request.Header.Add("Authorization", value)
+			}
+			response := httptest.NewRecorder()
+			WithCMDMioOwnerAuthentication(next, "ren", []byte(token)).ServeHTTP(response, request)
+
+			if response.Code != tt.wantStatus {
+				t.Fatalf("status=%d body=%s want=%d", response.Code, response.Body.String(), tt.wantStatus)
+			}
+			if tt.wantStatus != http.StatusNoContent && scopeFound {
+				t.Fatalf("rejected request reached next handler with scope %+v", gotScope)
+			}
+			if tt.wantOwner && (!scopeFound || gotScope.Validate() != nil || gotScope.AuthenticatedUserID != "ren" || !gotScope.Allows(domaintool.DataScopeUser)) {
+				t.Fatalf("scope=%+v found=%t, want configured owner ren", gotScope, scopeFound)
+			}
+		})
+	}
+
+	t.Run("public EventSource remains anonymous", func(t *testing.T) {
+		var gotScope domaintool.ToolExecutionScope
+		var scopeFound bool
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotScope, scopeFound = domaintool.ToolExecutionScopeFromContext(r.Context())
+			w.WriteHeader(http.StatusNoContent)
+		})
+		request := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
+		request.RemoteAddr = "192.0.2.10:1234"
+		response := httptest.NewRecorder()
+		WithCMDMioOwnerAuthentication(next, "ren", []byte(token)).ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent || scopeFound || gotScope.Allows(domaintool.DataScopeUser) {
+			t.Fatalf("status=%d scope=%+v found=%t, want anonymous public stream", response.Code, gotScope, scopeFound)
+		}
+	})
 }
 
 func TestHandleSendPreservesAudioOutputIntent(t *testing.T) {

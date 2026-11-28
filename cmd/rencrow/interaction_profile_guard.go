@@ -40,6 +40,11 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 	"core-viewer": {
 		client: "RenCrow_CORE",
 		allow: func(method, path string) bool {
+			if method == http.MethodGet {
+				return path == "/viewer/events" ||
+					cmdMusicArtifactDownloadInteractionAllowed(method, path) ||
+					coreViewerMovieRenderDownloadInteractionAllowed(method, path)
+			}
 			return method == http.MethodPost && (path == "/viewer/surface-presence" || path == "/viewer/send")
 		},
 	},
@@ -49,7 +54,7 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 			return (method == http.MethodGet && path == "/viewer/events") ||
 				(method == http.MethodPost &&
 					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/stt/chat-input" || path == "/viewer/surface-presence")) ||
-				cmdMusicArtifactDownloadInteractionAllowed(method, path)
+				cmdMusicArtifactDownloadInteractionAllowed(method, path) || coreViewerMovieRenderDownloadInteractionAllowed(method, path)
 		},
 	},
 	"cmd-idlechat": {
@@ -160,6 +165,28 @@ func cmdMusicArtifactDownloadInteractionAllowed(method, path string) bool {
 	}
 	for i := 0; i < len(artifactID); i++ {
 		c := artifactID[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func coreViewerMovieRenderDownloadInteractionAllowed(method, path string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	const prefix = "/viewer/movie/jobs/"
+	const suffix = "/download"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	jobID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	if len(jobID) == 0 || len(jobID) > 128 {
+		return false
+	}
+	for i := 0; i < len(jobID); i++ {
+		c := jobID[i]
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
 			return false
 		}

@@ -109,6 +109,25 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.MusicRemix != nil {
 		r.registerMusicRemixTools()
 	}
+	if r.config.MusicAnalysisBeats != nil || r.config.MusicAnalysisCaptions != nil || r.config.MusicAnalysisReader != nil {
+		r.registerMusicAnalysisTools()
+	}
+	if r.config.MusicSourceSearch != nil {
+		r.registerMusicSourceSearchTool()
+	}
+	if r.config.MusicAudioImport != nil {
+		r.registerMusicAudioImportTools(r.config.MusicAudioImportReady && r.config.MusicProjects != nil)
+	}
+	if r.config.Movie != nil && r.config.MovieAssetStorageReady && r.config.MusicArtifactMetadata != nil && r.config.MusicArtifactPlayback != nil &&
+		r.config.Movie.ActorID() == r.config.MusicArtifactPlayback.ActorID() && r.config.Movie.ActorID() == r.config.MusicArtifactMetadata.ActorID() {
+		r.toolsV2["movie.asset.import"] = r.executeMovieAssetImportV2
+	}
+	if r.config.Movie != nil && r.config.MovieRenderReady {
+		r.toolsV2["movie.render.submit"] = r.executeMovieRenderSubmitV2
+	}
+	if r.config.Movie != nil {
+		r.toolsV2["movie.render.status"] = r.executeMovieRenderStatusV2
+	}
 	if r.config.LyricsCatalogLookup != nil {
 		r.registerLyricsCatalogLookupTool()
 	}
@@ -370,6 +389,31 @@ func (r *ToolRunner) registerToolMetadata() {
 	}
 	if r.config.MusicRemix != nil {
 		r.metadata["music.remix.create"] = musicRemixCreateMetadata(r.config.MusicControl != nil)
+	}
+	if r.config.MusicAnalysisBeats != nil || r.config.MusicAnalysisCaptions != nil {
+		r.metadata["music.analysis.create"] = musicAnalysisCreateMetadata(r.config.MusicAnalysisBeats != nil, r.config.MusicAnalysisCaptions != nil)
+	}
+	if r.config.MusicAnalysisReader != nil {
+		r.metadata["music.analysis.get"] = musicAnalysisGetMetadata()
+	}
+	if r.config.MusicSourceSearch != nil {
+		r.metadata["music.source.search"] = musicSourceSearchMetadata()
+	}
+	if r.config.MusicAudioImport != nil {
+		if r.config.MusicAudioImportReady && r.config.MusicProjects != nil {
+			r.metadata["music.audio.import"] = musicAudioImportMetadata()
+		}
+		r.metadata["music.audio.import.status"] = musicAudioImportStatusMetadata()
+	}
+	if r.config.Movie != nil && r.config.MovieAssetStorageReady && r.config.MusicArtifactMetadata != nil && r.config.MusicArtifactPlayback != nil &&
+		r.config.Movie.ActorID() == r.config.MusicArtifactPlayback.ActorID() && r.config.Movie.ActorID() == r.config.MusicArtifactMetadata.ActorID() {
+		r.metadata["movie.asset.import"] = movieAssetImportMetadata()
+	}
+	if r.config.Movie != nil && r.config.MovieRenderReady {
+		r.metadata["movie.render.submit"] = movieRenderSubmitMetadata(r.movieMusicTimingIntegrationReady())
+	}
+	if r.config.Movie != nil {
+		r.metadata["movie.render.status"] = movieRenderStatusMetadata(r.config.MoviePlaybackLinkReady)
 	}
 	if r.config.LyricsCatalogLookup != nil {
 		r.metadata["lyrics_catalog.lookup"] = lyricsCatalogLookupMetadata()

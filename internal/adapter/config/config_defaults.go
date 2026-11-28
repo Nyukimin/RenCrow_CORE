@@ -66,6 +66,9 @@ func (c *Config) setDefaults() {
 	c.Music.Endpoint = strings.TrimSpace(c.Music.Endpoint)
 	c.Music.ActorID = strings.TrimSpace(c.Music.ActorID)
 	c.Music.TokenEnv = strings.TrimSpace(c.Music.TokenEnv)
+	c.Movie.Endpoint = strings.TrimSpace(c.Movie.Endpoint)
+	c.Movie.ActorID = strings.TrimSpace(c.Movie.ActorID)
+	c.Movie.TokenEnv = strings.TrimSpace(c.Movie.TokenEnv)
 	c.PersonRelatedCatalog.ProviderURL = strings.TrimSpace(c.PersonRelatedCatalog.ProviderURL)
 
 	// RenCrow_LLM is mandatory.

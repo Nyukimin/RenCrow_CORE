@@ -601,6 +601,18 @@ func registerMusicArtifactRoutes(mux *http.ServeMux, cfg *config.Config, depende
 	mux.HandleFunc("/viewer/music/artifacts/", viewer.WithCMDMioOwnerAuthentication(handler, ownerID, ownerToken))
 }
 
+func registerMovieRenderRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies) {
+	if mux == nil || cfg == nil || dependencies == nil || !dependencies.moviePlaybackLinkReady || dependencies.movieGateway == nil {
+		return
+	}
+	ownerID, ownerToken := viewerEventsCMDOwnerCredentials(cfg)
+	if ownerID == "" || ownerID != dependencies.movieGateway.ActorID() || len(ownerToken) == 0 {
+		return
+	}
+	handler := viewer.HandleMovieRenderDownload(dependencies.movieGateway)
+	mux.HandleFunc("/viewer/movie/jobs/", viewer.WithCMDMioOwnerAuthentication(handler, ownerID, ownerToken))
+}
+
 func registerCharImageRoutes(mux *http.ServeMux, cfg *config.Config, gateway appcharimage.ImageGateway) {
 	catalog, err := domaincharimage.LoadEmbeddedCatalog()
 	var service *appcharimage.Service
