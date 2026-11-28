@@ -58,3 +58,11 @@ jobs:
 
       - name: Build
         run: make build-all
+
+      - name: Keep macOS arm64 deployment binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rencrow-darwin-arm64-${{ github.sha }}
+          path: build/rencrow-darwin-arm64
+          if-no-files-found: error
+          retention-days: 3
