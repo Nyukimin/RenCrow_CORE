@@ -460,6 +460,33 @@ const viewerForegroundPresence = {
   releasePromise: null,
   heartbeatTimer: null,
 };
+let viewerComposerResizeObserver = null;
+
+function updateViewerComposerHeight(inputBar) {
+  const composer = inputBar || (typeof document !== 'undefined' ? document.querySelector('.input-bar') : null);
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  if (!composer || !root || !root.style || typeof composer.getBoundingClientRect !== 'function') return;
+  const height = Number(composer.getBoundingClientRect().height);
+  if (!Number.isFinite(height) || height <= 0) return;
+  const cssHeight = String(Math.ceil(height)) + 'px';
+  if (root.style.getPropertyValue('--input-h') !== cssHeight) {
+    root.style.setProperty('--input-h', cssHeight);
+  }
+}
+
+function bindViewerComposerHeight() {
+  const inputBar = typeof document !== 'undefined' ? document.querySelector('.input-bar') : null;
+  if (!inputBar) return;
+  const syncHeight = () => updateViewerComposerHeight(inputBar);
+  syncHeight();
+  if (typeof ResizeObserver === 'function') {
+    viewerComposerResizeObserver = new ResizeObserver(syncHeight);
+    viewerComposerResizeObserver.observe(inputBar);
+  }
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('resize', syncHeight);
+  }
+}
 
 function coreViewerHeaders(extra = {}) {
   return Object.assign({
@@ -7063,6 +7090,7 @@ setInterval(refreshDebugSystem, 5000);
 refreshDebugSystem();
 registerWebMCPTools();
 bindViewerForegroundPresenceLifecycle();
+bindViewerComposerHeight();
 bindViewerMioControls();
 connect();
 

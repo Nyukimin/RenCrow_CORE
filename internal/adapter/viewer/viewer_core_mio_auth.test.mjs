@@ -461,6 +461,55 @@ globalThis.__logoutHarness = {logoutViewerMioOwner, noteViewerMioPrivateEvent, c
   assert.equal(context.__resetCount, 1);
 });
 
+test('fixed composer height tracks auth wrapping, logout, textarea, attachments and viewport reflow', () => {
+  let measuredHeight = 188.5;
+  let observedComposer = null;
+  let resizeCallback = null;
+  const properties = new Map();
+  const windowListeners = new Map();
+  const composer = {getBoundingClientRect() { return {height: measuredHeight}; }};
+  const source = sourceBetween(viewerJs, 'let viewerComposerResizeObserver = null;', 'function coreViewerHeaders') + `
+globalThis.__composerHarness = {bindViewerComposerHeight, get observer() { return viewerComposerResizeObserver; }};
+`;
+  class FakeResizeObserver {
+    constructor(callback) { resizeCallback = callback; }
+    observe(element) { observedComposer = element; }
+  }
+  const context = vm.createContext({
+    document: {
+      documentElement: {style: {
+        getPropertyValue(name) { return properties.get(name) || ''; },
+        setProperty(name, value) { properties.set(name, String(value)); },
+      }},
+      querySelector(selector) { return selector === '.input-bar' ? composer : null; },
+    },
+    ResizeObserver: FakeResizeObserver,
+    window: {addEventListener(name, callback) { windowListeners.set(name, callback); }},
+  });
+  vm.runInContext(source, context);
+  const harness = context.__composerHarness;
+  harness.bindViewerComposerHeight();
+  assert.equal(properties.get('--input-h'), '189px', 'the initial variable stores the measured outer height');
+  assert.equal(observedComposer, composer);
+  assert.ok(harness.observer);
+
+  for (const [scenario, height] of [
+    ['wrapped connection status', 277.2],
+    ['logout status shrink', 158.1],
+    ['expanded textarea', 320.4],
+    ['attachment tray', 346],
+    ['compact or orientation reflow', 218.6],
+  ]) {
+    measuredHeight = height;
+    resizeCallback();
+    assert.equal(properties.get('--input-h'), Math.ceil(height) + 'px', scenario);
+  }
+
+  measuredHeight = 204.3;
+  windowListeners.get('resize')();
+  assert.equal(properties.get('--input-h'), '205px', 'window resize also refreshes the measurement');
+});
+
 test('protected media probes size before fetch, enforces the bounded Blob and revokes it on replacement/logout', async () => {
   const calls = [];
   const small = loadMediaHarness(async (_url, init) => {

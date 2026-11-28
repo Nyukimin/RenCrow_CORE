@@ -313,11 +313,11 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(js, /consumeIdlePendingMessage\(sid, id, bubbleKind, messageId, turnIndex\)/);
   assert.match(js, /\^\(今日のお題\|きょうのおだい\)\(です\)\?\[、。:：！？!\?\]\?/);
   assert.match(css, /\.audio-btn\{[\s\S]*touch-action:manipulation/);
-  assert.match(css, /\.chat-desk-panel\{[\s\S]*height:calc\(100dvh - var\(--header-h\) - var\(--input-h\) - 54px - var\(--safe-bottom\)\)/);
+  assert.match(css, /\.chat-desk-panel\{[\s\S]*height:calc\(100dvh - var\(--header-h\) - var\(--input-h\) - 54px\)/);
   assert.match(css, /\.chat-desk-shell\{[\s\S]*align-items:start/);
   assert.match(css, /\.chat-desk-shell\{[\s\S]*min-height:0;height:100%/);
   assert.match(css, /\.chat-character-pane\{[\s\S]*--chat-character-w:100%/);
-  assert.match(css, /\.chat-character-pane\{[\s\S]*--chat-character-h:clamp\(340px, calc\(100dvh - var\(--header-h\) - var\(--input-h\) - 112px - var\(--safe-bottom\)\), 620px\)/);
+  assert.match(css, /\.chat-character-pane\{[\s\S]*--chat-character-h:clamp\(340px, calc\(100dvh - var\(--header-h\) - var\(--input-h\) - 112px\), 620px\)/);
   assert.match(css, /\.chat-character-pane\{[\s\S]*grid-template-rows:auto minmax\(0,var\(--chat-character-h\)\)/);
   assert.match(css, /\.chat-character-pane\{[\s\S]*align-self:start/);
   assert.match(css, /\.chat-character-pane\{[\s\S]*height:fit-content/);

@@ -64,7 +64,7 @@ header{
   width:100%;max-width:100vw;background:transparent;overflow:hidden;position:relative;
 }
 .tabs{
-  display:flex;flex-direction:column;gap:5px;padding:14px 12px calc(var(--input-h) + 24px + var(--safe-bottom));
+  display:flex;flex-direction:column;gap:5px;padding:14px 12px calc(var(--input-h) + 24px);
   border-right:1px solid var(--border);background:linear-gradient(180deg,rgba(11,17,38,.60),rgba(8,12,27,.72));
   backdrop-filter:blur(18px) saturate(1.12);
   overflow:auto;min-width:0;
@@ -93,7 +93,7 @@ header{
 .db-catalog-status-blocked{color:var(--err)}
 .mobile-panel-switch{display:none}
 
-main{min-width:0;width:100%;max-width:100vw;overflow-y:auto;overflow-x:hidden;padding:18px 0 calc(var(--input-h) + 24px + var(--safe-bottom));position:relative}
+main{min-width:0;width:100%;max-width:100vw;overflow-y:auto;overflow-x:hidden;padding:18px 0 calc(var(--input-h) + 24px);scroll-padding-bottom:var(--input-h);position:relative}
 .panel{display:none;width:min(100%,1480px);max-width:100%;margin:0 auto;padding:0 clamp(14px,2vw,30px)}
 .panel.active{display:block}
 
@@ -479,7 +479,7 @@ tr.evi-selected td{background:rgba(34,211,238,.08)}
 
 .chat-desk-panel{
   width:min(100%,1480px);padding-top:10px;
-  height:calc(100dvh - var(--header-h) - var(--input-h) - 54px - var(--safe-bottom));
+  height:calc(100dvh - var(--header-h) - var(--input-h) - 54px);
   min-height:420px;
 }
 .chat-desk-shell{
@@ -494,7 +494,7 @@ tr.evi-selected td{background:rgba(34,211,238,.08)}
 }
 .chat-character-pane{
   --chat-character-w:100%;
-  --chat-character-h:clamp(340px, calc(100dvh - var(--header-h) - var(--input-h) - 112px - var(--safe-bottom)), 620px);
+  --chat-character-h:clamp(340px, calc(100dvh - var(--header-h) - var(--input-h) - 112px), 620px);
   min-width:0;min-height:0;
   display:grid;grid-template-rows:auto minmax(0,var(--chat-character-h));gap:10px;padding:12px;overflow:hidden;
   align-self:start;height:fit-content;max-height:100%;
@@ -1061,7 +1061,7 @@ body.theme-compact{
 }
 body.theme-compact header{padding:calc(5px + var(--safe-top)) 16px 7px}
 body.theme-compact .logo img{height:46px !important}
-body.theme-compact .tabs{padding:8px 8px calc(var(--input-h) + 16px + var(--safe-bottom));gap:3px}
+body.theme-compact .tabs{padding:8px 8px calc(var(--input-h) + 16px);gap:3px}
 body.theme-compact .tab-btn{min-height:30px;padding:7px 8px;font-size:11px;border-radius:6px}
 body.theme-compact main{padding-top:10px}
 body.theme-compact .panel{padding:0 16px}
@@ -1098,7 +1098,7 @@ body.theme-compact .input-wrap textarea{min-height:38px;max-height:86px}
     width:40px;height:38px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.045);
     color:var(--t1);font-size:18px;font-weight:900;line-height:1;cursor:pointer;
   }
-  main{flex:1;min-height:0;width:100%;max-width:100vw;overflow-x:hidden;padding-bottom:calc(164px + var(--safe-bottom))}
+  main{flex:1;min-height:0;width:100%;max-width:100vw;overflow-x:hidden;padding-bottom:calc(var(--input-h) + 24px)}
   .chat-desk-shell{grid-template-columns:1fr;min-height:0}
   .chat-character-pane{display:none}
   .chat-main-pane{min-height:360px}
@@ -1149,7 +1149,7 @@ body.theme-compact .input-wrap textarea{min-height:38px;max-height:86px}
   #panel-news-pack .news-pack-items-table th:nth-child(5){width:48px}
   #panel-news-pack .news-pack-items-table td:nth-child(4){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #panel-news-pack #newsPackDetail{min-width:0;min-height:380px}
-  main{padding:10px 0 calc(164px + var(--safe-bottom))}
+  main{padding:10px 0 calc(var(--input-h) + 24px)}
   .panel{width:100%;max-width:100vw;padding:0 10px}
   .sys-content{min-width:0}
   .input-bar{padding:8px 10px calc(10px + var(--safe-bottom))}
@@ -1209,7 +1209,7 @@ body.theme-compact .input-wrap textarea{min-height:38px;max-height:86px}
   .logo img{height:40px !important}
   .tabs{padding:6px 10px}
   .tab-btn{min-height:32px;padding:7px 10px}
-  main{padding-top:10px;padding-bottom:calc(138px + var(--safe-bottom))}
+  main{padding-top:10px;padding-bottom:calc(var(--input-h) + 24px)}
   .input-bar{padding:8px 12px calc(8px + var(--safe-bottom))}
   .idle-tools{
     display:flex;

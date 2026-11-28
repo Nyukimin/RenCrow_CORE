@@ -471,7 +471,7 @@ func TestViewerStaticContractIdleChatStockUsesReadableInspectionLayout(t *testin
 			t.Fatalf("IdleChat stock readable layout render contract missing %q", needle)
 		}
 	}
-	if !strings.Contains(html, "viewer.css?v=20260805-idle-topic-playback") {
+	if !strings.Contains(html, "viewer.css?v=20261128-private-mio-composer-height") {
 		t.Fatal("IdleChat stock layout must invalidate the Viewer CSS cache")
 	}
 }
@@ -1019,7 +1019,7 @@ func TestViewerStaticContractGameBridgeOpsCard(t *testing.T) {
 	if !strings.Contains(page, "games.js?v=20260729-agent-launch") {
 		t.Fatal("viewer.html missing Games tab cache buster")
 	}
-	if !strings.Contains(page, "viewer.js?v=20260806-prompt-logs-panel") {
+	if !strings.Contains(page, "viewer.js?v=20261128-private-mio-composer-height") {
 		t.Fatal("viewer.html missing Prompt Debug viewer cache buster")
 	}
 }
