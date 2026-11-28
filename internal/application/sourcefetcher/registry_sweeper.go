@@ -51,6 +51,8 @@ type SweepOptions struct {
 	ArticleFallback   modulewebgather.FetchProvider
 }
 
+var ErrPublicAcquisitionBusy = errors.New("public source acquisition is already leased")
+
 type SweepResult struct {
 	Sources           int
 	Staged            int
@@ -118,20 +120,18 @@ func sweepRegistrySources(ctx context.Context, store RegistryStore, sources []l1
 	result := SweepResult{Sources: len(sources)}
 	parser := gofeed.NewParser()
 	for _, source := range sources {
-		if source.Kind == l1sqlite.L1SourceKindWebGather {
-			err = sweepWebGatherSource(ctx, store, source, now, &result)
-		} else if source.Kind != l1sqlite.L1SourceKindRSS && source.Kind != l1sqlite.L1SourceKindAtom {
-			err = sweepHTTPSource(ctx, store, source, trustScores, now, &result)
-		} else {
-			err = sweepFeedSource(ctx, store, parser, source, trustScores, now, opts, &result)
-		}
+		err = withRegistrySourceAcquisition(ctx, store, source, now, func(leaseCtx context.Context) error {
+			if source.Kind == l1sqlite.L1SourceKindWebGather {
+				return sweepWebGatherSource(leaseCtx, store, source, now, &result)
+			}
+			if source.Kind != l1sqlite.L1SourceKindRSS && source.Kind != l1sqlite.L1SourceKindAtom {
+				return sweepHTTPSource(leaseCtx, store, source, trustScores, now, &result)
+			}
+			return sweepFeedSource(leaseCtx, store, parser, source, trustScores, now, opts, &result)
+		})
 		if err != nil {
 			result.Failed++
-			_ = store.MarkSourceRegistryFetched(ctx, source.SourceID, now, "error", err.Error())
 			continue
-		}
-		if err := store.MarkSourceRegistryFetched(ctx, source.SourceID, now, "ok", ""); err != nil {
-			return result, err
 		}
 	}
 	return result, nil
@@ -175,22 +175,91 @@ func RunSource(ctx context.Context, store interface {
 		return result, err
 	}
 	parser := gofeed.NewParser()
-	if selected.Kind == l1sqlite.L1SourceKindWebGather {
-		err = sweepWebGatherSource(ctx, store, *selected, now, &result)
-	} else if selected.Kind != l1sqlite.L1SourceKindRSS && selected.Kind != l1sqlite.L1SourceKindAtom {
-		err = sweepHTTPSource(ctx, store, *selected, trustScores, now, &result)
-	} else {
-		err = sweepFeedSource(ctx, store, parser, *selected, trustScores, now, opts, &result)
-	}
+	err = withRegistrySourceAcquisition(ctx, store, *selected, now, func(leaseCtx context.Context) error {
+		if selected.Kind == l1sqlite.L1SourceKindWebGather {
+			return sweepWebGatherSource(leaseCtx, store, *selected, now, &result)
+		}
+		if selected.Kind != l1sqlite.L1SourceKindRSS && selected.Kind != l1sqlite.L1SourceKindAtom {
+			return sweepHTTPSource(leaseCtx, store, *selected, trustScores, now, &result)
+		}
+		return sweepFeedSource(leaseCtx, store, parser, *selected, trustScores, now, opts, &result)
+	})
 	if err != nil {
 		result.Failed = 1
-		_ = store.MarkSourceRegistryFetched(ctx, selected.SourceID, now, "error", err.Error())
-		return result, err
-	}
-	if err := store.MarkSourceRegistryFetched(ctx, selected.SourceID, now, "ok", ""); err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+func withRegistrySourceAcquisition(ctx context.Context, store RegistryStore, source l1sqlite.L1SourceRegistryEntry, fetchedAt time.Time, run func(context.Context) error) error {
+	leases, ok := store.(l1sqlite.PublicAcquisitionLeaseStore)
+	if !ok {
+		return errors.New("unavailable: public acquisition lease owner is not connected")
+	}
+	lease, claimed, err := leases.ClaimPublicAcquisition(ctx, source.URL, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return ErrPublicAcquisitionBusy
+	}
+	leaseCtx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
+	runErr := run(leaseCtx)
+	cancel()
+	if ctx.Err() != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cleanupCancel()
+		released, releaseErr := leases.ReleasePublicAcquisition(cleanupCtx, lease, time.Now().UTC())
+		if releaseErr != nil {
+			return releaseErr
+		}
+		if !released {
+			return errors.New("unavailable: cancelled public acquisition lease expired before cleanup")
+		}
+		return ctx.Err()
+	}
+	status, lastError := l1sqlite.L1SourceFetchStatusOK, ""
+	if runErr != nil {
+		status, lastError = l1sqlite.L1SourceFetchStatusError, runErr.Error()
+	}
+	completed, completionErr := leases.CompletePublicSourceAcquisition(ctx, lease, source.SourceID, fetchedAt, status, lastError)
+	if completionErr != nil {
+		return completionErr
+	}
+	if !completed {
+		return errors.New("unavailable: public acquisition lease expired or source changed before completion")
+	}
+	return runErr
+}
+
+func withPublicSourceAcquisition(ctx context.Context, store RegistryStore, rawURL string, run func(context.Context) error) error {
+	leases, ok := store.(l1sqlite.PublicAcquisitionLeaseStore)
+	if !ok {
+		return errors.New("unavailable: public acquisition lease owner is not connected")
+	}
+	lease, claimed, err := leases.ClaimPublicAcquisition(ctx, rawURL, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return ErrPublicAcquisitionBusy
+	}
+	leaseCtx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
+	defer cancel()
+	runErr := run(leaseCtx)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cleanupCancel()
+	released, releaseErr := leases.ReleasePublicAcquisition(cleanupCtx, lease, time.Now().UTC())
+	if runErr != nil {
+		return runErr
+	}
+	if releaseErr != nil {
+		return releaseErr
+	}
+	if !released {
+		return errors.New("unavailable: public acquisition lease expired before completion")
+	}
+	return nil
 }
 
 func sweepWebGatherSource(ctx context.Context, store RegistryStore, source l1sqlite.L1SourceRegistryEntry, now time.Time, result *SweepResult) error {
@@ -751,35 +820,40 @@ func fetchFeedArticle(ctx context.Context, store RegistryStore, rawURL string, s
 		}
 		return feedArticleFetchResult{}, errFeedArticleFetchDeferred
 	}
-	artifact, err := webgatherinfra.NewHTTPFetcher().Fetch(ctx, normalizedURL, policy)
-	if err != nil && articleFallback != nil && webGatherErrorCode(err) == string(modulewebgather.ErrBlockedByPolicy) {
-		artifact, err = articleFallback.Fetch(ctx, normalizedURL, policy)
-	}
+	var artifact modulewebgather.FetchArtifact
+	var doc modulewebgather.ExtractedDocument
+	err = withPublicSourceAcquisition(ctx, store, normalizedURL, func(leaseCtx context.Context) error {
+		var fetchErr error
+		artifact, fetchErr = webgatherinfra.NewHTTPFetcher().Fetch(leaseCtx, normalizedURL, policy)
+		if fetchErr != nil && articleFallback != nil && webGatherErrorCode(fetchErr) == string(modulewebgather.ErrBlockedByPolicy) {
+			artifact, fetchErr = articleFallback.Fetch(leaseCtx, normalizedURL, policy)
+		}
+		if fetchErr != nil {
+			return fetchErr
+		}
+		doc, fetchErr = webgatherinfra.NewBasicExtractor().Extract(leaseCtx, artifact, modulewebgather.DefaultExtractor)
+		if fetchErr != nil {
+			return fetchErr
+		}
+		if strings.TrimSpace(doc.Text) == "" {
+			return modulewebgather.NewError(modulewebgather.ErrEmptyContent, "linked article extracted content is empty")
+		}
+		if !completeExtractedArticle(doc.Text, doc.Extractor) {
+			return modulewebgather.NewError(modulewebgather.ErrEmptyContent, "linked article extracted content is incomplete")
+		}
+		return articleStore.CompleteNewsArticleFetch(leaseCtx, normalizedURL, l1sqlite.L1NewsArticleFetchCompletion{
+			FinalURL: artifact.FinalURL, FetchURL: firstNonEmpty(stringFromAnyMeta(artifact.Meta, "article_fetch_url"), artifact.FinalURL),
+			ContentType: artifact.ContentType, FetchProvider: artifact.ProviderName, Extractor: doc.Extractor,
+			RawBytes: artifact.RawBytes, ArticleText: doc.Text,
+			ContentSHA256: firstNonEmpty(stringFromAnyMeta(artifact.Meta, "article_content_sha256"), modulewebgather.SHA256Text(doc.Text)),
+		}, now)
+	})
 	if err != nil {
-		_ = articleStore.FailNewsArticleFetch(ctx, normalizedURL, webGatherErrorCode(err), now, newsArticleRetryDelay)
-		return feedArticleFetchResult{Artifact: artifact}, err
-	}
-	doc, err := webgatherinfra.NewBasicExtractor().Extract(ctx, artifact, modulewebgather.DefaultExtractor)
-	if err != nil {
-		_ = articleStore.FailNewsArticleFetch(ctx, normalizedURL, webGatherErrorCode(err), now, newsArticleRetryDelay)
-		return feedArticleFetchResult{Artifact: artifact}, err
-	}
-	if strings.TrimSpace(doc.Text) == "" {
-		err = modulewebgather.NewError(modulewebgather.ErrEmptyContent, "linked article extracted content is empty")
-		_ = articleStore.FailNewsArticleFetch(ctx, normalizedURL, webGatherErrorCode(err), now, newsArticleRetryDelay)
-		return feedArticleFetchResult{Artifact: artifact, Document: doc}, err
-	}
-	if !completeExtractedArticle(doc.Text, doc.Extractor) {
-		err = modulewebgather.NewError(modulewebgather.ErrEmptyContent, "linked article extracted content is incomplete")
-		_ = articleStore.FailNewsArticleFetch(ctx, normalizedURL, webGatherErrorCode(err), now, newsArticleRetryDelay)
-		return feedArticleFetchResult{Artifact: artifact, Document: doc}, err
-	}
-	if err := articleStore.CompleteNewsArticleFetch(ctx, normalizedURL, l1sqlite.L1NewsArticleFetchCompletion{
-		FinalURL: artifact.FinalURL, FetchURL: firstNonEmpty(stringFromAnyMeta(artifact.Meta, "article_fetch_url"), artifact.FinalURL),
-		ContentType: artifact.ContentType, FetchProvider: artifact.ProviderName, Extractor: doc.Extractor,
-		RawBytes: artifact.RawBytes, ArticleText: doc.Text,
-		ContentSHA256: firstNonEmpty(stringFromAnyMeta(artifact.Meta, "article_content_sha256"), modulewebgather.SHA256Text(doc.Text)),
-	}, now); err != nil {
+		errorCode := webGatherErrorCode(err)
+		if errors.Is(err, ErrPublicAcquisitionBusy) {
+			errorCode = "public_acquisition_busy"
+		}
+		_ = articleStore.FailNewsArticleFetch(ctx, normalizedURL, errorCode, now, newsArticleRetryDelay)
 		return feedArticleFetchResult{Artifact: artifact, Document: doc}, err
 	}
 	return feedArticleFetchResult{Artifact: artifact, Document: doc}, nil

@@ -365,7 +365,7 @@ func isPrivateMioDeltaForOwner(event orchestrator.OrchestratorEvent, ownerID str
 }
 
 func isMioCommandFinal(event orchestrator.OrchestratorEvent) bool {
-	return event.Type == "agent.response" && event.From == "mio" && event.To == "user" && event.Route == "CHAT" &&
+	return event.Type == "agent.response" && event.From == "mio" && event.To == "user" && (event.Route == "CHAT" || event.Route == "RESEARCH") &&
 		event.EventSeq > 0 && event.Channel == "viewer" && strings.HasPrefix(event.ChannelAddress, "cmd:") &&
 		event.ActorKind == "agent" && event.ActorID == "mio"
 }

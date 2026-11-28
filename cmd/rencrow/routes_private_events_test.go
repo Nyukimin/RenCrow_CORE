@@ -216,6 +216,74 @@ func TestViewerEventsAuthenticatedCMDFiltersLiveEvents(t *testing.T) {
 	}
 }
 
+func TestViewerEventsAuthenticatedCMDIncludesOnlyOwnedPrivateResearchFinal(t *testing.T) {
+	store, err := eventstore.NewSQLiteStore(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ownerSessionID, otherSessionID := modulecore.NewSessionID(), modulecore.NewSessionID()
+	ownerAddress, err := domainconversation.NewChannelAddress("viewer", "cmd:owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAddress, err := domainconversation.NewChannelAddress("viewer", "cmd:owner-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+	ownerSession, err := domainsession.NewCanonicalSessionWithOwner(ownerSessionID, "owner-a", "2026-10-24", ownerAddress, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSession, err := domainsession.NewCanonicalSessionWithOwner(otherSessionID, "owner-b", "2026-10-24", otherAddress, createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := viewer.NewEventHub(10)
+	cfg := routeTestOwnerConfig(t)
+	runtimeStore := &routeTestRuntimeVersionStore{SQLiteStore: store, sessionID: ownerSessionID, ownerID: "owner-a", version: "v1", found: true}
+	deps := &Dependencies{
+		eventHub: hub,
+		sessionRepository: routeTestSessionRepository{sessions: map[string]*domainsession.Session{
+			string(ownerSessionID): ownerSession,
+			string(otherSessionID): otherSession,
+		}},
+		canonicalEventStore: runtimeStore,
+	}
+	request := routeTestOwnerRequest("/viewer/events?from=now&to=mio", privateEventsOwnerToken)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	response := &liveRouteSSEWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		cancel:           cancel,
+		publish: func() {
+			ownerFinal := routeTestPrivateMioFinalForRoute(ownerSessionID, "owner-a", ownerSession.PublicationIncarnation(), "owner-a Research final", "RESEARCH")
+			ownerFinal.EventSeq = 1
+			if _, publishErr := hub.PublishLive(ownerFinal); publishErr != nil {
+				t.Errorf("publish owned Research final: %v", publishErr)
+			}
+			otherFinal := routeTestPrivateMioFinalForRoute(otherSessionID, "owner-b", otherSession.PublicationIncarnation(), "owner-b Research final", "RESEARCH")
+			otherFinal.EventSeq = 2
+			if _, publishErr := hub.PublishLive(otherFinal); publishErr != nil {
+				t.Errorf("publish foreign Research final: %v", publishErr)
+			}
+		},
+	}
+	timer := time.AfterFunc(100*time.Millisecond, cancel)
+	defer timer.Stop()
+	viewerGlobalEventsHandler(cfg, deps).ServeHTTP(response, request.WithContext(ctx))
+
+	body := response.Body.String()
+	if !strings.Contains(body, "owner-a Research final") {
+		t.Fatalf("authenticated CMD stream omitted its current private Research final: %s", body)
+	}
+	if strings.Contains(body, "owner-b Research final") {
+		t.Fatalf("authenticated CMD stream exposed another owner's Research final: %s", body)
+	}
+}
+
 func TestViewerEventsRequiresLocalCMDChatOwnerBearer(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -656,6 +724,38 @@ func TestAuthenticatedPrivateMioOPSFinalRejectsUntrustedRouteAndExecutionIdentit
 	}
 	if isAuthenticatedPrivateMioFinal(valid, "owner-b") {
 		t.Fatal("OPS final was accepted for a different authenticated owner")
+	}
+}
+
+func TestAuthenticatedPrivateMioResearchFinalRequiresExactPrivateIdentity(t *testing.T) {
+	sessionID, sess := routeTestSession(t, "owner-a", true)
+	valid := routeTestPrivateMioFinalForRoute(sessionID, "owner-a", sess.PublicationIncarnation(), "Research final", "RESEARCH")
+	valid.EventSeq = 1
+	if !isAuthenticatedPrivateMioFinal(valid, "owner-a") {
+		t.Fatal("canonical private Mio-to-user RESEARCH final was rejected for its authenticated owner")
+	}
+	for _, mutate := range []struct {
+		name string
+		fn   func(*orchestrator.OrchestratorEvent)
+	}{
+		{name: "wrong route", fn: func(event *orchestrator.OrchestratorEvent) { event.Route = "WILD" }},
+		{name: "wrong actor", fn: func(event *orchestrator.OrchestratorEvent) { event.ActorID = "shiro" }},
+		{name: "wrong speaker", fn: func(event *orchestrator.OrchestratorEvent) { event.From = "shiro" }},
+		{name: "wrong owner address", fn: func(event *orchestrator.OrchestratorEvent) { event.ChannelAddress = "cmd:owner-b" }},
+		{name: "public visibility", fn: func(event *orchestrator.OrchestratorEvent) { event.Visibility = "public" }},
+		{name: "missing private provenance", fn: func(event *orchestrator.OrchestratorEvent) { event.Visibility = "" }},
+		{name: "unsequenced", fn: func(event *orchestrator.OrchestratorEvent) { event.EventSeq = 0 }},
+	} {
+		t.Run(mutate.name, func(t *testing.T) {
+			candidate := valid
+			mutate.fn(&candidate)
+			if isAuthenticatedPrivateMioFinal(candidate, "owner-a") {
+				t.Fatal("invalid private RESEARCH final was accepted")
+			}
+		})
+	}
+	if isAuthenticatedPrivateMioFinal(valid, "owner-b") {
+		t.Fatal("private RESEARCH final was accepted for a different authenticated owner")
 	}
 }
 

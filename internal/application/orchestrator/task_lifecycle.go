@@ -40,6 +40,7 @@ type TaskLifecycleManager interface {
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	Start(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
+	ReadTaskRuns(context.Context, []modulecore.TaskID) (map[modulecore.TaskID]domaintask.Task, map[modulecore.TaskID][]domaintask.Run, error)
 	Wait(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Succeed(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Fail(context.Context, modulecore.TaskID, string, []string) (domaintask.Task, error)
@@ -280,10 +281,13 @@ func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, tas
 	if err != nil {
 		return err
 	}
-	task, err := a.lifecycle.manager.Get(ctx, taskID)
+	// Read Task and Run from one owner snapshot. Independent admitted reads
+	// can otherwise race the persistence worker between identity checks.
+	tasks, taskRuns, err := a.lifecycle.manager.ReadTaskRuns(ctx, []modulecore.TaskID{taskID})
 	if err != nil {
 		return fmt.Errorf("resolve execution task %s: %w", taskID, err)
 	}
+	task := tasks[taskID]
 	if task.TaskID != taskID {
 		return fmt.Errorf("execution task identity mismatch: got %s want %s", task.TaskID, taskID)
 	}
@@ -294,7 +298,13 @@ func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, tas
 	if taskActor != canonicalActor {
 		return fmt.Errorf("execution task %s assignee mismatch: saved=%s want=%s", taskID, taskActor, canonicalActor)
 	}
-	run, err := a.lifecycle.activeRunForTask(ctx, taskID)
+	active := make([]domaintask.Run, 0, 1)
+	for _, run := range taskRuns[taskID] {
+		if run.Status == domaintask.RunStatusRunning {
+			active = append(active, run)
+		}
+	}
+	run, err := selectActiveTaskRun(taskID, active)
 	if err != nil {
 		return fmt.Errorf("resolve execution Run for task %s: %w", taskID, err)
 	}
@@ -342,6 +352,10 @@ func (l *taskLifecycle) activeRunForTask(ctx context.Context, taskID modulecore.
 	if err != nil {
 		return domaintask.Run{}, fmt.Errorf("list active task runs: %w", err)
 	}
+	return selectActiveTaskRun(taskID, runs)
+}
+
+func selectActiveTaskRun(taskID modulecore.TaskID, runs []domaintask.Run) (domaintask.Run, error) {
 	if len(runs) != 1 {
 		return domaintask.Run{}, fmt.Errorf("task %s must have exactly one active run, got %d", taskID, len(runs))
 	}
@@ -700,6 +714,13 @@ func (l *taskLifecycle) finish(ctx context.Context, rootTaskID, executionTaskID 
 	}
 	var firstErr error
 	if executionErr == nil {
+		closed, err := l.finishResearchResult(ctx, executionTaskID, "", "")
+		if err != nil {
+			return err
+		}
+		if closed {
+			return l.propagateResearchTaskOutcome(ctx, rootTaskID, executionTaskID)
+		}
 		if executionTaskID != rootTaskID {
 			if _, err := l.manager.Succeed(ctx, executionTaskID, response); err != nil {
 				firstErr = fmt.Errorf("succeed execution task: %w", err)
@@ -714,6 +735,16 @@ func (l *taskLifecycle) finish(ctx context.Context, rootTaskID, executionTaskID 
 		// The Harness may have accepted the delegation and kept running. Preserve
 		// the owner Task/Run as active so a retry cannot create a second execution.
 		return nil
+	}
+	var incompleteResearch *domainagent.WebResearchIncompleteError
+	if errors.As(executionErr, &incompleteResearch) && incompleteResearch.Result.RunID != "" {
+		closed, closeErr := l.finishResearchResult(ctx, executionTaskID, incompleteResearch.Result.RunID, incompleteResearch.Result.Status)
+		if closeErr != nil {
+			return closeErr
+		}
+		if closed {
+			return l.propagateResearchTaskOutcome(ctx, rootTaskID, executionTaskID)
+		}
 	}
 
 	summary := strings.TrimSpace(executionErr.Error())
@@ -760,6 +791,95 @@ func (l *taskLifecycle) finish(ctx context.Context, rootTaskID, executionTaskID 
 		firstErr = fmt.Errorf("fail root task: %w", err)
 	}
 	return firstErr
+}
+
+// finishResearchResult closes the current generic Agent Task to the exact
+// durable Research projection after ToolLoop has completed its action attempt.
+func (l *taskLifecycle) finishResearchResult(ctx context.Context, taskID modulecore.TaskID, expectedResearchRunID, expectedResearchStatus string) (bool, error) {
+	task, err := l.manager.Get(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, domaintask.ErrTypedTaskRequiresOwner) || errors.Is(err, domaintask.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get Task before Research result finalization: %w", err)
+	}
+	if task.ResearchResult == nil {
+		return false, nil
+	}
+	run, err := l.activeRunForTask(ctx, taskID)
+	if err != nil {
+		return false, fmt.Errorf("read active Run for Research result finalization: %w", err)
+	}
+	result := *task.ResearchResult
+	if result.ExecutionRunID != run.RunID ||
+		(expectedResearchRunID != "" && result.ResearchRunID != expectedResearchRunID) ||
+		(expectedResearchStatus != "" && result.Status != expectedResearchStatus) {
+		return false, nil
+	}
+	if result.ActorID != task.Assignee || result.ActorID != run.Assignee {
+		return false, fmt.Errorf("Research result actor does not match the active Task/Run")
+	}
+	if err := result.Validate(task); err != nil {
+		return false, fmt.Errorf("Research Task receipt is invalid: %w", err)
+	}
+	summary := result.TaskSummary()
+	switch result.Status {
+	case "succeeded":
+		return false, nil
+	case "waiting_input":
+		if _, err := l.manager.Wait(ctx, taskID, "research manual seed required"); err != nil {
+			return true, fmt.Errorf("wait Task for Research input: %w", err)
+		}
+	case "partial", "failed":
+		if _, err := l.manager.Fail(ctx, taskID, summary, []string{"review_research_missing_outputs"}); err != nil {
+			return true, fmt.Errorf("fail Task for non-success Research result: %w", err)
+		}
+	case "cancelled":
+		if _, err := l.manager.Cancel(ctx, taskID, summary); err != nil {
+			return true, fmt.Errorf("cancel Task for cancelled Research result: %w", err)
+		}
+	default:
+		return true, fmt.Errorf("Research result status %q is not terminal", result.Status)
+	}
+	return true, nil
+}
+
+func (l *taskLifecycle) propagateResearchTaskOutcome(ctx context.Context, rootTaskID, executionTaskID modulecore.TaskID) error {
+	if rootTaskID == executionTaskID {
+		return nil
+	}
+	executionTask, err := l.manager.Get(ctx, executionTaskID)
+	if err != nil {
+		return fmt.Errorf("read closed Research child Task: %w", err)
+	}
+	if executionTask.ResearchResult == nil {
+		return fmt.Errorf("closed Research child Task has no typed result")
+	}
+	rootTask, err := l.manager.Get(ctx, rootTaskID)
+	if err != nil {
+		return fmt.Errorf("read root Task after Research child: %w", err)
+	}
+	if rootTask.Status != domaintask.StatusRunning {
+		return nil
+	}
+	summary := executionTask.ResearchResult.TaskSummary()
+	switch executionTask.Status {
+	case domaintask.StatusWaiting:
+		if _, err := l.manager.Wait(ctx, rootTaskID, executionTask.WaitingReason); err != nil {
+			return fmt.Errorf("wait root Task after Research child: %w", err)
+		}
+	case domaintask.StatusFailed:
+		if _, err := l.manager.Fail(ctx, rootTaskID, summary, []string{"review_research_missing_outputs"}); err != nil {
+			return fmt.Errorf("fail root Task after Research child: %w", err)
+		}
+	case domaintask.StatusCancelled:
+		if _, err := l.manager.Cancel(ctx, rootTaskID, summary); err != nil {
+			return fmt.Errorf("cancel root Task after Research child: %w", err)
+		}
+	default:
+		return fmt.Errorf("Research child Task closed with unexpected status %q", executionTask.Status)
+	}
+	return nil
 }
 
 func nativeCodingWasCancelled(err error) bool {

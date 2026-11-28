@@ -35,3 +35,9 @@ func TestSourceIDAndEventIDAreStable(t *testing.T) {
 		t.Fatal("event id must be stable")
 	}
 }
+
+func TestTextPreviewPreservesJapaneseCharacterBoundary(t *testing.T) {
+	if got := TextPreview("日本語の本文", 4); got != "日本語の" {
+		t.Fatalf("got %q, want four complete Unicode characters", got)
+	}
+}

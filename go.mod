@@ -23,6 +23,7 @@ require (
 )
 
 require (
+	github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128021017-4dac8a679b7c
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

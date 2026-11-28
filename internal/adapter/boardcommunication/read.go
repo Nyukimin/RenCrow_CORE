@@ -60,6 +60,9 @@ type BoardMessage struct {
 	ReplyTo     string   `json:"reply_to,omitempty"`
 	CausationID string   `json:"causation_id,omitempty"`
 	HopCount    int      `json:"hop_count,omitempty"`
+	// MentionDelivery is BOARD's canonical flag that effective delivery
+	// includes mentioned principals in addition to explicit recipients.
+	MentionDelivery bool `json:"mention_delivery,omitempty"`
 }
 
 // InboxPage contains the canonical flat inbox rows and the continuation cursor.

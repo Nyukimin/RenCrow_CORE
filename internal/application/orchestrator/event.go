@@ -311,6 +311,7 @@ type eventConversationIdentity struct {
 	TraceID                modulecore.TraceID
 	SessionID              modulecore.SessionID
 	PublicationIncarnation string
+	PublicationAudience    domainconversation.SessionAudience
 }
 
 func newEventTraceBindings() *eventTraceBindings {
@@ -347,6 +348,7 @@ func (b *eventTraceBindings) BindConversationIdentity(taskID string, turnID modu
 	identity := b.byTask[taskID]
 	if identity.SessionID != "" && identity.SessionID != sessionID {
 		identity.PublicationIncarnation = ""
+		identity.PublicationAudience = ""
 	}
 	identity.TurnID = turnID
 	identity.TraceID = traceID
@@ -387,6 +389,7 @@ func (b *eventTraceBindings) BindConversationSessionBinding(taskID string, turnI
 	identity.TraceID = traceID
 	identity.SessionID = binding.SessionID()
 	identity.PublicationIncarnation = binding.PublicationIncarnation()
+	identity.PublicationAudience = binding.Audience()
 	b.byTask[taskID] = identity
 	return nil
 }
@@ -449,6 +452,13 @@ func (b *eventTraceBindings) Apply(ev *OrchestratorEvent) {
 	ev.SessionID = identity.SessionID
 	if originalSessionID == identity.SessionID {
 		ev.PublicationIncarnation = identity.PublicationIncarnation
+		// The command reply uses the same owner-scoped SSE contract as a
+		// streamed answer. Stamp privacy from the validated Session binding,
+		// never from the command text, channel label, or model output.
+		if identity.PublicationAudience == domainconversation.SessionAudiencePrivate &&
+			ev.Type == "agent.response" && ev.From == "mio" && ev.To == "user" && (ev.Route == "CHAT" || ev.Route == "RESEARCH") {
+			ev.Visibility = "private"
+		}
 	}
 }
 

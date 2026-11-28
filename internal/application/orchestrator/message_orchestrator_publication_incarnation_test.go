@@ -58,9 +58,12 @@ func TestMessageEventPortStampsOnlyExactValidatedSessionBinding(t *testing.T) {
 		ownerID  string
 		audience domainconversation.SessionAudience
 		chatID   string
+		route    string
 	}{
-		{name: "public", audience: domainconversation.SessionAudiencePublic, chatID: "viewer-user"},
-		{name: "private", ownerID: "ren", audience: domainconversation.SessionAudiencePrivate, chatID: "cmd:ren"},
+		{name: "public CHAT", audience: domainconversation.SessionAudiencePublic, chatID: "viewer-user", route: "CHAT"},
+		{name: "public RESEARCH", audience: domainconversation.SessionAudiencePublic, chatID: "viewer-user", route: "RESEARCH"},
+		{name: "private CHAT", ownerID: "ren", audience: domainconversation.SessionAudiencePrivate, chatID: "cmd:ren", route: "CHAT"},
+		{name: "private RESEARCH", ownerID: "ren", audience: domainconversation.SessionAudiencePrivate, chatID: "cmd:ren", route: "RESEARCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			address, err := domainconversation.NewChannelAddress("viewer", tc.chatID)
@@ -92,7 +95,7 @@ func TestMessageEventPortStampsOnlyExactValidatedSessionBinding(t *testing.T) {
 			}
 
 			for _, eventType := range []string{"message.received", "routing.decision", "agent.response"} {
-				port.Emit(eventType, "mio", "user", "test", "CHAT", taskID.String(), string(sessionID), "viewer", tc.chatID)
+				port.Emit(eventType, "mio", "user", "test", tc.route, taskID.String(), string(sessionID), "viewer", tc.chatID)
 			}
 			for i, event := range listener.events {
 				if event.SessionID != sessionID || event.PublicationIncarnation != sess.PublicationIncarnation() {
@@ -100,6 +103,12 @@ func TestMessageEventPortStampsOnlyExactValidatedSessionBinding(t *testing.T) {
 				}
 				if i >= 3 {
 					t.Fatalf("unexpected event count: %#v", listener.events)
+				}
+				if event.Type == "agent.response" && tc.audience == domainconversation.SessionAudiencePrivate && event.Visibility != "private" {
+					t.Fatal("private Mio final lost its validated audience; owner SSE must reject an unclassified final")
+				}
+				if event.Type == "agent.response" && tc.audience != domainconversation.SessionAudiencePrivate && event.Visibility != "" {
+					t.Fatal("non-private Mio final was stamped private without a private Session binding")
 				}
 			}
 			if len(listener.events) != 3 {

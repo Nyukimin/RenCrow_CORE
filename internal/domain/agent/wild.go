@@ -14,6 +14,9 @@ import (
 
 var ErrImageGeneratorUnavailable = errors.New("RenCrow_Image interface is unavailable")
 
+// WildMaxOutputTokens is Midori's output budget for research and final answers.
+const WildMaxOutputTokens = 32 * 1024
+
 const defaultWildSystemPrompt = `You are Wild, a creative LLM for RenCrow.
 Focus on story generation, image search, image generation, image analysis, image prompts, mood, composition, clothing, texture, and visual interpretation.
 When image generation is requested, use the RenCrow_Image interface.
@@ -101,6 +104,7 @@ func (w *WildAgent) ExecutePrivateWork(ctx context.Context, input conversation.T
 	}
 
 	private := *w
+	private.llmProvider = privateWebResearch(w.llmProvider, capabilities)
 	private.conversationEngine = nil
 	allowImageGeneration := hasPrivateCapability(capabilities, privateCapabilityImageGenerate)
 	if !allowImageGeneration {
@@ -195,7 +199,7 @@ func (w *WildAgent) generate(ctx context.Context, t conversation.TurnInput, allo
 	}
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
-		MaxTokens:   2048,
+		MaxTokens:   WildMaxOutputTokens,
 		Temperature: 0.8,
 		OnToken:     onToken,
 	})

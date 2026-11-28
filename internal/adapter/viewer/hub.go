@@ -450,7 +450,7 @@ func isOwnerScopedMioLiveEventForOwner(event orchestrator.OrchestratorEvent, own
 
 func isPrivateMioFinalForOwner(event orchestrator.OrchestratorEvent, ownerID string) bool {
 	return strings.TrimSpace(ownerID) != "" && strings.TrimSpace(ownerID) == ownerID &&
-		event.Type == "agent.response" && event.From == "mio" && event.To == "user" && event.Route == "CHAT" &&
+		event.Type == "agent.response" && event.From == "mio" && event.To == "user" && (event.Route == "CHAT" || event.Route == "RESEARCH") &&
 		event.EventSeq > 0 && event.Channel == "viewer" && event.ChannelAddress == "cmd:"+ownerID &&
 		event.ActorKind == "agent" && event.ActorID == "mio" && event.Visibility == "private" &&
 		strings.TrimSpace(event.PublicationIncarnation) != "" && strings.TrimSpace(event.PublicationIncarnation) == event.PublicationIncarnation &&

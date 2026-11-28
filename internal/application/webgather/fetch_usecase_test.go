@@ -348,3 +348,70 @@ type failingStaging struct{}
 func (failingStaging) Save(context.Context, modulewebgather.FetchRequest, modulewebgather.FetchArtifact, modulewebgather.ExtractedDocument, map[string]any) (modulewebgather.StagingRecord, error) {
 	return modulewebgather.StagingRecord{}, errors.New("write failed")
 }
+
+func TestFetchURLReturnsBoundedBodyEvidenceBeyondPreview(t *testing.T) {
+	text := strings.Repeat("前半の説明。", 90) + "Production applications must not depend on this service."
+	u := NewUseCase(fakeFetcher{artifact: modulewebgather.FetchArtifact{FinalURL: "https://example.org", StatusCode: 200}}, fakeExtractor{doc: modulewebgather.ExtractedDocument{Text: text}}, nil)
+	got, err := u.FetchURL(context.Background(), modulewebgather.FetchRequest{URL: "https://example.org", StoreStagingSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence map[string]any
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	excerpt, _ := evidence["text_excerpt"].(string)
+	if !strings.Contains(excerpt, "Production applications") {
+		t.Fatal("body evidence after character 240 was lost")
+	}
+	if len([]rune(excerpt)) > 4000 {
+		t.Fatal("body evidence is unbounded")
+	}
+	if _, exists := evidence["ExtractedText"]; exists {
+		t.Fatal("raw full body leaked")
+	}
+}
+
+func TestL1FetchCacheReacquiresOldPreviewAndKeepsBoundedEvidence(t *testing.T) {
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cache := NewL1FetchCache(store)
+	ctx := context.Background()
+	req := modulewebgather.FetchRequest{URL: "https://example.org", FetchProvider: "http", Extractor: "html_basic"}
+	old := modulewebgather.FetchResponse{URL: req.URL, Status: "ok", ExtractedChars: 600, TextPreview: "old short preview"}
+	if err := cache.Save(ctx, req, old, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, hit, err := cache.Get(ctx, req, time.Now()); err != nil || hit {
+		t.Fatalf("old short-only cache hit=%v err=%v", hit, err)
+	}
+	current := old
+	current.TextExcerpt = strings.Repeat("本文", 300)
+	current.ExtractedText = "process-only full body"
+	if err := cache.Save(ctx, req, current, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	got, hit, err := cache.Get(ctx, req, time.Now())
+	if err != nil || !hit || got.TextExcerpt != current.TextExcerpt || got.ExtractedText != "" {
+		t.Fatalf("bounded cache evidence lost or raw body leaked: hit=%v err=%v", hit, err)
+	}
+}
+
+func TestFetchURLMarksTruncatedJapaneseEvidence(t *testing.T) {
+	text := strings.Repeat("日本語の本文。", 1000)
+	u := NewUseCase(fakeFetcher{artifact: modulewebgather.FetchArtifact{FinalURL: "https://example.org", StatusCode: 200}}, fakeExtractor{doc: modulewebgather.ExtractedDocument{Text: text}}, nil)
+	got, err := u.FetchURL(context.Background(), modulewebgather.FetchRequest{URL: "https://example.org", StoreStagingSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.TextTruncated || len([]rune(got.TextExcerpt)) != 4000 || !strings.HasPrefix(text, got.TextExcerpt) {
+		t.Fatal("long Japanese evidence was not bounded at a character boundary with an incomplete-coverage marker")
+	}
+}

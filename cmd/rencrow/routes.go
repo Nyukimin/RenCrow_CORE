@@ -241,7 +241,7 @@ func isAuthenticatedPrivateMioFinal(event orchestrator.OrchestratorEvent, ownerI
 		return false
 	}
 	switch event.Route {
-	case "CHAT":
+	case "CHAT", "RESEARCH":
 		return event.Visibility == "private" && event.ActorKind == "agent" && event.ActorID == "mio"
 	case "OPS":
 		// OPS runs under Shiro's Task/Run identity while Mio emits the final.
@@ -311,6 +311,9 @@ func viewerRuntimeTools(dependencies *Dependencies) func(context.Context) ([]dom
 }
 
 func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies) {
+	if dependencies.researchOwner != nil {
+		mux.HandleFunc("/v1/research/owner", dependencies.researchOwner)
+	}
 	if dependencies.backlogStore == nil {
 		dependencies.backlogStore = viewer.NewBacklogStore(filepath.Join(cfg.WorkspaceDir, "logs", "backlog.jsonl"))
 	}

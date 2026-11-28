@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
@@ -40,6 +41,17 @@ func (p *NoThinkingProvider) Name() string {
 	return p.inner.Name()
 }
 
+func (p *NoThinkingProvider) Chat(ctx context.Context, req domainllm.ChatRequest) (domainllm.ChatResponse, error) {
+	provider, ok := p.inner.(domainllm.ToolCallingProvider)
+	if !ok {
+		return domainllm.ChatResponse{}, fmt.Errorf("inner provider does not support Chat")
+	}
+	// Gateway Chat already disables thinking; do not override it with a
+	// reasoning effort supplied by the generic Tool loop.
+	req.ReasoningEffort = domainllm.ReasoningEffortUnspecified
+	return provider.Chat(ctx, req)
+}
+
 // LowThinkingProvider enforces the GPT-OSS ChatWorker reasoning-low contract.
 type LowThinkingProvider struct {
 	inner domainllm.LLMProvider
@@ -74,4 +86,13 @@ func (p *LowThinkingProvider) Generate(ctx context.Context, req domainllm.Genera
 
 func (p *LowThinkingProvider) Name() string {
 	return p.inner.Name()
+}
+
+func (p *LowThinkingProvider) Chat(ctx context.Context, req domainllm.ChatRequest) (domainllm.ChatResponse, error) {
+	provider, ok := p.inner.(domainllm.ToolCallingProvider)
+	if !ok {
+		return domainllm.ChatResponse{}, fmt.Errorf("inner provider does not support Chat")
+	}
+	req.ReasoningEffort = domainllm.ReasoningEffortLow
+	return provider.Chat(ctx, req)
 }

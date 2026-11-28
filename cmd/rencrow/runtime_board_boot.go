@@ -87,6 +87,7 @@ func buildBoardCommunicationRuntime(
 		service: service, ownerRequestChat: mioOwnerRequestChat, agentRequestBoots: agentRequestBoots,
 		actorAdmission: deps.agentAdmission,
 	}
+	deps.boardCommunicationRootBoot = boot
 	if mioOwnerRequestChat != nil {
 		agentRequestBoots[string(mioOwnerRequestChat.Actor())] = boot
 	}

@@ -405,6 +405,8 @@ type Task struct {
 	NextActions              []string                              `json:"next_actions,omitempty"`
 	Evidence                 []string                              `json:"evidence,omitempty"`
 	Artifacts                []string                              `json:"artifacts,omitempty"`
+	ResearchBinding          *ResearchExecutionBinding             `json:"research_binding,omitempty"`
+	ResearchResult           *ResearchResultProjection             `json:"research_result,omitempty"`
 }
 
 type SharedRoleContext struct {
@@ -606,6 +608,19 @@ func (t Task) Validate() error {
 		}
 	} else if t.TaskMeetingInvocation != nil && (t.TaskMeetingInvocation.Purpose == TaskMeetingPurposeReport || t.TaskMeetingInvocation.Purpose == TaskMeetingPurposeAnswer) && t.Status == StatusSucceeded {
 		return errors.New("succeeded TaskMeeting generation requires its canonical message reference")
+	}
+	if t.ResearchResult != nil {
+		if err := t.ResearchResult.Validate(t); err != nil {
+			return fmt.Errorf("research_result is invalid: %w", err)
+		}
+	}
+	if t.ResearchBinding != nil {
+		if err := t.ResearchBinding.Validate(t); err != nil {
+			return fmt.Errorf("research_binding is invalid: %w", err)
+		}
+		if t.Autonomous != nil || t.TaskCenterExecution != nil || t.NativePlanningInvocation != nil || t.TaskMeetingInvocation != nil {
+			return errors.New("Research execution binding cannot be combined with another typed Task owner")
+		}
 	}
 	managed := 0
 	for _, present := range []bool{t.TaskCenterExecution != nil, t.NativePlanningInvocation != nil, t.TaskMeetingInvocation != nil} {

@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +76,50 @@ func TestMioAgent_CanUseCombinedChatDraftIsBoundedToOrdinaryMioText(t *testing.T
 	legacyMio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, nil, nil, legacyEngine)
 	if legacyMio.canUseCombinedChatDraft(context.Background(), base) {
 		t.Fatal("conversation engine without typed commit must stay on the existing path")
+	}
+}
+
+func TestMioResearchTerminalAdoptionDoesNotUseContinuationAndKeepsTypedReceipt(t *testing.T) {
+	input := newAgentTurnInput(t, "Research the release history", "viewer", "mio")
+	draft := &MioChatDraft{
+		outcome: MioTurnOutcome{Kind: MioTurnOutcomeRetrieve, Requests: []MioRetrievalRequest{{SourceKind: MioRetrievalSourceResearch}}},
+		ready:   true, turnID: string(input.TurnID()), sessionID: input.SessionID(),
+		messageID: string(input.UserMessageID()), messageHash: sha256.Sum256([]byte(input.MessageText())),
+	}
+	mio := NewMioAgent(nil, nil, nil, nil, nil, nil)
+	terminal := MioResearchTerminal{RunID: "run_01a21c1b-cc68-7361-808f-6e7e79d80625", Status: "succeeded", Report: "Verified report", Receipts: []string{"receipt-digest"}}
+	if err := mio.AdoptResearchTerminal(context.Background(), input, draft, terminal); err != nil {
+		t.Fatal(err)
+	}
+	response, err := mio.ChatWithDraft(context.Background(), input, draft)
+	if err != nil {
+		t.Fatalf("ChatWithDraft() error = %v", err)
+	}
+	if !strings.Contains(response, "Verified report") || !strings.Contains(response, "status succeeded") || !strings.Contains(response, "receipt-digest") {
+		t.Fatalf("Research terminal response lost report or receipt: %q", response)
+	}
+	if draft.outcome.Kind != MioTurnOutcomeRetrieve || draft.researchTerminal == nil {
+		t.Fatalf("terminal source status was replaced by a generated answer: %#v", draft)
+	}
+}
+
+func TestMioResearchWaitingInputRemainsNonterminalAndNamesRequiredInput(t *testing.T) {
+	input := newAgentTurnInput(t, "Research this topic", "viewer", "mio")
+	draft := &MioChatDraft{
+		outcome: MioTurnOutcome{Kind: MioTurnOutcomeRetrieve, Requests: []MioRetrievalRequest{{SourceKind: MioRetrievalSourceResearch}}},
+		ready:   true, turnID: string(input.TurnID()), sessionID: input.SessionID(),
+		messageID: string(input.UserMessageID()), messageHash: sha256.Sum256([]byte(input.MessageText())),
+	}
+	mio := NewMioAgent(nil, nil, nil, nil, nil, nil)
+	err := mio.AdoptResearchTerminal(context.Background(), input, draft, MioResearchTerminal{
+		RunID: "run_01a21c1b-cc68-7361-808f-6e7e79d80625", Status: "waiting_input", Missing: []string{"manual_seed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := mio.ChatWithDraft(context.Background(), input, draft)
+	if err != nil || !strings.Contains(response, "status waiting_input") || !strings.Contains(response, "manual_seed") || strings.Contains(response, "status succeeded") {
+		t.Fatalf("waiting Research was reported as success: response=%q err=%v", response, err)
 	}
 }
 

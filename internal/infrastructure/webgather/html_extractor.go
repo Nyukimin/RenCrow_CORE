@@ -50,6 +50,7 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 	if err != nil {
 		return modulewebgather.ExtractedDocument{}, modulewebgather.WrapError(modulewebgather.ErrExtractFailed, "failed to parse HTML", err)
 	}
+	hasPasswordForm := containsPasswordForm(doc)
 	doc.Find("script,style,noscript,svg,canvas,iframe,header,footer,nav,aside,form,button").Each(func(_ int, s *goquery.Selection) {
 		s.Remove()
 	})
@@ -75,6 +76,7 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 		text = extractBestHTMLContent(doc)
 		text = normalizeSpace(text)
 	}
+	authInterstitial := hasPasswordForm && !hasSubstantiveArticleBody(doc)
 	if text == "" {
 		return modulewebgather.ExtractedDocument{}, modulewebgather.NewError(modulewebgather.ErrEmptyContent, "HTML extracted text is empty")
 	}
@@ -99,8 +101,40 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 			"html_extractor":           extractor,
 			"requested_html_extractor": requestedExtractor,
 			"published_at_text":        published,
+			"auth_interstitial":        authInterstitial,
 		},
 	}, nil
+}
+
+func containsPasswordForm(doc *goquery.Document) bool {
+	if doc == nil {
+		return false
+	}
+	found := false
+	doc.Find("form").EachWithBreak(func(_ int, form *goquery.Selection) bool {
+		form.Find("input").EachWithBreak(func(_ int, input *goquery.Selection) bool {
+			inputType, _ := input.Attr("type")
+			if strings.EqualFold(strings.TrimSpace(inputType), "password") {
+				found = true
+				return false
+			}
+			return true
+		})
+		return !found
+	})
+	return found
+}
+
+func hasSubstantiveArticleBody(doc *goquery.Document) bool {
+	if doc == nil {
+		return false
+	}
+	semantic := longestSelectionText(doc, "[itemprop='articleBody'],.article-body,.post-content,.entry-content,.blog-content,article")
+	if len([]rune(semantic)) >= 200 {
+		return true
+	}
+	main := longestSelectionText(doc, "main,[role='main']")
+	return len([]rune(main)) >= 500
 }
 
 func extractBestHTMLContent(doc *goquery.Document) string {

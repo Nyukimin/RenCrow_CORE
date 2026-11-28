@@ -41,6 +41,9 @@ func TestWildAgentGenerateUsesWildPromptAndStripsCommand(t *testing.T) {
 	if captured.OnToken == nil {
 		t.Fatal("Wild must always select the streaming provider path")
 	}
+	if captured.MaxTokens != 32768 {
+		t.Fatalf("Midori final output budget = %d, want 32768", captured.MaxTokens)
+	}
 }
 
 func TestWildAgentGenerateForwardsStreamCallback(t *testing.T) {

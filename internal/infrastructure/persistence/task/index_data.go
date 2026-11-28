@@ -403,7 +403,7 @@ func summaryOfTask(value domaintask.Task) taskFacts {
 		route: string(value.Route), status: string(value.Status), priority: string(value.Priority), interrupt: string(value.InterruptPolicy),
 		updated: toStamp(value.UpdatedAt), readOnly: value.ReadOnly,
 		hasStarted: value.StartedAt != nil, hasFinished: value.FinishedAt != nil,
-		pinned: value.ExpectedCriteriaRevision != "" || value.TaskCenterExecution != nil || value.NativePlanningInvocation != nil || value.TaskMeetingInvocation != nil || value.TaskMeetingResult != nil, hasClaims: len(value.NativeResumeClaims) > 0,
+		pinned: value.ExpectedCriteriaRevision != "" || value.TaskCenterExecution != nil || value.NativePlanningInvocation != nil || value.TaskMeetingInvocation != nil || value.TaskMeetingResult != nil || value.ResearchBinding != nil, hasClaims: len(value.NativeResumeClaims) > 0,
 		hasOriginPublication: value.OriginPublication != nil, hasPrivateAccess: value.PrivateAccess != nil,
 	}
 	if value.ParentTaskID != "" || value.SupersedesTaskID != "" || len(value.DependencyTaskIDs) > 0 {

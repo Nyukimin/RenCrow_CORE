@@ -481,6 +481,11 @@ func (m *missingActiveRunTaskLifecycleManager) ListRuns(context.Context, domaint
 	return nil, nil
 }
 
+func (m *missingActiveRunTaskLifecycleManager) ReadTaskRuns(ctx context.Context, ids []modulecore.TaskID) (map[modulecore.TaskID]domaintask.Task, map[modulecore.TaskID][]domaintask.Run, error) {
+	tasks, _, err := m.recordingTaskLifecycleManager.ReadTaskRuns(ctx, ids)
+	return tasks, nil, err
+}
+
 type mockHeavyAgent struct {
 	response string
 	called   bool

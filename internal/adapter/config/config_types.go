@@ -8,6 +8,7 @@ type Config struct {
 	Session                 SessionConfig             `yaml:"session"`
 	Storage                 StorageConfig             `yaml:"storage"`
 	DurableStore            DurableStoreConfig        `yaml:"durable_store"`
+	Research                ResearchConfig            `yaml:"research"`
 	TaskStore               TaskStoreConfig           `yaml:"task_store"`
 	TaskParallelLimits      *TaskParallelLimitsConfig `yaml:"task_parallel_limits"`
 	WorldProjection         WorldProjectionConfig     `yaml:"world_projection"`

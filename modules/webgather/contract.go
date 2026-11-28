@@ -81,6 +81,10 @@ type FetchResponse struct {
 	ContentType string `json:"content_type,omitempty"`
 	Title       string `json:"title,omitempty"`
 	TextPreview string `json:"text_preview,omitempty"`
+	// TextExcerpt is bounded body evidence for answers; it never contains the
+	// unbounded ExtractedText. TextTruncated marks incomplete source coverage.
+	TextExcerpt   string `json:"text_excerpt,omitempty"`
+	TextTruncated bool   `json:"text_truncated"`
 	// ExtractedText は同一プロセス内の一次情報処理だけで使う全文であり、
 	// API応答・ツール出力・永続キャッシュには含めない。
 	ExtractedText    string         `json:"-"`

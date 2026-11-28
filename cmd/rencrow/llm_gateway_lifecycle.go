@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -48,6 +51,11 @@ func ensureLLMGateway(cfg *config.Config) llmGatewayStartupStatus {
 	if cfg.LLMGateway.AutoStart != nil && !*cfg.LLMGateway.AutoStart {
 		status.Warning = "RenCrow_LLM is unavailable; CORE auto-start is disabled and the Gateway must be managed by its supervisor"
 		log.Printf("SYSTEM WARNING: %s (base_url=%s)", status.Warning, status.BaseURL)
+		return status
+	}
+	if llmGatewayProcessLive(status.BaseURL) {
+		status.Warning = "RenCrow_LLM Gateway is live, but the Mio alias is unavailable; Mio Gateway requests are not ready"
+		log.Printf("SYSTEM WARNING: %s", status.Warning)
 		return status
 	}
 
@@ -107,6 +115,57 @@ func llmGatewayHealthy(baseURL string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
 	defer cancel()
 	return llmGatewayReady(ctx, baseURL) == nil
+}
+
+func llmGatewayProcessLive(baseURL string) bool {
+	parsedURL, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || parsedURL.Host == "" {
+		return false
+	}
+	parsedURL.User = nil
+	parsedURL.Path = strings.TrimRight(parsedURL.Path, "/") + "/health/live"
+	parsedURL.RawPath = ""
+	parsedURL.RawQuery = ""
+	parsedURL.ForceQuery = false
+	parsedURL.Fragment = ""
+	parsedURL.RawFragment = ""
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{
+		Timeout: time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return false
+	}
+
+	const maxGatewayLivenessResponseBytes = 2048
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxGatewayLivenessResponseBytes+1))
+	if err != nil || len(body) > maxGatewayLivenessResponseBytes {
+		return false
+	}
+	var health struct {
+		OK      bool   `json:"ok"`
+		Status  string `json:"status"`
+		Service string `json:"service"`
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal(body, &health); err != nil {
+		return false
+	}
+	return health.OK && health.Status == "live" && health.Service == "rencrow-llm" && health.Runtime == "go"
 }
 
 func llmGatewayReady(ctx context.Context, baseURL string) error {

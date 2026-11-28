@@ -24,6 +24,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
 	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
+	researchengine "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/engine"
 )
 
 type conversationRuntime struct {
@@ -41,6 +42,8 @@ type conversationRuntime struct {
 	ArchiveCloser          conversationRuntimeCloser // nil when Closer owns archive/L1 shutdown
 	WebGatherFetcher       tools.WebGatherFetcher
 	ProfilePromotion       *memorypromotionapp.Service
+	ResearchEngine         *researchengine.Engine
+	ResearchCloser         conversationRuntimeCloser
 }
 
 type conversationRuntimeCloser interface {
@@ -65,6 +68,8 @@ func buildConversationRuntime(
 	var chatArchiveStore conversationpersistence.ConversationArchiveStore
 	var userMemoryStore domainagent.UserMemoryManager
 	var profilePromotion *memorypromotionapp.Service
+	var researchEngine *researchengine.Engine
+	var researchCloser conversationRuntimeCloser
 	mioPersona := conversation.DefaultMioPersona()
 	if cfg.Prompts != nil {
 		mioPersona = conversation.NewMioPersona(cfg.Prompts.MioPersona)
@@ -333,6 +338,34 @@ func buildConversationRuntime(
 			workerToolRunnerV2.WithWebGatherFetcher(webGatherUseCase)
 			workerToolRunnerV2.WithWebGatherSearcher(webGatherSearchUseCase)
 			workerToolRunnerV2.WithWebGatherSearchAndFetcher(webGatherSearchAndFetchUseCase)
+			if cfg.Research.Enabled {
+				researchScopeResolver := func(ctx context.Context) (webgatherapp.ResearchCacheScope, bool) {
+					envelope, ok := researchengine.ExecutionEnvelope(ctx)
+					if !ok {
+						return webgatherapp.ResearchCacheScope{}, false
+					}
+					return webgatherapp.ResearchCacheScope{DataScope: envelope.DataScope, OwnerID: envelope.OwnerID}, true
+				}
+				researchSearchCache := webgatherapp.NewResearchScopedSearchCache(webGatherSearchCache, researchScopeResolver)
+				researchSearchUseCase := webgatherapp.NewSearchUseCase(researchSearchCache, webGatherProviders)
+				researchFetchUseCase := webgatherapp.NewUseCase(
+					webgatherinfra.NewHTTPFetcher(),
+					webgatherinfra.NewBasicExtractor(),
+					nil,
+				)
+				if l1Store != nil {
+					researchFetchUseCase.WithFetchCache(webgatherapp.NewResearchScopedFetchCache(webgatherapp.NewL1FetchCache(l1Store), researchScopeResolver))
+				}
+				var researchErr error
+				researchEngine, researchCloser, researchErr = buildResearchEngine(cfg, researchSearchUseCase, researchFetchUseCase, l1Store)
+				if researchErr != nil {
+					log.Fatalf("Research initialization failed: %v", researchErr)
+				}
+				workerToolRunnerV2.WithResearchEngine(researchEngine)
+				if chatToolRunnerV2 != nil {
+					chatToolRunnerV2.WithResearchEngine(researchEngine)
+				}
+			}
 			if l1Store == nil {
 				log.Printf("ToolRunner web_gather.fetch/search/search_and_fetch enabled without Conversation L1 (external provider)")
 			} else {
@@ -365,6 +398,8 @@ func buildConversationRuntime(
 		ArchiveCloser:          conversationRuntimeArchiveCloser(realMgr, archiveStore),
 		WebGatherFetcher:       dailySourceFetcher,
 		ProfilePromotion:       profilePromotion,
+		ResearchEngine:         researchEngine,
+		ResearchCloser:         researchCloser,
 	}
 }
 

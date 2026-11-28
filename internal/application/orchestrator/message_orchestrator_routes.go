@@ -649,12 +649,6 @@ func (d *messageRouteDispatcher) completeMioRetrieval(ctx context.Context, input
 	if d.mioRetrieval == nil {
 		return ErrMioRetrievalUnavailable
 	}
-	continuation, ok := d.mio.(interface {
-		ContinueChatDraft(context.Context, domainconversation.TurnInput, *domainagent.MioChatDraft, []domainagent.MioRetrievalResult) (domainagent.MioTurnOutcome, error)
-	})
-	if !ok {
-		return errors.New("Mio cannot continue a retrieved CHAT draft")
-	}
 	sequenceCtx, cancel := context.WithTimeout(ctx, mioRetrievalSequenceLimit)
 	defer cancel()
 	budget := mioRetrievalBudget{cache: make(map[string]domainagent.MioRetrievalResult)}
@@ -668,6 +662,24 @@ func (d *messageRouteDispatcher) completeMioRetrieval(ctx context.Context, input
 		results, err := d.retrieveMioResults(sequenceCtx, input, outcome.Requests, &budget)
 		if err != nil {
 			return err
+		}
+		if len(outcome.Requests) == 1 && outcome.Requests[0].SourceKind == domainagent.MioRetrievalSourceResearch {
+			if len(results) != 1 || results[0].Research == nil {
+				return errors.New("Mio Research terminal receipt is unavailable")
+			}
+			adopter, ok := d.mio.(interface {
+				AdoptResearchTerminal(context.Context, domainconversation.TurnInput, *domainagent.MioChatDraft, domainagent.MioResearchTerminal) error
+			})
+			if !ok {
+				return errors.New("Mio Research terminal adopter is unavailable")
+			}
+			return adopter.AdoptResearchTerminal(sequenceCtx, input, draft, *results[0].Research)
+		}
+		continuation, ok := d.mio.(interface {
+			ContinueChatDraft(context.Context, domainconversation.TurnInput, *domainagent.MioChatDraft, []domainagent.MioRetrievalResult) (domainagent.MioTurnOutcome, error)
+		})
+		if !ok {
+			return errors.New("Mio cannot continue a retrieved CHAT draft")
 		}
 		outcome, err = continuation.ContinueChatDraft(sequenceCtx, input, draft, results)
 		if err != nil {
@@ -776,6 +788,23 @@ func validateMioRetrievalResponse(request domainagent.MioRetrievalRequest, resul
 	if result.SourceKind != request.SourceKind {
 		return fmt.Errorf("%w: response source %q does not match request source %q", domainagent.ErrInvalidMioRetrievalResult, result.SourceKind, request.SourceKind)
 	}
+	if request.SourceKind == domainagent.MioRetrievalSourceResearch {
+		if result.Status == domainagent.MioRetrievalStatusUnavailable {
+			if result.Research != nil || len(result.Items) != 0 {
+				return fmt.Errorf("%w: unavailable Research response carries data", domainagent.ErrInvalidMioRetrievalResult)
+			}
+			return nil
+		}
+		if result.Status != domainagent.MioRetrievalStatusFound || result.Research == nil || result.Research.RunID == "" || len(result.Items) != 0 {
+			return fmt.Errorf("%w: Research response lacks terminal receipt", domainagent.ErrInvalidMioRetrievalResult)
+		}
+		switch result.Research.Status {
+		case "succeeded", "partial", "failed", "waiting_input", "cancelled":
+			return nil
+		default:
+			return fmt.Errorf("%w: unknown Research terminal status", domainagent.ErrInvalidMioRetrievalResult)
+		}
+	}
 	switch result.Status {
 	case domainagent.MioRetrievalStatusDenied, domainagent.MioRetrievalStatusBlocked:
 		return fmt.Errorf("%w: source status %q", ErrMioRetrievalDenied, result.Status)
@@ -817,6 +846,12 @@ func cloneMioRetrievalResult(result domainagent.MioRetrievalResult) domainagent.
 	result.Provenance = append([]domainagent.MioRetrievalProvenance(nil), result.Provenance...)
 	for index := range result.Provenance {
 		result.Provenance[index].Reference.EvidenceEventIDs = append([]string(nil), result.Provenance[index].Reference.EvidenceEventIDs...)
+	}
+	if result.Research != nil {
+		terminal := *result.Research
+		terminal.Missing = append([]string(nil), result.Research.Missing...)
+		terminal.Receipts = append([]string(nil), result.Research.Receipts...)
+		result.Research = &terminal
 	}
 	return result
 }

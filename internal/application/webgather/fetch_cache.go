@@ -53,6 +53,11 @@ func (c *L1FetchCache) Get(ctx context.Context, req modulewebgather.FetchRequest
 	if err := json.Unmarshal([]byte(entry.ResponseJSON), &resp); err != nil {
 		return modulewebgather.FetchResponse{}, false, err
 	}
+	// Old entries contain only the short preview. Reacquire their body instead
+	// of presenting that preview as the newly available answer evidence.
+	if resp.Status == "ok" && resp.TextExcerpt == "" && resp.ExtractedChars > len([]rune(resp.TextPreview)) {
+		return modulewebgather.FetchResponse{}, false, nil
+	}
 	if resp.Diagnostics == nil {
 		resp.Diagnostics = map[string]any{}
 	}

@@ -108,6 +108,12 @@ llm_gateway:
   api_key_env: ""
   timeout_sec: 600
 
+research:
+  enabled: false
+  semantic_index:
+    enabled: false
+    service_ref: "research_embedding_local"
+
 # Codex CLI bridge for codex.run Tool / Advisor only. Kuro's normal LLM is
 # configured as a codex_cli target in RenCrow_LLM and is independent of this Tool.
 codex:

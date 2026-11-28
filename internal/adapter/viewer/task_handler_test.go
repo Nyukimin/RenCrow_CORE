@@ -701,6 +701,84 @@ type taskVisibilityTestStore struct {
 	getTaskIDs        []modulecore.TaskID
 }
 
+func TestPublicTaskViewerHidesUserScopedResearchBindingAndFacts(t *testing.T) {
+	privateBindingTask := domaintask.Task{
+		TaskID: modulecore.NewTaskID(), Title: "generic research task", Route: domaintask.RouteResearch,
+		OwnerID: "local-1", Assignee: "local-1",
+		ResearchBinding: &domaintask.ResearchExecutionBinding{
+			SchemaVersion: domaintask.ResearchExecutionBindingSchema, DataScope: "user", OwnerID: "local-1", OwnerRoute: "core.research.local",
+		},
+	}
+	privateFactsTask := domaintask.Task{
+		TaskID: modulecore.NewTaskID(), Title: "research task", Route: domaintask.RouteGeneral, OwnerID: "user-1",
+		ResearchResult: &domaintask.ResearchResultProjection{DataScope: "user", OwnerID: "user-1"},
+	}
+	store := &taskVisibilityTestStore{tasks: []domaintask.Task{privateBindingTask, privateFactsTask}}
+	visibilityCalls := 0
+	visibility := PublicTaskVisibility(func(context.Context, domaintask.Task) (bool, error) {
+		visibilityCalls++
+		return true, nil
+	})
+
+	list := httptest.NewRecorder()
+	HandleTasksWithPublicVisibility(store, visibility).ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/viewer/tasks", nil))
+	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), string(privateBindingTask.TaskID)) || strings.Contains(list.Body.String(), string(privateFactsTask.TaskID)) {
+		t.Fatalf("user-scope Research Tasks leaked through list: status=%d body=%s", list.Code, list.Body.String())
+	}
+
+	for _, task := range []domaintask.Task{privateBindingTask, privateFactsTask} {
+		detail := httptest.NewRecorder()
+		HandleTaskDetailWithPublicVisibility(store, visibility).ServeHTTP(detail, httptest.NewRequest(http.MethodGet, "/viewer/task/detail?task_id="+string(task.TaskID), nil))
+		if detail.Code != http.StatusNotFound || strings.Contains(detail.Body.String(), task.OwnerID) {
+			t.Fatalf("user-scope Research Task leaked through detail: status=%d body=%s", detail.Code, detail.Body.String())
+		}
+	}
+	if visibilityCalls != 0 {
+		t.Fatalf("public visibility callback was allowed to override user-scope binding: calls=%d", visibilityCalls)
+	}
+}
+
+func TestPublicTaskDetailProjectsMachineResearchFacts(t *testing.T) {
+	task := domaintask.Task{
+		TaskID: modulecore.NewTaskID(), Title: "research task", Route: domaintask.RouteResearch, Summary: "BOARD登録済み",
+		ResearchResult: &domaintask.ResearchResultProjection{
+			SchemaVersion: domaintask.ResearchResultSchema, TaskID: modulecore.NewTaskID(), ExecutionRunID: modulecore.NewRunID(),
+			ResearchRunID: "research-run-1", ActorID: "researcher", DataScope: "public",
+			ResultDigest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			Status:       "succeeded", Counts: domaintask.ResearchResultCounts{BoardPostsCreated: 0},
+			ReceiptState: "none", RequiredReceiptsComplete: true,
+		},
+	}
+	task.ResearchResult.TaskID = task.TaskID
+	store := &taskVisibilityTestStore{tasks: []domaintask.Task{task}}
+	detail := httptest.NewRecorder()
+	HandleTaskDetailWithPublicVisibility(store, PublicTaskVisibility(func(context.Context, domaintask.Task) (bool, error) { return true, nil })).ServeHTTP(
+		detail, httptest.NewRequest(http.MethodGet, "/viewer/task/detail?task_id="+string(task.TaskID), nil),
+	)
+	var detailPayload struct {
+		Task domaintask.Task `json:"task"`
+	}
+	if err := json.Unmarshal(detail.Body.Bytes(), &detailPayload); err != nil {
+		t.Fatalf("decode task detail: %v", err)
+	}
+	wantSummary := task.ResearchResult.TaskSummary()
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"board_posts_created":0`) ||
+		!strings.Contains(detail.Body.String(), `"receipt_state":"none"`) || detailPayload.Task.Summary != wantSummary || strings.Contains(detailPayload.Task.Summary, "BOARD登録済み") {
+		t.Fatalf("Viewer did not replace unsupported BOARD completion prose with deterministic facts: status=%d summary=%q body=%s", detail.Code, detailPayload.Task.Summary, detail.Body.String())
+	}
+	list := httptest.NewRecorder()
+	HandleTasksWithPublicVisibility(store, PublicTaskVisibility(func(context.Context, domaintask.Task) (bool, error) { return true, nil })).ServeHTTP(
+		list, httptest.NewRequest(http.MethodGet, "/viewer/tasks", nil),
+	)
+	var listPayload struct {
+		Items []domaintask.Task `json:"items"`
+	}
+	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &listPayload) != nil || len(listPayload.Items) != 1 ||
+		listPayload.Items[0].Summary != wantSummary || strings.Contains(listPayload.Items[0].Summary, "BOARD登録済み") {
+		t.Fatalf("Viewer task list retained unsupported BOARD completion prose: status=%d body=%s", list.Code, list.Body.String())
+	}
+}
+
 type blockingTaskGetStore struct {
 	*taskVisibilityTestStore
 	blockTaskID modulecore.TaskID

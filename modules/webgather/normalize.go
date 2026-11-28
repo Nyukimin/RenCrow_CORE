@@ -86,10 +86,11 @@ func SHA256Text(text string) string {
 
 func TextPreview(text string, limit int) string {
 	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	if limit <= 0 || len(text) <= limit {
+	characters := []rune(text)
+	if limit <= 0 || len(characters) <= limit {
 		return text
 	}
-	return strings.TrimSpace(text[:limit])
+	return strings.TrimSpace(string(characters[:limit]))
 }
 
 func SafeURLForLog(rawURL string) string {

@@ -99,6 +99,20 @@ func TestVerifyByContract_EmptyResponse(t *testing.T) {
 	}
 }
 
+func TestVerifyByContractReportSeparatesProseFromExecutionFailure(t *testing.T) {
+	contract := domaincontract.Contract{Goal: "失敗談を含む調査レポート"}
+	for _, route := range []routing.Route{routing.RouteWILD, routing.RouteRESEARCH, routing.RoutePLAN, routing.RouteANALYZE} {
+		ok, _, _ := verifyByContract(route, contract, autonomousapp.AttemptResult{Response: "失敗談。取得エラーは欠測として記録。"})
+		if !ok {
+			t.Fatalf("%s report prose caused a retry", route)
+		}
+		ok, kind, _ := verifyByContract(route, contract, autonomousapp.AttemptResult{Response: "本文", FailureKind: "provider_unavailable", FailureReason: "upstream unavailable"})
+		if ok || kind != "provider_unavailable" {
+			t.Fatalf("%s lost execution failure: ok=%v kind=%s", route, ok, kind)
+		}
+	}
+}
+
 func TestVerifyByContract_CodeRoute_NonExecutable(t *testing.T) {
 	// Coder が設計文のみ返した場合 → non_executable_output で reject
 	c := domaincontract.Contract{Goal: "コードを修正"}

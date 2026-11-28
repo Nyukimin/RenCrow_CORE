@@ -26,6 +26,42 @@ func TestBasicExtractorExtractsHTML(t *testing.T) {
 	}
 }
 
+func TestBasicExtractorFlagsPasswordFormInterstitialWithoutRejectingArticles(t *testing.T) {
+	tests := []struct {
+		name         string
+		html         string
+		interstitial bool
+	}{
+		{
+			name:         "password form with no article body",
+			html:         `<html><head><title>Account</title></head><body><main><h1>Sign in to continue</h1><p>Enter your account details to access this page.</p></main><form><input type="email"><input type="PASSWORD"><button>Continue</button></form></body></html>`,
+			interstitial: true,
+		},
+		{
+			name: "article mentions login",
+			html: `<html><body><article><h1>How login systems evolved</h1><p>Login became a common feature of online services. This article explains authentication history, account design, and the ways organizations protect their users from unauthorized access. It does not ask the reader to enter credentials or present a form.</p></article></body></html>`,
+		},
+		{
+			name: "substantive article with password form",
+			html: `<html><body><article><h1>Research article</h1><p>This article contains substantive reporting and a full discussion of the subject. It includes context, methods, results, and a detailed explanation of the findings for readers. The article body is present even though the site also displays an account form for other features.</p></article><form><input type="password"><button>Sign in</button></form></body></html>`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			doc, err := NewBasicExtractor().Extract(context.Background(), modulewebgather.FetchArtifact{
+				FinalURL: "https://example.org/page", ContentType: "text/html", Body: []byte(test.html),
+			}, "html_basic")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := doc.Meta["auth_interstitial"].(bool)
+			if got != test.interstitial {
+				t.Fatalf("auth_interstitial=%v, want %v; extracted=%q", got, test.interstitial, doc.Text)
+			}
+		})
+	}
+}
+
 func TestBasicExtractorSelectsFullSemanticBodyInsteadOfFirstArticleCard(t *testing.T) {
 	doc, err := NewBasicExtractor().Extract(context.Background(), modulewebgather.FetchArtifact{
 		FinalURL:    "https://huggingface.co/blog/example",

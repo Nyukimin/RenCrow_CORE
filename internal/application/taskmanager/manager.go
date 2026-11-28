@@ -988,6 +988,12 @@ func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID moduleco
 			return domaintask.Task{}, err
 		}
 	}
+	if task.ResearchResult != nil {
+		if err := task.ResearchResult.Validate(task); err != nil {
+			return domaintask.Task{}, fmt.Errorf("Research Task facts are invalid: %w", err)
+		}
+		summary = task.ResearchResult.TaskSummary()
+	}
 	now := m.now()
 	task.Status = status
 	task.WaitingReason = strings.TrimSpace(waitingReason)
