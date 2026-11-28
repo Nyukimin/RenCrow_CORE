@@ -146,9 +146,11 @@ function loadAudioHarness(options = {}) {
   assert.ok(start > 0, 'ttsPlayback block not found');
   assert.ok(end > start, 'audio handler block end not found');
   const chatInterruption = sourceBetween(js, 'function acceptSpeechCancelCapability(payload, requestGeneration) {', 'function handleChatInputIntent(reason)');
+  const mioCredentialState = sourceBetween(js, "let viewerMioOwnerCredential = '';", 'let viewerMioAuthGeneration =');
+  const mioSendHelpers = sourceBetween(js, 'function viewerSendUsesPrivateMio(body) {', 'function parseViewerPrivateMioMediaURL(rawValue) {');
   const sendViewerMessage = sourceBetween(js, 'async function sendViewerMessage(message, attachments = []) {', 'async function requestRepairFromChat()');
   const audioBlock = js.slice(start, end);
-  const source = memoryJs + '\n' + timelineJs + '\n' + idleJs + '\n' + audioBlock + '\n' + chatInterruption + '\n' + sendViewerMessage + `
+  const source = memoryJs + '\n' + timelineJs + '\n' + idleJs + '\n' + audioBlock + '\n' + chatInterruption + '\n' + mioCredentialState + '\n' + mioSendHelpers + '\n' + sendViewerMessage + `
 globalThis.__viewerAudioHarness = {
   state,
   ttsPlayback,
