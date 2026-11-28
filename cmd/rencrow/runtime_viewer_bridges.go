@@ -14,6 +14,7 @@ import (
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/persistencequeue"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -127,7 +128,7 @@ func buildViewerBridgeHandlers(
 		logicalDate := now.Format("2006-01-02")
 		if authenticatedUserID != "" {
 			var resolution domainsession.CanonicalSessionOwnerResolution
-			if deps != nil && !deps.combinedChatProcessorEligible {
+			if _, admitted := persistencequeue.AdmissionFromContext(ctx); !admitted {
 				ownerRepo, ok := sessionRepo.(canonicalViewerSynchronousOwnerSessionRepository)
 				if !ok {
 					return nil, false, fmt.Errorf("synchronous owner-aware canonical Viewer session repository is unavailable")
