@@ -158,6 +158,21 @@ func (r *LocalRecall) Recall(ctx context.Context, envelope c.Envelope, request c
 			result.Hits = append(result.Hits, knowledgeResult.Hits...)
 			result.Missing = append(result.Missing, knowledgeResult.Missing...)
 		case "documents":
+			var pageHits []c.Hit
+			var pageUnavailable bool
+			var pageErr error
+			pageIndexEnabled := r != nil && r.structured != nil && r.structured.PageIndexEnabled
+			if pageIndexEnabled {
+				if r.structured.Owner == nil {
+					pageUnavailable = true
+				} else {
+					pageHits, pageUnavailable, pageErr = r.structured.Owner.RecallPageIndexDocuments(ctx, envelope, request, query, limit)
+				}
+			}
+			if pageIndexEnabled && !pageUnavailable && pageErr == nil && pageIndexHitsCoverRequestedDocumentRefs(request.DocumentRefs, pageHits) {
+				result.Hits = append(result.Hits, pageHits...)
+				continue
+			}
 			var hits []c.Hit
 			var unavailable bool
 			var err error
@@ -170,16 +185,9 @@ func (r *LocalRecall) Recall(ctx context.Context, envelope c.Envelope, request c
 			} else {
 				hits, unavailable, err = r.recallDocuments(ctx, envelope, request, query, limit)
 			}
-			if r != nil && r.structured != nil && r.structured.PageIndexEnabled {
-				if r.structured.Owner == nil {
-					unavailable = true
-				} else {
-					pageHits, pageUnavailable, pageErr := r.structured.Owner.RecallPageIndexDocuments(ctx, envelope, request, query, limit)
-					hits = append(pageHits, hits...)
-					unavailable = unavailable || pageUnavailable
-					err = errors.Join(err, pageErr)
-				}
-			}
+			hits = append(pageHits, hits...)
+			unavailable = unavailable || pageUnavailable
+			err = errors.Join(err, pageErr)
 			result.Hits = append(result.Hits, hits...)
 			if unavailable {
 				result.Missing = append(result.Missing, target)
@@ -215,6 +223,57 @@ func (r *LocalRecall) Recall(ctx context.Context, envelope c.Envelope, request c
 		result.Hits = result.Hits[:limit]
 	}
 	return result, errors.Join(errs...)
+}
+
+func pageIndexHitsCoverRequestedDocumentRefs(refs []string, hits []c.Hit) bool {
+	if len(refs) == 0 || len(hits) == 0 {
+		return false
+	}
+	covered := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if _, duplicate := covered[ref]; duplicate {
+			continue
+		}
+		for _, hit := range hits {
+			if !validPageIndexDocumentRecallHit(hit) {
+				continue
+			}
+			if ref == hit.CanonicalRef || ref == hit.CanonicalRef+"@"+hit.Revision {
+				covered[ref] = struct{}{}
+				break
+			}
+		}
+		if _, ok := covered[ref]; !ok {
+			return false
+		}
+	}
+	return len(covered) > 0
+}
+
+func validPageIndexDocumentRecallHit(hit c.Hit) bool {
+	if hit.Target != "documents" || hit.MatchKind != "pageindex_section" || hit.EvidenceState != "acquired" ||
+		hit.CanonicalRef == "" || hit.Revision == "" || hit.Evidence == nil ||
+		hit.Evidence.DocumentID != hit.CanonicalRef+"@"+hit.Revision || !isSHA256(hit.Evidence.ArtifactHash) ||
+		hit.Evidence.Start < 1 || hit.Evidence.End < hit.Evidence.Start || hit.Locator == "" || hit.Evidence.Locator != hit.Locator {
+		return false
+	}
+	prefix := "pageindex://" + hit.CanonicalRef + "@" + hit.Revision + "/"
+	if !strings.HasPrefix(hit.Locator, prefix) {
+		return false
+	}
+	locatorPath := strings.TrimPrefix(hit.Locator, prefix)
+	pageRangeStart := strings.LastIndex(locatorPath, "/pages/")
+	if pageRangeStart < 0 || !strings.HasPrefix(locatorPath[:pageRangeStart], "node/") || len(locatorPath[:pageRangeStart]) <= len("node/") {
+		return false
+	}
+	pageRange := strings.Split(locatorPath[pageRangeStart+len("/pages/"):], "-")
+	if len(pageRange) != 2 {
+		return false
+	}
+	startPage, startErr := strconv.Atoi(pageRange[0])
+	endPage, endErr := strconv.Atoi(pageRange[1])
+	return startErr == nil && endErr == nil && startPage >= 1 && endPage >= startPage &&
+		hit.Evidence.Start >= startPage && hit.Evidence.End <= endPage
 }
 
 func (r *LocalRecall) recallDocuments(ctx context.Context, envelope c.Envelope, request c.RecallRequest, query string, limit int) ([]c.Hit, bool, error) {

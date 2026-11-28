@@ -186,14 +186,25 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 	}
 	hits := make([]c.Hit, 0, min(limit, len(symbols)))
 	seen := make(map[string]struct{}, len(symbols))
-	var recallErr error
+	verificationCache := newResearchCodeGraphVerificationCache()
 	unverifiedCandidate := false
+	type verifiedCandidate struct {
+		symbol   engine.CodeGraphSymbol
+		verified verifiedResearchCodeGraphSymbol
+	}
+	candidates := make([]verifiedCandidate, 0, len(symbols))
 	for _, symbol := range symbols {
 		verified, ok := verifyResearchCodeGraphSymbol(ctx, current.Repository, request.Revision, symbol, current.Snapshot.Files, query)
 		if !ok {
 			unverifiedCandidate = true
 			continue
 		}
+		verificationCache.add(verified)
+		candidates = append(candidates, verifiedCandidate{symbol: symbol, verified: verified})
+	}
+	var recallErr error
+	for _, candidate := range candidates {
+		symbol, verified := candidate.symbol, candidate.verified
 		key := fmt.Sprintf("%s:%d:%d", symbol.Path, symbol.StartLine, symbol.EndLine)
 		if _, duplicate := seen[key]; duplicate {
 			continue
@@ -203,29 +214,21 @@ func (owner *researchStructuredIndexOwner) RecallCodeGraph(ctx context.Context, 
 		if len(hits) >= limit {
 			break
 		}
-		traceFunction := symbol.QualifiedName
-		if traceFunction == "" {
-			traceFunction = symbol.Name
-		}
-		relations, traceErr := owner.codeGraph.TraceCalls(ctx, current.Snapshot.PortSnapshot.Project, traceFunction, "both", 1, min(limit, researchCodeGraphSearchMax))
+		calls, traceUnverified, traceErr := owner.traceVerifiedCodeGraphCalls(ctx, current.Snapshot.PortSnapshot.Project,
+			current.Repository, request.Revision, current.Snapshot.Files, verified, verificationCache, min(limit, researchCodeGraphSearchMax))
 		if traceErr != nil {
 			recallErr = errors.Join(recallErr, errors.New("CodeGraph call trace is unavailable"))
 			continue
 		}
-		for _, relation := range relations {
-			if relation.Kind != "CALLS" || relation.CallerName == "" || relation.CalleeName == "" {
-				unverifiedCandidate = true
-				continue
-			}
-			caller, callerOK := owner.verifyCodeGraphEndpoint(ctx, current.Snapshot.PortSnapshot.Project, current.Repository, request.Revision, current.Snapshot.Files, relation.CallerName, relation.CallerQualified)
-			callee, calleeOK := owner.verifyCodeGraphEndpoint(ctx, current.Snapshot.PortSnapshot.Project, current.Repository, request.Revision, current.Snapshot.Files, relation.CalleeName, relation.CalleeQualified)
-			if !callerOK || !calleeOK || (!strings.Contains(caller.source, query) && !strings.Contains(callee.source, query)) {
+		unverifiedCandidate = unverifiedCandidate || traceUnverified
+		for _, call := range calls {
+			if !strings.Contains(call.caller.source, query) && !strings.Contains(call.callee.source, query) {
 				unverifiedCandidate = true
 				continue
 			}
 			edgeLocator := fmt.Sprintf("%s@%s:CALLS:%s:%d->%s:%d", current.Repository.Ref, request.Revision,
-				caller.symbol.Path, caller.symbol.StartLine, callee.symbol.Path, callee.symbol.StartLine)
-			for _, endpoint := range []verifiedResearchCodeGraphSymbol{caller, callee} {
+				call.caller.symbol.Path, call.caller.symbol.StartLine, call.callee.symbol.Path, call.callee.symbol.StartLine)
+			for _, endpoint := range []verifiedResearchCodeGraphSymbol{call.caller, call.callee} {
 				edgeKey := "edge:" + edgeLocator + ":" + endpoint.symbol.Path + fmt.Sprint(":", endpoint.symbol.StartLine)
 				if _, duplicate := seen[edgeKey]; duplicate {
 					continue
@@ -252,21 +255,224 @@ type verifiedResearchCodeGraphSymbol struct {
 	excerpt   string
 }
 
+type verifiedResearchCodeGraphCall struct {
+	relation engine.CodeGraphRelation
+	caller   verifiedResearchCodeGraphSymbol
+	callee   verifiedResearchCodeGraphSymbol
+}
+
+type researchCodeGraphEndpointResult struct {
+	symbol verifiedResearchCodeGraphSymbol
+	ok     bool
+}
+
+type researchCodeGraphVerificationCache struct {
+	symbols           map[string]verifiedResearchCodeGraphSymbol
+	qualifiedEndpoint map[string]researchCodeGraphEndpointResult
+	bareEndpoint      map[string]researchCodeGraphEndpointResult
+}
+
+func newResearchCodeGraphVerificationCache() *researchCodeGraphVerificationCache {
+	return &researchCodeGraphVerificationCache{
+		symbols:           make(map[string]verifiedResearchCodeGraphSymbol),
+		qualifiedEndpoint: make(map[string]researchCodeGraphEndpointResult),
+		bareEndpoint:      make(map[string]researchCodeGraphEndpointResult),
+	}
+}
+
+func (cache *researchCodeGraphVerificationCache) add(symbol verifiedResearchCodeGraphSymbol) {
+	if cache == nil || len(cache.symbols) >= researchCodeGraphSearchMax {
+		return
+	}
+	cache.symbols[researchCodeGraphSymbolKey(symbol.symbol)] = symbol
+}
+
+func (cache *researchCodeGraphVerificationCache) rememberEndpoint(qualified, name string, result researchCodeGraphEndpointResult) {
+	if cache == nil {
+		return
+	}
+	if qualified == "" {
+		if _, exists := cache.bareEndpoint[name]; exists || len(cache.bareEndpoint) < researchCodeGraphSearchMax {
+			cache.bareEndpoint[name] = result
+		}
+		return
+	}
+	key := qualified + "\x00" + name
+	if _, exists := cache.qualifiedEndpoint[key]; exists || len(cache.qualifiedEndpoint) < researchCodeGraphSearchMax {
+		cache.qualifiedEndpoint[key] = result
+	}
+}
+
+func researchCodeGraphSymbolKey(symbol engine.CodeGraphSymbol) string {
+	return fmt.Sprintf("%s\x00%s\x00%d\x00%d", symbol.QualifiedName, symbol.Path, symbol.StartLine, symbol.EndLine)
+}
+
 func (owner *researchStructuredIndexOwner) verifyCodeGraphEndpoint(ctx context.Context, project string, repository config.ResearchRepositoryConfig, revision string, snapshotFiles map[string][]byte, name, qualified string) (verifiedResearchCodeGraphSymbol, bool) {
+	return owner.verifyCodeGraphEndpointCached(ctx, project, repository, revision, snapshotFiles, name, qualified, newResearchCodeGraphVerificationCache())
+}
+
+func (owner *researchStructuredIndexOwner) verifyCodeGraphEndpointCached(ctx context.Context, project string, repository config.ResearchRepositoryConfig, revision string, snapshotFiles map[string][]byte, name, qualified string, cache *researchCodeGraphVerificationCache) (verifiedResearchCodeGraphSymbol, bool) {
+	if owner == nil || owner.codeGraph == nil || ctx == nil || name == "" || cache == nil {
+		return verifiedResearchCodeGraphSymbol{}, false
+	}
+	if qualified != "" {
+		lookupKey := qualified + "\x00" + name
+		if result, found := cache.qualifiedEndpoint[lookupKey]; found {
+			return result.symbol, result.ok
+		}
+		var cached verifiedResearchCodeGraphSymbol
+		cachedCount := 0
+		for _, verified := range cache.symbols {
+			if verified.symbol.QualifiedName == qualified && name == verified.symbol.Name {
+				cached, cachedCount = verified, cachedCount+1
+			}
+		}
+		if cachedCount > 1 {
+			cache.rememberEndpoint(qualified, name, researchCodeGraphEndpointResult{})
+			return verifiedResearchCodeGraphSymbol{}, false
+		}
+		if cachedCount == 1 {
+			cache.rememberEndpoint(qualified, name, researchCodeGraphEndpointResult{symbol: cached, ok: true})
+			return cached, true
+		}
+	} else {
+		if result, found := cache.bareEndpoint[name]; found {
+			return result.symbol, result.ok
+		}
+	}
 	symbols, err := owner.codeGraph.SearchFunctions(ctx, project, name, researchCodeGraphSearchMax)
 	if err != nil {
 		return verifiedResearchCodeGraphSymbol{}, false
 	}
+	if len(symbols) >= researchCodeGraphSearchMax {
+		return verifiedResearchCodeGraphSymbol{}, false
+	}
+	var matched verifiedResearchCodeGraphSymbol
+	matchedFound := false
 	for _, symbol := range symbols {
-		if (qualified != "" && symbol.QualifiedName != qualified) || (qualified == "" && symbol.Name != name) {
+		if qualified != "" {
+			if symbol.QualifiedName != qualified || name != symbol.Name {
+				continue
+			}
+		} else if symbol.Name != name {
 			continue
 		}
 		verified, ok := verifyResearchCodeGraphSymbol(ctx, repository, revision, symbol, snapshotFiles, "")
-		if ok {
-			return verified, true
+		if !ok {
+			if qualified == "" {
+				cache.rememberEndpoint("", name, researchCodeGraphEndpointResult{})
+			}
+			return verifiedResearchCodeGraphSymbol{}, false
 		}
+		if matchedFound && researchCodeGraphSymbolKey(matched.symbol) != researchCodeGraphSymbolKey(verified.symbol) {
+			if qualified == "" {
+				cache.rememberEndpoint("", name, researchCodeGraphEndpointResult{})
+			}
+			return verifiedResearchCodeGraphSymbol{}, false
+		}
+		matched, matchedFound = verified, true
+		cache.add(verified)
 	}
-	return verifiedResearchCodeGraphSymbol{}, false
+	result := researchCodeGraphEndpointResult{symbol: matched, ok: matchedFound}
+	cache.rememberEndpoint(qualified, name, result)
+	return matched, matchedFound
+}
+
+func (owner *researchStructuredIndexOwner) traceVerifiedCodeGraphCalls(ctx context.Context, project string, repository config.ResearchRepositoryConfig, revision string, snapshotFiles map[string][]byte, subject verifiedResearchCodeGraphSymbol, cache *researchCodeGraphVerificationCache, limit int) ([]verifiedResearchCodeGraphCall, bool, error) {
+	if owner == nil || owner.codeGraph == nil || ctx == nil || cache == nil || limit < 1 || limit > researchCodeGraphSearchMax ||
+		subject.symbol.Name == "" || subject.symbol.Path == "" {
+		return nil, true, errors.New("invalid verified CodeGraph call-trace request")
+	}
+	cache.add(subject)
+	traceSubject := subject
+	traceName := traceSubject.symbol.QualifiedName
+	bareSubjectUnique := false
+	bareSubjectChecked := false
+	if traceName == "" {
+		traceName = traceSubject.symbol.Name
+		verified, unique := owner.verifyCodeGraphEndpointCached(ctx, project, repository, revision, snapshotFiles,
+			traceSubject.symbol.Name, "", cache)
+		if !unique || !sameResearchCodeGraphBareSymbol(verified.symbol, traceSubject.symbol) {
+			return nil, true, nil
+		}
+		traceSubject = verified
+		bareSubjectUnique, bareSubjectChecked = true, true
+	}
+	relations, err := owner.codeGraph.TraceCalls(ctx, project, traceName, "both", 1, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	verifiedCalls := make([]verifiedResearchCodeGraphCall, 0, len(relations))
+	unverified := false
+	for _, relation := range relations {
+		if relation.Kind != "CALLS" || relation.CallerName == "" || relation.CalleeName == "" {
+			unverified = true
+			continue
+		}
+		if !bareSubjectChecked &&
+			((relation.CallerQualified == "" && relation.CallerName == traceSubject.symbol.Name) ||
+				(relation.CalleeQualified == "" && relation.CalleeName == traceSubject.symbol.Name)) {
+			bareSubjectChecked = true
+			verified, ok := owner.verifyCodeGraphEndpointCached(ctx, project, repository, revision, snapshotFiles,
+				traceSubject.symbol.Name, "", cache)
+			bareSubjectUnique = ok && sameResearchCodeGraphBareSymbol(verified.symbol, traceSubject.symbol)
+		}
+		callerIsSubject, callerContradiction := researchCodeGraphRelationSideMatchesSubject(
+			relation.CallerName, relation.CallerQualified, traceName, traceSubject.symbol, bareSubjectUnique)
+		calleeIsSubject, calleeContradiction := researchCodeGraphRelationSideMatchesSubject(
+			relation.CalleeName, relation.CalleeQualified, traceName, traceSubject.symbol, bareSubjectUnique)
+		if callerContradiction || calleeContradiction || !callerIsSubject && !calleeIsSubject {
+			unverified = true
+			continue
+		}
+		caller := traceSubject
+		if !callerIsSubject {
+			var ok bool
+			caller, ok = owner.verifyCodeGraphEndpointCached(ctx, project, repository, revision, snapshotFiles,
+				relation.CallerName, relation.CallerQualified, cache)
+			if !ok {
+				unverified = true
+				continue
+			}
+		}
+		callee := traceSubject
+		if !calleeIsSubject {
+			var ok bool
+			callee, ok = owner.verifyCodeGraphEndpointCached(ctx, project, repository, revision, snapshotFiles,
+				relation.CalleeName, relation.CalleeQualified, cache)
+			if !ok {
+				unverified = true
+				continue
+			}
+		}
+		normalized := relation
+		normalized.CallerName, normalized.CallerQualified = caller.symbol.Name, caller.symbol.QualifiedName
+		normalized.CalleeName, normalized.CalleeQualified = callee.symbol.Name, callee.symbol.QualifiedName
+		verifiedCalls = append(verifiedCalls, verifiedResearchCodeGraphCall{relation: normalized, caller: caller, callee: callee})
+	}
+	return verifiedCalls, unverified, nil
+}
+
+func sameResearchCodeGraphBareSymbol(first, second engine.CodeGraphSymbol) bool {
+	return first.Name != "" && first.Name == second.Name && first.Path == second.Path &&
+		first.StartLine == second.StartLine && first.EndLine == second.EndLine
+}
+
+func researchCodeGraphRelationSideMatchesSubject(name, qualified, traceName string, subject engine.CodeGraphSymbol, bareSubjectUnique bool) (bool, bool) {
+	nameMatches := name == subject.Name || name == traceName
+	if qualified != "" {
+		if qualified != subject.QualifiedName {
+			return false, false
+		}
+		return nameMatches, !nameMatches
+	}
+	if name == subject.Name && bareSubjectUnique {
+		return true, false
+	}
+	if nameMatches {
+		return false, true
+	}
+	return false, false
 }
 
 func verifyResearchCodeGraphSymbol(ctx context.Context, repository config.ResearchRepositoryConfig, revision string, symbol engine.CodeGraphSymbol, snapshotFiles map[string][]byte, query string) (verifiedResearchCodeGraphSymbol, bool) {

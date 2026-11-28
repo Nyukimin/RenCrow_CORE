@@ -291,9 +291,11 @@ type structuredCodeGraphFake struct {
 	indexCalls     int
 	searchCalls    int
 	traceCalls     int
+	traceQueries   []string
 	workerBytes    []byte
 	failIndex      bool
 	searchOverride map[string][]engine.CodeGraphSymbol
+	traceOverride  map[string][]engine.CodeGraphRelation
 }
 
 func (fake *structuredCodeGraphFake) IndexRepository(_ context.Context, snapshot engine.CodeGraphSnapshot) (engine.CodeGraphIndexReceipt, error) {
@@ -338,11 +340,23 @@ func (fake *structuredCodeGraphFake) SearchFunctions(_ context.Context, project,
 
 func (fake *structuredCodeGraphFake) TraceCalls(_ context.Context, project, functionName, direction string, depth, limit int) ([]engine.CodeGraphRelation, error) {
 	fake.traceCalls++
-	if project == "" || (functionName != "fixture.HandleLedger" && functionName != "HandleLedger") || direction != "both" || depth != 1 || limit < 1 {
+	fake.traceQueries = append(fake.traceQueries, functionName)
+	_, hasOverride := fake.traceOverride[functionName]
+	knownFunction := functionName == "fixture.HandleLedger" || functionName == "HandleLedger" || functionName == "fixture.StoreLedger" || functionName == "StoreLedger"
+	if project == "" || !knownFunction && !hasOverride || direction != "both" || depth != 1 || limit < 1 {
 		return nil, errors.New("invalid trace request")
 	}
+	if relations, ok := fake.traceOverride[functionName]; ok {
+		return append([]engine.CodeGraphRelation(nil), relations...), nil
+	}
+	if functionName == "fixture.StoreLedger" || functionName == "StoreLedger" {
+		return []engine.CodeGraphRelation{{
+			CallerName: "HandleLedger", CallerQualified: "fixture.HandleLedger",
+			CalleeName: functionName, CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}}, nil
+	}
 	return []engine.CodeGraphRelation{{
-		CallerName: "HandleLedger", CallerQualified: "fixture.HandleLedger",
+		CallerName: functionName, CallerQualified: "fixture.HandleLedger",
 		CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
 	}}, nil
 }
@@ -395,7 +409,8 @@ func TestResearchStructuredCodeGraphBuildAndRecallRequireExactCommitSources(t *t
 	envelope := contract.Envelope{OwnerID: "ren", DataScope: "user"}
 	request := contract.RecallRequest{Query: "HandleLedger", Targets: []string{"code"}, RepoRef: "repo-fixture", Revision: firstRevision}
 	hits, unavailable, err := owner.RecallCodeGraph(context.Background(), envelope, request, request.Query, 8)
-	if err != nil || unavailable || len(hits) < 2 || fake.searchCalls < 3 || fake.traceCalls != 1 {
+	if err != nil || unavailable || len(hits) < 2 || fake.searchCalls != 2 || fake.traceCalls != 1 ||
+		len(fake.traceQueries) != 1 || fake.traceQueries[0] != "fixture.HandleLedger" {
 		t.Fatalf("same-commit CodeGraph source evidence = hits=%+v unavailable=%t err=%v searches=%d traces=%d", hits, unavailable, err, fake.searchCalls, fake.traceCalls)
 	}
 	foundFunction, foundEndpoints := false, 0
@@ -430,6 +445,166 @@ func TestResearchStructuredCodeGraphBuildAndRecallRequireExactCommitSources(t *t
 	}
 	if err := owner.VerifyLocalMaterial(context.Background(), envelope, codeDocument); err != nil {
 		t.Fatalf("exact CodeGraph source file failed current source verification: %v", err)
+	}
+	handle, ok := verifyResearchCodeGraphSymbol(context.Background(), cfg.Research.Repositories[0], firstRevision,
+		engine.CodeGraphSymbol{Name: "HandleLedger", QualifiedName: "fixture.HandleLedger", Path: "worker.go", StartLine: 2, EndLine: 4},
+		map[string][]byte{"worker.go": firstSource}, "")
+	if !ok {
+		t.Fatal("verified HandleLedger fixture symbol could not be prepared for call-trace contract checks")
+	}
+	store, ok := verifyResearchCodeGraphSymbol(context.Background(), cfg.Research.Repositories[0], firstRevision,
+		engine.CodeGraphSymbol{Name: "StoreLedger", QualifiedName: "fixture.StoreLedger", Path: "worker.go", StartLine: 5, EndLine: 7},
+		map[string][]byte{"worker.go": firstSource}, "")
+	if !ok {
+		t.Fatal("verified StoreLedger fixture symbol could not be prepared for call-trace contract checks")
+	}
+	bareHandle, ok := verifyResearchCodeGraphSymbol(context.Background(), cfg.Research.Repositories[0], firstRevision,
+		engine.CodeGraphSymbol{Name: "HandleLedger", Path: "worker.go", StartLine: 2, EndLine: 4},
+		map[string][]byte{"worker.go": firstSource}, "")
+	if !ok {
+		t.Fatal("verified unqualified HandleLedger fixture symbol could not be prepared")
+	}
+	callCache := newResearchCodeGraphVerificationCache()
+	callCache.add(handle)
+	callCache.add(store)
+	callCases := []struct {
+		name     string
+		subject  verifiedResearchCodeGraphSymbol
+		relation engine.CodeGraphRelation
+	}{
+		{name: "native qualified outbound subject", subject: handle, relation: engine.CodeGraphRelation{
+			CallerName: "fixture.HandleLedger", CallerQualified: "fixture.HandleLedger",
+			CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+		{name: "native qualified inbound subject", subject: store, relation: engine.CodeGraphRelation{
+			CallerName: "HandleLedger", CallerQualified: "fixture.HandleLedger",
+			CalleeName: "fixture.StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+		{name: "native qualified self call", subject: handle, relation: engine.CodeGraphRelation{
+			CallerName: "fixture.HandleLedger", CallerQualified: "fixture.HandleLedger",
+			CalleeName: "fixture.HandleLedger", CalleeQualified: "fixture.HandleLedger", Kind: "CALLS",
+		}},
+		{name: "legacy bare names with qualified identities", subject: handle, relation: engine.CodeGraphRelation{
+			CallerName: "HandleLedger", CallerQualified: "fixture.HandleLedger",
+			CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+		{name: "legacy bare-only relation with unique symbols", subject: handle, relation: engine.CodeGraphRelation{
+			CallerName: "HandleLedger", CalleeName: "StoreLedger", Kind: "CALLS",
+		}},
+		{name: "unqualified subject binds only after unique search", subject: bareHandle, relation: engine.CodeGraphRelation{
+			CallerName: "HandleLedger", CallerQualified: "fixture.HandleLedger",
+			CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+	}
+	for _, test := range callCases {
+		t.Run("call trace "+test.name, func(t *testing.T) {
+			traceName := test.subject.symbol.QualifiedName
+			if traceName == "" {
+				traceName = test.subject.symbol.Name
+			}
+			queriesBefore := len(fake.traceQueries)
+			fake.traceOverride = map[string][]engine.CodeGraphRelation{traceName: {test.relation}}
+			calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(context.Background(), "project", cfg.Research.Repositories[0],
+				firstRevision, map[string][]byte{"worker.go": firstSource}, test.subject, callCache, 8)
+			if traceErr != nil || unverified || len(calls) != 1 || len(fake.traceQueries) != queriesBefore+1 || fake.traceQueries[len(fake.traceQueries)-1] != traceName {
+				t.Fatalf("verified TraceCalls result = %+v unverified=%t err=%v", calls, unverified, traceErr)
+			}
+			if calls[0].relation.CallerName != calls[0].caller.symbol.Name || calls[0].relation.CallerQualified != calls[0].caller.symbol.QualifiedName ||
+				calls[0].relation.CalleeName != calls[0].callee.symbol.Name || calls[0].relation.CalleeQualified != calls[0].callee.symbol.QualifiedName {
+				t.Fatalf("TraceCalls did not restore exact source symbol names: %+v", calls[0])
+			}
+		})
+	}
+	fake.traceOverride = map[string][]engine.CodeGraphRelation{
+		"fixture.HandleLedger": {{
+			CallerName: "fixture.HandleLedger", CallerQualified: "else.HandleLedger",
+			CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+	}
+	if calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(context.Background(), "project", cfg.Research.Repositories[0],
+		firstRevision, map[string][]byte{"worker.go": firstSource}, handle, callCache, 8); traceErr != nil || !unverified || len(calls) != 0 {
+		t.Fatalf("foreign subject qualification was accepted: calls=%+v unverified=%t err=%v", calls, unverified, traceErr)
+	}
+	fake.traceOverride = map[string][]engine.CodeGraphRelation{
+		"fixture.HandleLedger": {{
+			CallerName: "WrongName", CallerQualified: "fixture.HandleLedger",
+			CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+	}
+	if calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(context.Background(), "project", cfg.Research.Repositories[0],
+		firstRevision, map[string][]byte{"worker.go": firstSource}, handle, callCache, 8); traceErr != nil || !unverified || len(calls) != 0 {
+		t.Fatalf("contradictory subject name was accepted: calls=%+v unverified=%t err=%v", calls, unverified, traceErr)
+	}
+	fake.traceOverride = map[string][]engine.CodeGraphRelation{
+		"fixture.HandleLedger": {{
+			CallerName: "StoreLedger", CallerQualified: "fixture.StoreLedger",
+			CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+	}
+	if calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(context.Background(), "project", cfg.Research.Repositories[0],
+		firstRevision, map[string][]byte{"worker.go": firstSource}, handle, callCache, 8); traceErr != nil || !unverified || len(calls) != 0 {
+		t.Fatalf("relation without its queried subject was accepted: calls=%+v unverified=%t err=%v", calls, unverified, traceErr)
+	}
+	if fake.searchOverride == nil {
+		fake.searchOverride = make(map[string][]engine.CodeGraphSymbol)
+	}
+	fake.searchOverride["StoreLedger"] = []engine.CodeGraphSymbol{
+		{Name: "StoreLedger", QualifiedName: "fixture.first.StoreLedger", Path: "worker.go", StartLine: 5, EndLine: 7},
+		{Name: "StoreLedger", QualifiedName: "fixture.second.StoreLedger", Path: "worker.go", StartLine: 5, EndLine: 7},
+	}
+	fake.traceOverride = map[string][]engine.CodeGraphRelation{
+		"fixture.HandleLedger": {{
+			CallerName: "fixture.HandleLedger", CallerQualified: "fixture.HandleLedger",
+			CalleeName: "StoreLedger", Kind: "CALLS",
+		}},
+	}
+	ambiguousCache := newResearchCodeGraphVerificationCache()
+	ambiguousCache.add(handle)
+	if calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(context.Background(), "project", cfg.Research.Repositories[0],
+		firstRevision, map[string][]byte{"worker.go": firstSource}, handle, ambiguousCache, 8); traceErr != nil || !unverified || len(calls) != 0 {
+		t.Fatalf("ambiguous bare-name counterpart was accepted: calls=%+v unverified=%t err=%v", calls, unverified, traceErr)
+	}
+	fake.searchOverride["HandleLedger"] = []engine.CodeGraphSymbol{
+		{Name: "HandleLedger", QualifiedName: "fixture.first.HandleLedger", Path: "worker.go", StartLine: 2, EndLine: 4},
+		{Name: "HandleLedger", QualifiedName: "fixture.second.HandleLedger", Path: "worker.go", StartLine: 2, EndLine: 4},
+	}
+	traceCallsBeforeAmbiguousSubject := fake.traceCalls
+	if calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(context.Background(), "project", cfg.Research.Repositories[0],
+		firstRevision, map[string][]byte{"worker.go": firstSource}, bareHandle, newResearchCodeGraphVerificationCache(), 8); traceErr != nil || !unverified || len(calls) != 0 || fake.traceCalls != traceCallsBeforeAmbiguousSubject {
+		t.Fatalf("unqualified subject without unique-name proof was traced: calls=%+v unverified=%t err=%v traces=%d before=%d", calls, unverified, traceErr, fake.traceCalls, traceCallsBeforeAmbiguousSubject)
+	}
+	delete(fake.searchOverride, "HandleLedger")
+	delete(fake.searchOverride, "StoreLedger")
+	fake.traceOverride = nil
+	rangedCode := codeDocument
+	rangedOrigin := *codeDocument.LocalOrigin
+	rangedCodeOrigin := *codeDocument.LocalOrigin.Code
+	rangedCodeOrigin.Calls = append([]contract.CodeCallRelation(nil), codeDocument.LocalOrigin.Code.Calls...)
+	rangedCodeOrigin.Calls[0].CalleeStartLine++
+	rangedOrigin.Code = &rangedCodeOrigin
+	rangedCode.LocalOrigin = &rangedOrigin
+	if err := owner.VerifyLocalMaterial(context.Background(), envelope, rangedCode); err == nil {
+		t.Fatal("changed CALLS endpoint range was accepted")
+	}
+	missingRelation := codeDocument
+	missingOrigin := *codeDocument.LocalOrigin
+	missingCodeOrigin := *codeDocument.LocalOrigin.Code
+	missingOrigin.Code = &missingCodeOrigin
+	missingRelation.LocalOrigin = &missingOrigin
+	fake.traceOverride = map[string][]engine.CodeGraphRelation{
+		"fixture.HandleLedger": {{
+			CallerName: "StoreLedger", CallerQualified: "fixture.StoreLedger",
+			CalleeName: "StoreLedger", CalleeQualified: "fixture.StoreLedger", Kind: "CALLS",
+		}},
+	}
+	if err := owner.VerifyLocalMaterial(context.Background(), envelope, missingRelation); err == nil {
+		t.Fatal("a CALLS relation absent from the current graph was accepted")
+	}
+	fake.traceOverride = nil
+	tamperedCode := codeDocument
+	tamperedCode.Text += "// changed source bytes\n"
+	if err := owner.VerifyLocalMaterial(context.Background(), envelope, tamperedCode); err == nil {
+		t.Fatal("mutated original source bytes were accepted")
 	}
 	secondSource := []byte("package fixture\nfunc StoreLedger() {\n\treturn\n}\n")
 	if err := os.WriteFile(filepath.Join(repositoryPath, "worker.go"), secondSource, 0600); err != nil {
@@ -514,6 +689,24 @@ func TestResearchCodeGraphEndpointRequiresExactQualifiedPackage(t *testing.T) {
 		map[string][]byte{"first.go": firstSource, "second.go": secondSource}, "HandleLedger", "fixture.first.HandleLedger")
 	if !ok || endpoint.symbol.QualifiedName != "fixture.first.HandleLedger" || endpoint.symbol.Path != "first.go" || !bytes.Equal(endpoint.fileBytes, firstSource) {
 		t.Fatalf("same-name symbol from another package satisfied a qualified CALLS endpoint: endpoint=%+v found=%t", endpoint.symbol, ok)
+	}
+	subject, ok := verifyResearchCodeGraphSymbol(context.Background(), repository, revision,
+		engine.CodeGraphSymbol{Name: "HandleLedger", QualifiedName: "fixture.first.HandleLedger", Path: "first.go", StartLine: 2, EndLine: 2},
+		map[string][]byte{"first.go": firstSource, "second.go": secondSource}, "")
+	if !ok {
+		t.Fatal("exact first-package subject could not be verified")
+	}
+	fake.traceOverride = map[string][]engine.CodeGraphRelation{
+		"fixture.first.HandleLedger": {{
+			CallerName: "HandleLedger", CallerQualified: "fixture.second.HandleLedger",
+			CalleeName: "fixture.first.HandleLedger", CalleeQualified: "fixture.first.HandleLedger", Kind: "CALLS",
+		}},
+	}
+	calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(context.Background(), "project", repository, revision,
+		map[string][]byte{"first.go": firstSource, "second.go": secondSource}, subject, newResearchCodeGraphVerificationCache(), 8)
+	if traceErr != nil || unverified || len(calls) != 1 || calls[0].caller.symbol.QualifiedName != "fixture.second.HandleLedger" ||
+		calls[0].callee.symbol.QualifiedName != "fixture.first.HandleLedger" {
+		t.Fatalf("valid same-name cross-package CALLS edge was rejected or misbound: calls=%+v unavailable=%t err=%v", calls, unverified, traceErr)
 	}
 }
 

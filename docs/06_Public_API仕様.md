@@ -1649,6 +1649,8 @@ bodyからactor/scope/物理DB/path/command/backendを選べない。operation�
 
 構造索引のoperation keyは、登録済み資料・版・owner・scope・runtime等からOwnerが導出する。`pending`と`outcome_unknown`は保存未確認を表し、作成を再実行せずexact Task／Runを照合する。`completed`でもresultの`registered`／`indexed`／`failed`／`partial`を区別する。成功receiptは原資料や索引のhash・版と読み戻し結果に束縛される。CodeGraphのCALLSはbackendの関係と両端のexact原文範囲を返し、正規の位置情報がないcall-site行を推測で付けない。
 
+明示されたPDF refsがPageIndexの取得済みhitで全て満たされ、版・hash・EvidenceRef・ページ範囲が整合する`recall`では、無関係なsemantic/L1の不足を合算しない。ref未指定・未解決refとの混在・異版・未認可・backend障害では従来の探索と不足／エラーを維持する。CodeGraphの問い合わせ側endpointは、原文検証済みsubjectの名前と完全修飾名に完全一致する表現だけを正規化する。名前を分割して推定せず、相手側は短名で検索して完全修飾名・原文位置を照合する。関係には確認したsubjectが必要で、修飾名が不明な場合は同名候補の一意性も確認する。検証済みendpointの再利用は同じ操作・snapshot内の上限付きデータだけで行い、永続cacheや権限の正本を増やさない。
+
 local document collectionは既存L1 stagingをowner/scopeで検索した後、各候補を同一namespace/event IDで再読し、保存済みの原文/hash・canonical元URL/最終URL・source policyを照合した完全な本文だけを採用する。`request.document_refs`は最大20件のcanonical document/event IDを指定し、Queryによる本文照合を保ったまま既存storeのscope付きexact lookupを使う。新しい取得や保存は行わず、読取権限・policyに合わない候補、scan上限超過、欠落はmissingとして残す。正当に再読できたitemが一部あり後続readに失敗した場合は、そのitemを保持しつつmissing/unavailableを記録してpartialとする。時間窓には保存済み`TimeBasis`（`published_at`または`fetched_at`）を使い、取得時刻はUTCで保持する。staging metadataに取得時点のprimary判定がないため、local readでprimaryへ昇格しない。
 
 構造索引を有効にした`run`は`retrieval_targets`の`documents`／`code`から原資料も読める。`document_refs`は登録PDFのrefまたはexactな`ref@revision`を受理し、コードは任意pathではなく登録済み`repo_ref`と40桁commitの`revision`を一緒に指定する。両field省略時は旧requestのwireとdigestを維持し、コードの版指定が不足した実行はunavailableとする。PDFは選択した1節の最大32ページの本文で、全文取得とは区別する。コードは最大8MiBのUTF-8実ファイル（snapshot全体は最大64MiB）を読み、対象コードを実行しない。原PDFのhash・ページ範囲、またはrepo・commit・path・原ファイルhash・関数範囲は`Document.local_origin`に保持し、解析本文内のrune offsetとは区別する。

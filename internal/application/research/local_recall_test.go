@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,6 +82,144 @@ func TestLocalRecallEnabledStructuredBackendNeverFallsBackWhenOwnerIsMissing(t *
 	})
 	if err != nil || len(result.Hits) != 0 || !containsRecallTarget(result.Missing, "code") {
 		t.Fatalf("enabled CodeGraph without its owner must be unavailable: result=%#v err=%v", result, err)
+	}
+}
+
+func TestLocalRecallSkipsSemanticAndL1WhenPageIndexCoversExactRefs(t *testing.T) {
+	documents := &localRecallDocumentStoreStub{}
+	vectorReader := &localRecallMissingVectorReader{}
+	embeddings := &localRecallEmbeddingStub{}
+	structured := &localRecallPageIndexStub{hits: []c.Hit{localRecallPageIndexHit("spec-ledger", "revision-v1")}}
+	recall := NewLocalRecallWithSemanticAndStructured(nil, documents, nil,
+		ResearchSemanticRecallPorts{VectorReader: vectorReader, Embeddings: embeddings, SourcePolicy: semanticTestSourcePolicy(true)},
+		ResearchStructuredRecallPorts{Owner: structured, PageIndexEnabled: true})
+	result, err := recall.Recall(context.Background(), c.Envelope{DataScope: "user", OwnerID: "ren"}, c.RecallRequest{
+		Query: "ledger policy", Targets: []string{"documents"}, DocumentRefs: []string{"spec-ledger@revision-v1"}, Limit: 4,
+	})
+	if err != nil || len(result.Hits) != 1 || len(result.Missing) != 0 || result.Hits[0].MatchKind != "pageindex_section" {
+		t.Fatalf("fully covered PageIndex ref = %+v err=%v", result, err)
+	}
+	if structured.pageCalls != 1 || vectorReader.calls != 0 || embeddings.capabilityCalls != 0 || embeddings.embedCalls != 0 || documents.searchCalls != 0 {
+		t.Fatalf("fully covered PageIndex ref triggered unrelated recall: page=%d vector=%d capability=%d embed=%d lexical=%d",
+			structured.pageCalls, vectorReader.calls, embeddings.capabilityCalls, embeddings.embedCalls, documents.searchCalls)
+	}
+	if !pageIndexHitsCoverRequestedDocumentRefs([]string{"spec-ledger"}, result.Hits) {
+		t.Fatal("owner-resolved unambiguous bare PDF ref was not covered by its exact-version evidence hit")
+	}
+}
+
+func TestLocalRecallMixedPageIndexAndL1RefsKeepFallbackShortage(t *testing.T) {
+	documents := &localRecallDocumentStoreStub{}
+	vectorReader := &localRecallMissingVectorReader{}
+	embedder := &localRecallEmbeddingStub{}
+	structured := &localRecallPageIndexStub{hits: []c.Hit{localRecallPageIndexHit("spec-ledger", "revision-v1")}}
+	recall := NewLocalRecallWithSemanticAndStructured(nil, documents, nil,
+		ResearchSemanticRecallPorts{VectorReader: vectorReader, Embeddings: embedder, SourcePolicy: semanticTestSourcePolicy(true)},
+		ResearchStructuredRecallPorts{Owner: structured, PageIndexEnabled: true})
+	result, err := recall.Recall(context.Background(), c.Envelope{DataScope: "public"}, c.RecallRequest{
+		Query: "ledger policy", Targets: []string{"documents"}, DocumentRefs: []string{"spec-ledger@revision-v1", "missing-l1-event"}, Limit: 4,
+	})
+	if err != nil || len(result.Hits) != 1 || result.Hits[0].CanonicalRef != "spec-ledger" || !containsRecallTarget(result.Missing, "documents") {
+		t.Fatalf("mixed PDF and L1 refs must preserve the uncovered-ref shortage: result=%+v err=%v", result, err)
+	}
+	if structured.pageCalls != 1 || vectorReader.calls != 1 || documents.searchCalls != 1 {
+		t.Fatalf("mixed refs did not use the existing semantic/L1 fallback: page=%d vector=%d lexical=%d", structured.pageCalls, vectorReader.calls, documents.searchCalls)
+	}
+}
+
+func TestLocalRecallDoesNotTreatUnconfirmedPageIndexRefsAsCovered(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		ref         string
+		pageErr     error
+		unavailable bool
+	}{
+		{name: "unknown reference", ref: "unknown-pdf@revision-v1", unavailable: true},
+		{name: "wrong revision", ref: "spec-ledger@revision-wrong", unavailable: true},
+		{name: "outside scope", ref: "spec-ledger@revision-v1", unavailable: true},
+		{name: "wrong owner", ref: "spec-ledger@revision-v1", unavailable: true},
+		{name: "backend stopped", ref: "spec-ledger@revision-v1", pageErr: errors.New("PageIndex backend stopped"), unavailable: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			documents := &localRecallDocumentStoreStub{}
+			vectorReader := &localRecallMissingVectorReader{}
+			embedder := &localRecallEmbeddingStub{}
+			structured := &localRecallPageIndexStub{unavailable: test.unavailable, err: test.pageErr}
+			recall := NewLocalRecallWithSemanticAndStructured(nil, documents, nil,
+				ResearchSemanticRecallPorts{VectorReader: vectorReader, Embeddings: embedder, SourcePolicy: semanticTestSourcePolicy(true)},
+				ResearchStructuredRecallPorts{Owner: structured, PageIndexEnabled: true})
+			result, err := recall.Recall(context.Background(), c.Envelope{DataScope: "user", OwnerID: "ren"}, c.RecallRequest{
+				Query: "ledger policy", Targets: []string{"documents"}, DocumentRefs: []string{test.ref}, Limit: 4,
+			})
+			if !containsRecallTarget(result.Missing, "documents") || len(result.Hits) != 0 {
+				t.Fatalf("unconfirmed ref became successful: result=%+v err=%v", result, err)
+			}
+			if test.pageErr != nil && !errors.Is(err, test.pageErr) || test.pageErr == nil && err != nil {
+				t.Fatalf("PageIndex error propagation = %v, want %v", err, test.pageErr)
+			}
+			if vectorReader.calls != 1 || documents.searchCalls != 1 {
+				t.Fatalf("unconfirmed ref did not retain existing fallback: vector=%d lexical=%d", vectorReader.calls, documents.searchCalls)
+			}
+		})
+	}
+}
+
+type localRecallPageIndexStub struct {
+	hits        []c.Hit
+	unavailable bool
+	err         error
+	pageCalls   int
+}
+
+func (stub *localRecallPageIndexStub) RecallPageIndexDocuments(context.Context, c.Envelope, c.RecallRequest, string, int) ([]c.Hit, bool, error) {
+	stub.pageCalls++
+	return append([]c.Hit(nil), stub.hits...), stub.unavailable, stub.err
+}
+
+func (*localRecallPageIndexStub) RecallCodeGraph(context.Context, c.Envelope, c.RecallRequest, string, int) ([]c.Hit, bool, error) {
+	return nil, true, nil
+}
+
+type localRecallDocumentStoreStub struct{ searchCalls int }
+
+func (stub *localRecallDocumentStoreStub) SearchResearchStagingDocuments(context.Context, string, string, string, []string, time.Time, time.Time, int) (l1sqlite.L1ResearchStagingSearchResult, error) {
+	stub.searchCalls++
+	return l1sqlite.L1ResearchStagingSearchResult{Items: []l1sqlite.L1StagingItem{}}, nil
+}
+
+func (*localRecallDocumentStoreStub) FindStagingItemByNamespaceEventID(context.Context, string, string) (l1sqlite.L1StagingItem, bool, error) {
+	return l1sqlite.L1StagingItem{}, false, nil
+}
+
+type localRecallMissingVectorReader struct{ calls int }
+
+func (reader *localRecallMissingVectorReader) ReadResearchVectorCandidates(context.Context, l1sqlite.L1ResearchVectorReadRequest) (l1sqlite.L1ResearchVectorReadResult, error) {
+	reader.calls++
+	return l1sqlite.L1ResearchVectorReadResult{State: l1sqlite.L1ResearchVectorReadMissing}, nil
+}
+
+type localRecallEmbeddingStub struct {
+	capabilityCalls int
+	embedCalls      int
+}
+
+func (stub *localRecallEmbeddingStub) Capability(context.Context) (SemanticEmbeddingCapability, error) {
+	stub.capabilityCalls++
+	return SemanticEmbeddingCapability{ModelID: "fixture", Revision: "sha256:" + strings.Repeat("a", 64), Dimension: 1}, nil
+}
+
+func (stub *localRecallEmbeddingStub) Embed(context.Context, SemanticEmbeddingCapability, []string) (SemanticEmbeddingResult, error) {
+	stub.embedCalls++
+	return SemanticEmbeddingResult{}, errors.New("embedding should not be called for an empty vector index")
+}
+
+func localRecallPageIndexHit(documentRef, revision string) c.Hit {
+	locator := "pageindex://" + documentRef + "@" + revision + "/node/ledger-section/pages/2-3"
+	return c.Hit{
+		Target: "documents", CanonicalRef: documentRef, Revision: revision, Locator: locator,
+		MatchKind: "pageindex_section", EvidenceState: "acquired", Evidence: &c.EvidenceRef{
+			DocumentID: documentRef + "@" + revision, ArtifactHash: strings.Repeat("a", 64), Start: 2, End: 2, Locator: locator,
+		},
 	}
 }
 

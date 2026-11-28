@@ -220,6 +220,7 @@ func (owner *researchStructuredIndexOwner) readLocalCodeMaterials(ctx context.Co
 		return localMaterialUnavailable(result, "code"), nil
 	}
 	files := make(map[string]*localCodeFileMaterial)
+	verificationCache := newResearchCodeGraphVerificationCache()
 	addFunction := func(verified verifiedResearchCodeGraphSymbol) bool {
 		path := verified.symbol.Path
 		material := files[path]
@@ -244,43 +245,41 @@ func (owner *researchStructuredIndexOwner) readLocalCodeMaterials(ctx context.Co
 		return true
 	}
 	unavailable := false
+	type verifiedCodeCandidate struct {
+		verified verifiedResearchCodeGraphSymbol
+	}
+	verifiedSymbols := make([]verifiedCodeCandidate, 0, len(symbols))
 	seenFunctions := make(map[string]struct{}, len(symbols))
-	seenRelations := make(map[string]struct{})
 	for _, symbol := range symbols {
+		functionKey := fmt.Sprintf("%s:%d:%d", symbol.Path, symbol.StartLine, symbol.EndLine)
+		if _, duplicate := seenFunctions[functionKey]; duplicate {
+			continue
+		}
 		verified, valid := verifyResearchCodeGraphSymbol(operationCtx, current.Repository, request.Revision, symbol, current.Snapshot.Files, request.Query)
 		if !valid {
 			unavailable = true
 			continue
 		}
-		functionKey := fmt.Sprintf("%s:%d:%d", symbol.Path, symbol.StartLine, symbol.EndLine)
-		if _, duplicate := seenFunctions[functionKey]; duplicate {
-			continue
-		}
 		seenFunctions[functionKey] = struct{}{}
+		verificationCache.add(verified)
+		verifiedSymbols = append(verifiedSymbols, verifiedCodeCandidate{verified: verified})
+	}
+	seenRelations := make(map[string]struct{})
+	for _, candidate := range verifiedSymbols {
+		verified := candidate.verified
 		if !addFunction(verified) {
 			unavailable = true
 			continue
 		}
-		traceFunction := symbol.QualifiedName
-		if traceFunction == "" {
-			traceFunction = symbol.Name
-		}
-		relations, traceErr := owner.codeGraph.TraceCalls(operationCtx, current.Snapshot.PortSnapshot.Project, traceFunction, "both", 1, min(request.Limit, researchCodeGraphSearchMax))
+		calls, traceUnverified, traceErr := owner.traceVerifiedCodeGraphCalls(operationCtx, current.Snapshot.PortSnapshot.Project,
+			current.Repository, request.Revision, current.Snapshot.Files, verified, verificationCache, min(request.Limit, researchCodeGraphSearchMax))
 		if traceErr != nil {
 			unavailable = true
 			continue
 		}
-		for _, relation := range relations {
-			if relation.Kind != "CALLS" || relation.CallerName == "" || relation.CalleeName == "" {
-				unavailable = true
-				continue
-			}
-			caller, callerOK := owner.verifyCodeGraphEndpoint(operationCtx, current.Snapshot.PortSnapshot.Project, current.Repository, request.Revision, current.Snapshot.Files, relation.CallerName, relation.CallerQualified)
-			callee, calleeOK := owner.verifyCodeGraphEndpoint(operationCtx, current.Snapshot.PortSnapshot.Project, current.Repository, request.Revision, current.Snapshot.Files, relation.CalleeName, relation.CalleeQualified)
-			if !callerOK || !calleeOK {
-				unavailable = true
-				continue
-			}
+		unavailable = unavailable || traceUnverified
+		for _, traced := range calls {
+			caller, callee, relation := traced.caller, traced.callee, traced.relation
 			call := c.CodeCallRelation{
 				CallerPath: caller.symbol.Path, CallerName: caller.symbol.Name, CallerQualifiedName: caller.symbol.QualifiedName,
 				CallerStartLine: caller.symbol.StartLine, CallerEndLine: caller.symbol.EndLine,
@@ -450,9 +449,10 @@ func (owner *researchStructuredIndexOwner) verifyLocalCodeMaterial(ctx context.C
 		!utf8.Valid(fileBytes) || string(fileBytes) != document.Text || researchDigest(fileBytes) != origin.FileHash {
 		return errors.New("local code file no longer matches the exact registered commit")
 	}
+	verificationCache := newResearchCodeGraphVerificationCache()
 	for _, function := range origin.Functions {
-		verified, valid := owner.verifyCodeGraphEndpoint(ctx, current.Snapshot.PortSnapshot.Project, repository, origin.Revision,
-			current.Snapshot.Files, function.Name, function.QualifiedName)
+		verified, valid := owner.verifyCodeGraphEndpointCached(ctx, current.Snapshot.PortSnapshot.Project, repository, origin.Revision,
+			current.Snapshot.Files, function.Name, function.QualifiedName, verificationCache)
 		if !valid || verified.symbol.Path != origin.Path || verified.symbol.StartLine != function.StartLine || verified.symbol.EndLine != function.EndLine {
 			return errors.New("local code function range no longer matches the current CodeGraph source")
 		}
@@ -461,21 +461,22 @@ func (owner *researchStructuredIndexOwner) verifyLocalCodeMaterial(ctx context.C
 		if relation.Kind != "CALLS" {
 			return errors.New("local code call relation kind is invalid")
 		}
-		caller, callerOK := owner.verifyCodeGraphEndpoint(ctx, current.Snapshot.PortSnapshot.Project, repository, origin.Revision,
-			current.Snapshot.Files, relation.CallerName, relation.CallerQualifiedName)
-		callee, calleeOK := owner.verifyCodeGraphEndpoint(ctx, current.Snapshot.PortSnapshot.Project, repository, origin.Revision,
-			current.Snapshot.Files, relation.CalleeName, relation.CalleeQualifiedName)
+		caller, callerOK := owner.verifyCodeGraphEndpointCached(ctx, current.Snapshot.PortSnapshot.Project, repository, origin.Revision,
+			current.Snapshot.Files, relation.CallerName, relation.CallerQualifiedName, verificationCache)
+		callee, calleeOK := owner.verifyCodeGraphEndpointCached(ctx, current.Snapshot.PortSnapshot.Project, repository, origin.Revision,
+			current.Snapshot.Files, relation.CalleeName, relation.CalleeQualifiedName, verificationCache)
 		if !callerOK || !calleeOK || caller.symbol.Path != relation.CallerPath || caller.symbol.StartLine != relation.CallerStartLine ||
 			caller.symbol.EndLine != relation.CallerEndLine || callee.symbol.Path != relation.CalleePath ||
 			callee.symbol.StartLine != relation.CalleeStartLine || callee.symbol.EndLine != relation.CalleeEndLine {
 			return errors.New("local code call endpoint no longer matches the exact commit")
 		}
-		traceName := relation.CallerQualifiedName
-		if traceName == "" {
-			traceName = relation.CallerName
+		calls, unverified, traceErr := owner.traceVerifiedCodeGraphCalls(ctx, current.Snapshot.PortSnapshot.Project,
+			repository, origin.Revision, current.Snapshot.Files, caller, verificationCache, researchCodeGraphSearchMax)
+		relations := make([]engine.CodeGraphRelation, 0, len(calls))
+		for _, traced := range calls {
+			relations = append(relations, traced.relation)
 		}
-		relations, traceErr := owner.codeGraph.TraceCalls(ctx, current.Snapshot.PortSnapshot.Project, traceName, "both", 1, researchCodeGraphSearchMax)
-		if traceErr != nil || !researchCodeGraphRelationExists(relations, relation) {
+		if traceErr != nil || unverified || !researchCodeGraphRelationExists(relations, relation) {
 			return errors.New("local code call relation is unavailable in the current graph")
 		}
 	}
