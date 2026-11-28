@@ -408,30 +408,10 @@ func buildViewerBridgeHandlers(
 			if deps.eventRelay == nil {
 				return
 			}
-			if req.To == modulechat.ViewerRecipientMio && req.PublicationBinding.Audience() == domainconversation.SessionAudiencePrivate {
-				if publishErr := publishRuntimeViewerTerminalError(ctx, deps.eventRelay, req.PublicationBinding,
-					modulecore.TraceID(req.TraceID), modulecore.TurnID(req.TurnID), modulecore.MessageID(req.MessageID),
-					req.RootTaskID, req.SessionID, req.To, req.Provenance, true, err); publishErr != nil {
-					log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
-				}
-				return
-			}
-
-			// Keep the established generic failure signal for public Mio turns and
-			// other recipients. The authenticated Viewer→Mio owner exception above carries
-			// its exact accepted publication binding and stronger envelope.
-			_, chatID, _, identityErr := viewerSessionIdentity(ctx)
-			if identityErr != nil {
-				log.Printf("[Viewer] error event identity unavailable task=%s: %v", req.RootTaskID, identityErr)
-				return
-			}
-			event := orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
-				"viewer.error", "system", "viewer", err.Error(), "", req.RootTaskID, req.SessionID, "viewer", chatID)
-			if recorder := turntiming.FromContext(ctx); recorder != nil {
-				snapshot := recorder.Snapshot()
-				event.Timing = &snapshot
-			}
-			if publishErr := deps.eventRelay.OnEvent(event); publishErr != nil {
+			requireAuthenticatedViewerProvenance := req.PublicationBinding.Audience() == domainconversation.SessionAudiencePrivate
+			if publishErr := publishRuntimeViewerTerminalError(ctx, deps.eventRelay, req.PublicationBinding,
+				modulecore.TraceID(req.TraceID), modulecore.TurnID(req.TurnID), modulecore.MessageID(req.MessageID),
+				req.RootTaskID, req.SessionID, req.To, req.Provenance, requireAuthenticatedViewerProvenance, err); publishErr != nil {
 				log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
 			}
 		}
@@ -616,7 +596,8 @@ func publishRuntimeViewerTerminalError(
 	if relay == nil || processingErr == nil {
 		return nil
 	}
-	if recipient != modulechat.ViewerRecipientMio || binding.Validate() != nil ||
+	normalizedRecipient, recipientErr := modulechat.NormalizeViewerRecipient(string(recipient))
+	if recipientErr != nil || normalizedRecipient != recipient || binding.Validate() != nil ||
 		string(binding.SessionID()) != sessionID || traceID.Validate() != nil ||
 		turnID.Validate() != nil || messageID.Validate() != nil {
 		return errors.New("terminal Viewer error has no accepted canonical publication binding")
@@ -626,6 +607,9 @@ func publishRuntimeViewerTerminalError(
 		return errors.New("terminal Viewer error has a non-Viewer canonical address")
 	}
 	if binding.Audience() == domainconversation.SessionAudiencePrivate {
+		if recipient != modulechat.ViewerRecipientMio {
+			return errors.New("terminal Viewer error cannot publish a private non-Mio recipient")
+		}
 		ownerID, authenticated, authErr := viewer.AuthenticatedViewerOwnerID(ctx)
 		if authErr != nil || !authenticated || ownerID != binding.OwnerID() ||
 			address.ExternalConversationID() != "cmd:"+ownerID ||
@@ -637,11 +621,21 @@ func publishRuntimeViewerTerminalError(
 		return errors.New("terminal Viewer error has an invalid public canonical address")
 	}
 
+	route := ""
+	if binding.Audience() == domainconversation.SessionAudiencePrivate {
+		route = "CHAT"
+	}
 	event := orchestrator.NewEventWithTraceID(traceID,
-		"viewer.error", "system", "viewer", processingErr.Error(), "CHAT", rootTaskID,
+		"viewer.error", "system", "viewer", processingErr.Error(), route, rootTaskID,
 		string(binding.SessionID()), address.ChannelType(), address.ExternalConversationID(),
 	)
-	event.Visibility = string(binding.Audience())
+	if binding.Audience() == domainconversation.SessionAudiencePrivate {
+		// Private terminal errors use the authenticated response-first envelope.
+		// Public legacy errors leave Visibility empty so the existing SSE path
+		// resolves their audience from the canonical binding instead of treating
+		// them as response-first events.
+		event.Visibility = string(binding.Audience())
+	}
 	event.PublicationIncarnation = binding.PublicationIncarnation()
 	event.TurnID = turnID
 	event.MessageID = messageID

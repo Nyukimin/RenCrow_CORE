@@ -195,13 +195,10 @@ func researchObjective(messages []llm.Message) string {
 // Conditions that need typed source/time/destination fields must be supplied
 // through the existing structured Tool/CLI, rather than silently discarded.
 func researchRequestFromUser(objective string) (contract.Request, error) {
+	if structured, ok := structuredResearchRequestPayload(objective); ok {
+		return engine.DecodeRequest([]byte(structured))
+	}
 	raw := strings.TrimSpace(objective)
-	if strings.HasPrefix(raw, "```json\n") && strings.HasSuffix(raw, "\n```") {
-		raw = strings.TrimSuffix(strings.TrimPrefix(raw, "```json\n"), "\n```")
-	}
-	if strings.HasPrefix(raw, "{") {
-		return engine.DecodeRequest([]byte(raw))
-	}
 	if utf8.RuneCountInString(raw) > 2000 {
 		return contract.Request{}, fmt.Errorf("research objective exceeds 2000 characters; provide a bounded structured Research request")
 	}
@@ -209,6 +206,32 @@ func researchRequestFromUser(objective string) (contract.Request, error) {
 		return contract.Request{}, fmt.Errorf("source, time or destination conditions require a structured Research request; no reduced-scope research was started")
 	}
 	return engine.Normalize(contract.Request{SchemaVersion: contract.RequestSchema, Mode: researchMode(raw), Objective: raw, SourceKinds: []string{"web"}, SeedURLs: researchSeedURLs(raw), CostProfile: "zero_incremental_cost"})
+}
+
+// IsVersionedResearchRequest recognizes only the existing envelope identifier.
+// Full field validation remains owned by NormalizeResearchRequest.
+func IsVersionedResearchRequest(objective string) bool {
+	structured, ok := structuredResearchRequestPayload(objective)
+	if !ok {
+		return false
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(structured), &envelope); err != nil {
+		return false
+	}
+	var schemaVersion string
+	if err := json.Unmarshal(envelope["schema_version"], &schemaVersion); err != nil {
+		return false
+	}
+	return schemaVersion == contract.RequestSchema
+}
+
+func structuredResearchRequestPayload(objective string) (string, bool) {
+	raw := strings.TrimSpace(objective)
+	if strings.HasPrefix(raw, "```json\n") && strings.HasSuffix(raw, "\n```") {
+		raw = strings.TrimSuffix(strings.TrimPrefix(raw, "```json\n"), "\n```")
+	}
+	return raw, strings.HasPrefix(raw, "{")
 }
 
 // NormalizeResearchRequest is the shared normalization entry for typed

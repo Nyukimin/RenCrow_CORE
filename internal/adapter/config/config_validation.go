@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata"
+	"unicode"
+	"unicode/utf8"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
@@ -128,6 +130,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("llm_gateway.timeout_sec must be >= 1")
 	}
 	if err := c.validateResearchSemanticIndexConfig(); err != nil {
+		return err
+	}
+	if err := c.validateResearchStructuredIndexConfig(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.Games.ObserverURL) != "" {
@@ -1005,6 +1010,122 @@ func (c *Config) validateResearchSemanticIndexConfig() error {
 		return fmt.Errorf("research.semantic_index.service_ref is required when enabled=true")
 	}
 	return nil
+}
+
+func (c *Config) validateResearchStructuredIndexConfig() error {
+	structured := c.Research.StructuredIndex
+	if !structured.PageIndex.Enabled && !structured.CodeGraph.Enabled && len(structured.TrustedPDFs) == 0 {
+		return nil
+	}
+	if !c.Research.Enabled {
+		return fmt.Errorf("research.structured_index requires research.enabled")
+	}
+	if !c.LocalAgentOps.Enabled || c.LocalAgentOps.UserID == "" {
+		return fmt.Errorf("research.structured_index requires the existing authenticated local user owner")
+	}
+	if !filepath.IsAbs(c.Research.ArtifactRoot) {
+		return fmt.Errorf("research.structured_index requires an absolute research.artifact_root")
+	}
+	if len(structured.TrustedPDFs) > 0 && !structured.PageIndex.Enabled {
+		return fmt.Errorf("research.structured_index.trusted_pdfs requires page_index.enabled")
+	}
+
+	seenPDFs := make(map[string]struct{}, len(structured.TrustedPDFs))
+	for _, document := range structured.TrustedPDFs {
+		if !validResearchLocalIdentity(document.DocumentRef) || !validResearchLocalIdentity(document.Revision) {
+			return fmt.Errorf("research.structured_index.trusted_pdfs requires normalized document_ref and revision identifiers")
+		}
+		if !validResearchSHA256(document.OriginalSHA256) {
+			return fmt.Errorf("research.structured_index.trusted_pdfs.original_sha256 must be sha256:<64 lowercase hex>")
+		}
+		if document.DataScope != "user" || c.LocalAgentOps.UserID == "" || document.OwnerID != c.LocalAgentOps.UserID {
+			return fmt.Errorf("research.structured_index.trusted_pdfs must bind the authenticated local user owner and user scope")
+		}
+		if strings.TrimSpace(document.RightsBasis) != document.RightsBasis || document.RightsBasis == "" || len(document.RightsBasis) > 512 || !utf8.ValidString(document.RightsBasis) || strings.IndexFunc(document.RightsBasis, unicode.IsControl) >= 0 {
+			return fmt.Errorf("research.structured_index.trusted_pdfs.rights_basis must be a non-empty normalized value of at most 512 bytes")
+		}
+		key := document.DocumentRef + "\x00" + document.Revision
+		if _, duplicate := seenPDFs[key]; duplicate {
+			return fmt.Errorf("research.structured_index.trusted_pdfs contains a duplicate document_ref/revision")
+		}
+		seenPDFs[key] = struct{}{}
+	}
+
+	page := structured.PageIndex
+	if page.Enabled {
+		if len(structured.TrustedPDFs) == 0 {
+			return fmt.Errorf("research.structured_index.page_index.enabled requires trusted_pdfs")
+		}
+		if !filepath.IsAbs(page.PythonExecutable) || !filepath.IsAbs(page.RuntimeRoot) || !filepath.IsAbs(page.TempRoot) {
+			return fmt.Errorf("research.structured_index.page_index requires absolute python_executable, runtime_root, and temp_root")
+		}
+		if !researchPathWithin(page.RuntimeRoot, page.PythonExecutable) {
+			return fmt.Errorf("research.structured_index.page_index.python_executable must be inside runtime_root")
+		}
+		if !validResearchSHA256(page.RuntimeManifestSHA256) || page.TimeoutSeconds < 1 || page.TimeoutSeconds > 300 {
+			return fmt.Errorf("research.structured_index.page_index requires a trusted runtime_manifest_sha256 and timeout_seconds from 1 to 300")
+		}
+	}
+
+	graph := structured.CodeGraph
+	if graph.Enabled {
+		if len(c.Research.Repositories) == 0 {
+			return fmt.Errorf("research.structured_index.code_graph.enabled requires registered repositories")
+		}
+		if !filepath.IsAbs(graph.Executable) || !filepath.IsAbs(graph.CacheRoot) || !filepath.IsAbs(graph.RuntimeRoot) || !filepath.IsAbs(graph.TempRoot) {
+			return fmt.Errorf("research.structured_index.code_graph requires absolute executable, cache_root, runtime_root, and temp_root")
+		}
+		if !researchPathWithin(graph.CacheRoot, graph.RuntimeRoot) || !validResearchSHA256(graph.BinarySHA256) ||
+			!validResearchLocalIdentity(graph.RuntimeVersion) || !validResearchGitRevision(graph.SourceCommit) ||
+			graph.TimeoutSeconds < 1 || graph.TimeoutSeconds > 300 {
+			return fmt.Errorf("research.structured_index.code_graph runtime identity, cache layout, or timeout is invalid")
+		}
+	}
+	return nil
+}
+
+func validResearchLocalIdentity(value string) bool {
+	if value == "" || value == "." || value == ".." || strings.TrimSpace(value) != value || len(value) > 512 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, char := range value {
+		if char < 0x21 || unicode.IsControl(char) || char == '/' || char == '\\' || char == '?' || char == '#' {
+			return false
+		}
+	}
+	return true
+}
+
+func validResearchSHA256(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
+		return false
+	}
+	for _, char := range strings.TrimPrefix(value, "sha256:") {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validResearchGitRevision(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func researchPathWithin(parent, child string) bool {
+	if !filepath.IsAbs(parent) || !filepath.IsAbs(child) {
+		return false
+	}
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func validateIdleChatNightPreparationSchedule(schedule IdleChatNightPreparationScheduleConfig) error {

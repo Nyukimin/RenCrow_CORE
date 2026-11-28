@@ -113,6 +113,25 @@ research:
   semantic_index:
     enabled: false
     service_ref: "research_embedding_local"
+  structured_index:
+    page_index:
+      enabled: false
+      python_executable: ""
+      runtime_root: ""
+      runtime_manifest_sha256: ""
+      temp_root: ""
+      timeout_seconds: 60
+    code_graph:
+      enabled: false
+      executable: ""
+      binary_sha256: ""
+      runtime_version: ""
+      source_commit: ""
+      cache_root: ""
+      runtime_root: ""
+      temp_root: ""
+      timeout_seconds: 60
+    trusted_pdfs: []
 
 # Codex CLI bridge for codex.run Tool / Advisor only. Kuro's normal LLM is
 # configured as a codex_cli target in RenCrow_LLM and is independent of this Tool.

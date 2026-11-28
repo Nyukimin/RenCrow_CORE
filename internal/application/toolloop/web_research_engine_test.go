@@ -143,6 +143,32 @@ func TestWebResearchEnginePreservesExplicitStructuredConditions(t *testing.T) {
 	}
 }
 
+func TestWebResearchEnginePreservesRFC1149SourceSaveAndEvidenceRequest(t *testing.T) {
+	runner := &researchRunOnlyRunner{result: tool.NewSuccess(researchResultForTool("succeeded"))}
+	raw := `{"schema_version":"rencrow.research.request.v1","mode":"collect","objective":"RFC1149原文を取得し、knowledge_stagingへ保存する","source_kinds":["web"],"seed_urls":["https://www.rfc-editor.org/rfc/rfc1149"],"outputs":{"report":{"required":true,"format":"markdown"},"save":[{"target":"knowledge_staging","required":true}],"evidence":{"min_documents":1,"min_independent_sources":1,"require_primary_for_material_claims":true}},"limits":{"search_calls":1,"candidates":3,"fetch_attempts":2,"max_documents":1,"deadline_seconds":30},"cost_profile":"zero_incremental_cost"}`
+	_, err := NewWebResearcher(runner, nil).Gather(webResearchContext(t), nonToolCallingResearchProvider{}, llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Type: llm.PromptContextUser, Content: raw}},
+	}, nil)
+	if err != nil || runner.calls != 1 {
+		t.Fatalf("calls=%d err=%v", runner.calls, err)
+	}
+	request := runner.args["request"].(map[string]any)
+	if request["mode"] != "collect" || request["objective"] != "RFC1149原文を取得し、knowledge_stagingへ保存する" {
+		t.Fatalf("explicit Research mode/objective was not preserved: %+v", request)
+	}
+	if got := request["seed_urls"].([]any); len(got) != 1 || got[0] != "https://www.rfc-editor.org/rfc/rfc1149" {
+		t.Fatalf("RFC1149 seed was not preserved: %+v", request["seed_urls"])
+	}
+	outputs := request["outputs"].(map[string]any)
+	if save := outputs["save"].([]any); len(save) != 1 || save[0].(map[string]any)["target"] != "knowledge_staging" || save[0].(map[string]any)["required"] != true {
+		t.Fatalf("required knowledge_staging output was not preserved: %+v", outputs["save"])
+	}
+	evidence := outputs["evidence"].(map[string]any)
+	if evidence["min_documents"] != float64(1) || evidence["min_independent_sources"] != float64(1) || evidence["require_primary_for_material_claims"] != true {
+		t.Fatalf("evidence conditions were not preserved: %+v", evidence)
+	}
+}
+
 func TestWebResearchEngineDoesNotDiscardNaturalRequiredConditions(t *testing.T) {
 	for _, objective := range []string{"直近7日のXリサーチをBOARDへ登録して", "今朝のYouTube情報を調査して", "調査結果をDBへ保存して"} {
 		runner := &researchRunOnlyRunner{result: tool.NewSuccess(researchResultForTool("succeeded"))}

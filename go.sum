@@ -240,3 +240,5 @@ modernc.org/strutil v1.2.1 h1:UneZBkQA+DX2Rp35KcM69cSsNES9ly8mQWD71HKlOA0=
 modernc.org/strutil v1.2.1/go.mod h1:EHkiggD70koQxjVdSBM3JKM7k6L0FbGE5eymy9i3B9A=
 modernc.org/token v1.1.0 h1:Xl7Ap9dKaEs5kLoOQeQmPWevfnk/DM5qcLcYlA8ys6Y=
 modernc.org/token v1.1.0/go.mod h1:UGzOrNV1mAFSEB63lOFHIpNRUVMvYTc6yu1SMY/XTDM=
+github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128081513-3602a9fe0df9 h1:b4cNtnpKfgY8ZZ/2TbQPDexP4h6zr8PoUmB0bi4DuEk=
+github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine v0.0.0-20261128081513-3602a9fe0df9/go.mod h1:cUIJrzjMElvadkI/LIrPD/CLzOJkBCnUj8R/QXob4+c=

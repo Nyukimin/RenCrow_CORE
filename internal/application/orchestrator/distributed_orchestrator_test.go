@@ -310,6 +310,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *te
 	}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	rec := &distRecordingEventListener{}
 	orch.SetEventListener(rec)
@@ -356,6 +357,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *t
 	recall := &mockRecallTraceStore{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	orch.SetRecallTraceStore(recall)
 	rec := &distRecordingEventListener{}
@@ -397,6 +399,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(
 	searcher := &mockDCISearcher{trigger: true, err: errors.New("dci trace unavailable")}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	rec := &distRecordingEventListener{}
 	orch.SetEventListener(rec)

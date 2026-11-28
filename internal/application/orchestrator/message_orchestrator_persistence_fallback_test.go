@@ -364,6 +364,7 @@ func TestMessageOrchestratorExplicitDCIFallsBackBeforeSearch(t *testing.T) {
 	ctx, _, fallbackCalls, fallbackCompleted := newEmptyFallbackContext(t)
 	orch := NewMessageOrchestrator(newMockSessionRepository(), &mockMioAgent{}, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	searcher := &fallbackCheckingDCISearcher{completed: fallbackCompleted}
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	req := defaultReq()
 	req.UserMessage = "docsから仕様を探して"

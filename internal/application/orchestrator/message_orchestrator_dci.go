@@ -6,10 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -18,7 +21,63 @@ func shouldHandleExplicitDCI(searcher DCISearcher, message string) bool {
 	if strings.HasPrefix(strings.TrimSpace(message), "/") {
 		return false
 	}
+	if toolloop.IsVersionedResearchRequest(message) {
+		return false
+	}
 	return searcher != nil && searcher.ShouldTrigger(message)
+}
+
+func validateVersionedResearchRequest(message string) error {
+	if !toolloop.IsVersionedResearchRequest(message) {
+		return nil
+	}
+	if _, err := toolloop.NormalizeResearchRequest(message); err != nil {
+		return fmt.Errorf("Research request validation failed: %w", err)
+	}
+	return nil
+}
+
+func explicitDCIExecutionContext(ctx context.Context, input domainconversation.TurnInput, taskID modulecore.TaskID, lifecycle *taskLifecycle) (context.Context, error) {
+	if lifecycle == nil || lifecycle.manager == nil {
+		return nil, fmt.Errorf("DCI requires a configured canonical Task lifecycle")
+	}
+	if err := taskID.Validate(); err != nil {
+		return nil, fmt.Errorf("DCI execution Task ID is invalid: %w", err)
+	}
+	traceID := input.TraceID()
+	if traceID == "" {
+		return nil, fmt.Errorf("DCI execution Trace ID is required")
+	}
+	tasks, taskRuns, err := lifecycle.manager.ReadTaskRuns(ctx, []modulecore.TaskID{taskID})
+	if err != nil {
+		return nil, fmt.Errorf("read canonical DCI Task and Runs: %w", err)
+	}
+	task, found := tasks[taskID]
+	if !found || task.TaskID != taskID {
+		return nil, fmt.Errorf("canonical DCI Task %s is unavailable", taskID)
+	}
+	researchTaskRoute, err := taskRouteForOrchestratorRoute(routing.RouteRESEARCH)
+	if err != nil {
+		return nil, fmt.Errorf("resolve DCI Task route: %w", err)
+	}
+	if task.Route != researchTaskRoute || task.Assignee != taskLifecycleShiro || task.Status != domaintask.StatusRunning ||
+		task.ParentTaskID == "" || task.ParentTaskID != input.RootTaskID() {
+		return nil, fmt.Errorf("canonical DCI Task %s does not match the active Shiro Research child", taskID)
+	}
+	activeRuns := make([]domaintask.Run, 0, len(taskRuns[taskID]))
+	for _, run := range taskRuns[taskID] {
+		if run.Status == domaintask.RunStatusRunning {
+			activeRuns = append(activeRuns, run)
+		}
+	}
+	run, err := selectActiveTaskRun(taskID, activeRuns)
+	if err != nil {
+		return nil, fmt.Errorf("resolve canonical DCI Run: %w", err)
+	}
+	if run.Assignee != task.Assignee {
+		return nil, fmt.Errorf("canonical DCI Run assignee %q does not match Task assignee %q", run.Assignee, task.Assignee)
+	}
+	return domainexecution.WithIdentity(ctx, taskID, run.RunID, traceID)
 }
 
 func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, taskID modulecore.TaskID, triggered bool) (ProcessMessageResponse, bool, error) {
@@ -27,16 +86,20 @@ func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req Process
 	}
 
 	taskIDText := taskID.String()
-	result, err := o.dciSearcher.Search(ctx, req.UserMessage)
+	dciCtx, err := explicitDCIExecutionContext(ctx, input, taskID, o.taskLifecycle)
+	if err != nil {
+		return ProcessMessageResponse{}, true, err
+	}
+	result, err := o.dciSearcher.Search(dciCtx, req.UserMessage)
 	if err != nil {
 		return ProcessMessageResponse{}, true, fmt.Errorf("dci search failed: %w", err)
 	}
 
 	response := formatDCIResponse(result)
-	if err := o.saveDCIRecallTrace(ctx, input, result); err != nil {
+	if err := o.saveDCIRecallTrace(dciCtx, input, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
-	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
+	if err := o.sessions.SaveCompletedTurnInput(dciCtx, sess, input); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	o.events.Emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), taskIDText, req.SessionID, req.Channel, req.ChatID)

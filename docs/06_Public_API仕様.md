@@ -1625,7 +1625,7 @@ Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCORE�
 
 ## RenCrow Research local owner（段階的配備・限定受入）
 
-`POST /v1/research/owner`はloopback接続と既存local_agent_ops bearerに限る内部business-task owner。新しい汎用Public APIではない。最大64KiBのstrict JSONと、operationごとの閉じたfield集合を検査する。認証済みUserでTaskを開始し、Agent identityを偽装しない。
+`POST /v1/research/owner`はloopback接続と既存local_agent_ops bearerに限る内部business-task owner。新しい汎用Public APIではない。strict JSONとoperationごとの閉じたfield集合を検査する。外側のbody上限はPDF登録を含め23MiB、`source_register`以外の`request`は64KiB以下。認証済みUserでTaskを開始し、Agent identityを偽装しない。
 
 |operation|入力|応答|
 |---|---|---|
@@ -1640,8 +1640,14 @@ Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCORE�
 |watch_disable|exact watch_id|rencrow.research.watch-management.v1。Ownerのverified disabled state|
 |refresh_due|追加fieldなし|rencrow.research.due.v1。readonly due list、最大20件|
 |doctor|追加fieldなし|rencrow.research.doctor.v1。configured_unprobed、live取得なし|
+|source_register|rencrow.research.local-pdf-register.v1。登録済みdocument_ref／revisionと上限16MiBのPDF bytesのcanonical Base64|rencrow.research.structured-index-operation.v1。登録済み期待hash・権利・scopeを照合し、原資料保存とTask／Run receiptを読み戻す|
+|source_register_status|同schemaのdocument_ref／revision。PDF bytesなし|同operation response。照合のみで再登録しない|
+|page_index_build / page_index_status|rencrow.research.page-index-build.v1。documentsは登録済みdocument_ref／revisionの組|rencrow.research.structured-index-batch.v1。版ごとのoperation response、missing、全体の状態を区別。statusは再構築しない|
+|code_graph_build / code_graph_status|rencrow.research.code-graph-build.v1。登録済みrepository_refとallowlist内のexact commit|同structured-index-operation response。管理設定のbackendと読取専用snapshotのみを使用。statusは再構築しない|
 
 bodyからactor/scope/物理DB/path/command/backendを選べない。operationを跨ぐfield混在と未知field/trailing JSONは400。Agentの`research.status`は`run_id`/`watch_id`のちょうど一方を受ける。`refresh_due`はCLIから明示実行するbounded batchの読み取り専用due listingであり、schedulerではない。source-level相互排他は既存SourceFetcherと同じOwner leaseを使う。全障害回復の実機受入は未完了。run/resumeの業務終端はResult.statusで判定し、HTTP200だけを完了としない。必須工程やOwner照合が不足すればpartial/failed。Task ownerのreceipt不足もmissingへ記録する。受付・認証・Task admission失敗は非200で返す。初回同期runの応答不明時は同一key・requestによるlookupで照合する。異なる内容の同一keyは拒否し、lookupから取得や保存を再実行しない。
+
+構造索引のoperation keyは、登録済み資料・版・owner・scope・runtime等からOwnerが導出する。`pending`と`outcome_unknown`は保存未確認を表し、作成を再実行せずexact Task／Runを照合する。`completed`でもresultの`registered`／`indexed`／`failed`／`partial`を区別する。成功receiptは原資料や索引のhash・版と読み戻し結果に束縛される。CodeGraphのCALLSはbackendの関係と両端のexact原文範囲を返し、正規の位置情報がないcall-site行を推測で付けない。
 
 local document collectionは既存L1 stagingをowner/scopeで検索した後、各候補を同一namespace/event IDで再読し、保存済みの原文/hash・canonical元URL/最終URL・source policyを照合した完全な本文だけを採用する。`request.document_refs`は最大20件のcanonical document/event IDを指定し、Queryによる本文照合を保ったまま既存storeのscope付きexact lookupを使う。新しい取得や保存は行わず、読取権限・policyに合わない候補、scan上限超過、欠落はmissingとして残す。正当に再読できたitemが一部あり後続readに失敗した場合は、そのitemを保持しつつmissing/unavailableを記録してpartialとする。時間窓には保存済み`TimeBasis`（`published_at`または`fetched_at`）を使い、取得時刻はUTCで保持する。staging metadataに取得時点のprimary判定がないため、local readでprimaryへ昇格しない。
 

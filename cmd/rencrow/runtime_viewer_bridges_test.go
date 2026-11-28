@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -1671,5 +1672,227 @@ func TestLegacyCMDMioTerminalErrorReachesAuthenticatedGlobalSSE(t *testing.T) {
 	viewerGlobalEventsHandler(otherCfg, deps).ServeHTTP(otherResponse, otherStream.WithContext(otherContext))
 	if strings.Contains(otherResponse.Body.String(), "viewer processing failed") {
 		t.Fatalf("different authenticated owner received CMD terminal error: %s", otherResponse.Body.String())
+	}
+}
+
+type viewerTerminalErrorTestReceipt struct {
+	SessionID  string `json:"session_id"`
+	MessageID  string `json:"message_id"`
+	TurnID     string `json:"turn_id"`
+	RootTaskID string `json:"root_task_id"`
+	TraceID    string `json:"trace_id"`
+}
+
+type viewerBridgeErrorAfterCanonicalSessionRekeyProcessor struct {
+	repository             *sessionpersistence.JSONSessionRepository
+	replacementLogicalDate string
+	address                domainconversation.ChannelAddress
+}
+
+func (p viewerBridgeErrorAfterCanonicalSessionRekeyProcessor) ProcessMessage(ctx context.Context, request orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+	turntiming.Mark(ctx, turntiming.PointRouteDecided)
+	turntiming.Mark(ctx, turntiming.PointDispatchStarted)
+	rekeyed, err := domainsession.NewCanonicalSession(
+		modulecore.SessionID(request.SessionID), p.replacementLogicalDate, p.address, time.Now().UTC(),
+	)
+	if err != nil {
+		return orchestrator.ProcessMessageResponse{}, fmt.Errorf("construct canonical Session rekey: %w", err)
+	}
+	if err := p.repository.Save(ctx, rekeyed); err != nil {
+		return orchestrator.ProcessMessageResponse{}, fmt.Errorf("persist canonical Session rekey: %w", err)
+	}
+	return orchestrator.ProcessMessageResponse{}, errors.New("viewer processing failed after canonical Session rekey")
+}
+
+func newViewerTerminalErrorTestFixture(t *testing.T) (*config.Config, *Dependencies, *sessionpersistence.JSONSessionRepository, *eventstore.SQLiteStore, string) {
+	t.Helper()
+	const token = "viewer-terminal-test-owner-token-0123456789"
+	tokenPath := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: tokenPath, UserID: "ren"}}
+	store := openViewerBridgeAdmissionStore(t)
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	hub := viewer.NewEventHub(32)
+	hub.SetSessionPublicReplayReader(archive)
+	repo := sessionpersistence.NewJSONSessionRepository(t.TempDir())
+	if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+		t.Fatalf("warm canonical Session index: %v", err)
+	}
+	deps := &Dependencies{
+		eventRelay:          &idleAwareEventListener{archive: archive, hub: hub},
+		canonicalEventStore: store,
+		eventHub:            hub,
+		sessionRepository:   repo,
+	}
+	return cfg, deps, repo, store, token
+}
+
+func sendViewerTerminalErrorTestRequest(t *testing.T, cfg *config.Config, deps *Dependencies, repo orchestrator.SessionRepository, processor messageProcessor, recipient string) viewerTerminalErrorTestReceipt {
+	t.Helper()
+	handler := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo).ViewerSendFromOrch(processor)
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(
+		`{"message":"public terminal error","to":"`+recipient+`","viewer_client_id":"viewer-terminal-`+recipient+`"}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Host = "127.0.0.1:18790"
+	attachViewerBridgeTestPresence(t, deps, request)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("public %s send status=%d body=%s, want accepted response", recipient, response.Code, response.Body.String())
+	}
+	var accepted viewerTerminalErrorTestReceipt
+	if err := json.NewDecoder(response.Body).Decode(&accepted); err != nil {
+		t.Fatalf("decode accepted public %s response: %v", recipient, err)
+	}
+	if accepted.SessionID == "" || accepted.MessageID == "" || accepted.TurnID == "" || accepted.RootTaskID == "" || accepted.TraceID == "" {
+		t.Fatalf("accepted public %s response=%+v, want session/message/turn/task/trace identities", recipient, accepted)
+	}
+	return accepted
+}
+
+func waitForViewerTerminalErrorTestEvent(t *testing.T, store *eventstore.SQLiteStore, relay *idleAwareEventListener, traceID string) modulecore.EventEnvelope {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		items, err := store.ListByComponent(context.Background(), "orchestrator", 100)
+		if err != nil {
+			t.Fatalf("read canonical viewer.error events: %v", err)
+		}
+		for _, item := range items {
+			if item.EventType == "viewer.error" && item.Payload["trace_id"] == traceID {
+				if item.EventSeq > 0 && relay.DurableEventSeq() >= item.EventSeq {
+					return item
+				}
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for durable viewer.error with accepted trace %q", traceID)
+	return modulecore.EventEnvelope{}
+}
+
+func viewerTerminalErrorTestSSE(t *testing.T, cfg *config.Config, deps *Dependencies, target, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, target, nil)
+	if token != "" {
+		request = routeTestOwnerRequest(target, token)
+	}
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	response := httptest.NewRecorder()
+	writer := &cancelRouteSSEWriter{ResponseRecorder: response, cancel: cancel}
+	viewerGlobalEventsHandler(cfg, deps).ServeHTTP(writer, request.WithContext(ctx))
+	return response
+}
+
+func TestViewerPublicTerminalErrorsReachVisibilityFilteredSSE(t *testing.T) {
+	for _, recipient := range []string{"mio", "shiro", "midori", "kuro"} {
+		recipient := recipient
+		t.Run(recipient, func(t *testing.T) {
+			cfg, deps, repo, store, token := newViewerTerminalErrorTestFixture(t)
+			createdAt := time.Now().UTC()
+			address, err := domainconversation.NewChannelAddress("viewer", publicViewerChatID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session, _, err := repo.LoadOrCreateCanonical(context.Background(), createdAt.Format("2006-01-02"), address, createdAt)
+			if err != nil || session == nil {
+				t.Fatalf("seed public canonical Session=%v err=%v", session, err)
+			}
+			acceptedBinding, err := domainsession.NewCanonicalSessionPublicationBinding(session)
+			if err != nil {
+				t.Fatalf("capture public canonical publication binding: %v", err)
+			}
+
+			accepted := sendViewerTerminalErrorTestRequest(t, cfg, deps, repo, viewerBridgeErrorProcessor{}, recipient)
+			if accepted.SessionID != string(acceptedBinding.SessionID()) {
+				t.Fatalf("accepted SessionID=%q, want seeded public Session %q", accepted.SessionID, acceptedBinding.SessionID())
+			}
+			terminal := waitForViewerTerminalErrorTestEvent(t, store, deps.eventRelay, accepted.TraceID)
+			if terminal.TraceID != modulecore.TraceID(accepted.TraceID) || terminal.SessionID != modulecore.SessionID(accepted.SessionID) ||
+				terminal.Payload["trace_id"] != accepted.TraceID || terminal.Payload["task_id"] != accepted.RootTaskID ||
+				terminal.Payload["session_id"] != accepted.SessionID || terminal.Payload["turn_id"] != accepted.TurnID || terminal.Payload["message_id"] != accepted.MessageID ||
+				terminal.Payload["publication_incarnation"] != acceptedBinding.PublicationIncarnation() ||
+				terminal.Payload["channel"] != "viewer" || terminal.Payload["channel_address"] != publicViewerChatID {
+				t.Fatalf("public %s terminal identity does not match the accepted binding: payload=%#v accepted=%+v binding=%+v", recipient, terminal.Payload, accepted, acceptedBinding)
+			}
+			if visibility, exists := terminal.Payload["visibility"]; exists && visibility != "" {
+				t.Fatalf("public %s terminal error must leave audience resolution to the canonical binding: %#v", recipient, terminal.Payload)
+			}
+			for _, field := range []string{"actor_kind", "actor_id", "run_id"} {
+				if _, exists := terminal.Payload[field]; exists {
+					t.Fatalf("public %s terminal error fabricated execution identity %s: %#v", recipient, field, terminal.Payload)
+				}
+			}
+
+			publicResponse := viewerTerminalErrorTestSSE(t, cfg, deps, "/viewer/events?to="+recipient, "")
+			publicBody := publicResponse.Body.String()
+			if publicResponse.Code != http.StatusOK || !strings.Contains(publicBody, "viewer processing failed") ||
+				!strings.Contains(publicBody, accepted.TraceID) || !strings.Contains(publicBody, accepted.RootTaskID) ||
+				!strings.Contains(publicBody, accepted.SessionID) || !strings.Contains(publicBody, accepted.TurnID) ||
+				!strings.Contains(publicBody, accepted.MessageID) || !strings.Contains(publicBody, string(terminal.EventID)) {
+				t.Fatalf("public %s visibility-filtered SSE omitted accepted terminal identity: status=%d body=%s", recipient, publicResponse.Code, publicBody)
+			}
+
+			privateResponse := viewerTerminalErrorTestSSE(t, cfg, deps, "/viewer/events?to=mio", token)
+			privateBody := privateResponse.Body.String()
+			if privateResponse.Code != http.StatusOK || strings.Contains(privateBody, accepted.TraceID) || strings.Contains(privateBody, "viewer processing failed") {
+				t.Fatalf("public %s terminal error crossed into authenticated private Mio SSE: %s", recipient, privateBody)
+			}
+		})
+	}
+}
+
+func TestViewerStalePublicTerminalErrorFailsClosedInSSE(t *testing.T) {
+	cfg, deps, repo, store, _ := newViewerTerminalErrorTestFixture(t)
+	createdAt := time.Now().UTC()
+	logicalDate := createdAt.Format("2006-01-02")
+	replacementLogicalDate := createdAt.AddDate(0, 0, 1).Format("2006-01-02")
+	address, err := domainconversation.NewChannelAddress("viewer", publicViewerChatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, _, err := repo.LoadOrCreateCanonical(context.Background(), logicalDate, address, createdAt)
+	if err != nil || session == nil {
+		t.Fatalf("seed public canonical Session=%v err=%v", session, err)
+	}
+	acceptedBinding, err := domainsession.NewCanonicalSessionPublicationBinding(session)
+	if err != nil {
+		t.Fatalf("capture accepted public publication binding: %v", err)
+	}
+	processor := viewerBridgeErrorAfterCanonicalSessionRekeyProcessor{
+		repository: repo, replacementLogicalDate: replacementLogicalDate, address: address,
+	}
+	accepted := sendViewerTerminalErrorTestRequest(t, cfg, deps, repo, processor, "shiro")
+	terminal := waitForViewerTerminalErrorTestEvent(t, store, deps.eventRelay, accepted.TraceID)
+	if terminal.SessionID != acceptedBinding.SessionID() || terminal.Payload["session_id"] != accepted.SessionID ||
+		terminal.Payload["publication_incarnation"] != acceptedBinding.PublicationIncarnation() {
+		t.Fatalf("stale terminal error identity=%+v payload=%#v, want accepted Session %q/incarnation %q", terminal, terminal.Payload, acceptedBinding.SessionID(), acceptedBinding.PublicationIncarnation())
+	}
+	current, found, err := repo.LoadCanonical(context.Background(), replacementLogicalDate, address)
+	if err != nil || !found || current == nil || current.ID() != accepted.SessionID || current.LogicalDate() != replacementLogicalDate ||
+		current.PublicationIncarnation() == acceptedBinding.PublicationIncarnation() {
+		t.Fatalf("current rekeyed public Session=%v found=%v err=%v, want same SessionID with a new canonical incarnation", current, found, err)
+	}
+	currentBinding, err := domainsession.NewCanonicalSessionPublicationBinding(current)
+	if err != nil {
+		t.Fatalf("capture current rekeyed publication binding: %v", err)
+	}
+	if currentBinding.SameIdentity(acceptedBinding) {
+		t.Fatalf("accepted binding=%+v and current rekeyed binding=%+v must have distinct publication identities", acceptedBinding, currentBinding)
+	}
+	if _, found, err := repo.LoadCanonical(context.Background(), logicalDate, address); err != nil || found {
+		t.Fatalf("old public canonical lookup=(found=%t err=%v), want retired after rekey", found, err)
+	}
+	response := viewerTerminalErrorTestSSE(t, cfg, deps, "/viewer/events?to=shiro", "")
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), accepted.TraceID) || strings.Contains(response.Body.String(), "viewer processing failed") {
+		t.Fatalf("stale public terminal error escaped visibility filtering: status=%d body=%s", response.Code, response.Body.String())
 	}
 }

@@ -35,6 +35,22 @@ type ResearchDocumentStore interface {
 	ResearchDocumentExactReader
 }
 
+// ResearchStructuredRecallPort resolves only owner-registered, current local
+// indexes. Implementations must exact-read source evidence before returning a
+// hit and report unavailable when the current receipt or source is missing.
+type ResearchStructuredRecallPort interface {
+	RecallPageIndexDocuments(context.Context, c.Envelope, c.RecallRequest, string, int) ([]c.Hit, bool, error)
+	RecallCodeGraph(context.Context, c.Envelope, c.RecallRequest, string, int) ([]c.Hit, bool, error)
+}
+
+// ResearchStructuredRecallPorts enables a configured structured backend for
+// each target independently. Disabled code recall keeps the literal Git path.
+type ResearchStructuredRecallPorts struct {
+	Owner            ResearchStructuredRecallPort
+	PageIndexEnabled bool
+	CodeGraphEnabled bool
+}
+
 // RegisteredRepository is an owner-configured local Git snapshot. Request
 // values select only Ref and an allowlisted immutable commit, never Path.
 type RegisteredRepository struct {
@@ -53,6 +69,7 @@ type LocalRecall struct {
 	documents    ResearchDocumentStore
 	repositories []RegisteredRepository
 	semantic     *ResearchSemanticRecallPorts
+	structured   *ResearchStructuredRecallPorts
 }
 
 func NewLocalRecall(knowledge engine.RecallPort, documents ResearchDocumentStore, repos []RegisteredRepository) *LocalRecall {
@@ -64,6 +81,22 @@ func NewLocalRecall(knowledge engine.RecallPort, documents ResearchDocumentStore
 func NewLocalRecallWithSemantic(knowledge engine.RecallPort, documents ResearchDocumentStore, repos []RegisteredRepository, semantic ResearchSemanticRecallPorts) *LocalRecall {
 	recall := NewLocalRecall(knowledge, documents, repos)
 	recall.semantic = &semantic
+	return recall
+}
+
+// NewLocalRecallWithStructured preserves the lexical owner paths and adds
+// explicitly enabled local PageIndex/CodeGraph recall.
+func NewLocalRecallWithStructured(knowledge engine.RecallPort, documents ResearchDocumentStore, repos []RegisteredRepository, structured ResearchStructuredRecallPorts) *LocalRecall {
+	recall := NewLocalRecall(knowledge, documents, repos)
+	recall.structured = &structured
+	return recall
+}
+
+// NewLocalRecallWithSemanticAndStructured composes the existing read-only
+// semantic path with independently configured local structure backends.
+func NewLocalRecallWithSemanticAndStructured(knowledge engine.RecallPort, documents ResearchDocumentStore, repos []RegisteredRepository, semantic ResearchSemanticRecallPorts, structured ResearchStructuredRecallPorts) *LocalRecall {
+	recall := NewLocalRecallWithSemantic(knowledge, documents, repos, semantic)
+	recall.structured = &structured
 	return recall
 }
 
@@ -137,6 +170,16 @@ func (r *LocalRecall) Recall(ctx context.Context, envelope c.Envelope, request c
 			} else {
 				hits, unavailable, err = r.recallDocuments(ctx, envelope, request, query, limit)
 			}
+			if r != nil && r.structured != nil && r.structured.PageIndexEnabled {
+				if r.structured.Owner == nil {
+					unavailable = true
+				} else {
+					pageHits, pageUnavailable, pageErr := r.structured.Owner.RecallPageIndexDocuments(ctx, envelope, request, query, limit)
+					hits = append(pageHits, hits...)
+					unavailable = unavailable || pageUnavailable
+					err = errors.Join(err, pageErr)
+				}
+			}
 			result.Hits = append(result.Hits, hits...)
 			if unavailable {
 				result.Missing = append(result.Missing, target)
@@ -145,7 +188,18 @@ func (r *LocalRecall) Recall(ctx context.Context, envelope c.Envelope, request c
 				errs = append(errs, err)
 			}
 		case "code":
-			hits, unavailable, err := r.recallCode(ctx, envelope, request, query, limit)
+			var hits []c.Hit
+			var unavailable bool
+			var err error
+			if r != nil && r.structured != nil && r.structured.CodeGraphEnabled {
+				if r.structured.Owner == nil {
+					unavailable = true
+				} else {
+					hits, unavailable, err = r.structured.Owner.RecallCodeGraph(ctx, envelope, request, query, limit)
+				}
+			} else {
+				hits, unavailable, err = r.recallCode(ctx, envelope, request, query, limit)
+			}
 			result.Hits = append(result.Hits, hits...)
 			if unavailable {
 				result.Missing = append(result.Missing, target)

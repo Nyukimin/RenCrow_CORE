@@ -25,6 +25,9 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	if err := ensureProcessRequestIdentity(&req); err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	if err := validateVersionedResearchRequest(req.UserMessage); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	sess, req, err := o.sessions.ResolveForRequest(ctx, req, startedAt)
 	if err != nil {
 		return ProcessMessageResponse{}, fmt.Errorf("failed to resolve session: %w", err)

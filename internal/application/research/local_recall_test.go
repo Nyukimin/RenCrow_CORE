@@ -60,6 +60,30 @@ func TestLocalRecallReportsUnavailableDocumentTarget(t *testing.T) {
 	}
 }
 
+func TestLocalRecallEnabledStructuredBackendNeverFallsBackWhenOwnerIsMissing(t *testing.T) {
+	repoPath := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoPath, "init", "-q")
+	runGit(t, repoPath, "config", "user.email", "test@example.invalid")
+	runGit(t, repoPath, "config", "user.name", "Research Test")
+	if err := os.WriteFile(filepath.Join(repoPath, "example.go"), []byte("package example\n// literal evidence\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoPath, "add", "example.go")
+	runGit(t, repoPath, "commit", "-q", "-m", "fixture")
+	revision := strings.TrimSpace(runGit(t, repoPath, "rev-parse", "HEAD"))
+	repository := RegisteredRepository{Ref: "repo-sample", Path: repoPath, AllowedRevisions: []string{revision}, Scope: "user", OwnerID: "ren"}
+	adapter := NewLocalRecallWithStructured(nil, nil, []RegisteredRepository{repository}, ResearchStructuredRecallPorts{CodeGraphEnabled: true})
+	result, err := adapter.Recall(context.Background(), c.Envelope{DataScope: "user", OwnerID: "ren"}, c.RecallRequest{
+		Query: "literal evidence", Targets: []string{"code"}, RepoRef: repository.Ref, Revision: revision,
+	})
+	if err != nil || len(result.Hits) != 0 || !containsRecallTarget(result.Missing, "code") {
+		t.Fatalf("enabled CodeGraph without its owner must be unavailable: result=%#v err=%v", result, err)
+	}
+}
+
 func TestLocalRecallKeepsLegacyRevisionlessHTTPEventCompatible(t *testing.T) {
 	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "legacy.db"))
 	if err != nil {

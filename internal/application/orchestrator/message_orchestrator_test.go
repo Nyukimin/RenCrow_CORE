@@ -1571,6 +1571,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *testin
 	result := searcher.result
 	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	orch.SetEventListener(listener)
 
@@ -1611,6 +1612,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testi
 	result := searcher.result
 	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	orch.SetRecallTraceStore(recall)
 	orch.SetEventListener(listener)
@@ -1659,6 +1661,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(t *t
 	req.UserMessage = "ログを探して"
 	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	orch.SetEventListener(listener)
 
@@ -1683,6 +1686,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIRecallTraceErrorFails(t *
 	}
 	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(newRecordingTaskLifecycleManager())
 	orch.SetDCISearcher(searcher)
 	orch.SetRecallTraceStore(&mockRecallTraceStore{err: fmt.Errorf("l1 unavailable")})
 	orch.SetEventListener(listener)

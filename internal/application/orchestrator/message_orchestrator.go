@@ -526,6 +526,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := ensureProcessRequestIdentity(&req); err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	if err := validateVersionedResearchRequest(req.UserMessage); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	turntiming.Mark(ctx, turntiming.PointProcessSessionStarted)
 	sess, req, boundOwnerID, err := o.sessions.ResolveForRequestWithOwner(ctx, req, latencyStartedAt.UTC())
 	turntiming.Mark(ctx, turntiming.PointProcessSessionEnded)

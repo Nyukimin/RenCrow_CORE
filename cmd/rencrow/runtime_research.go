@@ -62,7 +62,7 @@ type researchAdmissionResponse struct {
 
 // This is a local authenticated business-task owner, not a public URL-fetch
 // proxy. It accepts only versioned Research requests and returns no raw paths.
-func newResearchOwnerHandler(cfg *config.Config, e *engine.Engine, tasks *taskmanager.Manager, resultRecorder tools.ResearchResultRecorder, indexBuilder researchDocumentIndexBuilder) (http.HandlerFunc, error) {
+func newResearchOwnerHandler(cfg *config.Config, e *engine.Engine, tasks *taskmanager.Manager, resultRecorder tools.ResearchResultRecorder, indexBuilder researchDocumentIndexBuilder, structuredOwners ...*researchStructuredIndexOwner) (http.HandlerFunc, error) {
 	if e == nil {
 		return nil, nil
 	}
@@ -74,6 +74,10 @@ func newResearchOwnerHandler(cfg *config.Config, e *engine.Engine, tasks *taskma
 		return nil, err
 	}
 	owner := cfg.LocalAgentOps.UserID
+	var structuredOwner *researchStructuredIndexOwner
+	if len(structuredOwners) > 0 {
+		structuredOwner = structuredOwners[0]
+	}
 	var recorder tools.ResearchResultRecorder = &coreresearch.ResultRecorder{Store: e.Ports.Store, Tasks: tasks}
 	if resultRecorder != nil {
 		recorder = resultRecorder
@@ -99,7 +103,7 @@ func newResearchOwnerHandler(cfg *config.Config, e *engine.Engine, tasks *taskma
 			fail(http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, researchOwnerMaxRequestBytes))
 		decoder.DisallowUnknownFields()
 		var input researchOwnerRequest
 		if err := decoder.Decode(&input); err != nil {
@@ -114,6 +118,13 @@ func newResearchOwnerHandler(cfg *config.Config, e *engine.Engine, tasks *taskma
 		caller := c.Envelope{OwnerID: owner, Actor: owner, DataScope: "user", PolicyRevision: tools.ResearchPolicyRevision}
 		if e.PolicyRevision != "" {
 			caller.PolicyRevision = e.PolicyRevision
+		}
+		if input.Operation != "source_register" && len(input.Request) > 64*1024 {
+			fail(http.StatusRequestEntityTooLarge, "request_too_large")
+			return
+		}
+		if structuredOwner != nil && structuredOwner.handleOperation(w, r, input, caller, owner) {
+			return
 		}
 		if handleResearchIndexOperation(w, r, input, caller, owner, tasks, indexBuilder) {
 			return

@@ -1104,7 +1104,11 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	if err != nil {
 		log.Fatalf("Research semantic index initialization failed: %v", err)
 	}
-	if err := connectResearchRecall(conversationRuntime.ResearchEngine, toolRuntime, researchDocuments, cfg, semanticEmbeddings, semanticSourcePolicy); err != nil {
+	structuredResearchOwner, err := buildResearchStructuredIndexOwner(cfg, conversationRuntime.ResearchEngine, deps.taskManager)
+	if err != nil {
+		log.Fatalf("Research structured index initialization failed: %v", err)
+	}
+	if err := connectResearchRecall(conversationRuntime.ResearchEngine, toolRuntime, researchDocuments, cfg, semanticEmbeddings, semanticSourcePolicy, structuredResearchOwner); err != nil {
 		log.Fatalf("Research recall initialization failed: %v", err)
 	}
 	var researchResultRecorder *coreresearch.ResultRecorder
@@ -1115,7 +1119,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 			toolRuntime.ChatRunnerV2.WithResearchResultRecorder(researchResultRecorder)
 		}
 	}
-	deps.researchOwner, err = newResearchOwnerHandler(cfg, conversationRuntime.ResearchEngine, deps.taskManager, researchResultRecorder, researchIndexBuilder)
+	deps.researchOwner, err = newResearchOwnerHandler(cfg, conversationRuntime.ResearchEngine, deps.taskManager, researchResultRecorder, researchIndexBuilder, structuredResearchOwner)
 	if err != nil {
 		log.Fatalf("Research owner initialization failed: %v", err)
 	}

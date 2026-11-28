@@ -25,17 +25,21 @@ func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req Pro
 	}
 
 	taskIDText := taskID.String()
-	result, err := o.dciSearcher.Search(ctx, req.UserMessage)
+	dciCtx, err := explicitDCIExecutionContext(ctx, input, taskID, o.taskLifecycle)
+	if err != nil {
+		return ProcessMessageResponse{}, true, err
+	}
+	result, err := o.dciSearcher.Search(dciCtx, req.UserMessage)
 	if err != nil {
 		return ProcessMessageResponse{}, true, fmt.Errorf("dci search failed: %w", err)
 	}
 
 	response := formatDCIResponse(result)
-	if err := o.saveDCIRecallTrace(ctx, input, result); err != nil {
+	if err := o.saveDCIRecallTrace(dciCtx, input, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	routedInput := input.WithRoute(routing.RouteRESEARCH)
-	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, routedInput); err != nil {
+	if err := o.sessions.SaveCompletedTurnInput(dciCtx, sess, routedInput); err != nil {
 		return ProcessMessageResponse{}, true, fmt.Errorf("failed to save session: %w", err)
 	}
 	o.emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), taskIDText, req.SessionID, req.Channel, req.ChatID)

@@ -17,9 +17,11 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
 	appkm "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
 	coreresearch "github.com/Nyukimin/RenCrow_CORE/internal/application/research"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	c "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/contract"
 	"github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/engine"
+	"github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/localbackend"
 )
 
 func buildResearchEngine(cfg *config.Config, searcher coreresearch.Searcher, fetcher coreresearch.Fetcher, staging coreresearch.L1StagingStore) (*engine.Engine, *engine.FileStore, error) {
@@ -170,6 +172,7 @@ func connectResearchRecall(
 	cfg *config.Config,
 	embeddings coreresearch.SemanticEmbeddingPort,
 	sourcePolicy coreresearch.SourcePolicy,
+	structuredOwners ...*researchStructuredIndexOwner,
 ) error {
 	if e == nil {
 		return nil
@@ -205,18 +208,65 @@ func connectResearchRecall(
 	for _, repo := range cfg.Research.Repositories {
 		repos = append(repos, coreresearch.RegisteredRepository{Ref: repo.Ref, Path: repo.Path, AllowedRevisions: append([]string(nil), repo.AllowedRevisions...), Scope: repo.Scope, OwnerID: repo.OwnerID})
 	}
+	structured := coreresearch.ResearchStructuredRecallPorts{}
+	if cfg.Research.StructuredIndex.PageIndex.Enabled || cfg.Research.StructuredIndex.CodeGraph.Enabled {
+		if len(structuredOwners) == 0 || structuredOwners[0] == nil {
+			return fmt.Errorf("Research structured recall requires its authenticated owner and Task receipt")
+		}
+		structured = coreresearch.ResearchStructuredRecallPorts{
+			Owner: structuredOwners[0], PageIndexEnabled: cfg.Research.StructuredIndex.PageIndex.Enabled,
+			CodeGraphEnabled: cfg.Research.StructuredIndex.CodeGraph.Enabled,
+		}
+	}
 	if !cfg.Research.SemanticIndex.Enabled {
-		e.Ports.Recall = coreresearch.NewLocalRecall(knowledge, documents, repos)
+		if structured.Owner != nil {
+			e.Ports.Recall = coreresearch.NewLocalRecallWithStructured(knowledge, documents, repos, structured)
+		} else {
+			e.Ports.Recall = coreresearch.NewLocalRecall(knowledge, documents, repos)
+		}
 		return nil
 	}
 	vectorReader, ok := documents.(coreresearch.ResearchDocumentVectorReader)
 	if !ok || embeddings == nil || sourcePolicy == nil {
 		return fmt.Errorf("Research semantic recall requires the configured embedding port, vector reader, and source policy")
 	}
-	e.Ports.Recall = coreresearch.NewLocalRecallWithSemantic(knowledge, documents, repos, coreresearch.ResearchSemanticRecallPorts{
+	semantic := coreresearch.ResearchSemanticRecallPorts{
 		VectorReader: vectorReader,
 		Embeddings:   embeddings,
 		SourcePolicy: sourcePolicy,
-	})
+	}
+	if structured.Owner != nil {
+		e.Ports.Recall = coreresearch.NewLocalRecallWithSemanticAndStructured(knowledge, documents, repos, semantic, structured)
+	} else {
+		e.Ports.Recall = coreresearch.NewLocalRecallWithSemantic(knowledge, documents, repos, semantic)
+	}
 	return nil
+}
+
+func buildResearchStructuredIndexOwner(cfg *config.Config, e *engine.Engine, tasks *taskmanager.Manager) (*researchStructuredIndexOwner, error) {
+	if cfg == nil || !cfg.Research.StructuredIndex.PageIndex.Enabled && !cfg.Research.StructuredIndex.CodeGraph.Enabled {
+		return nil, nil
+	}
+	if e == nil || e.Ports.Store == nil || tasks == nil || !cfg.LocalAgentOps.Enabled || cfg.LocalAgentOps.UserID == "" {
+		return nil, fmt.Errorf("Research structured index requires the existing authenticated local owner, artifact Store, and Task owner")
+	}
+	owner := &researchStructuredIndexOwner{config: cfg, ownerID: cfg.LocalAgentOps.UserID, store: e.Ports.Store, tasks: tasks}
+	page := cfg.Research.StructuredIndex.PageIndex
+	if page.Enabled {
+		port, err := localbackend.NewPageIndexCLI(page.PythonExecutable, page.RuntimeRoot, page.RuntimeManifestSHA256, page.TempRoot, time.Duration(page.TimeoutSeconds)*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("initialize trusted local PageIndex backend: %w", err)
+		}
+		owner.pageIndex = port
+	}
+	graph := cfg.Research.StructuredIndex.CodeGraph
+	if graph.Enabled {
+		port, err := localbackend.NewCodebaseMemoryCLI(graph.Executable, graph.BinarySHA256, graph.RuntimeVersion, graph.SourceCommit,
+			graph.CacheRoot, graph.RuntimeRoot, graph.TempRoot, time.Duration(graph.TimeoutSeconds)*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("initialize trusted local CodeGraph backend: %w", err)
+		}
+		owner.codeGraph = port
+	}
+	return owner, nil
 }
