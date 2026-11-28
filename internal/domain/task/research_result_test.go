@@ -1,6 +1,7 @@
 package task
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestResearchResultLocalReuseIsSeparatedFromExternalAcquisition(t *testing.T
 		t.Fatal(err)
 	}
 	summary := projection.TaskSummary()
-	for _, fact := range []string{"local_documents_reused=1", "external_documents_acquired=1"} {
+	for _, fact := range []string{"local_documents_reused=1", "local_materials_acquired=0", "external_documents_acquired=1"} {
 		if !strings.Contains(summary, fact) {
 			t.Fatalf("local evidence was counted as external acquisition: %s", summary)
 		}
@@ -63,6 +64,37 @@ func TestResearchResultLocalReuseIsSeparatedFromExternalAcquisition(t *testing.T
 		if err := projection.Validate(task); err == nil {
 			t.Fatalf("impossible local evidence count %d was accepted", invalid)
 		}
+	}
+}
+
+func TestResearchResultLocalMaterialAcquisitionIsSeparatedFromExternal(t *testing.T) {
+	task := Task{TaskID: modulecore.NewTaskID()}
+	projection := validResearchProjection(task)
+	projection.Counts = ResearchResultCounts{DocumentsFetched: 3, LocalMaterialsAcquired: 2}
+	if err := projection.Validate(task); err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range []string{"sources_fetched=3", "local_documents_reused=0", "local_materials_acquired=2", "external_documents_acquired=1"} {
+		if !strings.Contains(projection.TaskSummary(), fact) {
+			t.Fatalf("local material count was not projected accurately: %s", projection.TaskSummary())
+		}
+	}
+	for _, counts := range []ResearchResultCounts{
+		{DocumentsFetched: 3, LocalMaterialsAcquired: -1},
+		{DocumentsFetched: 3, LocalMaterialsAcquired: 4},
+		{DocumentsFetched: 3, LocalDocumentsReused: 2, LocalMaterialsAcquired: 2},
+	} {
+		projection.Counts = counts
+		if err := projection.Validate(task); err == nil {
+			t.Fatalf("impossible local material counts were accepted: %+v", counts)
+		}
+	}
+	legacy, err := json.Marshal(ResearchResultCounts{DocumentsFetched: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(legacy), "local_materials_acquired") {
+		t.Fatalf("zero local material count changed the legacy Task projection wire: %s", legacy)
 	}
 }
 

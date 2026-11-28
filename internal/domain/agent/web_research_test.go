@@ -136,6 +136,245 @@ func TestWebResearchAllAgentGenerationPathsReceiveEvidence(t *testing.T) {
 	}
 }
 
+func TestWebResearchTypedCompletionIsSharedAcrossManagementActors(t *testing.T) {
+	requestText := `{"schema_version":"rencrow.research.request.v1","mode":"investigate","objective":"Search the official source"}`
+	result := map[string]any{
+		"schema_version": "rencrow.research.result.v1", "run_id": "research-run-1", "status": "succeeded",
+		"missing": []string{}, "counts": map[string]any{"candidates": 0},
+		"artifacts": []map[string]string{
+			{"kind": "collection", "hash": strings.Repeat("b", 64), "ref": "collection-ref"},
+			{"kind": "report", "hash": strings.Repeat("a", 64), "ref": "report-ref"},
+		},
+		"report": "Owner-produced report body.",
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const taskSummary = "Research status=succeeded; documents_analyzed=1; records_saved=1"
+	for _, actor := range []string{"mio", "shiro", "kuro", "midori"} {
+		t.Run(actor, func(t *testing.T) {
+			research := &webResearchStub{evidence: []llm.Message{{
+				Role: "user", Type: llm.PromptContextVariable, Content: string(data), Metadata: map[string]string{
+					"runtime_context_kind": "web_research_evidence", "research_status": "succeeded",
+					"research_request_schema": "rencrow.research.request.v1", "research_mode": "investigate",
+					"research_task_summary": taskSummary,
+				},
+			}}}
+			innerCalls := 0
+			provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+				innerCalls++
+				return llm.GenerateResponse{Content: "LLM promise"}, nil
+			}}
+			input := newAgentTurnInput(t, requestText, "viewer", "research-user")
+			var err error
+			var output string
+			switch actor {
+			case "mio":
+				output, err = NewMioAgent(provider, nil, nil, nil, nil, nil).WithWebResearch(research).Chat(context.Background(), input)
+			case "shiro":
+				output, err = NewShiroAgent(provider, nil, nil, "shiro", nil).WithWebResearch(research).Execute(context.Background(), input)
+			case "kuro":
+				output, err = NewHeavyAgent(provider, "kuro").WithWebResearch(research).Generate(context.Background(), input)
+			case "midori":
+				output, err = NewWildAgent(provider, "midori").WithWebResearch(research).Generate(context.Background(), input)
+			}
+			if err != nil || innerCalls != 0 || !strings.Contains(output, taskSummary) || !strings.Contains(output, "Owner-produced report body.") || strings.Contains(output, "LLM promise") {
+				t.Fatalf("typed Research did not return authoritative completion: output=%q final_generations=%d err=%v", output, innerCalls, err)
+			}
+		})
+	}
+}
+
+func TestWebResearchTypedRequestPreservesStructuredCallerContract(t *testing.T) {
+	requestText := `{"schema_version":"rencrow.research.request.v1","mode":"investigate","objective":"Search the official source"}`
+	result := `{"schema_version":"rencrow.research.result.v1","run_id":"research-run-structured","status":"succeeded","missing":[],"counts":{"candidates":0},"artifacts":[]}`
+	for _, test := range []struct {
+		name    string
+		prepare func() llm.GenerateRequest
+	}{
+		{
+			name: "response format",
+			prepare: func() llm.GenerateRequest {
+				return llm.GenerateRequest{
+					Messages:       []llm.Message{{Role: "user", Type: llm.PromptContextUser, Content: requestText}},
+					ResponseFormat: llm.ResponseFormatJSONObject,
+				}
+			},
+		},
+		{
+			name: "Coder prompt contract",
+			prepare: func() llm.GenerateRequest {
+				return llm.GenerateRequest{Messages: []llm.Message{
+					coderOwnedPromptBlock(coderPromptOwnerContract, CommonCoderContract, llm.PromptContextCharacter),
+					{Role: "user", Type: llm.PromptContextUser, Content: requestText},
+				}}
+			},
+		},
+		{
+			name: "system prompt contract",
+			prepare: func() llm.GenerateRequest {
+				return llm.GenerateRequest{
+					Messages:     []llm.Message{{Role: "user", Type: llm.PromptContextUser, Content: requestText}},
+					SystemPrompt: "Return the caller's declared JSON object.",
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			research := &webResearchStub{evidence: []llm.Message{{
+				Role: "user", Type: llm.PromptContextVariable, Content: result,
+				Metadata: map[string]string{
+					"runtime_context_kind": "web_research_evidence", "research_status": "succeeded",
+					"research_request_schema": "rencrow.research.request.v1", "research_mode": "investigate",
+					"research_task_summary": "Research status=succeeded",
+				},
+			}}}
+			innerCalls := 0
+			provider := &mockLLMProvider{generateFunc: func(_ context.Context, request llm.GenerateRequest) (llm.GenerateResponse, error) {
+				innerCalls++
+				if test.name == "response format" && request.ResponseFormat != llm.ResponseFormatJSONObject {
+					t.Fatalf("structured ResponseFormat was lost: %q", request.ResponseFormat)
+				}
+				if test.name == "system prompt contract" && request.SystemPrompt != "Return the caller's declared JSON object." {
+					t.Fatalf("structured SystemPrompt was lost: %q", request.SystemPrompt)
+				}
+				if test.name == "Coder prompt contract" {
+					foundContract := false
+					for _, message := range request.Messages {
+						if message.Metadata[coderPromptOwnerMetadataKey] == coderPromptOwnerContract && message.Content == CommonCoderContract {
+							foundContract = true
+						}
+					}
+					if !foundContract {
+						t.Fatal("Coder's owned output contract was lost")
+					}
+				}
+				return llm.GenerateResponse{Content: "contract-compliant output"}, nil
+			}}
+			if _, err := withWebResearch(provider, research).Generate(context.Background(), test.prepare()); err != nil || innerCalls != 1 || research.calls != 1 {
+				t.Fatalf("structured caller contract was replaced: final=%d research=%d err=%v", innerCalls, research.calls, err)
+			}
+		})
+	}
+}
+
+func TestWebResearchTypedSearchOnlyReturnsActualCandidateLinks(t *testing.T) {
+	request := llm.GenerateRequest{Messages: []llm.Message{{
+		Role: "user", Type: llm.PromptContextUser,
+		Content: `{"schema_version":"rencrow.research.request.v1","mode":"search_only","objective":"Find official links"}`,
+	}}}
+	result := map[string]any{
+		"schema_version": "rencrow.research.result.v1", "run_id": "research-run-2", "status": "succeeded",
+		"missing": []string{}, "counts": map[string]any{"candidates": 2},
+		"candidates": []map[string]string{
+			{"canonical_url": "https://example.org/one", "stable_item_id": "item-one"},
+			{"stable_item_id": "item-two"},
+		},
+		"artifacts": []map[string]string{
+			{"kind": "collection", "hash": strings.Repeat("b", 64), "ref": "collection-ref"},
+			{"kind": "report", "hash": strings.Repeat("a", 64), "ref": "report-ref"},
+		},
+		"report": "search-only should not show report body",
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	research := &webResearchStub{evidence: []llm.Message{{
+		Role: "user", Type: llm.PromptContextVariable, Content: string(data), Metadata: map[string]string{
+			"runtime_context_kind": "web_research_evidence", "research_status": "succeeded",
+			"research_request_schema": "rencrow.research.request.v1", "research_mode": "search_only",
+			"research_task_summary": "Research status=succeeded; candidates=2",
+		},
+	}}}
+	innerCalls := 0
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		innerCalls++
+		return llm.GenerateResponse{Content: "unverified promise"}, nil
+	}}
+	response, err := withWebResearch(provider, research).Generate(context.Background(), request)
+	if err != nil || innerCalls != 0 {
+		t.Fatalf("search-only Research did not return deterministic links: response=%+v final_generations=%d err=%v", response, innerCalls, err)
+	}
+	for _, expected := range []string{"https://example.org/one", "stable_item_id=\"item-one\"", "stable_item_id=\"item-two\"", "candidates=2"} {
+		if !strings.Contains(response.Content, expected) {
+			t.Errorf("completion omitted actual search-only fact %q: %s", expected, response.Content)
+		}
+	}
+	if strings.Contains(response.Content, "collection-ref") || strings.Contains(response.Content, "Report artifacts") || strings.Contains(response.Content, "report-ref") || strings.Contains(response.Content, "search-only should not show report body") {
+		t.Fatalf("search-only output included report or non-report artifacts: %s", response.Content)
+	}
+}
+
+func TestWebResearchCollectCompletionShowsOnlyOwnerFacts(t *testing.T) {
+	const taskSummary = "Research status=succeeded; result_ref=sha256:result; receipt_state=verified"
+	content, err := formatWebResearchCompletion(taskSummary, "collect", WebResearchRunResult{
+		Report:    "unexpected report body",
+		Artifacts: []WebResearchArtifactRef{{Kind: "report", Hash: strings.Repeat("a", 64), Ref: "report-ref"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, taskSummary) || strings.Contains(content, "unexpected report body") || strings.Contains(content, "Report artifacts") || strings.Contains(content, "report-ref") {
+		t.Fatalf("collect output did not stay with owner facts: %s", content)
+	}
+}
+
+func TestWebResearchInvestigateRejectsMismatchedSHA256ReportReference(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	_, err := formatWebResearchCompletion("Research status=succeeded", "investigate", WebResearchRunResult{
+		Artifacts: []WebResearchArtifactRef{{Kind: "report", Hash: hash, Ref: "sha256:" + strings.Repeat("b", 64)}},
+	})
+	if err == nil {
+		t.Fatal("report artifact reference with a different SHA-256 was displayed")
+	}
+}
+
+func TestWebResearchTypedCompletionRejectsUnnormalizedModeMismatch(t *testing.T) {
+	request := llm.GenerateRequest{Messages: []llm.Message{{
+		Role: "user", Type: llm.PromptContextUser,
+		Content: `{"schema_version":"rencrow.research.request.v1","mode":"collect","objective":"Search the official source"}`,
+	}}}
+	research := &webResearchStub{evidence: []llm.Message{{
+		Role: "user", Type: llm.PromptContextVariable,
+		Content: `{"schema_version":"rencrow.research.result.v1","run_id":"research-run-mode-mismatch","status":"succeeded","missing":[],"counts":{"candidates":0},"artifacts":[]}`,
+		Metadata: map[string]string{
+			"runtime_context_kind": "web_research_evidence", "research_status": "succeeded",
+			"research_request_schema": "rencrow.research.request.v1", "research_mode": "search_only",
+			"research_task_summary": "Research status=succeeded",
+		},
+	}}}
+	innerCalls := 0
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		innerCalls++
+		return llm.GenerateResponse{Content: "unverified promise"}, nil
+	}}
+	if _, err := withWebResearch(provider, research).Generate(context.Background(), request); err == nil || innerCalls != 0 {
+		t.Fatalf("typed completion accepted mismatched normalized mode: final=%d err=%v", innerCalls, err)
+	}
+}
+
+func TestWebResearchTypedSuccessWithoutRecordedTaskSummaryFailsClosed(t *testing.T) {
+	request := llm.GenerateRequest{Messages: []llm.Message{{
+		Role: "user", Type: llm.PromptContextUser,
+		Content: `{"schema_version":"rencrow.research.request.v1","mode":"collect","objective":"Collect official source"}`,
+	}}}
+	research := &webResearchStub{evidence: []llm.Message{{
+		Role: "user", Type: llm.PromptContextVariable,
+		Content:  `{"schema_version":"rencrow.research.result.v1","run_id":"run-missing-summary","status":"succeeded","missing":[],"artifacts":[]}`,
+		Metadata: map[string]string{"runtime_context_kind": "web_research_evidence", "research_status": "succeeded"},
+	}}}
+	innerCalls := 0
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		innerCalls++
+		return llm.GenerateResponse{Content: "unverified promise"}, nil
+	}}
+	if _, err := withWebResearch(provider, research).Generate(context.Background(), request); err == nil || innerCalls != 0 {
+		t.Fatalf("missing authoritative Task summary reached final LLM: calls=%d err=%v", innerCalls, err)
+	}
+}
+
 func TestWebResearchPreservesFinalStreamAndStructuredContract(t *testing.T) {
 	research := &webResearchStub{}
 	called := false
@@ -162,6 +401,7 @@ func TestWebResearchDoesNotReplaceMioLogicalRetrievalOrSearchOrdinaryChat(t *tes
 		{Messages: []llm.Message{{Role: "user", Content: "こんにちは"}}},
 		{Messages: []llm.Message{{Role: "user", Content: "私の名前を覚えてる？"}}},
 		{Messages: []llm.Message{{Role: "user", Content: "検索して"}}, LogicalOutcomeStream: llm.LogicalOutcomeStreamV2},
+		{Messages: []llm.Message{{Role: "user", Content: `{"schema_version":"rencrow.research.request.v1","mode":"investigate","objective":"official source"}`}}, LogicalOutcomeStream: llm.LogicalOutcomeStreamV2},
 	} {
 		research := &webResearchStub{}
 		if _, err := withWebResearch(&mockLLMProvider{}, research).Generate(context.Background(), request); err != nil || research.calls != 0 {

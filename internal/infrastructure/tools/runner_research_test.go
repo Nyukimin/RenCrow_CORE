@@ -6,14 +6,18 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	coreresearch "github.com/Nyukimin/RenCrow_CORE/internal/application/research"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	taskstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	contract "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/contract"
 	engine "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/engine"
@@ -215,6 +219,79 @@ func TestToolRunnerResearchRequiresResultProjectionOwner(t *testing.T) {
 	if !ok || result.Status != "succeeded" {
 		t.Fatal("valid source result lost when Task projection failed")
 	}
+}
+
+func TestToolRunnerResearchRecordsThroughOwnerExactlyOnce(t *testing.T) {
+	root := t.TempDir()
+	taskLog, err := taskstore.NewJSONLStoreWithOptions(filepath.Join(root, "tasks"), taskstore.OpenOptions{Index: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = taskLog.Close() })
+	tasks := taskmanager.New(taskLog, taskmanager.DefaultParallelLimits())
+	const actor = "agent-a"
+	taskID := modulecore.NewTaskID()
+	task, run, err := tasks.CreateAndStartRun(context.Background(), domaintask.Task{
+		TaskID: taskID, Title: "Research Tool owner path", OwnerID: actor, Assignee: actor,
+		ReadOnly: true, Route: domaintask.RouteResearch,
+	}, domaintask.SharedRoleContext{TaskID: taskID, UserIntent: "Search official sources"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := domainexecution.WithIdentity(context.Background(), task.TaskID, run.RunID, modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := tool.NewToolExecutionScope("research-request-1", tool.ActorKindAgent, actor, "", []string{tool.DataScopePublic}, tool.AuthenticationSourceAgentOrchestrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = tool.WithToolExecutionScope(ctx, scope)
+	artifactStore, err := engine.NewFileStore(filepath.Join(root, "artifacts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = artifactStore.Close() })
+	owner := &coreresearch.ResultRecorder{Store: artifactStore, Tasks: tasks}
+	recorder := &countingResearchProjectionRecorder{ResultRecorder: owner}
+	runner := NewToolRunner(ToolRunnerConfig{}).
+		WithResearchEngine(&engine.Engine{Ports: engine.Ports{Store: artifactStore}}).
+		WithResearchResultRecorder(recorder)
+	response, err := runner.ExecuteV2(ctx, researchRunToolName, map[string]any{"request": map[string]any{
+		"schema_version": contract.RequestSchema, "mode": "search_only", "objective": "Search official sources",
+		"seed_urls": []any{"https://example.org/source"}, "cost_profile": "zero_incremental_cost",
+	}})
+	if err != nil || response == nil || response.Error != nil || response.IsError() {
+		t.Fatalf("owner-backed research.run failed: response=%+v err=%v", response, err)
+	}
+	if recorder.projectionCalls != 1 || recorder.recordCalls != 0 {
+		t.Fatalf("Research owner was called through unexpected record path: projection=%d legacy=%d", recorder.projectionCalls, recorder.recordCalls)
+	}
+	projection, ok := response.Metadata["research_result_projection"].(domaintask.ResearchResultProjection)
+	artifactRef, refOK := response.Metadata["research_result_artifact_ref"].(string)
+	if !ok || !refOK || artifactRef == "" || artifactRef != projection.ArtifactRef {
+		t.Fatalf("Research runner did not return the exact owner projection handoff: metadata=%+v", response.Metadata)
+	}
+	stored, err := tasks.Get(ctx, task.TaskID)
+	if err != nil || stored.ResearchResult == nil || !reflect.DeepEqual(*stored.ResearchResult, projection) {
+		t.Fatalf("Tool result projection differs from the persisted Task owner: projection=%+v stored=%+v err=%v", projection, stored.ResearchResult, err)
+	}
+}
+
+type countingResearchProjectionRecorder struct {
+	*coreresearch.ResultRecorder
+	projectionCalls int
+	recordCalls     int
+}
+
+func (r *countingResearchProjectionRecorder) Record(ctx context.Context, env contract.Envelope, result contract.Result) error {
+	r.recordCalls++
+	return r.ResultRecorder.Record(ctx, env, result)
+}
+
+func (r *countingResearchProjectionRecorder) RecordWithProjection(ctx context.Context, env contract.Envelope, result contract.Result) (domaintask.ResearchResultProjection, error) {
+	r.projectionCalls++
+	return r.ResultRecorder.RecordWithProjection(ctx, env, result)
 }
 
 func TestToolRunnerResearchPreflightsProjectionBeforeEngine(t *testing.T) {

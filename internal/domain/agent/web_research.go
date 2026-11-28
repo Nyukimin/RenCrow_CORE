@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -26,12 +27,17 @@ type webResearchProvider struct {
 // WebResearchRunResult keeps the result fields required to explain an
 // incomplete Research run while RawResult retains the exact typed payload.
 type WebResearchRunResult struct {
-	SchemaVersion string                   `json:"schema_version"`
-	RunID         string                   `json:"run_id"`
-	Status        string                   `json:"status"`
-	Missing       []string                 `json:"missing"`
-	Artifacts     []WebResearchArtifactRef `json:"artifacts"`
-	RawResult     json.RawMessage          `json:"-"`
+	SchemaVersion  string                       `json:"schema_version"`
+	RunID          string                       `json:"run_id"`
+	TaskID         string                       `json:"task_id"`
+	ExecutionRunID string                       `json:"execution_run_id"`
+	Status         string                       `json:"status"`
+	Missing        []string                     `json:"missing"`
+	Counts         researchcontract.Counts      `json:"counts"`
+	Artifacts      []WebResearchArtifactRef     `json:"artifacts"`
+	Candidates     []researchcontract.Candidate `json:"candidates"`
+	Report         string                       `json:"report"`
+	RawResult      json.RawMessage              `json:"-"`
 }
 
 // WebResearchArtifactRef identifies an artifact persisted by the Research Engine.
@@ -83,6 +89,13 @@ func (p *webResearchProvider) Generate(ctx context.Context, request llm.Generate
 	if err := webResearchOutcomeError(evidence); err != nil {
 		return llm.GenerateResponse{}, fmt.Errorf("web research: %w", err)
 	}
+	if typedRequest := webResearchTypedRequest(request.Messages); typedRequest != "" && !webResearchHasStructuredOutputContract(request) {
+		response, err := webResearchCompletionResponse(request, evidence, typedRequest)
+		if err != nil {
+			return llm.GenerateResponse{}, fmt.Errorf("web research: %w", err)
+		}
+		return response, nil
+	}
 	// Preserve the original request, callbacks, output schema and typed prefix.
 	// Retrieved material is variable evidence, never a system instruction.
 	messages := make([]llm.Message, 0, len(request.Messages)+len(evidence))
@@ -99,6 +112,149 @@ func (p *webResearchProvider) Generate(ctx context.Context, request llm.Generate
 	}
 	request.Messages = messages
 	return p.inner.Generate(ctx, request)
+}
+
+func webResearchTypedRequest(messages []llm.Message) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if !strings.EqualFold(strings.TrimSpace(message.Role), "user") || message.Type == llm.PromptContextRecall || message.Type == llm.PromptContextVariable {
+			continue
+		}
+		raw := strings.TrimSpace(message.Content)
+		if strings.HasPrefix(raw, "```json\n") && strings.HasSuffix(raw, "\n```") {
+			raw = strings.TrimSuffix(strings.TrimPrefix(raw, "```json\n"), "\n```")
+		}
+		var request struct {
+			SchemaVersion string `json:"schema_version"`
+			Mode          string `json:"mode"`
+		}
+		if json.Unmarshal([]byte(raw), &request) == nil && request.SchemaVersion == researchcontract.RequestSchema {
+			return strings.ToLower(strings.TrimSpace(request.Mode))
+		}
+		return ""
+	}
+	return ""
+}
+
+func webResearchHasStructuredOutputContract(request llm.GenerateRequest) bool {
+	if strings.TrimSpace(request.SystemPrompt) != "" || request.ResponseFormat != llm.ResponseFormatText || request.LogicalOutcomeStream != "" || request.OnLogicalOutcomeEvent != nil {
+		return true
+	}
+	for _, message := range request.Messages {
+		if message.Metadata[coderPromptOwnerMetadataKey] == coderPromptOwnerContract {
+			return true
+		}
+	}
+	return false
+}
+
+func webResearchCompletionResponse(request llm.GenerateRequest, evidence []llm.Message, requestMode string) (llm.GenerateResponse, error) {
+	for _, message := range evidence {
+		if message.Metadata["runtime_context_kind"] != "web_research_evidence" {
+			continue
+		}
+		if message.Metadata["research_request_schema"] != researchcontract.RequestSchema ||
+			message.Metadata["research_mode"] != requestMode || message.Metadata["research_task_summary"] == "" {
+			return llm.GenerateResponse{}, fmt.Errorf("recorded Research Task completion facts are unavailable")
+		}
+		var result WebResearchRunResult
+		if err := json.Unmarshal([]byte(message.Content), &result); err != nil || result.SchemaVersion != researchcontract.ResultSchema || result.RunID == "" || result.Status != "succeeded" {
+			return llm.GenerateResponse{}, fmt.Errorf("Research completion result is invalid")
+		}
+		result.RawResult = append(json.RawMessage(nil), []byte(message.Content)...)
+		content, err := formatWebResearchCompletion(message.Metadata["research_task_summary"], requestMode, result)
+		if err != nil {
+			return llm.GenerateResponse{}, err
+		}
+		if request.OnToken != nil {
+			request.OnToken(content)
+		}
+		return llm.GenerateResponse{Content: content, FinishReason: "stop"}, nil
+	}
+	return llm.GenerateResponse{}, fmt.Errorf("recorded Research Task completion facts are unavailable")
+}
+
+func formatWebResearchCompletion(taskSummary, mode string, result WebResearchRunResult) (string, error) {
+	const maxReportedResearchRefs = 100
+	const maxResearchRefLength = 4096
+	switch mode {
+	case "search_only", "collect", "investigate", "refresh":
+	default:
+		return "", fmt.Errorf("Research completion mode is invalid")
+	}
+	var builder strings.Builder
+	if mode == "investigate" && result.Report != "" {
+		builder.WriteString(result.Report)
+		builder.WriteString("\n\n")
+	}
+	if mode == "search_only" {
+		if len(result.Candidates) > maxReportedResearchRefs || len(result.Candidates) != result.Counts.Candidates {
+			return "", fmt.Errorf("Research search result exceeds the completion display bound")
+		}
+		if len(result.Candidates) > 0 {
+			builder.WriteString("Search candidates:\n")
+			for _, candidate := range result.Candidates {
+				if candidate.URL != "" && (len(candidate.URL) > maxResearchRefLength || strings.TrimSpace(candidate.URL) != candidate.URL) {
+					return "", fmt.Errorf("Research candidate reference is invalid")
+				}
+				if candidate.StableID == "" && candidate.URL == "" {
+					return "", fmt.Errorf("Research candidate has no stable reference")
+				}
+				builder.WriteString("- ")
+				if candidate.URL != "" {
+					builder.WriteString(strconv.Quote(candidate.URL))
+				}
+				if candidate.StableID != "" {
+					if len(candidate.StableID) > maxResearchRefLength || strings.TrimSpace(candidate.StableID) != candidate.StableID {
+						return "", fmt.Errorf("Research candidate stable reference is invalid")
+					}
+					builder.WriteString(" stable_item_id=")
+					builder.WriteString(strconv.Quote(candidate.StableID))
+				}
+				builder.WriteByte('\n')
+			}
+			builder.WriteByte('\n')
+		}
+	}
+	builder.WriteString("Completion facts:\n")
+	builder.WriteString(taskSummary)
+	reportRefs := 0
+	if mode == "investigate" {
+		for _, artifact := range result.Artifacts {
+			if artifact.Kind != "report" {
+				continue
+			}
+			if len(artifact.Hash) != 64 || len(artifact.Ref) == 0 || len(artifact.Ref) > maxResearchRefLength ||
+				strings.TrimSpace(artifact.Ref) != artifact.Ref || !researchSHA256Hex(artifact.Hash) ||
+				(strings.HasPrefix(artifact.Ref, "sha256:") && artifact.Ref != "sha256:"+artifact.Hash) {
+				return "", fmt.Errorf("Research report artifact reference is invalid")
+			}
+			reportRefs++
+			if reportRefs > maxReportedResearchRefs {
+				return "", fmt.Errorf("Research report artifact references exceed the completion display bound")
+			}
+			if reportRefs == 1 {
+				builder.WriteString("\nReport artifacts:\n")
+			}
+			builder.WriteString("- ref=")
+			builder.WriteString(strconv.Quote(artifact.Ref))
+			builder.WriteString(" sha256=")
+			builder.WriteString(artifact.Hash)
+			builder.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(builder.String()), nil
+}
+
+func researchSHA256Hex(value string) bool {
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			if char < 'a' || char > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func webResearchOutcomeError(evidence []llm.Message) error {

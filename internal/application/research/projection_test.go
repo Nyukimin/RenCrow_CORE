@@ -13,6 +13,7 @@ import (
 	c "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/contract"
 	"github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/engine"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -60,8 +61,54 @@ func TestResultRecorderUsesExactCASJournalAndTaskOwner(t *testing.T) {
 	if err != nil || active.Status != "running" || !contains(active.Missing, "task_receipt") {
 		t.Fatalf("unclosed Task/Run was reported complete: %+v %v", active, err)
 	}
-	if err := recorder.Record(ctx, env, result); err != nil {
+	projected, err := recorder.RecordWithProjection(ctx, env, result)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if projected.ArtifactRef == "" || projected.ResultDigest != digestBytes(mustMarshalResearchResult(t, result)) {
+		t.Fatalf("recorded projection lost its authoritative CAS/digest binding: %+v", projected)
+	}
+	if err := ValidateResearchResultProjection(env, result, projected, projected.ArtifactRef, projected.RequiredReceiptsComplete); err != nil {
+		t.Fatalf("valid owner projection rejected: %v", err)
+	}
+	for _, mutate := range []struct {
+		name string
+		edit func(*c.Envelope, *domaintask.ResearchResultProjection, *string)
+	}{
+		{name: "task", edit: func(bound *c.Envelope, _ *domaintask.ResearchResultProjection, _ *string) {
+			bound.TaskID = string(core.NewTaskID())
+		}},
+		{name: "run", edit: func(bound *c.Envelope, _ *domaintask.ResearchResultProjection, _ *string) {
+			bound.RunID = string(core.NewRunID())
+		}},
+		{name: "actor", edit: func(bound *c.Envelope, _ *domaintask.ResearchResultProjection, _ *string) {
+			bound.Actor = "foreign-actor"
+		}},
+		{name: "scope", edit: func(bound *c.Envelope, _ *domaintask.ResearchResultProjection, _ *string) { bound.DataScope = "public" }},
+		{name: "owner", edit: func(bound *c.Envelope, _ *domaintask.ResearchResultProjection, _ *string) {
+			bound.OwnerID = "foreign-owner"
+		}},
+		{name: "digest", edit: func(_ *c.Envelope, projection *domaintask.ResearchResultProjection, _ *string) {
+			projection.ResultDigest = "mutated"
+		}},
+		{name: "CAS reference", edit: func(_ *c.Envelope, projection *domaintask.ResearchResultProjection, artifactRef *string) {
+			projection.ArtifactRef = "mutated-ref"
+			*artifactRef = projected.ArtifactRef
+		}},
+		{name: "receipt completeness", edit: func(_ *c.Envelope, projection *domaintask.ResearchResultProjection, _ *string) {
+			projection.RequiredReceiptsComplete = false
+		}},
+		{name: "receipt state", edit: func(_ *c.Envelope, projection *domaintask.ResearchResultProjection, _ *string) {
+			projection.ReceiptState = "pending"
+		}},
+	} {
+		t.Run(mutate.name, func(t *testing.T) {
+			badEnv, badProjection, badArtifactRef := env, projected, projected.ArtifactRef
+			mutate.edit(&badEnv, &badProjection, &badArtifactRef)
+			if err := ValidateResearchResultProjection(badEnv, result, badProjection, badArtifactRef, badProjection.RequiredReceiptsComplete); err == nil {
+				t.Fatal("mutated Research projection metadata accepted")
+			}
+		})
 	}
 	if err := recorder.Record(ctx, env, result); err != nil {
 		t.Fatalf("same projection not idempotent: %v", err)
@@ -71,7 +118,7 @@ func TestResultRecorderUsesExactCASJournalAndTaskOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := task.ResearchResult
-	if p == nil || p.Status != "succeeded" || p.Counts.RecordsSaved != 1 || p.Counts.BoardPostsCreated != 0 || p.ReceiptState != "verified" || !p.RequiredReceiptsComplete || len(p.VerifiedReceiptRefs) != 1 {
+	if p == nil || !reflect.DeepEqual(*p, projected) || p.Status != "succeeded" || p.Counts.RecordsSaved != 1 || p.Counts.BoardPostsCreated != 0 || p.ReceiptState != "verified" || !p.RequiredReceiptsComplete || len(p.VerifiedReceiptRefs) != 1 {
 		t.Fatalf("incorrect facts: %+v", p)
 	}
 	if strings.Contains(p.ArtifactRef, "example.org") || strings.Contains(task.Summary, text) {
@@ -158,6 +205,15 @@ func TestResultRecorderUsesExactCASJournalAndTaskOwner(t *testing.T) {
 	}
 }
 
+func mustMarshalResearchResult(t *testing.T, result c.Result) []byte {
+	t.Helper()
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func TestResearchProjectionPreservesLocalEvidenceCounter(t *testing.T) {
 	result := c.Result{RunID: "research-local", Status: "succeeded", Counts: c.Counts{DocumentsFetched: 2, LocalDocumentsReused: 1}}
 	projection := researchProjection(c.Envelope{}, result, "digest", "ref")
@@ -171,6 +227,14 @@ func TestResearchProjectionPreservesLocalEvidenceCounter(t *testing.T) {
 	}
 	if decoded.Counts.LocalDocumentsReused != 1 || decoded.Counts.DocumentsFetched != 2 || !strings.Contains(decoded.TaskSummary(), "external_documents_acquired=1") {
 		t.Fatalf("Task projection lost local/external acquisition separation: %s", encoded)
+	}
+}
+
+func TestResearchProjectionPreservesNewLocalMaterialsInExternalAcquisitionCount(t *testing.T) {
+	result := c.Result{RunID: "research-local-materials", Status: "succeeded", Counts: c.Counts{DocumentsFetched: 3, LocalMaterialsAcquired: 2}}
+	projection := researchProjection(c.Envelope{}, result, "digest", "ref")
+	if projection.Counts.DocumentsFetched != 3 || projection.Counts.LocalDocumentsReused != 0 || projection.Counts.LocalMaterialsAcquired != 2 || !strings.Contains(projection.TaskSummary(), "external_documents_acquired=1") {
+		t.Fatalf("local owner-read materials were counted as external acquisition: %+v (%s)", projection.Counts, projection.TaskSummary())
 	}
 }
 

@@ -75,16 +75,17 @@ func ResearchResultDataScopeMatches(task Task, dataScope, ownerID string) bool {
 }
 
 type ResearchResultCounts struct {
-	SearchCalls          int `json:"search_calls"`
-	Candidates           int `json:"candidates"`
-	FetchAttempts        int `json:"fetch_attempts"`
-	DocumentsFetched     int `json:"documents_fetched"`
-	LocalDocumentsReused int `json:"local_documents_reused,omitempty"`
-	DocumentsAnalyzed    int `json:"documents_analyzed"`
-	RecordsSaved         int `json:"records_saved"`
-	BoardPostsCreated    int `json:"board_posts_created"`
-	AnalysisCalls        int `json:"analysis_calls"`
-	PaidExternalCalls    int `json:"paid_external_calls"`
+	SearchCalls            int `json:"search_calls"`
+	Candidates             int `json:"candidates"`
+	FetchAttempts          int `json:"fetch_attempts"`
+	DocumentsFetched       int `json:"documents_fetched"`
+	LocalDocumentsReused   int `json:"local_documents_reused,omitempty"`
+	LocalMaterialsAcquired int `json:"local_materials_acquired,omitempty"`
+	DocumentsAnalyzed      int `json:"documents_analyzed"`
+	RecordsSaved           int `json:"records_saved"`
+	BoardPostsCreated      int `json:"board_posts_created"`
+	AnalysisCalls          int `json:"analysis_calls"`
+	PaidExternalCalls      int `json:"paid_external_calls"`
 }
 
 type ResearchVerifiedReceipt struct {
@@ -148,8 +149,9 @@ func (result ResearchResultProjection) TaskSummary() string {
 		len(result.VerifiedReceiptRefs), result.ReceiptCount, result.RequiredReceiptsComplete,
 		missing, strings.Join(refs, ","),
 	)
-	if result.Counts.LocalDocumentsReused > 0 {
-		summary += fmt.Sprintf("; local_documents_reused=%d; external_documents_acquired=%d", result.Counts.LocalDocumentsReused, result.Counts.DocumentsFetched-result.Counts.LocalDocumentsReused)
+	if result.Counts.LocalDocumentsReused > 0 || result.Counts.LocalMaterialsAcquired > 0 {
+		externalDocumentsAcquired := result.Counts.DocumentsFetched - result.Counts.LocalDocumentsReused - result.Counts.LocalMaterialsAcquired
+		summary += fmt.Sprintf("; local_documents_reused=%d; local_materials_acquired=%d; external_documents_acquired=%d", result.Counts.LocalDocumentsReused, result.Counts.LocalMaterialsAcquired, externalDocumentsAcquired)
 	}
 	return summary
 }
@@ -182,11 +184,13 @@ func (result ResearchResultProjection) Validate(task Task) error {
 	}
 	counts := result.Counts
 	if counts.SearchCalls < 0 || counts.Candidates < 0 || counts.FetchAttempts < 0 || counts.DocumentsFetched < 0 ||
-		counts.DocumentsAnalyzed < 0 || counts.RecordsSaved < 0 || counts.BoardPostsCreated < 0 || counts.AnalysisCalls < 0 || counts.PaidExternalCalls < 0 {
+		counts.LocalDocumentsReused < 0 || counts.LocalMaterialsAcquired < 0 || counts.DocumentsAnalyzed < 0 ||
+		counts.RecordsSaved < 0 || counts.BoardPostsCreated < 0 || counts.AnalysisCalls < 0 || counts.PaidExternalCalls < 0 {
 		return errors.New("research result counts cannot be negative")
 	}
-	if counts.LocalDocumentsReused < 0 || counts.LocalDocumentsReused > counts.DocumentsFetched {
-		return errors.New("research local reuse count exceeds the acquired document count")
+	if counts.LocalDocumentsReused > counts.DocumentsFetched ||
+		counts.LocalMaterialsAcquired > counts.DocumentsFetched-counts.LocalDocumentsReused {
+		return errors.New("research local document counts exceed the acquired document count")
 	}
 	if result.ReceiptCount < 0 || result.ReceiptCount < len(result.VerifiedReceiptRefs) {
 		return errors.New("research receipt count is invalid")

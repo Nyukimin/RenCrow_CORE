@@ -8,8 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	coreresearch "github.com/Nyukimin/RenCrow_CORE/internal/application/research"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
@@ -39,6 +41,7 @@ func (r *WebResearcher) gatherResearchEngine(ctx context.Context, request llm.Ge
 	if objective == "" {
 		return nil, fmt.Errorf("research.run requires a user request")
 	}
+	versionedRequest := IsVersionedResearchRequest(objective)
 	researchRequest, err := researchRequestFromUser(objective)
 	if err != nil {
 		return nil, err
@@ -71,6 +74,15 @@ func (r *WebResearcher) gatherResearchEngine(ctx context.Context, request llm.Ge
 	}
 	response, runErr := r.runner.ExecuteV2(execCtx, researchRunTool, args)
 	result, typedResult := researchTypedResult(response)
+	var projection *domaintask.ResearchResultProjection
+	if versionedRequest && typedResult && result.Status == "succeeded" && response.Error == nil {
+		recorded, projectionErr := recordedResearchProjection(ctx, response, result)
+		if projectionErr != nil {
+			response = tool.NewError(tool.ErrInternalError, "Research Task completion facts are unavailable", nil)
+		} else {
+			projection = &recorded
+		}
+	}
 	if runErr == nil && (response == nil || response.Error == nil) && (!typedResult || result.Status == "partial" || result.Status == "failed") {
 		details := map[string]any{}
 		message := "research.run returned no valid completed result"
@@ -108,11 +120,53 @@ func (r *WebResearcher) gatherResearchEngine(ctx context.Context, request llm.Ge
 	if err != nil {
 		return nil, fmt.Errorf("encode typed research result")
 	}
+	metadata := map[string]string{"runtime_context_kind": "web_research_evidence", "research_status": result.Status}
+	if versionedRequest {
+		metadata["research_request_schema"] = contract.RequestSchema
+		metadata["research_mode"] = researchRequest.Mode
+		if projection != nil {
+			metadata["research_task_summary"] = projection.TaskSummary()
+		}
+	}
 	return []llm.Message{{
 		Role: "user", Type: llm.PromptContextVariable,
-		Metadata: map[string]string{"runtime_context_kind": "web_research_evidence", "research_status": result.Status},
+		Metadata: metadata,
 		Content:  string(data),
 	}}, nil
+}
+
+func recordedResearchProjection(ctx context.Context, response *tool.ToolResponse, result contract.Result) (domaintask.ResearchResultProjection, error) {
+	if response == nil || response.Metadata == nil {
+		return domaintask.ResearchResultProjection{}, fmt.Errorf("Research Task projection metadata is missing")
+	}
+	projection, ok := response.Metadata["research_result_projection"].(domaintask.ResearchResultProjection)
+	if !ok {
+		return domaintask.ResearchResultProjection{}, fmt.Errorf("Research Task projection metadata has an invalid type")
+	}
+	artifactRef, ok := response.Metadata["research_result_artifact_ref"].(string)
+	if !ok || artifactRef == "" || artifactRef != projection.ArtifactRef {
+		return domaintask.ResearchResultProjection{}, fmt.Errorf("Research Task projection CAS reference is missing or changed")
+	}
+	identity, err := researchLoopIdentity(ctx)
+	if err != nil {
+		return domaintask.ResearchResultProjection{}, err
+	}
+	scope, ok := tool.ToolExecutionScopeFromContext(ctx)
+	if !ok || scope.Validate() != nil {
+		return domaintask.ResearchResultProjection{}, fmt.Errorf("Research Task projection scope is unavailable")
+	}
+	dataScope, ownerID, err := scope.SearchScope()
+	if err != nil {
+		return domaintask.ResearchResultProjection{}, err
+	}
+	env := contract.Envelope{
+		TaskID: string(identity.TaskID), RunID: string(identity.RunID), TraceID: string(identity.TraceID),
+		RequestID: scope.RequestID, Actor: scope.ActorID, OwnerID: ownerID, DataScope: dataScope,
+	}
+	if err := coreresearch.ValidateResearchResultProjection(env, result, projection, artifactRef, projection.RequiredReceiptsComplete); err != nil {
+		return domaintask.ResearchResultProjection{}, fmt.Errorf("Research Task projection differs: %w", err)
+	}
+	return projection, nil
 }
 
 func researchLoopIdentity(ctx context.Context) (identity domainexecution.Identity, err error) {

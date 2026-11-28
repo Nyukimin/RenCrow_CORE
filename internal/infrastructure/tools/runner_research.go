@@ -11,6 +11,7 @@ import (
 
 	coreresearch "github.com/Nyukimin/RenCrow_CORE/internal/application/research"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	contract "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/contract"
 	engine "github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine/engine"
@@ -28,6 +29,10 @@ const (
 
 type ResearchResultRecorder interface {
 	Record(context.Context, contract.Envelope, contract.Result) error
+}
+
+type ResearchResultProjectionRecorder interface {
+	RecordWithProjection(context.Context, contract.Envelope, contract.Result) (domaintask.ResearchResultProjection, error)
 }
 
 type ResearchResultPreflighter interface {
@@ -89,10 +94,29 @@ func (r *ToolRunner) registerResearchTools(researchEngine *engine.Engine) {
 		if err != nil {
 			return researchEngineError(err, result), nil
 		}
-		if err := r.researchResultRecorder.Record(ctx, env, result); err != nil {
+		var projection *domaintask.ResearchResultProjection
+		var recordErr error
+		if recorder, ok := r.researchResultRecorder.(ResearchResultProjectionRecorder); ok {
+			recorded, err := recorder.RecordWithProjection(ctx, env, result)
+			if err == nil {
+				projection = &recorded
+			}
+			recordErr = err
+		} else {
+			recordErr = r.researchResultRecorder.Record(ctx, env, result)
+		}
+		if recordErr != nil {
 			return tool.NewError(tool.ErrInternalError, "Research result Task projection is unavailable", map[string]any{"research_result": result}), nil
 		}
-		return researchResultResponse(result), nil
+		response := researchResultResponse(result)
+		if projection != nil {
+			if response.Metadata == nil {
+				response.Metadata = make(map[string]any)
+			}
+			response.Metadata["research_result_projection"] = *projection
+			response.Metadata["research_result_artifact_ref"] = projection.ArtifactRef
+		}
+		return response, nil
 	}
 	r.toolsV2[researchStatusToolName] = func(ctx context.Context, args map[string]any) (*tool.ToolResponse, error) {
 		env, err := researchEnvelopeFromContext(ctx)

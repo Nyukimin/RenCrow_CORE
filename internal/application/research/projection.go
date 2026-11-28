@@ -26,26 +26,33 @@ type ResultRecorder struct {
 }
 
 func (r *ResultRecorder) Record(ctx context.Context, env c.Envelope, result c.Result) error {
+	_, err := r.RecordWithProjection(ctx, env, result)
+	return err
+}
+
+// RecordWithProjection returns the projection accepted by the Task owner after
+// the exact Engine result and CAS artifact have been verified and recorded.
+func (r *ResultRecorder) RecordWithProjection(ctx context.Context, env c.Envelope, result c.Result) (domaintask.ResearchResultProjection, error) {
 	if r == nil || r.Store == nil || r.Tasks == nil || ctx == nil {
-		return errors.New("unavailable: Research result projection owner")
+		return domaintask.ResearchResultProjection{}, errors.New("unavailable: Research result projection owner")
 	}
 	// Recording observed outcomes is bounded cleanup, including after cancel.
 	ctx, stop := context.WithTimeout(context.WithoutCancel(ctx), taskmanager.StartedRunTerminalWriteTimeout)
 	defer stop()
 	if result.SchemaVersion != c.ResultSchema || result.TaskID != env.TaskID || result.ExecutionRunID != env.RunID || result.RunID == "" {
-		return errors.New("invalid_response: Research execution/result binding")
+		return domaintask.ResearchResultProjection{}, errors.New("invalid_response: Research execution/result binding")
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
-		return err
+		return domaintask.ResearchResultProjection{}, err
 	}
 	digest := digestBytes(data)
 	ref, err := r.Store.Put(ctx, data)
 	if err != nil {
-		return err
+		return domaintask.ResearchResultProjection{}, err
 	}
 	if ref.Hash != digest || ref.Ref == "" {
-		return errors.New("invalid_response: Research result CAS receipt")
+		return domaintask.ResearchResultProjection{}, errors.New("invalid_response: Research result CAS receipt")
 	}
 	projection := researchProjection(env, result, digest, ref.Ref)
 	verify := func(checkCtx context.Context, proposed domaintask.ResearchResultProjection) error {
@@ -72,18 +79,11 @@ func (r *ResultRecorder) Record(ctx context.Context, env c.Envelope, result c.Re
 		if err != nil || bound != env || !bytes.Equal(stored, data) {
 			return errors.New("invalid_response: Research journal/result binding")
 		}
-		expected := researchProjection(env, record.Result, digest, ref.Ref)
-		expected.RequiredReceiptsComplete = requiredResearchReceiptsComplete(record)
-		proposedJSON, _ := json.Marshal(proposed)
-		expectedJSON, _ := json.Marshal(expected)
-		if !bytes.Equal(proposedJSON, expectedJSON) {
-			return errors.New("invalid_response: Research facts differ from stored result")
-		}
-		return nil
+		return ValidateResearchResultProjection(env, record.Result, proposed, ref.Ref, requiredResearchReceiptsComplete(record))
 	}
 	record, err := r.Store.Load(ctx, result.RunID)
 	if err != nil {
-		return err
+		return domaintask.ResearchResultProjection{}, err
 	}
 	projection.RequiredReceiptsComplete = requiredResearchReceiptsComplete(record)
 	var read domaintask.TaskReadAuthorizationCheck
@@ -94,7 +94,10 @@ func (r *ResultRecorder) Record(ctx context.Context, env c.Envelope, result c.Re
 	if r.PrivateWrite != nil {
 		write = r.PrivateWrite(ctx, env)
 	}
-	return r.Tasks.RecordResearchResult(ctx, core.TaskID(env.TaskID), core.RunID(env.RunID), env.Actor, projection, verify, read, write)
+	if err := r.Tasks.RecordResearchResult(ctx, core.TaskID(env.TaskID), core.RunID(env.RunID), env.Actor, projection, verify, read, write); err != nil {
+		return domaintask.ResearchResultProjection{}, err
+	}
+	return projection, nil
 }
 
 // Preflight rejects execution identities that this recorder cannot durably
@@ -290,7 +293,7 @@ func researchTaskRunStateMatches(taskStatus domaintask.Status, runStatus domaint
 
 func researchProjection(env c.Envelope, result c.Result, digest, ref string) domaintask.ResearchResultProjection {
 	counts := result.Counts
-	p := domaintask.ResearchResultProjection{SchemaVersion: domaintask.ResearchResultSchema, TaskID: core.TaskID(env.TaskID), ExecutionRunID: core.RunID(env.RunID), ResearchRunID: result.RunID, ActorID: env.Actor, DataScope: env.DataScope, OwnerID: env.OwnerID, ResultDigest: digest, ArtifactRef: ref, Status: result.Status, Missing: append([]string(nil), result.Missing...), Counts: domaintask.ResearchResultCounts{SearchCalls: counts.SearchCalls, Candidates: counts.Candidates, FetchAttempts: counts.FetchAttempts, DocumentsFetched: counts.DocumentsFetched, LocalDocumentsReused: counts.LocalDocumentsReused, DocumentsAnalyzed: counts.DocumentsAnalyzed, RecordsSaved: counts.RecordsSaved, BoardPostsCreated: counts.BoardPostsCreated, AnalysisCalls: counts.AnalysisCalls, PaidExternalCalls: counts.PaidExternalCalls}}
+	p := domaintask.ResearchResultProjection{SchemaVersion: domaintask.ResearchResultSchema, TaskID: core.TaskID(env.TaskID), ExecutionRunID: core.RunID(env.RunID), ResearchRunID: result.RunID, ActorID: env.Actor, DataScope: env.DataScope, OwnerID: env.OwnerID, ResultDigest: digest, ArtifactRef: ref, Status: result.Status, Missing: append([]string(nil), result.Missing...), Counts: domaintask.ResearchResultCounts{SearchCalls: counts.SearchCalls, Candidates: counts.Candidates, FetchAttempts: counts.FetchAttempts, DocumentsFetched: counts.DocumentsFetched, LocalDocumentsReused: counts.LocalDocumentsReused, LocalMaterialsAcquired: counts.LocalMaterialsAcquired, DocumentsAnalyzed: counts.DocumentsAnalyzed, RecordsSaved: counts.RecordsSaved, BoardPostsCreated: counts.BoardPostsCreated, AnalysisCalls: counts.AnalysisCalls, PaidExternalCalls: counts.PaidExternalCalls}}
 	receipts := append([]c.Receipt(nil), result.Receipts...)
 	if result.RefreshReceipt != nil && result.RefreshReceipt.CursorCommitted {
 		receipts = append(receipts, result.RefreshReceipt.Receipt)
@@ -313,6 +316,44 @@ func researchProjection(env c.Envelope, result c.Result, digest, ref string) dom
 		p.ReceiptState = "verified"
 	}
 	return p
+}
+
+// ValidateResearchResultProjection checks the returned facts against the
+// canonical Engine-to-Task mapper. artifactRef and requiredReceiptsComplete
+// remain owner-supplied because they come from the verified CAS Put and frozen
+// RunRecord, respectively.
+func ValidateResearchResultProjection(env c.Envelope, result c.Result, proposed domaintask.ResearchResultProjection, artifactRef string, requiredReceiptsComplete bool) error {
+	if artifactRef == "" || proposed.ArtifactRef != artifactRef {
+		return errors.New("invalid_response: Research projection CAS reference")
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	digest := digestBytes(data)
+	if proposed.ResultDigest != digest {
+		return errors.New("invalid_response: Research projection result digest")
+	}
+	if result.SchemaVersion != c.ResultSchema || result.TaskID != env.TaskID || result.ExecutionRunID != env.RunID || result.RunID == "" {
+		return errors.New("invalid_response: Research execution/result binding")
+	}
+	if result.Status == "succeeded" && !requiredReceiptsComplete {
+		return errors.New("invalid_response: succeeded Research result has incomplete required receipts")
+	}
+	expected := researchProjection(env, result, digest, artifactRef)
+	expected.RequiredReceiptsComplete = requiredReceiptsComplete
+	proposedJSON, err := json.Marshal(proposed)
+	if err != nil {
+		return err
+	}
+	expectedJSON, err := json.Marshal(expected)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(proposedJSON, expectedJSON) {
+		return errors.New("invalid_response: Research facts differ from stored result")
+	}
+	return nil
 }
 
 func requiredResearchReceiptsComplete(record c.RunRecord) bool {
