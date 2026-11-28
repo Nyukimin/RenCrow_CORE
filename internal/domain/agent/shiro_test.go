@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agentprofile"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -46,6 +47,62 @@ func (m *mockSubagentManager) RunSync(ctx context.Context, task SubagentTask) (S
 		return m.runSyncFunc(ctx, task)
 	}
 	return SubagentResult{AgentName: task.AgentName, Output: "subagent ok"}, nil
+}
+
+func TestShiroSubagentPromptIncludesAttachmentReferenceWithoutMedia(t *testing.T) {
+	const originalMessage = "添付音声の内容を確認して"
+	const audioMarker = "raw-audio-secret-marker"
+	attachment := domainattachment.Attachment{
+		ID:          "att_opaque_music_01",
+		Kind:        domainattachment.KindAudio,
+		Filename:    "demo.flac",
+		ContentType: "audio/flac",
+		SizeBytes:   int64(len(audioMarker)),
+		Path:        "/workspace/att_opaque_music_01.flac",
+		Data:        []byte(audioMarker),
+	}
+	input := newAgentTurnInput(t, originalMessage, "line", "U123").WithAttachments([]domainattachment.Attachment{attachment})
+	var captured SubagentTask
+	manager := &mockSubagentManager{runSyncFunc: func(_ context.Context, task SubagentTask) (SubagentResult, error) {
+		captured = task
+		return SubagentResult{AgentName: task.AgentName, Output: "ok"}, nil
+	}}
+	shiro := NewShiroAgent(&mockLLMProvider{}, &mockToolRunner{}, &mockMCPClient{}, "test prompt", manager)
+
+	if _, err := shiro.Execute(context.Background(), input); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if captured.Instruction != originalMessage {
+		t.Errorf("Instruction = %q, want original user text %q", captured.Instruction, originalMessage)
+	}
+	if input.MessageText() != originalMessage {
+		t.Errorf("Execute changed the original message to %q", input.MessageText())
+	}
+	originalAttachments := input.Attachments()
+	if len(originalAttachments) != 1 || originalAttachments[0].ID != attachment.ID || string(originalAttachments[0].Data) != audioMarker {
+		t.Fatalf("Execute changed the original attachment metadata or data: %#v", originalAttachments)
+	}
+	if len(captured.PromptContext) == 0 {
+		t.Fatal("PromptContext is empty")
+	}
+	last := captured.PromptContext[len(captured.PromptContext)-1]
+	if last.Role != "user" || last.Type != llm.PromptContextUser {
+		t.Fatalf("last PromptContext message = %#v, want typed user message", last)
+	}
+	if !strings.Contains(last.Content, originalMessage) {
+		t.Errorf("user prompt omitted original message: %q", last.Content)
+	}
+	if !strings.Contains(last.Content, "id="+attachment.ID) {
+		t.Errorf("user prompt omitted attachment reference %q: %q", attachment.ID, last.Content)
+	}
+	for i, message := range captured.PromptContext {
+		if len(message.Parts) != 0 {
+			t.Errorf("PromptContext message %d contains media parts: %#v", i, message.Parts)
+		}
+		if strings.Contains(message.Content, audioMarker) {
+			t.Errorf("PromptContext message %d contains raw audio bytes", i)
+		}
+	}
 }
 
 type panicSubagentManager struct{}

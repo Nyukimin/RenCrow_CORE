@@ -32,6 +32,7 @@ func registerFeatureRoutes(
 	registerGovernanceSecurityReportRoutes(mux, dependencies)
 	registerImageRoutes(mux, cfg)
 	registerMusicArtifactRoutes(mux, cfg, dependencies)
+	registerMovieRenderRoutes(mux, cfg, dependencies)
 	registerViewerDynamicRoutes(mux, dependencies)
 	registerPresenceRoutes(mux, dependencies)
 	registerIdleChatRoutes(mux, dependencies)

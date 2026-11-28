@@ -150,6 +150,7 @@
         "internal/adapter/viewer/stt_utterance_utils.test.mjs",
         "internal/adapter/viewer/task_center_browser.test.mjs",
         "internal/adapter/viewer/viewer_audio_button.test.mjs",
+        "internal/adapter/viewer/viewer_core_mio_auth.test.mjs",
         "internal/adapter/viewer/viewer_idle_mode_buttons.test.mjs",
         "internal/adapter/viewer/viewer_memory_panel.test.mjs",
         "internal/adapter/viewer/viewer_presence_client.test.mjs",

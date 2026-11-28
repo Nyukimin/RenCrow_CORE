@@ -71,7 +71,7 @@ function normState(s) {
   return 'idle';
 }
 function fmt(s) {
-  let h = esc(s);
+  let h = renderViewerTextWithProtectedMedia(s);
   const cbRe = new RegExp(BT+'{3}(\\w*)\\n([\\s\\S]*?)'+BT+'{3}', 'g');
   h = h.replace(cbRe, '<pre><code>$2</code></pre>');
   const icRe = new RegExp(BT+'([^'+BT+' ]+)'+BT, 'g');
@@ -460,6 +460,33 @@ const viewerForegroundPresence = {
   releasePromise: null,
   heartbeatTimer: null,
 };
+let viewerComposerResizeObserver = null;
+
+function updateViewerComposerHeight(inputBar) {
+  const composer = inputBar || (typeof document !== 'undefined' ? document.querySelector('.input-bar') : null);
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  if (!composer || !root || !root.style || typeof composer.getBoundingClientRect !== 'function') return;
+  const height = Number(composer.getBoundingClientRect().height);
+  if (!Number.isFinite(height) || height <= 0) return;
+  const cssHeight = String(Math.ceil(height)) + 'px';
+  if (root.style.getPropertyValue('--input-h') !== cssHeight) {
+    root.style.setProperty('--input-h', cssHeight);
+  }
+}
+
+function bindViewerComposerHeight() {
+  const inputBar = typeof document !== 'undefined' ? document.querySelector('.input-bar') : null;
+  if (!inputBar) return;
+  const syncHeight = () => updateViewerComposerHeight(inputBar);
+  syncHeight();
+  if (typeof ResizeObserver === 'function') {
+    viewerComposerResizeObserver = new ResizeObserver(syncHeight);
+    viewerComposerResizeObserver.observe(inputBar);
+  }
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('resize', syncHeight);
+  }
+}
 
 function coreViewerHeaders(extra = {}) {
   return Object.assign({
@@ -3911,7 +3938,7 @@ function refreshViewerStatus() {
     });
 }
 
-function ingestEvent(ev) {
+function ingestEvent(ev, privateMioEvent = false) {
   handleViewerActiveControlEvent(ev);
   if (!isCurrentIdleChatPlaybackEvent(ev)) return;
   if (isStaleIdleChatEvent(ev)) return;
@@ -3922,9 +3949,16 @@ function ingestEvent(ev) {
   }
   const key = eventKey(ev);
   if (seenEventKeys.has(key)) return;
+  if (privateMioEvent && viewerMioPrivateEvents.size >= MAX_SEEN_EVENTS) {
+    logoutViewerMioOwner();
+    setViewerMioAuthStatus('Private Mio cache reached its event limit; reconnect to continue', 'conn-off');
+    return;
+  }
   rememberEventKey(key);
+  const privateAgentState = privateMioEvent && typeof captureViewerMioPrivateAgentState === 'function'
+    ? captureViewerMioPrivateAgentState(ev) : null;
   const receivedMS = typeof nowLatencyMS === 'function' ? nowLatencyMS() : Date.now();
-  noteViewerEventLatency(ev, receivedMS);
+  if (!privateMioEvent) noteViewerEventLatency(ev, receivedMS);
 
   state.logs.push(ev);
   if (state.logs.length > MAX_LOGS) state.logs.shift();
@@ -3935,12 +3969,19 @@ function ingestEvent(ev) {
   addIdleMsgToTimeline(ev);
   addIdleSummaryToTimeline(ev);
   if (ev.type === 'agent.thinking') {
-    pushDebugTrace('think', {
+    const trace = {
       time: ftime(ev.timestamp),
       agent: agName(ev.from || '-'),
       task: ev.task_id || '-',
       text: short(ev.content || '', 240),
-    });
+    };
+    pushDebugTrace('think', trace);
+    if (privateMioEvent && typeof viewerMioPrivateDebugTraces !== 'undefined') {
+      viewerMioPrivateDebugTraces.add(trace);
+    }
+  }
+  if (privateMioEvent && typeof noteViewerMioPrivateEvent === 'function') {
+    noteViewerMioPrivateEvent(ev, privateAgentState);
   }
   handleTTSAudioEvent(ev);
   if (String(ev.type || '').toLowerCase().startsWith('investment.')) {
@@ -6124,6 +6165,655 @@ function send() {
   });
 }
 
+const VIEWER_PRIVATE_MIO_SSE_MAX_FRAME_CHARS = 1 << 20;
+const VIEWER_PRIVATE_MIO_SSE_MAX_ID_CHARS = 1024;
+const VIEWER_PRIVATE_MIO_SSE_DECODE_CHUNK_BYTES = 64 * 1024;
+const VIEWER_PRIVATE_MIO_MEDIA_PREVIEW_MAX_BYTES = 64 * 1024 * 1024;
+let viewerMioOwnerCredential = '';
+let viewerMioAuthGeneration = 0;
+let viewerMioPrivateStreamController = null;
+let viewerMioPrivateMediaController = null;
+let viewerMioReconnectTimer = null;
+let viewerMioReconnectDelayMS = 1000;
+let viewerMioPrivateRetryDisabled = false;
+let viewerMioLastEventID = '';
+const viewerMioPrivateEvents = new Map();
+const viewerMioPrivateTaskIDs = new Set();
+const viewerMioPrivateSessionIDs = new Set();
+const viewerMioPrivateAgentChanges = [];
+const viewerMioPrivateDebugTraces = new Set();
+let viewerMioActiveMediaPreview = null;
+
+function viewerSendUsesPrivateMio(body) {
+  const recipient = String(body && body.to || '').trim().toLowerCase();
+  return !recipient || recipient === 'mio';
+}
+
+function viewerMioSendHeaders(body, extra = {}) {
+  const headers = coreViewerHeaders(extra);
+  if (viewerMioOwnerCredential && viewerSendUsesPrivateMio(body)) {
+    headers.Authorization = 'Bearer ' + viewerMioOwnerCredential;
+  }
+  return headers;
+}
+
+function parseViewerPrivateMioMediaURL(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw || raw.length > 2048 || /[\u0000-\u001f\u007f\\]/.test(raw)) return null;
+  const origin = typeof window !== 'undefined' && window.location ? String(window.location.origin || '') : '';
+  if (!origin) return null;
+  let url;
+  try { url = new URL(raw, origin); } catch (_) { return null; }
+  if (url.origin !== origin || url.username || url.password || url.hash || url.search !== '?to=mio') return null;
+  const match = /^\/viewer\/(music\/artifacts|movie\/jobs)\/([A-Za-z0-9_-]{1,256})\/download$/.exec(url.pathname);
+  if (!match) return null;
+  const maxIDLength = match[1] === 'movie/jobs' ? 128 : 256;
+  if (match[2].length > maxIDLength) return null;
+  const path = url.pathname + url.search;
+  if (raw.startsWith('/')) {
+    if (raw !== path) return null;
+  } else if (raw !== url.origin + path) {
+    return null;
+  }
+  return {
+    id: match[2],
+    kind: match[1] === 'movie/jobs' ? 'video' : 'audio',
+    path,
+    url: url.origin + path,
+  };
+}
+
+function viewerPrivateMediaButton(label, media) {
+  const title = String(label || (media.kind === 'video' ? 'Preview Movie' : 'Preview Music'));
+  return '<button class="viewer-private-media" type="button" data-viewer-media-path="' + esc(media.path) + '">' + esc(title) + '</button>';
+}
+
+function renderViewerTextWithProtectedMedia(value) {
+  const text = String(value || '');
+  const pattern = /\[([^\]\r\n]{1,120})\]\(([^)\s]{1,1024})\)|(?:https?:\/\/[^\s<>"'()]+)?\/viewer\/(?:music\/artifacts|movie\/jobs)\/[A-Za-z0-9_-]{1,256}\/download\?to=mio/g;
+  let html = '';
+  let cursor = 0;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    html += esc(text.slice(cursor, match.index));
+    const candidate = match[2] || match[0];
+    const media = parseViewerPrivateMioMediaURL(candidate);
+    if (media) {
+      html += viewerPrivateMediaButton(match[2] ? match[1] : '', media);
+    } else {
+      html += esc(match[0]);
+    }
+    cursor = match.index + match[0].length;
+  }
+  return html + esc(text.slice(cursor));
+}
+
+function createViewerMioSSEParser(onFrame) {
+  let buffer = '';
+  let frameChars = 0;
+  let dataLines = [];
+  let eventName = '';
+  let eventID = '';
+  let hasEventID = false;
+
+  function resetFrame() {
+    frameChars = 0;
+    dataLines = [];
+    eventName = '';
+    eventID = '';
+    hasEventID = false;
+  }
+
+  function consumeLine(line) {
+    frameChars += line.length + 1;
+    if (frameChars > VIEWER_PRIVATE_MIO_SSE_MAX_FRAME_CHARS) throw new Error('Private Mio event exceeded the frame limit');
+    if (line === '') {
+      if (dataLines.length || hasEventID || eventName) {
+        onFrame({data: dataLines.join('\n'), event: eventName || 'message', id: eventID, hasID: hasEventID});
+      }
+      resetFrame();
+      return;
+    }
+    if (line[0] === ':') return;
+    const separator = line.indexOf(':');
+    const field = separator < 0 ? line : line.slice(0, separator);
+    let fieldValue = separator < 0 ? '' : line.slice(separator + 1);
+    if (fieldValue[0] === ' ') fieldValue = fieldValue.slice(1);
+    if (field === 'data') {
+      dataLines.push(fieldValue);
+    } else if (field === 'event') {
+      eventName = fieldValue;
+    } else if (field === 'id' && !fieldValue.includes('\u0000')) {
+      if (fieldValue.length > VIEWER_PRIVATE_MIO_SSE_MAX_ID_CHARS) throw new Error('Private Mio event cursor exceeded the limit');
+      eventID = fieldValue;
+      hasEventID = true;
+    }
+  }
+
+  function push(chunk, final = false) {
+    buffer += String(chunk || '');
+    if (buffer.length + frameChars > VIEWER_PRIVATE_MIO_SSE_MAX_FRAME_CHARS) throw new Error('Private Mio event exceeded the frame limit');
+    while (buffer) {
+      const lf = buffer.indexOf('\n');
+      const cr = buffer.indexOf('\r');
+      let lineEnd = -1;
+      if (lf >= 0 && cr >= 0) lineEnd = Math.min(lf, cr);
+      else lineEnd = Math.max(lf, cr);
+      if (lineEnd < 0 || (buffer[lineEnd] === '\r' && lineEnd === buffer.length - 1 && !final)) break;
+      const line = buffer.slice(0, lineEnd);
+      let separatorLength = 1;
+      if (buffer[lineEnd] === '\r' && buffer[lineEnd + 1] === '\n') separatorLength = 2;
+      buffer = buffer.slice(lineEnd + separatorLength);
+      consumeLine(line);
+    }
+    if (buffer.length + frameChars > VIEWER_PRIVATE_MIO_SSE_MAX_FRAME_CHARS) throw new Error('Private Mio event exceeded the frame limit');
+  }
+
+  return {
+    push,
+    finish() { push('', true); buffer = ''; },
+  };
+}
+
+function setViewerMioAuthStatus(message, stateName = '') {
+  const status = document.getElementById('mioOwnerAuthStatus');
+  if (!status) return;
+  status.textContent = String(message || 'Public conversation');
+  status.className = 'stt-state' + (stateName ? ' ' + stateName : '');
+}
+
+function cancelViewerMioReconnect() {
+  if (viewerMioReconnectTimer !== null && typeof clearTimeout === 'function') clearTimeout(viewerMioReconnectTimer);
+  viewerMioReconnectTimer = null;
+}
+
+function cancelViewerMioPrivateStream() {
+  cancelViewerMioReconnect();
+  if (viewerMioPrivateStreamController) {
+    try { viewerMioPrivateStreamController.abort(); } catch (_) {}
+    viewerMioPrivateStreamController = null;
+  }
+}
+
+function revokeViewerMioMediaPreview() {
+  if (viewerMioPrivateMediaController) {
+    try { viewerMioPrivateMediaController.abort(); } catch (_) {}
+    viewerMioPrivateMediaController = null;
+  }
+  const active = viewerMioActiveMediaPreview;
+  viewerMioActiveMediaPreview = null;
+  if (!active) return;
+  if (active.player) {
+    try { active.player.pause(); } catch (_) {}
+    try { active.player.removeAttribute('src'); } catch (_) {}
+    try { active.player.load(); } catch (_) {}
+  }
+  if (active.preview && active.preview.parentNode) active.preview.parentNode.removeChild(active.preview);
+  if (active.blobURL && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+    try { URL.revokeObjectURL(active.blobURL); } catch (_) {}
+  }
+}
+
+function clearViewerMioPrivateFrames() {
+  if (viewerMioPrivateEvents.size === 0 && viewerMioPrivateAgentChanges.length === 0) return;
+  const privateKeys = new Set(viewerMioPrivateEvents.keys());
+  state.logs = state.logs.filter((event) => !privateKeys.has(eventKey(event)));
+  for (const [key, event] of viewerMioPrivateEvents) {
+    seenEventKeys.delete(key);
+    if (event && event.type === 'task.notification' && typeof taskNotificationEventKey === 'function') {
+      const notificationKey = taskNotificationEventKey(event);
+      if (notificationKey) seenTaskNotificationKeys.delete(notificationKey);
+    }
+  }
+  for (let index = seenEventQueue.length - 1; index >= 0; index--) {
+    if (privateKeys.has(seenEventQueue[index])) seenEventQueue.splice(index, 1);
+  }
+  for (const taskID of viewerMioPrivateTaskIDs) delete state.tasks[taskID];
+  for (const sessionID of viewerMioPrivateSessionIDs) delete state.sessions[sessionID];
+  for (const taskMap of Object.values(state.openTasks || {})) {
+    for (const taskID of viewerMioPrivateTaskIDs) delete taskMap[taskID];
+  }
+  if (viewerMioPrivateTaskIDs.has(String(state.ops && state.ops.latestTaskID || '')) && state.ops) state.ops.latestTaskID = '';
+  for (let index = viewerMioPrivateAgentChanges.length - 1; index >= 0; index--) {
+    const change = viewerMioPrivateAgentChanges[index];
+    const current = state.agents && state.agents[change.id];
+    if (!current) continue;
+    const fields = new Set([...Object.keys(change.before || {}), ...Object.keys(change.after || {})]);
+    for (const field of fields) {
+      const beforeHas = Object.prototype.hasOwnProperty.call(change.before || {}, field);
+      const afterHas = Object.prototype.hasOwnProperty.call(change.after || {}, field);
+      if (beforeHas === afterHas && viewerMioSameValue(change.before && change.before[field], change.after && change.after[field])) continue;
+      if (!viewerMioSameValue(current[field], change.after && change.after[field])) continue;
+      if (beforeHas) current[field] = change.before[field];
+      else delete current[field];
+    }
+  }
+  if (state.debug && Array.isArray(state.debug.thinkTrace) && viewerMioPrivateDebugTraces.size) {
+    state.debug.thinkTrace = state.debug.thinkTrace.filter((trace) => !viewerMioPrivateDebugTraces.has(trace));
+  }
+  if ([...viewerMioPrivateEvents.values()].some((event) => /^idlechat\./.test(String(event && event.type || '')))) {
+    // The idle render trace is write-only diagnostics; clear it without reading its rows.
+    if (Array.isArray(idleLiveRenderedLog)) idleLiveRenderedLog.length = 0;
+    if (typeof chatAudioSync !== 'undefined' && chatAudioSync && typeof chatAudioSync.resetIdleChat === 'function') {
+      chatAudioSync.resetIdleChat();
+    }
+    if (typeof resetIdleChatLiveForControlChange === 'function') resetIdleChatLiveForControlChange();
+  }
+  viewerMioPrivateEvents.clear();
+  viewerMioPrivateTaskIDs.clear();
+  viewerMioPrivateSessionIDs.clear();
+  viewerMioPrivateAgentChanges.length = 0;
+  viewerMioPrivateDebugTraces.clear();
+  if (typeof resetTimeline === 'function') resetTimeline();
+  if (typeof chatAudioSync !== 'undefined' && chatAudioSync && typeof chatAudioSync.resetChat === 'function') {
+    chatAudioSync.resetChat('mio_owner_logout');
+  }
+  derivedDirty = true;
+}
+
+function viewerMioSameValue(left, right) {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  try { return JSON.stringify(left) === JSON.stringify(right); } catch (_) { return false; }
+}
+
+function captureViewerMioPrivateAgentState(event) {
+  const affected = new Set();
+  const type = String(event && event.type || '');
+  const from = String(event && event.from || '').toLowerCase();
+  const to = String(event && event.to || '').toLowerCase();
+  if (type === 'message.received' || type === 'routing.decision') affected.add('mio');
+  if (AGENTS.includes(from)) affected.add(from);
+  if (type === 'agent.start' && AGENTS.includes(to)) affected.add(to);
+  if (type === 'agent.response' && to === 'mio') affected.add('mio');
+  const snapshot = new Map();
+  for (const id of affected) {
+    if (state.agents && state.agents[id]) snapshot.set(id, Object.assign({}, state.agents[id]));
+  }
+  return snapshot;
+}
+
+function noteViewerMioPrivateEvent(event, agentStateBefore) {
+  const key = eventKey(event);
+  viewerMioPrivateEvents.set(key, event);
+  const taskID = String(event && event.task_id || '').trim();
+  const sessionID = String(event && event.session_id || 'viewer').trim();
+  if (taskID) viewerMioPrivateTaskIDs.add(taskID);
+  if (sessionID) viewerMioPrivateSessionIDs.add(sessionID);
+  if (agentStateBefore instanceof Map) {
+    for (const [id, before] of agentStateBefore) {
+      const after = state.agents && state.agents[id] ? Object.assign({}, state.agents[id]) : {};
+      viewerMioPrivateAgentChanges.push({id, before, after});
+    }
+  }
+}
+
+function logoutViewerMioOwner() {
+  cancelViewerMioPrivateStream();
+  viewerMioAuthGeneration++;
+  viewerMioPrivateRetryDisabled = true;
+  viewerMioOwnerCredential = '';
+  viewerMioLastEventID = '';
+  revokeViewerMioMediaPreview();
+  clearViewerMioPrivateFrames();
+  const input = document.getElementById('mioOwnerCredential');
+  if (input) input.value = '';
+  const logoutButton = document.getElementById('mioOwnerLogout');
+  if (logoutButton) logoutButton.hidden = true;
+  setViewerMioAuthStatus('Public conversation');
+}
+
+function scheduleViewerMioReconnect(generation) {
+  if (viewerMioReconnectTimer !== null || viewerMioPrivateRetryDisabled || !viewerMioOwnerCredential || generation !== viewerMioAuthGeneration) return;
+  const delay = viewerMioReconnectDelayMS;
+  viewerMioReconnectDelayMS = Math.min(30000, delay * 2);
+  viewerMioReconnectTimer = setTimeout(() => {
+    viewerMioReconnectTimer = null;
+    if (generation === viewerMioAuthGeneration && viewerMioOwnerCredential && !viewerMioPrivateRetryDisabled) {
+      void openViewerMioPrivateStream(generation);
+    }
+  }, delay);
+}
+
+function ingestViewerMioPrivateSSEFrame(frame, generation) {
+  if (generation !== viewerMioAuthGeneration) return;
+  if (frame.hasID) {
+    const canonicalEventID = /^evt_[0-9a-f]{8}-[0-9a-f]{4}-[57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(frame.id);
+    if (frame.id === '' || frame.id === 'reset' || canonicalEventID) viewerMioLastEventID = frame.id;
+  }
+  if (!frame.data || frame.event !== 'message') return;
+  let event;
+  try { event = JSON.parse(frame.data); } catch (_) { return; }
+  if (generation !== viewerMioAuthGeneration || !event || typeof event !== 'object') return;
+  if (event.type === 'agent.response_delta') return;
+  ingestEvent(event, true);
+}
+
+async function openViewerMioPrivateStream(generation) {
+  if (generation !== viewerMioAuthGeneration || !viewerMioOwnerCredential || viewerMioPrivateRetryDisabled) return;
+  const controller = new AbortController();
+  let reader = null;
+  viewerMioPrivateStreamController = controller;
+  try {
+    const headers = coreViewerHeaders({Accept: 'text/event-stream', 'Cache-Control': 'no-cache'});
+    headers.Authorization = 'Bearer ' + viewerMioOwnerCredential;
+    if (viewerMioLastEventID) headers['Last-Event-ID'] = viewerMioLastEventID;
+    const response = await fetch('/viewer/events?to=mio', {
+      method: 'GET',
+      headers,
+      cache: 'no-store',
+      credentials: 'same-origin',
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    if (generation !== viewerMioAuthGeneration) return;
+    if (response.status === 401 || response.status === 403) {
+      viewerMioPrivateRetryDisabled = true;
+      setViewerMioAuthStatus('Credential rejected; reconnect after checking it', 'conn-off');
+      return;
+    }
+    if (!response.ok) {
+      setViewerMioAuthStatus('Private Mio unavailable; retrying', 'conn-reconnect');
+      scheduleViewerMioReconnect(generation);
+      return;
+    }
+    const contentType = String(response.headers && response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+    if (contentType !== 'text/event-stream' || !response.body || typeof response.body.getReader !== 'function') {
+      setViewerMioAuthStatus('Private Mio stream unavailable; retrying', 'conn-reconnect');
+      scheduleViewerMioReconnect(generation);
+      return;
+    }
+    const input = document.getElementById('mioOwnerCredential');
+    if (input) input.value = '';
+    const logoutButton = document.getElementById('mioOwnerLogout');
+    if (logoutButton) logoutButton.hidden = false;
+    setViewerMioAuthStatus('Private Mio connected', 'conn-on');
+    viewerMioReconnectDelayMS = 1000;
+    const decoder = new TextDecoder();
+    const parser = createViewerMioSSEParser((frame) => ingestViewerMioPrivateSSEFrame(frame, generation));
+    reader = response.body.getReader();
+    while (generation === viewerMioAuthGeneration) {
+      const chunk = await reader.read();
+      if (generation !== viewerMioAuthGeneration) return;
+      if (chunk.done) break;
+      const bytes = chunk.value || new Uint8Array(0);
+      for (let offset = 0; offset < bytes.byteLength; offset += VIEWER_PRIVATE_MIO_SSE_DECODE_CHUNK_BYTES) {
+        const end = Math.min(offset + VIEWER_PRIVATE_MIO_SSE_DECODE_CHUNK_BYTES, bytes.byteLength);
+        parser.push(decoder.decode(bytes.subarray(offset, end), {stream: true}));
+      }
+    }
+    parser.push(decoder.decode(), true);
+    parser.finish();
+    if (generation === viewerMioAuthGeneration && !controller.signal.aborted) {
+      setViewerMioAuthStatus('Private Mio reconnecting', 'conn-reconnect');
+      scheduleViewerMioReconnect(generation);
+    }
+  } catch (_) {
+    if (reader && typeof reader.cancel === 'function' && !controller.signal.aborted) {
+      try { await reader.cancel(); } catch (_) {}
+    }
+    if (generation === viewerMioAuthGeneration && !controller.signal.aborted) {
+      setViewerMioAuthStatus('Private Mio connection interrupted; retrying', 'conn-reconnect');
+      scheduleViewerMioReconnect(generation);
+    }
+  } finally {
+    if (reader && typeof reader.releaseLock === 'function') {
+      try { reader.releaseLock(); } catch (_) {}
+    }
+    if (viewerMioPrivateStreamController === controller) viewerMioPrivateStreamController = null;
+  }
+}
+
+function startViewerMioOwnerSession(rawCredential, inputElement) {
+  const credential = String(rawCredential || '').trim();
+  if (!credential) {
+    setViewerMioAuthStatus('Enter the owner credential');
+    return;
+  }
+  cancelViewerMioPrivateStream();
+  const credentialChanged = credential !== viewerMioOwnerCredential;
+  if (credentialChanged) {
+    revokeViewerMioMediaPreview();
+    clearViewerMioPrivateFrames();
+    viewerMioLastEventID = '';
+  }
+  viewerMioOwnerCredential = credential;
+  viewerMioPrivateRetryDisabled = false;
+  viewerMioReconnectDelayMS = 1000;
+  viewerMioAuthGeneration++;
+  const input = inputElement || document.getElementById('mioOwnerCredential');
+  if (input) input.value = credential;
+  setViewerMioAuthStatus('Connecting to private Mio…', 'conn-reconnect');
+  void openViewerMioPrivateStream(viewerMioAuthGeneration);
+}
+
+function bindViewerMioControls() {
+  const input = document.getElementById('mioOwnerCredential');
+  const connectButton = document.getElementById('mioOwnerConnect');
+  const logoutButton = document.getElementById('mioOwnerLogout');
+  if (input && connectButton && typeof connectButton.addEventListener === 'function') {
+    connectButton.addEventListener('click', () => startViewerMioOwnerSession(input.value || viewerMioOwnerCredential, input));
+    if (typeof input.addEventListener === 'function') {
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          startViewerMioOwnerSession(input.value || viewerMioOwnerCredential, input);
+        }
+      });
+    }
+  }
+  if (logoutButton && typeof logoutButton.addEventListener === 'function') {
+    logoutButton.addEventListener('click', logoutViewerMioOwner);
+  }
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('click', (event) => {
+      const button = event.target && typeof event.target.closest === 'function'
+        ? event.target.closest('[data-viewer-media-path]') : null;
+      if (!button) return;
+      const media = parseViewerPrivateMioMediaURL(String(button.getAttribute('data-viewer-media-path') || ''));
+      if (!media) return;
+      event.preventDefault();
+      void loadViewerMioProtectedMedia(button, media);
+    });
+  }
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', () => {
+      logoutViewerMioOwner();
+    });
+  }
+}
+
+function viewerMioMediaNotice(button, message) {
+  const preview = document.createElement('div');
+  preview.className = 'viewer-private-media-preview';
+  const status = document.createElement('div');
+  status.setAttribute('role', 'status');
+  status.textContent = String(message || 'Loading protected media…');
+  preview.appendChild(status);
+  const parent = button && typeof button.closest === 'function' ? button.closest('.mb') : null;
+  if (!parent) return null;
+  parent.appendChild(preview);
+  viewerMioActiveMediaPreview = {preview, player: null, blobURL: ''};
+  return {preview, status};
+}
+
+function viewerMioAllowedMediaType(rawType) {
+  const type = String(rawType || '').split(';')[0].trim().toLowerCase();
+  if (type === 'video/mp4') return {type: 'video/mp4', extension: 'mp4', kind: 'video'};
+  if (type === 'audio/flac' || type === 'audio/x-flac') return {type: 'audio/flac', extension: 'flac', kind: 'audio'};
+  if (type === 'audio/wav' || type === 'audio/x-wav' || type === 'audio/wave') return {type: 'audio/wav', extension: 'wav', kind: 'audio'};
+  return null;
+}
+
+async function viewerMioReadBoundedResponse(response, limit, mediaType, expectedBytes = null) {
+  const rawLength = response.headers && response.headers.get('Content-Length');
+  const contentLength = rawLength === null || rawLength === '' ? NaN : Number(rawLength);
+  if (Number.isFinite(contentLength) && (contentLength < 0 || contentLength > limit)) {
+    await cancelViewerMioResponseBody(response);
+    throw new Error('The media file exceeds the 64 MiB preview limit. It was not loaded.');
+  }
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    throw new Error('This browser cannot stream a bounded media preview.');
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      const bytes = chunk.value;
+      if (!bytes || total + bytes.byteLength > limit) {
+        try { await reader.cancel(); } catch (_) {}
+        throw new Error('The media file exceeds the 64 MiB preview limit. It was not loaded.');
+      }
+      total += bytes.byteLength;
+      chunks.push(bytes);
+    }
+  } finally {
+    if (typeof reader.releaseLock === 'function') reader.releaseLock();
+  }
+  if (total === 0) throw new Error('The media response was empty.');
+  if (Number.isFinite(contentLength) && total !== contentLength) {
+    throw new Error('The protected media response length did not match its metadata.');
+  }
+  if (expectedBytes !== null && total !== expectedBytes) {
+    throw new Error('The protected media response was incomplete. It was not opened.');
+  }
+  return new Blob(chunks, {type: mediaType});
+}
+
+async function cancelViewerMioResponseBody(response) {
+  const body = response && response.body;
+  if (!body || typeof body.cancel !== 'function') return;
+  try { await body.cancel(); } catch (_) {}
+}
+
+async function loadViewerMioProtectedMedia(button, media) {
+  const safeMedia = parseViewerPrivateMioMediaURL(media && media.url || media && media.path || '');
+  if (!safeMedia) return;
+  if (!viewerMioOwnerCredential) {
+    showToast('Connect a Mio owner credential before loading private media', 'error');
+    return;
+  }
+  revokeViewerMioMediaPreview();
+  const notice = viewerMioMediaNotice(button, 'Loading protected media after your click…');
+  if (!notice) return;
+  const generation = viewerMioAuthGeneration;
+  const controller = new AbortController();
+  viewerMioPrivateMediaController = controller;
+  try {
+    const headers = coreViewerHeaders({
+      Accept: 'video/mp4,audio/flac,audio/x-flac,audio/wav,audio/x-wav',
+      Range: 'bytes=0-0',
+    });
+    headers.Authorization = 'Bearer ' + viewerMioOwnerCredential;
+    const requestMedia = (range) => {
+      headers.Range = range;
+      return fetch(safeMedia.path, {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+        credentials: 'same-origin',
+        redirect: 'error',
+        signal: controller.signal,
+      });
+    };
+    let response = await requestMedia('bytes=0-0');
+    if (generation !== viewerMioAuthGeneration || controller.signal.aborted) return;
+    if (response.status === 401 || response.status === 403) {
+      await cancelViewerMioResponseBody(response);
+      notice.status.textContent = 'Owner credential was rejected. The media was not loaded.';
+      return;
+    }
+    if (response.status !== 200 && response.status !== 206) {
+      await cancelViewerMioResponseBody(response);
+      notice.status.textContent = 'Protected media is unavailable (HTTP ' + String(response.status) + ').';
+      return;
+    }
+    let mediaType = viewerMioAllowedMediaType(response.headers && response.headers.get('Content-Type'));
+    if (!mediaType || mediaType.kind !== safeMedia.kind) {
+      await cancelViewerMioResponseBody(response);
+      notice.status.textContent = 'Protected media returned an unsupported media type.';
+      return;
+    }
+    let expectedBytes = null;
+    if (response.status === 206) {
+      const probeRange = /^bytes 0-0\/(\d+)$/.exec(String(response.headers && response.headers.get('Content-Range') || ''));
+      if (!probeRange || Number(probeRange[1]) < 1) {
+        await cancelViewerMioResponseBody(response);
+        notice.status.textContent = 'Protected media returned invalid range metadata.';
+        return;
+      }
+      const totalBytes = Number(probeRange[1]);
+      if (totalBytes > VIEWER_PRIVATE_MIO_MEDIA_PREVIEW_MAX_BYTES) {
+        await cancelViewerMioResponseBody(response);
+        notice.status.textContent = 'This file is larger than 64 MiB. It was not loaded into memory.';
+        return;
+      }
+      expectedBytes = totalBytes;
+      if (totalBytes > 1) {
+        await cancelViewerMioResponseBody(response);
+        if (generation !== viewerMioAuthGeneration || controller.signal.aborted) return;
+        response = await requestMedia('bytes=0-' + String(totalBytes - 1));
+        if (generation !== viewerMioAuthGeneration || controller.signal.aborted) return;
+        if (response.status === 401 || response.status === 403) {
+          await cancelViewerMioResponseBody(response);
+          notice.status.textContent = 'Owner credential was rejected. The media was not loaded.';
+          return;
+        }
+        if (response.status !== 200 && response.status !== 206) {
+          await cancelViewerMioResponseBody(response);
+          notice.status.textContent = 'Protected media is unavailable (HTTP ' + String(response.status) + ').';
+          return;
+        }
+        mediaType = viewerMioAllowedMediaType(response.headers && response.headers.get('Content-Type'));
+        if (!mediaType || mediaType.kind !== safeMedia.kind) {
+          await cancelViewerMioResponseBody(response);
+          notice.status.textContent = 'Protected media returned an unsupported media type.';
+          return;
+        }
+        if (response.status === 206) {
+          const fullRange = /^bytes 0-(\d+)\/(\d+)$/.exec(String(response.headers && response.headers.get('Content-Range') || ''));
+          if (!fullRange || Number(fullRange[1]) + 1 !== totalBytes || Number(fullRange[2]) !== totalBytes) {
+            await cancelViewerMioResponseBody(response);
+            notice.status.textContent = 'Protected media returned an incomplete preview range.';
+            return;
+          }
+        } else {
+          expectedBytes = null;
+        }
+      }
+    }
+    const blob = await viewerMioReadBoundedResponse(response, VIEWER_PRIVATE_MIO_MEDIA_PREVIEW_MAX_BYTES, mediaType.type, expectedBytes);
+    if (generation !== viewerMioAuthGeneration || controller.signal.aborted) return;
+    const blobURL = URL.createObjectURL(blob);
+    if (viewerMioActiveMediaPreview) viewerMioActiveMediaPreview.blobURL = blobURL;
+    const player = document.createElement(mediaType.kind);
+    player.controls = true;
+    player.preload = 'metadata';
+    if (mediaType.kind === 'video') player.playsInline = true;
+    player.src = blobURL;
+    const download = document.createElement('a');
+    download.href = blobURL;
+    download.download = safeMedia.id + '.' + mediaType.extension;
+    download.textContent = 'Download preview file';
+    notice.status.textContent = 'Bounded preview ready (' + Math.ceil(blob.size / (1024 * 1024)) + ' MiB).';
+    notice.preview.insertBefore(player, notice.status);
+    notice.preview.appendChild(download);
+    if (viewerMioActiveMediaPreview) {
+      viewerMioActiveMediaPreview.player = player;
+      viewerMioActiveMediaPreview.blobURL = blobURL;
+    }
+  } catch (error) {
+    if (generation === viewerMioAuthGeneration && !controller.signal.aborted && notice.status) {
+      notice.status.textContent = String(error && error.message || 'Protected media could not be previewed.');
+    }
+  } finally {
+    if (viewerMioPrivateMediaController === controller) viewerMioPrivateMediaController = null;
+  }
+}
+
 async function sendViewerMessage(message, attachments = []) {
   if (!viewerForegroundPresence.ready) throw new Error('CORE foreground presence is not ready');
   const requestGeneration = speechCancelGeneration;
@@ -6138,16 +6828,18 @@ async function sendViewerMessage(message, attachments = []) {
       form.append(key, value && typeof value === 'object' ? JSON.stringify(value) : (value || ''));
     });
     attachments.forEach((file) => form.append('attachments[]', file, file.name));
-    request = {method: 'POST', headers: coreViewerHeaders(), body: form};
+    request = {method: 'POST', headers: viewerMioSendHeaders(body), body: form};
   } else {
     request = {
       method: 'POST',
-      headers: coreViewerHeaders({'Content-Type': 'application/json'}),
+      headers: viewerMioSendHeaders(body, {'Content-Type': 'application/json'}),
       body: JSON.stringify(body),
     };
   }
+  const privateMioSend = viewerSendUsesPrivateMio(body)
+    && request.headers.Authorization === 'Bearer ' + viewerMioOwnerCredential;
   const sendStartedAt = typeof nowLatencyMS === 'function' ? nowLatencyMS() : Date.now();
-  if (typeof recordLatencyMetric === 'function') {
+  if (!privateMioSend && typeof recordLatencyMetric === 'function') {
     recordLatencyMetric('network', 'viewer_send_start', {
       atMS: sendStartedAt,
       detail: short(body.message || '', 80),
@@ -6155,7 +6847,7 @@ async function sendViewerMessage(message, attachments = []) {
     });
   }
   const r = await fetch('/viewer/send', request);
-  if (typeof recordLatencyMetric === 'function') {
+  if (!privateMioSend && typeof recordLatencyMetric === 'function') {
     const sendFinishedAt = typeof nowLatencyMS === 'function' ? nowLatencyMS() : Date.now();
     recordLatencyMetric('network', 'viewer_send_response', {
       atMS: sendFinishedAt,
@@ -6398,6 +7090,8 @@ setInterval(refreshDebugSystem, 5000);
 refreshDebugSystem();
 registerWebMCPTools();
 bindViewerForegroundPresenceLifecycle();
+bindViewerComposerHeight();
+bindViewerMioControls();
 connect();
 
 // === STT (Speech-to-Text) realtime PCM16 streaming ===

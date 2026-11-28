@@ -393,6 +393,8 @@ type Dependencies struct {
 	workerToolRunner                    domaintool.RunnerV2                         // production Worker tool execution/listing boundary
 	musicArtifactPlayback               toolsinfra.MusicArtifactPlaybackGateway     // authenticated Music Range playback proxy
 	musicPlaybackLinkReady              bool                                        // links require the configured CMD owner proof
+	movieGateway                        toolsinfra.MovieGateway                     // authenticated Movie render download proxy
+	moviePlaybackLinkReady              bool                                        // links require the configured CMD owner proof
 	musicGenerationReady                bool                                        // generation routing requires an observed ready Gateway capability
 	musicRemixReady                     bool                                        // remix routing requires an observed ready Gateway capability
 	musicControlReady                   bool                                        // control routing requires an observed ready production_control capability
@@ -1332,6 +1334,8 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
 	deps.musicArtifactPlayback = toolRuntime.MusicArtifactPlayback
 	deps.musicPlaybackLinkReady = toolRuntime.MusicPlaybackLinkReady
+	deps.movieGateway = toolRuntime.MovieGateway
+	deps.moviePlaybackLinkReady = toolRuntime.MoviePlaybackLinkReady
 	deps.musicGenerationReady = toolRuntime.MusicGenerationReady
 	deps.musicRemixReady = toolRuntime.MusicRemixReady
 	deps.musicControlReady = toolRuntime.MusicControlReady

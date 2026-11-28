@@ -11,14 +11,45 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GOCACHE: ${{ github.workspace }}/Tmp/test-runtime/_cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/Tmp/test-runtime/_cache/go-mod
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Download private Go module dependencies
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RENCROW_TOOLS_READ_TOKEN }}
+          GOPRIVATE: github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine
+          GOMODCACHE: ${{ github.workspace }}/Tmp/test-runtime/_cache/go-mod
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          $bootstrapRoot = Join-Path $PWD 'Tmp/test-runtime/_bootstrap'
+          New-Item -ItemType Directory -Force -Path $bootstrapRoot -ErrorAction Stop | Out-Null
+          $env:GIT_CONFIG_GLOBAL = Join-Path $bootstrapRoot 'private-go.gitconfig'
+          try {
+            gh auth setup-git --hostname github.com
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub credential helper setup failed' }
+            go mod download
+            if ($LASTEXITCODE -ne 0) { throw 'Go module download failed' }
+          }
+          finally {
+            if (Test-Path -LiteralPath $env:GIT_CONFIG_GLOBAL) {
+              Remove-Item -LiteralPath $env:GIT_CONFIG_GLOBAL -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $env:GIT_CONFIG_GLOBAL) { throw 'Temporary Git configuration cleanup failed' }
+            Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue
+            Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+          }
 
       - name: fmt
         run: |
@@ -27,3 +58,11 @@ jobs:
 
       - name: Build
         run: make build-all
+
+      - name: Keep macOS arm64 deployment binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rencrow-darwin-arm64-${{ github.sha }}
+          path: build/rencrow-darwin-arm64
+          if-no-files-found: error
+          retention-days: 3

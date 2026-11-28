@@ -48,6 +48,11 @@ func ensureLLMGateway(cfg *config.Config) llmGatewayStartupStatus {
 		status.Ready = true
 		return status
 	}
+	if cfg.LLMGateway.AutoStart != nil && !*cfg.LLMGateway.AutoStart {
+		status.Warning = "RenCrow_LLM is unavailable; CORE auto-start is disabled and the Gateway must be managed by its supervisor"
+		log.Printf("SYSTEM WARNING: %s (base_url=%s)", status.Warning, status.BaseURL)
+		return status
+	}
 	if llmGatewayProcessLive(status.BaseURL) {
 		status.Warning = "RenCrow_LLM Gateway is live, but the Mio alias is unavailable; Mio Gateway requests are not ready"
 		log.Printf("SYSTEM WARNING: %s", status.Warning)

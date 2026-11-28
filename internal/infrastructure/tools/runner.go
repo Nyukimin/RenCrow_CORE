@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -99,6 +100,48 @@ type MusicRemixGateway interface {
 type MusicArtifactPlaybackGateway interface {
 	ActorID() string
 	OpenMusicArtifact(ctx context.Context, artifactID string, rangeHeader string) (*http.Response, error)
+}
+
+// MusicArtifactMetadataGateway reads immutable, actor-owned artifact metadata
+// separately from the bounded byte stream used by playback and Movie import.
+type MusicArtifactMetadataGateway interface {
+	ActorID() string
+	GetMusicArtifact(ctx context.Context, artifactID string) (MusicArtifact, error)
+}
+
+// MusicAnalysisGateway exposes only the typed, actor-bound analysis routes.
+type MusicAnalysisGateway interface {
+	ActorID() string
+	CreateMusicAnalysis(ctx context.Context, projectID string, input MusicAnalysisRequest, idempotencyKey string) (MusicAnalysis, error)
+	GetMusicAnalysis(ctx context.Context, analysisID string) (MusicAnalysis, error)
+}
+
+// MusicSourceSearchGateway exposes bounded Openverse metadata search without
+// a downloadable media or provider URL surface.
+type MusicSourceSearchGateway interface {
+	ActorID() string
+	SearchMusicSources(ctx context.Context, query string, page, pageSize int) (MusicSourceSearchResponse, error)
+}
+
+// MusicAudioImportGateway imports only bytes resolved from a trusted current
+// CORE request attachment and reads the durable import job projection.
+type MusicAudioImportGateway interface {
+	ActorID() string
+	ImportMusicAudio(ctx context.Context, projectID, sourceAttachmentID, expectedSHA256 string, audio []byte, idempotencyKey string) (MusicAudioImportJobStatus, error)
+	GetMusicAudioImportJob(ctx context.Context, jobID string) (MusicAudioImportJobStatus, error)
+}
+
+// MovieGateway is the actor-bound boundary for Movie assets, deterministic
+// timing conversion, render submission/status, and bounded MP4 downloads.
+type MovieGateway interface {
+	ActorID() string
+	ProbeCapabilities(ctx context.Context) (MovieCapabilities, error)
+	CreateMovieAsset(ctx context.Context, mediaType, sourceModule, sourceID, expectedSHA256 string, data []byte, idempotencyKey string) (MovieAsset, error)
+	GetMovieAssetMetadata(ctx context.Context, assetID string) (MovieAsset, error)
+	CreateMovieTimings(ctx context.Context, analysis MusicAnalysis, fps int) (MovieTimingReceipt, error)
+	SubmitMovieRender(ctx context.Context, plan MovieRenderPlan, idempotencyKey string) (MovieRenderJob, error)
+	GetMovieRenderJob(ctx context.Context, jobID string) (MovieRenderJob, error)
+	OpenMovieRender(ctx context.Context, jobID, rangeHeader string) (*http.Response, error)
 }
 
 type MusicProjectCreateInput struct {
@@ -274,6 +317,10 @@ type MusicArtifact struct {
 	SizeBytes        int64   `json:"size_bytes"`
 	MediaType        string  `json:"media_type"`
 	Format           string  `json:"format"`
+	SourceModule     string  `json:"source_module,omitempty"`
+	SourceID         string  `json:"source_id,omitempty"`
+	Stale            bool    `json:"stale,omitempty"`
+	StaleReason      string  `json:"stale_reason,omitempty"`
 	DurationFrames   int64   `json:"duration_frames"`
 	SampleRate       int     `json:"sample_rate"`
 	Channels         int     `json:"channels"`
@@ -308,6 +355,187 @@ type MusicCapabilities struct {
 	ActorID      string                           `json:"actor_id"`
 	Profile      string                           `json:"profile"`
 	Capabilities map[string]MusicCapabilityStatus `json:"capabilities"`
+}
+
+type MusicAnalysisRequest struct {
+	SourceArtifactID string `json:"source_artifact_id"`
+	Operation        string `json:"operation"`
+}
+
+type MusicAnalysis struct {
+	AnalysisID       string          `json:"analysis_id"`
+	ProjectID        string          `json:"project_id"`
+	SourceArtifactID string          `json:"source_artifact_id"`
+	SourceSHA256     string          `json:"source_sha256"`
+	Operation        string          `json:"operation"`
+	State            string          `json:"state"`
+	Result           json.RawMessage `json:"result,omitempty"`
+	ResultSHA256     string          `json:"result_sha256,omitempty"`
+	FailureCode      string          `json:"failure_code,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+type MusicAnalysisDocument struct {
+	SchemaVersion  string                `json:"schema_version"`
+	Operation      string                `json:"operation"`
+	SourceSHA256   string                `json:"source_sha256"`
+	SampleRate     int                   `json:"sample_rate"`
+	DurationFrames int64                 `json:"duration_frames"`
+	BPM            *float64              `json:"bpm"`
+	Beats          []MusicAnalysisBeat   `json:"beats"`
+	Words          []MusicAnalysisWord   `json:"words"`
+	Versions       MusicAnalysisVersions `json:"versions"`
+}
+
+type MusicAnalysisBeat struct {
+	Frame       int64   `json:"frame"`
+	TimeSeconds float64 `json:"time_seconds"`
+}
+
+type MusicAnalysisWord struct {
+	Text       string `json:"text"`
+	StartFrame int64  `json:"start_frame"`
+	EndFrame   int64  `json:"end_frame"`
+}
+
+type MusicAnalysisVersions struct {
+	Worker   string `json:"worker"`
+	Python   string `json:"python"`
+	Librosa  string `json:"librosa"`
+	WhisperX string `json:"whisperx,omitempty"`
+}
+
+type MusicSourceSearchResponse struct {
+	Page     int                       `json:"page"`
+	PageSize int                       `json:"page_size"`
+	Total    int                       `json:"total"`
+	Results  []MusicSourceSearchResult `json:"results"`
+}
+
+type MusicSourceSearchResult struct {
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Provider          string   `json:"provider"`
+	Source            string   `json:"source"`
+	ForeignLandingURL string   `json:"foreign_landing_url"`
+	License           string   `json:"license"`
+	LicenseVersion    string   `json:"license_version"`
+	LicenseURL        string   `json:"license_url"`
+	Attribution       string   `json:"attribution"`
+	Duration          *float64 `json:"duration,omitempty"`
+}
+
+type MusicAudioImportJobStatus struct {
+	JobID           string    `json:"job_id"`
+	Kind            string    `json:"kind"`
+	ProjectID       string    `json:"project_id"`
+	State           string    `json:"state"`
+	ArtifactID      string    `json:"artifact_id"`
+	InputSHA256     string    `json:"input_sha256"`
+	SourceModule    string    `json:"source_module"`
+	SourceID        string    `json:"source_id"`
+	SizeBytes       int64     `json:"size_bytes"`
+	MediaType       string    `json:"media_type"`
+	Format          string    `json:"format"`
+	DurationFrames  int64     `json:"duration_frames"`
+	DurationActualS float64   `json:"duration_actual_s"`
+	SampleRate      int       `json:"sample_rate"`
+	Channels        int       `json:"channels"`
+	FailureCode     string    `json:"failure_code,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type MusicAudioImportResult struct {
+	MusicAudioImportJobStatus
+	PlaybackURL string `json:"playback_url,omitempty"`
+}
+
+type MovieCapabilities struct {
+	ActorID      string                    `json:"actor_id"`
+	Capabilities MovieCapabilityProjection `json:"capabilities"`
+}
+
+type MovieCapabilityProjection struct {
+	AssetStorage      string                 `json:"asset_storage"`
+	Rendering         string                 `json:"rendering"`
+	Backend           MovieBackendCapability `json:"backend"`
+	RenderQueue       string                 `json:"render_queue"`
+	MusicTiming       string                 `json:"music_timing"`
+	ProductAcceptance bool                   `json:"product_acceptance"`
+}
+
+type MovieBackendCapability struct {
+	Configured   bool                           `json:"configured"`
+	Probed       bool                           `json:"probed"`
+	Available    bool                           `json:"available"`
+	Reason       string                         `json:"reason,omitempty"`
+	Capabilities []MovieBackendCapabilityStatus `json:"capabilities"`
+}
+
+type MovieBackendCapabilityStatus struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type MovieAsset struct {
+	ID           string `json:"id"`
+	SHA256       string `json:"sha256"`
+	SizeBytes    int64  `json:"size_bytes"`
+	MediaType    string `json:"media_type"`
+	CreatedAt    string `json:"created_at"`
+	SourceModule string `json:"source_module"`
+	SourceID     string `json:"source_id,omitempty"`
+}
+
+type MovieTimingReceipt struct {
+	Status               string         `json:"status"`
+	FPS                  int            `json:"fps"`
+	SourceSampleRate     int            `json:"source_sample_rate"`
+	SourceDurationFrames int64          `json:"source_duration_frames"`
+	VideoDurationFrames  int64          `json:"video_duration_frames"`
+	BeatFrames           []int64        `json:"beat_frames"`
+	Captions             []MovieCaption `json:"captions"`
+}
+
+type MovieCaption struct {
+	StartFrame int64  `json:"start_frame"`
+	EndFrame   int64  `json:"end_frame"`
+	Text       string `json:"text"`
+}
+
+type MovieRenderPlan struct {
+	SchemaVersion  int            `json:"schema_version"`
+	Width          int            `json:"width"`
+	Height         int            `json:"height"`
+	FPS            int            `json:"fps"`
+	DurationFrames *int           `json:"duration_frames,omitempty"`
+	Title          string         `json:"title"`
+	Scenes         []MovieScene   `json:"scenes"`
+	BeatFrames     []int64        `json:"beat_frames,omitempty"`
+	Captions       []MovieCaption `json:"captions,omitempty"`
+	AudioAssetID   string         `json:"audio_asset_id,omitempty"`
+}
+
+type MovieScene struct {
+	Kind           string `json:"kind"`
+	StartFrame     int    `json:"start_frame"`
+	DurationFrames *int   `json:"duration_frames,omitempty"`
+	AssetID        string `json:"asset_id,omitempty"`
+	Text           string `json:"text,omitempty"`
+}
+
+type MovieRenderJob struct {
+	ID          string `json:"id"`
+	State       string `json:"state"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	ArtifactID  string `json:"artifact_id,omitempty"`
+	SHA256      string `json:"sha256,omitempty"`
+	SizeBytes   int64  `json:"size_bytes,omitempty"`
+	FailureCode string `json:"failure_code,omitempty"`
 }
 
 // LyricsCatalogLookup keeps rights-aware lyrics and non-reconstructable
@@ -424,7 +652,19 @@ type ToolRunnerConfig struct {
 	MusicGeneration               MusicGenerationGateway        // nil = RenCrow_Music generation Tools 無効
 	MusicRemix                    MusicRemixGateway             // nil = RenCrow_Music bounded remix Tool 無効
 	MusicArtifactPlayback         MusicArtifactPlaybackGateway  // nil = RenCrow_Music artifact Range playback 無効
+	MusicArtifactMetadata         MusicArtifactMetadataGateway  // nil = RenCrow_Music artifact metadata unavailable
+	MusicAnalysisBeats            MusicAnalysisGateway          // nil = beats analysis capability unavailable
+	MusicAnalysisCaptions         MusicAnalysisGateway          // nil = captions analysis capability unavailable
+	MusicAnalysisReader           MusicAnalysisGateway          // actor-bound analysis reads remain available when creation is blocked
+	MusicSourceSearch             MusicSourceSearchGateway      // nil = Openverse metadata search unavailable
+	MusicAudioImport              MusicAudioImportGateway       // nil = native audio import unavailable
+	MusicAudioImportReady         bool                          // exact audio_import capability is implemented and ready for new imports
+	Movie                         MovieGateway                  // nil = authenticated RenCrow_Movie gateway unavailable
+	MovieAssetStorageReady        bool                          // exact Movie asset_storage capability was observed available
+	MovieRenderReady              bool                          // Movie rendering and render_queue are both available
+	MovieTimingReady              bool                          // Movie music_timing capability was observed available
 	MusicPlaybackLinkReady        bool                          // CMD owner-authenticated same-origin proxy is registered
+	MoviePlaybackLinkReady        bool                          // CMD owner-authenticated Movie proxy is registered
 	LyricsCatalogLookup           LyricsCatalogLookup           // nil = lyrics_catalog.lookup 無効
 	PersonRelatedCatalogLookup    PersonRelatedCatalogLookup    // nil = person_related_catalog.lookup 無効
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効

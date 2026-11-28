@@ -54,9 +54,9 @@ function buildViewerPresenceReference() {
   if (!viewerForegroundPresence.ready) throw new Error('CORE foreground presence is not ready');
   return {protocol_version: 2, runtime_epoch: 'epoch-1', registration_receipt: 'receipt-1', claim_seq: 7};
 }
-function coreViewerHeaders(extra = {}) {
-  return Object.assign({'X-RenCrow-Client':'RenCrow_CORE','X-RenCrow-Interaction-Profile':'core-viewer'}, extra || {});
-}
+` + sourceBetween('function coreViewerHeaders(', 'function buildViewerPresenceReference()') + `
+` + sourceBetween("let viewerMioOwnerCredential = '';", 'let viewerMioAuthGeneration =') + `
+` + sourceBetween('function viewerSendUsesPrivateMio(body) {', 'function parseViewerPrivateMioMediaURL(rawValue) {') + `
 ` + sourceBetween('async function sendViewerMessage(', 'async function requestRepairFromChat') + `
 globalThis.__sendHarness = {sendViewerMessage};
 `;

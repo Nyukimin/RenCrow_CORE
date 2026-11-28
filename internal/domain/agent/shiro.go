@@ -179,7 +179,12 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 	}
 	// SubagentManager が設定されている場合は ReActLoop を使用
 	if s.subagentManager != nil {
-		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, currentRuntimeContext(ctx, s.runtimeContextProvider, "shiro", s.stableRuntimeContext), dynamic, llm.Message{Role: "user", Content: t.MessageText()})})
+		attachments := t.Attachments()
+		userContent := t.MessageText()
+		if len(attachments) > 0 {
+			userContent = userMessageAttachmentSummary(userContent, attachments)
+		}
+		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, currentRuntimeContext(ctx, s.runtimeContextProvider, "shiro", s.stableRuntimeContext), dynamic, llm.Message{Role: "user", Content: userContent})})
 		// The typed blocks travel as they are. Flattening them into one system
 		// string would hide which parts are constant from the Gateway.
 		result, err := s.runSubagentSafely(ctx, SubagentTask{

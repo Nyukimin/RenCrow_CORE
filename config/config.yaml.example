@@ -99,9 +99,12 @@ browser_actor:
 
 # Production LLM execution enters RenCrow_LLM through one Gateway URL.
 # Physical URLs, models and command targets are configured in RenCrow_LLM, not CORE.
+# Omission keeps the legacy CORE auto-start behavior. Set auto_start: false when
+# an external RenCrow supervisor owns Gateway lifecycle (as in production).
 llm_gateway:
   enabled: true
   base_url: "http://127.0.0.1:8090"
+  # auto_start: false
   api_key_env: ""
   timeout_sec: 600
 
@@ -141,6 +144,13 @@ music:
   endpoint: ""
   actor_id: ""
   token_env: "REN_CROW_MUSIC_TOKEN"
+# Optional authenticated RenCrow_Movie gateway. Configure a numeric loopback
+# HTTP origin and exact actor only when enabling; bearer is read from env.
+movie:
+  enabled: false
+  endpoint: ""
+  actor_id: ""
+  token_env: "REN_CROW_MOVIE_TOKEN"
 person_related_catalog:
   provider_url: ""
 

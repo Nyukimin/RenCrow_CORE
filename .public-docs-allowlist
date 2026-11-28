@@ -126,6 +126,7 @@ docs/調査/20261020_173100_SpeechPlan_TTS_receipt_identity_Failure_Knowledge.md
 docs/調査/20261020_174000_Viewer音声URL二重proxy_Failure_Knowledge.md
 docs/調査/20261020_220205_CMD_Mio応答遅延40試行_実測と考察.md
 docs/調査/RenCrow_Atlas_Backlog_Implementation_Lifecycle_実装仕様.md
+docs/調査/RenCrow_Research_Tool_Spec_v2.1.md
 docs/調査/RenCrow_llmfit_Ops統合_実装仕様.md
 docs/調査/identity-remediation-ledger.json
 docs/調査/タスク管理仕様案.md

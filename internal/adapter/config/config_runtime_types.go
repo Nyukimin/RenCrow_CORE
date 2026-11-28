@@ -16,6 +16,7 @@ type TLSConfig struct {
 // LLMGatewayConfig connects CORE to RenCrow_LLM using logical Agent IDs only.
 type LLMGatewayConfig struct {
 	Enabled    bool   `yaml:"enabled"`
+	AutoStart  *bool  `yaml:"auto_start"`
 	BaseURL    string `yaml:"base_url"`
 	APIKeyEnv  string `yaml:"api_key_env"`
 	TimeoutSec int    `yaml:"timeout_sec"`
@@ -162,6 +163,15 @@ type MovieCatalogConfig struct {
 // MusicConfig enables the optional authenticated RenCrow_Music project gateway.
 // The credential itself is read from TokenEnv and is never stored in config.
 type MusicConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Endpoint string `yaml:"endpoint"`
+	ActorID  string `yaml:"actor_id"`
+	TokenEnv string `yaml:"token_env"`
+}
+
+// MovieConfig enables the optional authenticated RenCrow_Movie gateway.
+// The credential itself is read from TokenEnv and never stored in config.
+type MovieConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Endpoint string `yaml:"endpoint"`
 	ActorID  string `yaml:"actor_id"`

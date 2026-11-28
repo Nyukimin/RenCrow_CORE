@@ -54,3 +54,36 @@ func TestMusicGatewayRejectsNonLoopbackAndIncompleteEnabledConfig(t *testing.T) 
 		})
 	}
 }
+
+func TestMovieGatewayDefaultsOffAndRequiresNumericLoopbackWhenEnabled(t *testing.T) {
+	cfg := validMusicConfigForTest()
+	if cfg.Movie.Enabled {
+		t.Fatal("Movie gateway must default to disabled")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default config validation failed: %v", err)
+	}
+	cfg.Movie = MovieConfig{Enabled: true, Endpoint: "http://127.0.0.1:18870", ActorID: "ren", TokenEnv: "REN_CROW_MOVIE_TOKEN"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("numeric loopback Movie gateway config rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name string
+		cfg  MovieConfig
+		want string
+	}{
+		{name: "hostname", cfg: MovieConfig{Enabled: true, Endpoint: "http://localhost:18870", ActorID: "ren", TokenEnv: "REN_CROW_MOVIE_TOKEN"}, want: "movie.endpoint"},
+		{name: "remote address", cfg: MovieConfig{Enabled: true, Endpoint: "http://192.0.2.4:18870", ActorID: "ren", TokenEnv: "REN_CROW_MOVIE_TOKEN"}, want: "movie.endpoint"},
+		{name: "missing actor", cfg: MovieConfig{Enabled: true, Endpoint: "http://127.0.0.1:18870", TokenEnv: "REN_CROW_MOVIE_TOKEN"}, want: "movie.actor_id"},
+		{name: "missing token env", cfg: MovieConfig{Enabled: true, Endpoint: "http://127.0.0.1:18870", ActorID: "ren"}, want: "movie.token_env"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validMusicConfigForTest()
+			cfg.Movie = test.cfg
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v, want error containing %q", err, test.want)
+			}
+		})
+	}
+}

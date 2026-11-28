@@ -34,20 +34,23 @@ type SessionPublicationBindingResolver func(ctx context.Context) (domainsession.
 const (
 	viewerCMDClient          = "RenCrow_CMD"
 	viewerCMDChatProfile     = "cmd-chat"
+	viewerCOREClient         = "RenCrow_CORE"
+	viewerCOREChatProfile    = "core-viewer"
 	viewerSendMaxAuthBody    = 128 << 10
 	viewerSendOwnerAuthError = "viewer send authorization unavailable"
 )
 
 // WithCMDMioOwnerAuthentication validates the configured owner credential at
-// Viewer ingress. It protects Mio sends and the matching CMD chat event stream;
-// other clients continue with their existing public scope.
+// Viewer ingress. It protects CMD Mio sends, native COREViewer Mio sends that
+// present a Bearer, the matching private event stream, and protected media.
+// Native COREViewer requests without a credential retain their public scope.
 func WithCMDMioOwnerAuthentication(next http.Handler, ownerID string, token []byte) http.HandlerFunc {
 	ownerID = strings.TrimSpace(ownerID)
 	token = append([]byte(nil), token...)
 	return func(w http.ResponseWriter, r *http.Request) {
 		authorization := r.Header.Values("Authorization")
 		if r.Method == http.MethodGet {
-			if len(authorization) == 0 && !viewerSendHasCMDMarker(r) {
+			if len(authorization) == 0 && !viewerSendHasCMDMarker(r) && !viewerSendHasCOREViewerMarker(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -57,7 +60,9 @@ func WithCMDMioOwnerAuthentication(next http.Handler, ownerID string, token []by
 			}
 			client, clientOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Client")
 			profile, profileOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Interaction-Profile")
-			if !clientOK || !profileOK || client != viewerCMDClient || profile != viewerCMDChatProfile {
+			cmdContract := clientOK && profileOK && client == viewerCMDClient && profile == viewerCMDChatProfile
+			coreViewerContract := clientOK && profileOK && client == viewerCOREClient && profile == viewerCOREChatProfile
+			if cmdContract == coreViewerContract {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
@@ -108,6 +113,7 @@ func WithCMDMioOwnerAuthentication(next http.Handler, ownerID string, token []by
 			defer r.MultipartForm.RemoveAll()
 		}
 		cmdMarker := viewerSendHasCMDMarker(r)
+		coreViewerMarker := viewerSendHasCOREViewerMarker(r)
 		if recipientErr != nil {
 			if len(authorization) > 0 {
 				http.Error(w, "forbidden", http.StatusForbidden)
@@ -124,15 +130,19 @@ func WithCMDMioOwnerAuthentication(next http.Handler, ownerID string, token []by
 		client, clientOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Client")
 		profile, profileOK := exactlyOneMemoryOwnerHeader(r.Header, "X-RenCrow-Interaction-Profile")
 		cmdContract := clientOK && profileOK && client == viewerCMDClient && profile == viewerCMDChatProfile
-		requiresOwnerAuth := recipient == modulechat.ViewerRecipientMio && cmdMarker
-		if len(authorization) > 0 && (!cmdContract || recipient != modulechat.ViewerRecipientMio) {
+		coreViewerContract := clientOK && profileOK && client == viewerCOREClient && profile == viewerCOREChatProfile
+		if len(authorization) > 0 && ((!cmdContract && !coreViewerContract) || recipient != modulechat.ViewerRecipientMio) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if requiresOwnerAuth && !cmdContract {
+		if (cmdMarker && !cmdContract) || (len(authorization) > 0 && coreViewerMarker && !coreViewerContract) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		// CMD's legacy marker continues to require authentication even when its
+		// Bearer is absent. Native COREViewer remains public when no Bearer is
+		// supplied, but an attempted authenticated request cannot fall back.
+		requiresOwnerAuth := recipient == modulechat.ViewerRecipientMio && (cmdMarker || (len(authorization) > 0 && coreViewerMarker))
 		if !requiresOwnerAuth {
 			next.ServeHTTP(w, r)
 			return
@@ -185,6 +195,20 @@ func viewerSendHasCMDMarker(r *http.Request) bool {
 	}
 	for _, value := range r.Header.Values("X-RenCrow-Interaction-Profile") {
 		if strings.TrimSpace(value) == viewerCMDChatProfile {
+			return true
+		}
+	}
+	return false
+}
+
+func viewerSendHasCOREViewerMarker(r *http.Request) bool {
+	for _, value := range r.Header.Values("X-RenCrow-Client") {
+		if strings.TrimSpace(value) == viewerCOREClient {
+			return true
+		}
+	}
+	for _, value := range r.Header.Values("X-RenCrow-Interaction-Profile") {
+		if strings.TrimSpace(value) == viewerCOREChatProfile {
 			return true
 		}
 	}
@@ -259,7 +283,7 @@ func validatedViewerOwnerScope(ctx context.Context) (domaintool.ToolExecutionSco
 }
 
 // AuthenticatedViewerOwnerID returns only a previously validated HTTP owner
-// scope installed by the Viewer CMD authentication middleware.
+// scope installed by the Viewer owner authentication middleware.
 func AuthenticatedViewerOwnerID(ctx context.Context) (string, bool, error) {
 	scope, found, err := validatedViewerOwnerScope(ctx)
 	if err != nil || !found {

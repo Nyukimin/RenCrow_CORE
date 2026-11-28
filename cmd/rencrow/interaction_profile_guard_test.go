@@ -914,6 +914,31 @@ func TestCMDChatMusicArtifactDownloadIsExact(t *testing.T) {
 			path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusNoContent,
 		},
 		{
+			name:   "cmd chat can download one opaque Movie job for mio",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodGet,
+			path: "/viewer/movie/jobs/job_opaque/download?to=mio", want: http.StatusNoContent,
+		},
+		{
+			name:   "cmd chat cannot use another Movie download method",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodPost,
+			path: "/viewer/movie/jobs/job_opaque/download?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "cmd chat cannot use a neighboring Movie download path",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodGet,
+			path: "/viewer/movie/jobs/job_opaque/download/extra?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "cmd chat Movie download rejects unsafe job ID",
+			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodGet,
+			path: "/viewer/movie/jobs/job%2Fother/download?to=mio", want: http.StatusForbidden,
+		},
+		{
+			name:   "cmd diagnostics cannot download a Movie job",
+			client: "RenCrow_CMD", profile: "cmd-diagnostics", method: http.MethodGet,
+			path: "/viewer/movie/jobs/job_opaque/download?to=mio", want: http.StatusForbidden,
+		},
+		{
 			name:   "cmd chat cannot use another method",
 			client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodPost,
 			path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusForbidden,
@@ -947,6 +972,42 @@ func TestCMDChatMusicArtifactDownloadIsExact(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("X-RenCrow-Client", tt.client)
+			req.Header.Set(interactionProfileHeader, tt.profile)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestCOREViewerPrivateMioReadPathsAreExact(t *testing.T) {
+	handler := withInteractionProfileGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	tests := []struct {
+		name    string
+		client  string
+		profile string
+		method  string
+		path    string
+		want    int
+	}{
+		{name: "native private event stream", client: "RenCrow_CORE", profile: "core-viewer", method: http.MethodGet, path: "/viewer/events?to=mio", want: http.StatusNoContent},
+		{name: "native Music artifact", client: "RenCrow_CORE", profile: "core-viewer", method: http.MethodGet, path: "/viewer/music/artifacts/art_opaque/download?to=mio", want: http.StatusNoContent},
+		{name: "native Movie job", client: "RenCrow_CORE", profile: "core-viewer", method: http.MethodGet, path: "/viewer/movie/jobs/job_opaque/download?to=mio", want: http.StatusNoContent},
+		{name: "native event stream wrong method", client: "RenCrow_CORE", profile: "core-viewer", method: http.MethodPost, path: "/viewer/events?to=mio", want: http.StatusForbidden},
+		{name: "native Movie path neighbor", client: "RenCrow_CORE", profile: "core-viewer", method: http.MethodGet, path: "/viewer/movie/jobs/job_opaque/download/extra?to=mio", want: http.StatusForbidden},
+		{name: "native Movie encoded path segment", client: "RenCrow_CORE", profile: "core-viewer", method: http.MethodGet, path: "/viewer/movie/jobs/%2e%2e/download?to=mio", want: http.StatusForbidden},
+		{name: "native Movie unsafe ID characters", client: "RenCrow_CORE", profile: "core-viewer", method: http.MethodGet, path: "/viewer/movie/jobs/job%2Fother/download?to=mio", want: http.StatusForbidden},
+		{name: "forged native profile", client: "RenCrow_CORE", profile: "core-viewer-forged", method: http.MethodGet, path: "/viewer/events?to=mio", want: http.StatusForbidden},
+		{name: "CMD chat can use its dedicated Movie download path", client: "RenCrow_CMD", profile: "cmd-chat", method: http.MethodGet, path: "/viewer/movie/jobs/job_opaque/download?to=mio", want: http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "http://127.0.0.1"+tt.path, nil)
 			req.Header.Set("X-RenCrow-Client", tt.client)
 			req.Header.Set(interactionProfileHeader, tt.profile)
 			rec := httptest.NewRecorder()

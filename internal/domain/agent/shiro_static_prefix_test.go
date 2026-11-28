@@ -118,7 +118,7 @@ func TestShiroReActHandsOverTheTypedPromptContext(t *testing.T) {
 	shiro := NewShiroAgent(&mockLLMProvider{}, &mockToolRunner{}, &mockMCPClient{}, "test prompt", manager).
 		WithPersona(AgentPersona{Name: "Shiro", Personality: "precise worker"})
 
-	for _, text := range []string{"ファイルを作成して", "全く別の依頼です"} {
+	for _, text := range []string{"ファイルを作成して", "  全く別の依頼です  "} {
 		if _, err := shiro.Execute(context.Background(), newAgentTurnInput(t, text, "line", "U123")); err != nil {
 			t.Fatalf("Execute(%q) error = %v", text, err)
 		}

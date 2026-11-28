@@ -40,9 +40,13 @@ func configureRuntimeMusicTools(ctx context.Context, cfg config.MusicConfig, wor
 		log.Printf("RenCrow_Music Tools unavailable: authenticated capability probe did not confirm the configured actor")
 		return nil
 	}
+	// Analysis reads are actor-scoped and remain useful for durable results
+	// when Music blocks new analysis creation during reconciliation.
+	workerConfig.MusicAnalysisReader = gateway
 	projectStorage, found := capabilities.Capabilities["project_storage"]
 	if found && projectStorage.SupportState == "implemented" && projectStorage.Availability == "ready" {
 		workerConfig.MusicProjects = gateway
+		workerConfig.MusicArtifactMetadata = gateway
 		log.Printf("RenCrow_Music project Tools ready for the configured actor")
 	} else {
 		log.Printf("RenCrow_Music project Tools unavailable: project_storage is not confirmed implemented and ready")
@@ -71,6 +75,7 @@ func configureRuntimeMusicTools(ctx context.Context, cfg config.MusicConfig, wor
 	playback, found := capabilities.Capabilities["artifact_playback"]
 	if found && playback.SupportState == "implemented" && playback.Availability == "ready" {
 		workerConfig.MusicArtifactPlayback = gateway
+		workerConfig.MusicArtifactMetadata = gateway
 		log.Printf("RenCrow_Music artifact playback ready for the configured actor")
 	} else {
 		log.Printf("RenCrow_Music artifact playback unavailable: artifact_playback is not confirmed implemented and ready")
@@ -81,6 +86,36 @@ func configureRuntimeMusicTools(ctx context.Context, cfg config.MusicConfig, wor
 		log.Printf("RenCrow_Music bounded remix Tool ready for the configured actor")
 	} else {
 		log.Printf("RenCrow_Music bounded remix Tool unavailable: music_remix is not confirmed implemented and ready")
+	}
+	for _, registration := range []struct {
+		name string
+		set  func()
+	}{
+		{name: "music_analysis_beats", set: func() { workerConfig.MusicAnalysisBeats = gateway }},
+		{name: "music_analysis_captions", set: func() { workerConfig.MusicAnalysisCaptions = gateway }},
+		{name: "music_source_search", set: func() { workerConfig.MusicSourceSearch = gateway }},
+	} {
+		status, capabilityFound := capabilities.Capabilities[registration.name]
+		if capabilityFound && status.SupportState == "implemented" && status.Availability == "ready" {
+			if (registration.name == "music_analysis_beats" || registration.name == "music_analysis_captions") && workerConfig.MusicProjects == nil {
+				log.Printf("RenCrow_Music %s unavailable: project_storage is not confirmed implemented and ready", registration.name)
+				continue
+			}
+			registration.set()
+			log.Printf("RenCrow_Music %s ready for the configured actor", registration.name)
+		} else {
+			log.Printf("RenCrow_Music %s unavailable: capability is not confirmed implemented and ready", registration.name)
+		}
+	}
+	// Keep the actor-bound status reader even when the decoder capability is
+	// unavailable so existing durable import jobs remain recoverable.
+	workerConfig.MusicAudioImport = gateway
+	importCapability, found := capabilities.Capabilities["audio_import"]
+	workerConfig.MusicAudioImportReady = found && importCapability.SupportState == "implemented" && importCapability.Availability == "ready"
+	if workerConfig.MusicAudioImportReady {
+		log.Printf("RenCrow_Music audio_import ready for new imports")
+	} else {
+		log.Printf("RenCrow_Music audio import status remains available; new imports are not confirmed ready")
 	}
 	return nil
 }

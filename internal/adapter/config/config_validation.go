@@ -31,6 +31,9 @@ func (c *Config) Validate() error {
 	if err := c.validateMusicConfig(); err != nil {
 		return err
 	}
+	if err := c.validateMovieConfig(); err != nil {
+		return err
+	}
 	if c.Distributed.Enabled && c.TTS.SpeechPlanEnabled {
 		return fmt.Errorf("tts.speech_plan_enabled=true is not supported when distributed.enabled=true")
 	}
@@ -1178,6 +1181,33 @@ func (c *Config) validateMusicConfig() error {
 	tokenEnv := strings.TrimSpace(music.TokenEnv)
 	if !musicTokenEnvPattern.MatchString(tokenEnv) {
 		return fmt.Errorf("music.token_env must be an environment variable name")
+	}
+	return nil
+}
+
+func (c *Config) validateMovieConfig() error {
+	movie := c.Movie
+	if !movie.Enabled {
+		return nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(movie.Endpoint))
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return fmt.Errorf("movie.endpoint must be an absolute http URL with a numeric loopback host, explicit port, and no path, userinfo, query, or fragment")
+	}
+	ip := net.ParseIP(parsed.Hostname())
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("movie.endpoint must use a numeric loopback host")
+	}
+	port, portErr := strconv.Atoi(parsed.Port())
+	if portErr != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("movie.endpoint must include a valid port between 1 and 65535")
+	}
+	actorID := strings.TrimSpace(movie.ActorID)
+	if actorID == "" || len(actorID) > 200 || strings.ContainsAny(actorID, "\r\n\x00") {
+		return fmt.Errorf("movie.actor_id must be a non-empty bounded identifier")
+	}
+	if !musicTokenEnvPattern.MatchString(strings.TrimSpace(movie.TokenEnv)) {
+		return fmt.Errorf("movie.token_env must be an environment variable name")
 	}
 	return nil
 }

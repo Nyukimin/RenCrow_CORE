@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1030,6 +1032,147 @@ func TestViewerBridgeKeepsLegacyRouteWhenCombinedChatProcessorIsIneligible(t *te
 	}
 	if persisted.ChannelAddress() != wantAddress {
 		t.Fatalf("persisted ineligible-route ChannelAddress = %+v, want %+v", persisted.ChannelAddress(), wantAddress)
+	}
+}
+
+func TestViewerBridgeResolvesFreshOwnerSessionWithoutLegacyRAMAdmission(t *testing.T) {
+	const token = "viewer-send-owner-token-0123456789"
+	for _, tc := range []struct {
+		name           string
+		client         string
+		profile        string
+		withAttachment bool
+	}{
+		{name: "eligible CMD with attachment", client: "RenCrow_CMD", profile: "cmd-chat", withAttachment: true},
+		{name: "authenticated native COREViewer", client: "RenCrow_CORE", profile: "core-viewer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenPath := filepath.Join(t.TempDir(), "agent-ops.token")
+			if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{
+				WorkspaceDir: t.TempDir(),
+				LocalAgentOps: config.LocalAgentOpsConfig{
+					Enabled: true, AuthTokenFile: tokenPath, UserID: "ren",
+				},
+			}
+			sessionDir := t.TempDir()
+			repo := sessionpersistence.NewJSONSessionRepository(sessionDir)
+			if err := repo.WarmCanonicalIndex(context.Background()); err != nil {
+				t.Fatalf("warm canonical Session projection: %v", err)
+			}
+			deps := &Dependencies{
+				canonicalEventStore:           openViewerBridgeAdmissionStore(t),
+				combinedChatProcessorEligible: true,
+			}
+			processor := viewerBridgeCaptureProcessor{requests: make(chan orchestrator.ProcessMessageRequest, 1)}
+			handler := buildViewerBridgeHandlers(cfg, deps, "", ttsEntryRuntime{}, repo).ViewerSendFromOrch(processor)
+
+			body := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio","viewer_client_id":"viewer-bridge-test"}`))
+			body.Header.Set("Content-Type", "application/json")
+			body.Header.Set("X-RenCrow-Client", tc.client)
+			body.Header.Set("X-RenCrow-Interaction-Profile", tc.profile)
+			body.Header.Set("Authorization", "Bearer "+token)
+			body.RemoteAddr = "127.0.0.1:12345"
+			body.Host = "127.0.0.1:18790"
+			attachViewerBridgeTestPresence(t, deps, body)
+
+			request := body
+			if tc.withAttachment {
+				var bodyFields struct {
+					Message        string          `json:"message"`
+					To             string          `json:"to"`
+					ViewerClientID string          `json:"viewer_client_id"`
+					Presence       json.RawMessage `json:"presence"`
+				}
+				if err := json.NewDecoder(body.Body).Decode(&bodyFields); err != nil {
+					t.Fatalf("decode presence fixture: %v", err)
+				}
+				var multipartBody bytes.Buffer
+				writer := multipart.NewWriter(&multipartBody)
+				for name, value := range map[string]string{
+					"message": bodyFields.Message, "to": bodyFields.To,
+					"viewer_client_id": bodyFields.ViewerClientID, "presence": string(bodyFields.Presence),
+				} {
+					if err := writer.WriteField(name, value); err != nil {
+						t.Fatalf("write multipart field %q: %v", name, err)
+					}
+				}
+				part, err := writer.CreateFormFile("attachments[]", "memo.txt")
+				if err != nil {
+					t.Fatalf("create attachment part: %v", err)
+				}
+				if _, err := part.Write([]byte("attachment fixture")); err != nil {
+					t.Fatalf("write attachment fixture: %v", err)
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatalf("close multipart writer: %v", err)
+				}
+				request = httptest.NewRequest(http.MethodPost, "/viewer/send", &multipartBody)
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+			}
+			request.Header.Set("X-RenCrow-Client", tc.client)
+			request.Header.Set("X-RenCrow-Interaction-Profile", tc.profile)
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.RemoteAddr = "127.0.0.1:12345"
+			request.Host = "127.0.0.1:18790"
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("authenticated %s send status=%d body=%s", tc.profile, response.Code, response.Body.String())
+			}
+			var accepted orchestrator.ProcessMessageRequest
+			select {
+			case accepted = <-processor.requests:
+			case <-time.After(time.Second):
+				t.Fatal("authenticated Viewer request did not reach ProcessMessage")
+			}
+			if accepted.ChatID != "cmd:ren" || accepted.Channel != "viewer" || accepted.SessionID == "" {
+				t.Fatalf("accepted Viewer identity/session = %q/%q/%q, want private viewer/cmd:ren Session", accepted.Channel, accepted.ChatID, accepted.SessionID)
+			}
+			if accepted.OperationSource != tc.client {
+				t.Fatalf("accepted operation source=%q, want %q", accepted.OperationSource, tc.client)
+			}
+			if tc.withAttachment && len(accepted.Attachments) != 1 {
+				t.Fatalf("accepted attachment count=%d, want the multipart CMD attachment", len(accepted.Attachments))
+			}
+			if !tc.withAttachment && len(accepted.Attachments) != 0 {
+				t.Fatalf("native COREViewer unexpectedly accepted attachments: %d", len(accepted.Attachments))
+			}
+
+			address, err := domainconversation.NewChannelAddress("viewer", "cmd:ren")
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, err := os.ReadDir(sessionDir)
+			if err != nil {
+				t.Fatalf("read persisted sessions: %v", err)
+			}
+			if len(entry) != 1 || entry[0].IsDir() || !strings.HasSuffix(entry[0].Name(), ".json") {
+				t.Fatalf("persisted canonical Session files=%v, want one owner-bound Session", entry)
+			}
+			reloaded := sessionpersistence.NewJSONSessionRepository(sessionDir)
+			if err := reloaded.WarmCanonicalIndex(context.Background()); err != nil {
+				t.Fatalf("reload canonical Session projection: %v", err)
+			}
+			persisted, err := reloaded.Load(context.Background(), accepted.SessionID)
+			if err != nil || persisted == nil {
+				t.Fatalf("load accepted Session after repository reload: session=%v err=%v", persisted, err)
+			}
+			resolution, err := reloaded.LoadOrCreateCanonicalForOwner(
+				context.Background(), persisted.LogicalDate(), address, "ren", persisted.CreatedAt(),
+			)
+			if err != nil || resolution.Status != domainsession.CanonicalSessionOwnerMatched ||
+				resolution.Session == nil || resolution.Session.ID() != accepted.SessionID || resolution.BoundOwnerID != "ren" {
+				t.Fatalf("reloaded canonical Viewer Session=%+v err=%v, want same owner-bound Session", resolution, err)
+			}
+			entry, err = os.ReadDir(sessionDir)
+			if err != nil || len(entry) != 1 {
+				t.Fatalf("session files after reload resolution=%v err=%v, want no duplicate", entry, err)
+			}
+		})
 	}
 }
 

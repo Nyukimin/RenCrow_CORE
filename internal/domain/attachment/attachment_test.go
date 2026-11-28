@@ -68,6 +68,7 @@ func TestKindFromFilename(t *testing.T) {
 
 func TestSummaryLineIncludesExtractedDocumentTextPreview(t *testing.T) {
 	got := SummaryLine(Attachment{
+		ID:            "att_opaque",
 		Kind:          KindDocument,
 		Filename:      "memo.txt",
 		ContentType:   "text/plain",
@@ -75,7 +76,7 @@ func TestSummaryLineIncludesExtractedDocumentTextPreview(t *testing.T) {
 		Path:          "/tmp/memo.txt",
 		ExtractedText: "hello text",
 	})
-	if !strings.Contains(got, "本文プレビュー: hello text") {
+	if !strings.Contains(got, "id=att_opaque") || !strings.Contains(got, "本文プレビュー: hello text") {
 		t.Fatalf("SummaryLine did not include extracted text preview: %q", got)
 	}
 }

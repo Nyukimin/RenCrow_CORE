@@ -25,14 +25,44 @@ jobs:
   direct-chat-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/Tmp/test-runtime/_cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/Tmp/test-runtime/_cache/go-mod
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: false
+      - name: Download private Go module dependencies
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RENCROW_TOOLS_READ_TOKEN }}
+          GOPRIVATE: github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine
+          GOMODCACHE: ${{ github.workspace }}/Tmp/test-runtime/_cache/go-mod
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          $bootstrapRoot = Join-Path $PWD 'Tmp/test-runtime/_bootstrap'
+          New-Item -ItemType Directory -Force -Path $bootstrapRoot -ErrorAction Stop | Out-Null
+          $env:GIT_CONFIG_GLOBAL = Join-Path $bootstrapRoot 'private-go.gitconfig'
+          try {
+            gh auth setup-git --hostname github.com
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub credential helper setup failed' }
+            go mod download
+            if ($LASTEXITCODE -ne 0) { throw 'Go module download failed' }
+          }
+          finally {
+            if (Test-Path -LiteralPath $env:GIT_CONFIG_GLOBAL) {
+              Remove-Item -LiteralPath $env:GIT_CONFIG_GLOBAL -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $env:GIT_CONFIG_GLOBAL) { throw 'Temporary Git configuration cleanup failed' }
+            Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue
+            Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+          }
       - name: Verify direct conversation lifecycle and durable dispatch
         shell: pwsh
         run: |
@@ -69,6 +99,7 @@ jobs:
         with:
           path: source
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: Nyukimin/RenCrow_Tools
@@ -80,6 +111,32 @@ jobs:
         with:
           go-version-file: source/go.mod
           cache: false
+      - name: Download private Go module dependencies
+        shell: pwsh
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ secrets.RENCROW_TOOLS_READ_TOKEN }}
+          GOPRIVATE: github.com/Nyukimin/RenCrow_Tools/tools/research/research_engine
+          GOMODCACHE: ${{ github.workspace }}/source/Tmp/test-runtime/_cache/go-mod
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          $bootstrapRoot = Join-Path $PWD 'Tmp/test-runtime/_bootstrap'
+          New-Item -ItemType Directory -Force -Path $bootstrapRoot -ErrorAction Stop | Out-Null
+          $env:GIT_CONFIG_GLOBAL = Join-Path $bootstrapRoot 'private-go.gitconfig'
+          try {
+            gh auth setup-git --hostname github.com
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub credential helper setup failed' }
+            go mod download
+            if ($LASTEXITCODE -ne 0) { throw 'Go module download failed' }
+          }
+          finally {
+            if (Test-Path -LiteralPath $env:GIT_CONFIG_GLOBAL) {
+              Remove-Item -LiteralPath $env:GIT_CONFIG_GLOBAL -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $env:GIT_CONFIG_GLOBAL) { throw 'Temporary Git configuration cleanup failed' }
+            Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue
+            Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+          }
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
