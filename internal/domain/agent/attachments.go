@@ -7,10 +7,10 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-func userMessageWithAttachments(message string, attachments []domainattachment.Attachment) llm.Message {
+func userMessageAttachmentSummary(message string, attachments []domainattachment.Attachment) string {
 	trimmed := strings.TrimSpace(message)
 	if len(attachments) == 0 {
-		return llm.Message{Role: "user", Content: trimmed}
+		return trimmed
 	}
 
 	var b strings.Builder
@@ -23,8 +23,16 @@ func userMessageWithAttachments(message string, attachments []domainattachment.A
 		b.WriteString(domainattachment.SummaryLine(att))
 		b.WriteByte('\n')
 	}
+	return b.String()
+}
 
-	parts := []llm.MessagePart{{Type: llm.MessagePartText, Text: b.String()}}
+func userMessageWithAttachments(message string, attachments []domainattachment.Attachment) llm.Message {
+	content := userMessageAttachmentSummary(message, attachments)
+	if len(attachments) == 0 {
+		return llm.Message{Role: "user", Content: content}
+	}
+
+	parts := []llm.MessagePart{{Type: llm.MessagePartText, Text: content}}
 	for _, att := range attachments {
 		if att.Kind == domainattachment.KindAudio && len(att.Data) > 0 {
 			parts = append(parts, llm.MessagePart{
@@ -35,5 +43,5 @@ func userMessageWithAttachments(message string, attachments []domainattachment.A
 		}
 	}
 
-	return llm.Message{Role: "user", Content: b.String(), Parts: parts}
+	return llm.Message{Role: "user", Content: content, Parts: parts}
 }
